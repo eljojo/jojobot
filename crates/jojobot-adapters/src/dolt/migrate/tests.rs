@@ -93,6 +93,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0063_field_link",
     "0064_session_wrap_window",
     "0065_fact_write_session",
+    "0068_field_write_written_at",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

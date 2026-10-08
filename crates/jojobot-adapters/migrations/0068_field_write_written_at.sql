@@ -1,0 +1,20 @@
+-- When each write of a key happened, so a fold can tell which of two things'
+-- writes of one key is the newer.
+--
+-- **A write had no moment of its own.** `field_write` kept who, which key,
+-- which place in that key's history and the value. The claim that carried the
+-- write has a moment, but it is the claim's FIRST entry and every later edit of
+-- the claim repeats it, so it cannot say when a field was last written.
+--
+-- **The store stamps it, at the append, with its own clock.** The caller never
+-- supplies it. Text, like every other stamp here: the store keeps what it was
+-- handed and a reader parses it, because a fraction that drops its trailing
+-- zeros makes two stamps of one width compare wrong as text.
+--
+-- **Nothing is backfilled.** A write an older build appended has no moment of
+-- its own, and the only value available to fill it with is a claim's, which is
+-- the wrong reading this column exists to end (migrations 0027 and 0036 ruled
+-- the same way for the same reason). It stays NULL. A merge reads a NULL as
+-- older than every stamped write: the column came into being at one moment, so
+-- every write that carries a stamp is later than every write that cannot.
+ALTER TABLE field_write ADD COLUMN written_at VARCHAR(40) NULL;

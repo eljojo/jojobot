@@ -5554,6 +5554,214 @@ async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
     store.stop().await;
 }
 
+/// **The write the store stamped latest wins the fold, whichever thing held
+/// it.** Two handles on one database stamp on different stated days, so the
+/// stamps are the store's own and not set by hand. The survivor writes `now`
+/// and the duplicate writes `done`; the survivor holds whichever was stamped
+/// later.
+async fn latest_write_wins(survivor_day: i8, duplicate_day: i8, holds: &str) {
+    let scratch = Scratch::new("field-write-merge-latest");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("field_write_merge_latest")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let on = |day: i8| {
+        DoltMemory::open(pool.clone())
+            .on_clock(jojobot_domain::clock::Clock::stating(date(2026, 8, day)))
+    };
+    let (survivors, duplicates) = (on(survivor_day), on(duplicate_day));
+
+    let duplicate = EntityId("thing:contract-links-duplicate".into());
+    let survivor = EntityId("thing:contract-links-survivor".into());
+    for (id, name) in [(&survivor, "Survivor"), (&duplicate, "Duplicate")] {
+        survivors
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    for (memory, id, value) in [
+        (&survivors, &survivor, "now"),
+        (&duplicates, &duplicate, "done"),
+    ] {
+        memory
+            .capture(NewFact {
+                fields: [("status".to_string(), value.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(id.clone(), "where it stands", date(2026, 8, 1))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the claim lands");
+    }
+
+    survivors
+        .merge(&duplicate, &survivor, None, date(2026, 8, 9), &survivor)
+        .await
+        .expect("the fold lands");
+
+    assert_eq!(
+        survivors.fields(&survivor).await.expect("the fields read")["status"],
+        holds,
+        "the survivor's write was stamped on the {survivor_day}th and the duplicate's on the \
+         {duplicate_day}th",
+    );
+
+    store.stop().await;
+}
+
+#[tokio::test]
+async fn a_merge_keeps_the_survivors_write_when_it_was_made_later() {
+    latest_write_wins(3, 2, "now").await;
+}
+
+#[tokio::test]
+async fn a_merge_keeps_the_duplicates_write_when_it_was_made_later() {
+    latest_write_wins(2, 3, "done").await;
+}
+
+/// 🚨 **A merge places each key's writes by the moment the store stamped them,
+/// and the newest holds the key.**
+///
+/// The survivor wrote `status` as `now` and the duplicate wrote it as `done`.
+/// The stamps are set on the rows, as a store holds them, to cover every way two
+/// writes can stand to each other: either one later, an exact tie, and a write
+/// with no stamp, which is what an older build appended. The survivor wins a tie
+/// and an unstamped write is older than a stamped one. The ordinals are read
+/// back too, because the fold decides by them.
+#[tokio::test]
+async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
+    const SOME_DAY: &str = "2026-08-02T10:00:00Z";
+    const LATER_DAY: &str = "2026-08-03T10:00:00Z";
+    // (what stands, survivor's stamp, duplicate's stamp, the order the writes
+    // end up in oldest first, the value the survivor holds)
+    type Scenario = (
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        [&'static str; 2],
+        &'static str,
+    );
+    let scenarios: [Scenario; 6] = [
+        (
+            "the survivor's is later",
+            Some(LATER_DAY),
+            Some(SOME_DAY),
+            ["done", "now"],
+            "now",
+        ),
+        (
+            "the duplicate's is later",
+            Some(SOME_DAY),
+            Some(LATER_DAY),
+            ["now", "done"],
+            "done",
+        ),
+        (
+            "an exact tie",
+            Some(SOME_DAY),
+            Some(SOME_DAY),
+            ["done", "now"],
+            "now",
+        ),
+        (
+            "the survivor's has no stamp",
+            None,
+            Some(SOME_DAY),
+            ["now", "done"],
+            "done",
+        ),
+        (
+            "the duplicate's has no stamp",
+            Some(SOME_DAY),
+            None,
+            ["done", "now"],
+            "now",
+        ),
+        ("neither has a stamp", None, None, ["done", "now"], "now"),
+    ];
+    for (what, survivors, duplicates, order, holds) in scenarios {
+        let scratch = Scratch::new("field-write-merge-stamped");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("field_write_merge_stamped")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        booted(&pool).await;
+        let memory = DoltMemory::open(pool.clone());
+
+        let duplicate = EntityId("thing:contract-links-duplicate".into());
+        let survivor = EntityId("thing:contract-links-survivor".into());
+        for (id, name) in [(&survivor, "Survivor"), (&duplicate, "Duplicate")] {
+            memory
+                .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+                .await
+                .expect("add_entity ok")
+                .written()
+                .expect("nothing collides with it");
+        }
+        for (id, value, stamp) in [
+            (&survivor, "now", survivors),
+            (&duplicate, "done", duplicates),
+        ] {
+            memory
+                .capture(NewFact {
+                    fields: [("status".to_string(), value.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(id.clone(), "where it stands", date(2026, 8, 1))
+                })
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("the claim lands");
+            sqlx::query(
+                "UPDATE field_write SET written_at = ? WHERE entity = ? AND `key` = 'status'",
+            )
+            .bind(stamp)
+            .bind(badge_of(&pool, id.as_str()).await)
+            .execute(&pool)
+            .await
+            .expect("the stamp is set as the store holds it");
+        }
+
+        memory
+            .merge(&duplicate, &survivor, None, date(2026, 8, 4), &survivor)
+            .await
+            .unwrap_or_else(|e| panic!("the fold lands when {what}: {e:?}"));
+
+        let writes: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT value, ordinal FROM field_write WHERE `key` = 'status' ORDER BY ordinal",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("the writes read");
+        assert_eq!(
+            writes,
+            vec![(order[0].to_string(), 1), (order[1].to_string(), 2)],
+            "when {what}, the writes are renumbered oldest first",
+        );
+        assert_eq!(
+            memory.fields(&survivor).await.expect("the fields read")["status"],
+            holds,
+            "when {what}, the survivor holds the newest write",
+        );
+
+        store.stop().await;
+    }
+}
+
 /// 🚨 **Two things that link to the same target under the same key can be
 /// folded into one.**
 ///

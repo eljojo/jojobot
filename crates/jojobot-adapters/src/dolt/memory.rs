@@ -1693,7 +1693,7 @@ impl DoltMemory {
         // the guard has already run, so what lands here is free to be the
         // storage shape rather than the served one.
         let lowered_writes = self.lower_writes(tx, written_keys(&stored)).await?;
-        Self::append_writes(tx, &stored.home, &stored.id, lowered_writes).await?;
+        Self::append_writes(tx, &stored.home, &stored.id, lowered_writes, &self.clock).await?;
         // **Served under the handle, stored under the key** — resolved
         // before the commit closes the transaction this needs to do it in.
         let served_derived_from = match &stored.derived_from {
@@ -2100,6 +2100,7 @@ impl DoltMemory {
         entity: &EntityId,
         fact: &FactId,
         wrote: Vec<(String, Option<String>)>,
+        clock: &Clock,
     ) -> Result<(), MemoryError> {
         // **The link rows ride the write that made them**, in its transaction, so
         // a write and the question of who points at its targets never disagree.
@@ -2118,14 +2119,15 @@ impl DoltMemory {
             .map_err(store)?;
             let ordinal = highest.unwrap_or(0) + 1;
             sqlx::query(
-                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-                 VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(entity.as_str())
             .bind(&key)
             .bind(ordinal)
             .bind(value.as_deref())
             .bind(fact.as_str())
+            .bind(clock.now().to_string())
             .execute(&mut **tx)
             .await
             .map_err(store)?;
@@ -2369,6 +2371,126 @@ impl DoltMemory {
         Ok(touched)
     }
 
+    /// **Move the duplicate's field writes onto the survivor, in the order they
+    /// were made.**
+    ///
+    /// The fold of a thing's fields takes the newest write of each key by
+    /// ordinal, so a merge that put the duplicate's writes after the survivor's
+    /// would make the duplicate's value win whatever its age. Each key's two
+    /// histories are interleaved by the moment the store stamped each write
+    /// ([`interleave`]) and both sides are renumbered from one as one mapping,
+    /// across `field_write` and `field_link`, which is keyed by the write's
+    /// address. A claim's new id comes from `renamed`.
+    ///
+    /// **The move goes through a parked range.** The primary key is (thing, key,
+    /// ordinal), so renumbering in place would collide half way. Every row is
+    /// first set to its final ordinal plus [`PARKED`], a range nothing holds,
+    /// then the whole range is brought down in one statement.
+    async fn interleave_writes(
+        tx: &mut Transaction<'_, MySql>,
+        folded: &str,
+        survivor: &str,
+        renamed: &std::collections::HashMap<String, String>,
+    ) -> Result<(), MemoryError> {
+        let mut by_key: std::collections::BTreeMap<String, (Vec<StampedWrite>, Vec<StampedWrite>)> =
+            std::collections::BTreeMap::new();
+        for write in Self::stamped_writes(tx, folded).await? {
+            by_key.entry(write.key.clone()).or_default().0.push(write);
+        }
+        for write in Self::stamped_writes(tx, survivor).await? {
+            by_key.entry(write.key.clone()).or_default().1.push(write);
+        }
+        for (key, (theirs, ours)) in by_key {
+            // A key only the survivor holds has nothing to interleave.
+            if theirs.is_empty() {
+                continue;
+            }
+            for (place, (side, write)) in interleave(&theirs, &ours).into_iter().enumerate() {
+                let (from, fact_id) = match side {
+                    Side::Folded => (
+                        folded,
+                        renamed.get(&write.fact_id).unwrap_or(&write.fact_id),
+                    ),
+                    Side::Survivor => (survivor, &write.fact_id),
+                };
+                let parked = place as i64 + 1 + PARKED;
+                sqlx::query(
+                    "UPDATE field_write SET entity = ?, fact_id = ?, ordinal = ? \
+                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
+                )
+                .bind(survivor)
+                .bind(fact_id)
+                .bind(parked)
+                .bind(from)
+                .bind(&key)
+                .bind(write.ordinal)
+                .execute(&mut **tx)
+                .await
+                .map_err(store)?;
+                sqlx::query(
+                    "UPDATE field_link SET entity = ?, ordinal = ? \
+                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
+                )
+                .bind(survivor)
+                .bind(parked)
+                .bind(from)
+                .bind(&key)
+                .bind(write.ordinal)
+                .execute(&mut **tx)
+                .await
+                .map_err(store)?;
+            }
+        }
+        for table in ["field_write", "field_link"] {
+            sqlx::query(&format!(
+                "UPDATE {table} SET ordinal = ordinal - ? WHERE entity = ? AND ordinal >= ?"
+            ))
+            .bind(PARKED)
+            .bind(survivor)
+            .bind(PARKED)
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        }
+        Ok(())
+    }
+
+    /// Every field write on one thing with the moment the store stamped it,
+    /// each key's writes in ordinal order. **A stamp that does not parse reads as
+    /// no stamp**, the same as a write that was never stamped.
+    async fn stamped_writes(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &str,
+    ) -> Result<Vec<StampedWrite>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT `key`, ordinal, fact_id, written_at FROM field_write \
+             WHERE entity = ? ORDER BY `key`, ordinal",
+        )
+        .bind(entity)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut writes = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let key: String = row.try_get("key").map_err(store)?;
+            let stamp: Option<String> = row.try_get("written_at").map_err(store)?;
+            let written_at = stamp.and_then(|text| match text.parse::<jiff::Timestamp>() {
+                Ok(at) => Some(at),
+                Err(e) => {
+                    tracing::warn!(error = %e, entity, key, "a write's stamp does not parse; it reads as unstamped");
+                    None
+                }
+            });
+            writes.push(StampedWrite {
+                ordinal: row.try_get("ordinal").map_err(store)?,
+                fact_id: row.try_get("fact_id").map_err(store)?,
+                key,
+                written_at,
+            });
+        }
+        Ok(writes)
+    }
+
     /// The next local id on this page: `f` and the highest number already
     /// there, plus one.
     ///
@@ -2481,6 +2603,57 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
                                   w.edge_shape, \
                                   w.edge_object, w.derived_from, w.derived_from_id, \
                                   w.inserted_at, w.stale_after";
+
+/// The first ordinal of the range a merge parks field writes in while it
+/// renumbers them: far above any count of writes of one key.
+const PARKED: i64 = 1 << 40;
+
+/// One field write as a merge orders it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StampedWrite {
+    key: String,
+    ordinal: i64,
+    fact_id: String,
+    /// When the store stamped the write. `None` on a write an older build
+    /// appended, which has no moment of its own.
+    written_at: Option<jiff::Timestamp>,
+}
+
+/// Which thing a write came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Folded,
+    Survivor,
+}
+
+/// **Two histories of one key, interleaved oldest first.**
+///
+/// Each side is already in the order it was written, and that order is kept:
+/// the two are merged, not sorted, so a clock that stepped back inside one
+/// thing's history cannot reorder it. A write with no stamp is older than every
+/// stamped one. **On a tie the survivor's write comes after the duplicate's,
+/// two unstamped writes included**, so the survivor wins: it is the thing kept.
+fn interleave<'a>(
+    folded: &'a [StampedWrite],
+    survivor: &'a [StampedWrite],
+) -> Vec<(Side, &'a StampedWrite)> {
+    let mut merged = Vec::with_capacity(folded.len() + survivor.len());
+    let (mut theirs, mut ours) = (folded.iter().peekable(), survivor.iter().peekable());
+    loop {
+        match (theirs.peek(), ours.peek()) {
+            (Some(their), Some(our)) => {
+                if their.written_at <= our.written_at {
+                    merged.push((Side::Folded, theirs.next().expect("peeked")));
+                } else {
+                    merged.push((Side::Survivor, ours.next().expect("peeked")));
+                }
+            }
+            (Some(_), None) => merged.push((Side::Folded, theirs.next().expect("peeked"))),
+            (None, Some(_)) => merged.push((Side::Survivor, ours.next().expect("peeked"))),
+            (None, None) => return merged,
+        }
+    }
+}
 
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
@@ -3792,7 +3965,7 @@ impl Memory for DoltMemory {
         let lowered_writes = self
             .lower_writes(&mut tx, writes_of(&patch, &carried))
             .await?;
-        Self::append_writes(&mut tx, &fact.home, &fact.id, lowered_writes).await?;
+        Self::append_writes(&mut tx, &fact.home, &fact.id, lowered_writes, &self.clock).await?;
         // Read back from the substrate rather than from what the patch
         // believed, so the answer is the projection a later read will give.
         let mut fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
@@ -3957,24 +4130,11 @@ impl Memory for DoltMemory {
         //
         // ⚠️ **Moving a row therefore CHANGES ITS ADDRESS**, and everything
         // pointing at that address moves with it in the same transaction.
-        // 🚨 **A field write's ordinal is renumbered as it moves too.** Its key
-        // is (thing, key, ordinal), and both sides count each key from one, so
-        // two things that each wrote `status` once both own ordinal 1 and the
-        // move onto the survivor would land on the survivor's own row. **One
-        // mapping serves every table keyed by the write's address**: a moved
-        // write's ordinal is its old one plus the highest ordinal the survivor
-        // already holds for that key. The survivor's own writes keep theirs,
-        // the moved ones follow in the order they were written, and the newest
-        // is still last.
-        let offsets: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
-            "SELECT `key`, MAX(ordinal) FROM field_write WHERE entity = ? GROUP BY `key`",
-        )
-        .bind(survivor_key.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?
-        .into_iter()
-        .collect();
+        // **A field write is not moved claim by claim.** Its key is (thing, key,
+        // ordinal), so a write cannot land on the survivor until its place in the
+        // key's history is settled, and that place depends on every write of the
+        // key on both sides. The claims move here, and the id each one is given on
+        // the survivor is kept so the writes can take it when they move after.
         let moving: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM fact WHERE entity = ? ORDER BY CAST(SUBSTRING(id, 2) AS UNSIGNED)",
         )
@@ -3983,46 +4143,11 @@ impl Memory for DoltMemory {
         .await
         .map_err(store)?;
         let rehomed = moving.len();
+        let mut renamed: std::collections::HashMap<String, String> =
+            std::collections::HashMap::with_capacity(moving.len());
         for was in moving {
             let now = Self::mint(&mut tx, &survivor_key).await?;
-            let writes: Vec<(String, i64)> = sqlx::query_as(
-                "SELECT `key`, ordinal FROM field_write WHERE entity = ? AND fact_id = ?",
-            )
-            .bind(folded_key.as_str())
-            .bind(&was)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?;
-            for (key, ordinal) in writes {
-                let moved_to = ordinal + offsets.get(&key).copied().unwrap_or(0);
-                sqlx::query(
-                    "UPDATE field_write SET entity = ?, fact_id = ?, ordinal = ? \
-                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
-                )
-                .bind(survivor_key.as_str())
-                .bind(now.as_str())
-                .bind(moved_to)
-                .bind(folded_key.as_str())
-                .bind(&key)
-                .bind(ordinal)
-                .execute(&mut *tx)
-                .await
-                .map_err(store)?;
-                // **The link rows are the write's own address**, so they take
-                // the write's new ordinal in the same step.
-                sqlx::query(
-                    "UPDATE field_link SET entity = ?, ordinal = ? \
-                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
-                )
-                .bind(survivor_key.as_str())
-                .bind(moved_to)
-                .bind(folded_key.as_str())
-                .bind(&key)
-                .bind(ordinal)
-                .execute(&mut *tx)
-                .await
-                .map_err(store)?;
-            }
+            renamed.insert(was.clone(), now.as_str().to_string());
             for statement in [
                 "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = ?",
                 "UPDATE fact SET derived_from = ?, derived_from_id = ? \
@@ -4062,6 +4187,16 @@ impl Memory for DoltMemory {
                     .map_err(store)?;
             }
         }
+        // **The writes move last, once every claim has its new id**, interleaved
+        // with the survivor's by the moment each was made.
+        Self::interleave_writes(
+            &mut tx,
+            folded_key.as_str(),
+            survivor_key.as_str(),
+            &renamed,
+        )
+        .await?;
+
         // **An edge's object and a ref's entity are stored as the badge the
         // folded side wears** (rule 268), so these compare against that
         // badge alone and rewrite to the survivor's — never a handle, and
@@ -4159,7 +4294,14 @@ impl Memory for DoltMemory {
             stale_after: None,
         };
         Self::write_fact(&mut tx, &record, &self.clock, None).await?;
-        Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
+        Self::append_writes(
+            &mut tx,
+            &record.home,
+            &record.id,
+            written_keys(&record),
+            &self.clock,
+        )
+        .await?;
 
         // **The folded row stays and starts forwarding.** Written last, so a
         // failure anywhere above rolls back a row that still says it is a thing
@@ -4312,7 +4454,14 @@ impl Memory for DoltMemory {
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.
-        Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
+        Self::append_writes(
+            &mut tx,
+            &record.home,
+            &record.id,
+            written_keys(&record),
+            &self.clock,
+        )
+        .await?;
         // **Served under the handle, stored under the key.**
         let served_retracted = Fact {
             home: handle.clone(),
