@@ -740,6 +740,17 @@ fn the_recall_description_names_not_shown_offset_and_facts_not_shown() {
     assert_description_names("recall", &["not_shown", "offset", "facts_not_shown"]);
 }
 
+/// **`recall` says how old what an object holds is.** The answer's `as_of` and
+/// `fields_as_of` are explained here or nowhere, and `overdue` takes an `as_of`
+/// of its own, so the description has to say which is which.
+#[test]
+fn the_recall_description_says_how_old_what_an_object_holds_is() {
+    assert_description_names(
+        "recall",
+        &["`as_of`", "`fields_as_of`", "`overdue`'s `as_of`"],
+    );
+}
+
 /// **`recall`'s refusal of a query that narrows nothing lists `parent` among the
 /// ways to select**, as the selection itself counts it: a bot's children are a
 /// question on their own, and a list that leaves the argument out sends a

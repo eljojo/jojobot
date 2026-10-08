@@ -1622,7 +1622,12 @@ impl Jojobot {
                        fit is read the same way, `offset` counting its facts, and an object that \
                        cannot fit even first in its part carries `facts_not_shown` naming that \
                        subject to recall alone, which reads its facts in parts, and a single \
-                       fact larger than the ceiling still comes back whole. AN EMPTY ANSWER NAMES WHAT \
+                       fact larger than the ceiling still comes back whole. HOW OLD WHAT AN \
+                       OBJECT HOLDS IS: each object carries `as_of`, the day the store last took \
+                       in a write about it, and `fields_as_of` for any key whose own day is \
+                       older; an object with no `as_of` has no write the store could date. That \
+                       is a day the store saw, while `overdue`'s `as_of` is the day an overdue \
+                       question is asked about. AN EMPTY ANSWER NAMES WHAT \
                        IT LOOKED THROUGH: it carries `searched`, one line saying the population, \
                        what was left out and the call that widens it."
     )]
