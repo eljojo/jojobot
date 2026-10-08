@@ -378,6 +378,34 @@ impl Story {
         .await
     }
 
+    /// **The memory store under this story's server**, for a fixture too big
+    /// to write through the served surface: each served write costs a commit
+    /// of the index, so a world of thousands of records is seeded here and a
+    /// restart indexes it in one pass.
+    pub fn memory_store(&self) -> Arc<dyn jojobot_domain::memory::Memory> {
+        self.store.clone()
+    }
+
+    /// The mailbox store under this story's server, for the same reason.
+    pub fn mail_store(&self) -> Arc<InMemoryMailboxes> {
+        self.mail.clone()
+    }
+
+    /// **A second server over the same stores on the real clock**, whose index
+    /// is built from what the stores now hold. The handles of the first server
+    /// address nothing here.
+    pub async fn restarted(&self) -> Self {
+        Self::spawn(
+            &self.bot,
+            self.store.clone(),
+            self.mail.clone(),
+            self.runs.clone(),
+            jojobot_domain::clock::Clock::default(),
+            true,
+        )
+        .await
+    }
+
     /// **The same world, served again on another day** — a restart with a
     /// different `JOJOBOT_TODAY`, which is what two sittings of one simulation
     /// really are.
@@ -925,6 +953,15 @@ impl Session {
             what: format!("the answer from {tool}"),
             body: body.to_string(),
         }
+    }
+
+    /// **How many characters a call's answer was served in**, whatever it
+    /// was. The one way a story gets an answer past the ceiling without
+    /// failing, for the case that exists to measure the verbs at their widest.
+    pub async fn answer_size(&self, tool: &str, args: Value) -> usize {
+        let mut args = args;
+        self.riding(&mut args);
+        call_measured(&self.client, tool, args).await.1
     }
 
     /// This run's own handle — what a later boot offers back when this one
@@ -1910,6 +1947,23 @@ async fn within_a_deadline<T>(tool: &str, answering: impl std::future::Future<Ou
 }
 
 async fn call(client: &Client, tool: &str, args: Value) -> Value {
+    let (body, size) = call_measured(client, tool, args).await;
+    // **Every answer of every story is measured against the one ceiling.** A
+    // story that asks for something big enough to pass it fails here, naming the
+    // verb and the size, so a verb that grows past what a client can read is
+    // found by the stories that already exist and not only by a fixture written
+    // for the purpose.
+    assert!(
+        size <= jojobot_domain::text::ANSWER_CEILING || MAY_PASS_THE_CEILING.contains(&tool),
+        "{tool} answered {size} characters, past the {} every answer is meant to fit under",
+        jojobot_domain::text::ANSWER_CEILING,
+    );
+    body
+}
+
+/// **A call and the characters its answer was served in**, with no judgement on
+/// the size: the case that measures a verb at its widest asks through this.
+async fn call_measured(client: &Client, tool: &str, args: Value) -> (Value, usize) {
     let result = within_a_deadline(
         tool,
         client.call_tool(
@@ -1925,8 +1979,17 @@ async fn call(client: &Client, tool: &str, args: Value) -> Value {
         .and_then(|b| b.as_text())
         .map(|t| t.text.clone())
         .unwrap_or_else(|| panic!("{tool} returned no text block"));
-    serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }))
+    let size = text.chars().count();
+    (
+        serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text })),
+        size,
+    )
 }
+
+/// The verbs whose answer may pass the ceiling in a story. A boot whose floor
+/// is over the ceiling ships anyway and says so (`over_the_ceiling`), and a
+/// story that makes a bot too heavy on purpose asks for exactly that.
+const MAY_PASS_THE_CEILING: &[&str] = &["start_here"];
 
 /// **Every argument name one verb publishes, at every depth.**
 ///

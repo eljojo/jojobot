@@ -15,6 +15,9 @@ mod support;
 
 // A test target's root file does not get the `foo.rs` + `foo/` convention, so
 // the folder is named explicitly.
+/// How big an answer is allowed to get, and what a list does at the edge.
+#[path = "user_stories/answer_ceiling.rs"]
+mod answer_ceiling;
 #[path = "user_stories/archiving.rs"]
 mod archiving;
 #[path = "user_stories/around_a_day.rs"]
