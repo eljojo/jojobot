@@ -395,7 +395,33 @@ pub const CONNECTED_CONTEXT: Capped = Capped { budget: 20_000 };
 /// below the render boundary, comfortably above [`SESSION_CHRONOLOGY`]
 /// because it spends across the whole answer rather than one collection,
 /// and well past [`HELD_CONTEXT`]'s unasked-for aside.
-pub const BOOT_ANSWER: Capped = Capped { budget: 28_000 };
+pub const BOOT_ANSWER: Capped = Capped {
+    budget: ANSWER_CEILING,
+};
+
+/// **The most characters any one answer is meant to carry.** The operator ruled
+/// one ceiling for every answer, and the boot's was the first: measured against
+/// a real client, about 30,000 characters render inline and roughly 50,000 do
+/// not, so this sits with margin below the render boundary.
+///
+/// **A list fills against it in its own order and says what it left out.** The
+/// ceiling is never applied by cutting a finished answer, which would lose the
+/// order the list was ranked in: each verb that returns a collection spends the
+/// characters left once the rest of its answer is counted, through
+/// [`Capped::beside`].
+pub const ANSWER_CEILING: usize = 28_000;
+
+impl Capped {
+    /// **The budget a collection has once the rest of its answer is counted.**
+    /// `rest` is the characters everything else in the answer takes. The result
+    /// saturates at nothing, and [`Capped::head`] still serves the first item
+    /// whole, so a collection is never emptied by a heavy envelope.
+    pub fn beside(rest: usize) -> Capped {
+        Capped {
+            budget: ANSWER_CEILING.saturating_sub(rest),
+        }
+    }
+}
 
 /// **How many marked rules a boot carries for a bot that has no `rule_seats`
 /// of its own** — the default of the backpack's other axis, counted in things
@@ -888,5 +914,31 @@ mod prose_forgives_what_was_measured {
             "the third does not fit after the first two"
         );
         assert_eq!(kept.omitted(), 1);
+    }
+
+    /// **One ceiling, and the boot's is the same number.** The literal is pinned
+    /// once, because the operator ruled it and nothing outside this process
+    /// declares it; the boot's budget is read through the constant so the two
+    /// cannot drift.
+    #[test]
+    fn one_ceiling_serves_every_answer_and_the_boot_is_the_same_number() {
+        assert_eq!(ANSWER_CEILING, 28_000);
+        assert_eq!(BOOT_ANSWER.budget, ANSWER_CEILING);
+    }
+
+    /// **A collection spends what the rest of its answer leaves.** The envelope
+    /// is counted first, a collection that would pass the ceiling is cut at a
+    /// whole item, and an envelope heavier than the ceiling still leaves the
+    /// first item standing rather than an empty collection.
+    #[test]
+    fn a_collection_fills_the_room_left_beside_the_rest_of_its_answer() {
+        let items = [10_000usize, 10_000, 10_000];
+        let kept = Capped::beside(2_000).head(&items, |n| *n);
+        assert_eq!(kept.kept().len(), 2, "20,000 of the 26,000 left");
+        assert_eq!(kept.omitted(), 1);
+
+        let kept = Capped::beside(ANSWER_CEILING + 5).head(&items, |n| *n);
+        assert_eq!(kept.kept().len(), 1, "the first item is served whole");
+        assert_eq!(kept.omitted(), 2);
     }
 }
