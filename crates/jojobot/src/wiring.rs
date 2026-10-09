@@ -731,6 +731,39 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
         ),
     }
 
+    // **A role that has moved onto its own object no longer keeps a holder and a
+    // moment on the bot.** An older build left them there, frozen, and a reader
+    // that scans a bot's keys takes them for a lapsed lease. A role whose object
+    // carries no moment keeps its keys, because they are its lease. Idempotent,
+    // and best-effort for the reason the steps above are: the object answers for
+    // the lease whether or not the old keys are gone.
+    match jojobot_domain::session::role_keys::drop_old_role_keys_of_moved_roles(
+        seed_memory.as_ref(),
+    )
+    .await
+    {
+        Ok(pass) => {
+            if pass.cleared > 0 {
+                tracing::info!(
+                    cleared = pass.cleared,
+                    "took the old role keys off the bots whose roles have moved"
+                );
+            }
+            for line in &pass.failed {
+                tracing::warn!(
+                    role = %line,
+                    "OLD ROLE KEYS NOT TAKEN OFF — the role object answers for the lease, so \
+                     nothing is held wrongly. A restart repeats the pass."
+                );
+            }
+        }
+        Err(e) => tracing::warn!(
+            error = %e,
+            "OLD ROLE KEYS NOT TAKEN OFF — the bots could not be read at startup. Nothing was \
+             written and the role objects answer for every lease; a restart repeats the pass."
+        ),
+    }
+
     Ok(Booted {
         store,
         memory: indexed,

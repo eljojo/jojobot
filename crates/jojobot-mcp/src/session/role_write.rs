@@ -16,6 +16,7 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     EntityId, EntityKind, FactPatch, Guarded, MemoryError, NewEntity, NewFact, guard,
 };
+use jojobot_domain::session::role_keys::{drop_old_role_keys, role_claim_content};
 use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind, role_state};
 
 use crate::Jojobot;
@@ -28,12 +29,6 @@ pub(crate) enum RoleWrite<'a> {
     Renew { claimant: &'a str, at: Timestamp },
     /// The holder gives the role up at wrap.
     Release { claimant: &'a str },
-}
-
-/// What the claim record of a role says about itself, so a role claimed before
-/// it was an object has somewhere to move to.
-fn claim_content(role: &str) -> String {
-    format!("claimed the {role} role")
 }
 
 impl Jojobot {
@@ -109,7 +104,7 @@ impl Jojobot {
                 vec![ROLE_HOLDER.to_string()],
             ),
         };
-        match (record, role_move) {
+        let written = match (record, role_move) {
             // The record exists: the write patches it in place, so a claim
             // never multiplies records.
             (Some(address), role_move) => self
@@ -129,7 +124,7 @@ impl Jojobot {
             // The first claim ever made for a role: the record is captured
             // with the claim's own fields, and the store decides it as a claim.
             (None, None) => {
-                let mut fact = NewFact::about(object.clone(), claim_content(role), today);
+                let mut fact = NewFact::about(object.clone(), role_claim_content(role), today);
                 fact.fields = fields;
                 self.memory.capture(fact).await.map(|_| ())
             }
@@ -139,7 +134,11 @@ impl Jojobot {
             (None, Some(role_move)) => {
                 let made = self
                     .memory
-                    .capture(NewFact::about(object.clone(), claim_content(role), today))
+                    .capture(NewFact::about(
+                        object.clone(),
+                        role_claim_content(role),
+                        today,
+                    ))
                     .await?;
                 let Guarded::Written(fact) = made else {
                     return Err(MemoryError::InvalidFact(format!(
@@ -160,7 +159,16 @@ impl Jojobot {
                     .await
                     .map(|_| ())
             }
+        };
+        written?;
+        // **The bot's old keys for this role come off once the object holds the
+        // claim**, in this order so a failure between the two leaves the object
+        // answering and the old keys inert: `role_state` reads the object first.
+        // The next write of this role, or the next start, takes them off.
+        if let Err(e) = drop_old_role_keys(&*self.memory, bot, role).await {
+            tracing::warn!(error = %e, %bot, role, "the bot's old role keys could not be taken off");
         }
+        Ok(())
     }
 
     /// **The bot a role belongs to, when it is not `claimant`.** A role
@@ -354,7 +362,7 @@ impl Jojobot {
         let record = facts
             .iter()
             .find(|f| f.fields.contains_key(ROLE_HOLDER) || f.fields.contains_key(ROLE_CLAIMED_AT))
-            .or_else(|| facts.iter().find(|f| f.content == claim_content(role)))
+            .or_else(|| facts.iter().find(|f| f.content == role_claim_content(role)))
             .map(|f| f.address());
         Ok(Some(record))
     }
@@ -662,8 +670,8 @@ mod tests {
 
     /// **A write moves an old-shape claim onto its object, once, and the claim
     /// stays held across the move.** Before the write there is no object; after
-    /// it the object carries the holder and a moment, the bot's old keys are left
-    /// as written, and a rival is still refused.
+    /// it the object carries the holder and a moment, the bot no longer holds the
+    /// role's old keys, and a rival is still refused.
     #[tokio::test]
     async fn a_beat_moves_a_role_claimed_in_the_old_shape_onto_its_object() {
         let jojobot = handler();
@@ -685,15 +693,29 @@ mod tests {
         let moved = jojobot.memory.fields(&role).await.expect("fields ok");
         assert_eq!(moved.get("holder"), Some(&sid), "{moved:?}");
         assert!(moved.contains_key("claimed_at"), "{moved:?}");
-        let old = jojobot
+        let bot = EntityId("bot:gamma".into());
+        let old = jojobot.memory.fields(&bot).await.expect("fields ok");
+        for key in [
+            jojobot_domain::session::role_holder_key("dev-dispatch"),
+            jojobot_domain::session::role_claimed_at_key("dev-dispatch"),
+        ] {
+            assert!(
+                !old.contains_key(&key),
+                "the bot no longer holds {key}: {old:?}"
+            );
+        }
+        let claim = jojobot
             .memory
-            .fields(&EntityId("bot:gamma".into()))
+            .recall(&bot)
             .await
-            .expect("fields ok");
+            .expect("recall ok")
+            .into_iter()
+            .find(|f| f.content == "claimed the dev-dispatch role")
+            .expect("the old claim record is still readable");
         assert_eq!(
-            old.get(&jojobot_domain::session::role_holder_key("dev-dispatch")),
-            Some(&sid),
-            "the old keys are left as written: {old:?}",
+            claim.status,
+            jojobot_domain::memory::FactStatus::Archived,
+            "the empty record is archived, so it does not read as a rule"
         );
         let rival = booted(&jojobot, "gamma", Some("dev-dispatch")).await;
         assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
@@ -701,9 +723,9 @@ mod tests {
     }
 
     /// **A wrap releases a role claimed in the old shape, and the role is free at
-    /// once although the bot's old keys still name the holder.** The positive is
-    /// the rival that takes it after the wrap; the negative before it is the same
-    /// rival refused, so the release is what changed the answer.
+    /// once.** The positive is the rival that takes it after the wrap; the
+    /// negative before it is the same rival refused, so the release is what
+    /// changed the answer.
     #[tokio::test]
     async fn a_wrap_releases_a_role_claimed_in_the_old_shape() {
         let jojobot = handler();
@@ -764,7 +786,7 @@ mod tests {
         let landed = capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("agent".to_string(), "an-agent-id".to_string())]
                         .into_iter()
                         .collect(),

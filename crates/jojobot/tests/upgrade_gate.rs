@@ -2122,6 +2122,216 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     );
 }
 
+/// **A role that has moved onto its object, whose bot still holds the old keys
+/// an older build left there, boots clean with the keys taken off.** The old keys
+/// are put back by hand after the holder's write moved the claim, which is the
+/// shape a deployed store holds that an older build filled: the object answers
+/// for the lease and the bot still names a holder and a moment. The second boot
+/// changes nothing, so the pass is idempotent, and the lease is still the
+/// holder's afterwards.
+#[tokio::test]
+async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("moved-role-keys").await;
+    let role_holder = std::fs::read_to_string(format!("{FIXTURE_DIR}/role_holder.txt"))
+        .expect("the recorded holder")
+        .trim()
+        .to_string();
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+    const OLD_HOLDER: &str = "role/upgrade-fixture-holder/holder";
+    const OLD_MOMENT: &str = "role/upgrade-fixture-holder/claimed_at";
+    let held_on_the_bot = |held: &[(String, String, String)], role: &str| -> Vec<String> {
+        held.iter()
+            .filter(|(handle, key, _)| {
+                handle == "bot:assistant" && key.starts_with(&format!("role/{role}/"))
+            })
+            .map(|(_, key, _)| key.clone())
+            .collect()
+    };
+
+    // The holder's write moves the claim onto the role object.
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let beat = surface
+        .call(
+            "journal",
+            json!({"entry": "worked on after the upgrade", "sid": role_holder}),
+        )
+        .await;
+    if beat.contains("\"status\":\"blocked\"") {
+        fail("the holder's write after the upgrade was refused", &beat);
+    }
+    surface.finish().await;
+    booted.stop().await;
+
+    // The old keys are put back on the bot, as the store the older build filled
+    // holds them: written again at the next place in their history, and the
+    // record that carried them made active again.
+    let mut store = Dolt::start(&state_dir.join("db"), store_port)
+        .await
+        .expect("the store comes up to be read");
+    let badge: String = sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
+        .bind("bot:assistant")
+        .fetch_one(store.pool())
+        .await
+        .expect("the bot's badge");
+    let moment = (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string();
+    for (key, value) in [
+        (OLD_HOLDER, role_holder.as_str()),
+        (OLD_MOMENT, moment.as_str()),
+    ] {
+        let (fact_id, class, highest): (String, String, i64) = sqlx::query_as(
+            "SELECT fact_id, write_class, ordinal FROM field_write
+             WHERE entity = ? AND `key` = ? ORDER BY ordinal DESC LIMIT 1",
+        )
+        .bind(&badge)
+        .bind(key)
+        .fetch_one(store.pool())
+        .await
+        .unwrap_or_else(|e| fail("the old key was written once", &e.to_string()));
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&badge)
+        .bind(key)
+        .bind(highest + 1)
+        .bind(value)
+        .bind(&fact_id)
+        .bind(jiff::Timestamp::now().to_string())
+        .bind(class)
+        .execute(store.pool())
+        .await
+        .expect("the old key is written again");
+    }
+    // A claim record is read from its newest write and folded through its row, so
+    // both say it stands again. The move archived it, because it was left with no
+    // field: that is the first thing to hold.
+    let record_id: String = sqlx::query_scalar(
+        "SELECT fact_id FROM field_write WHERE entity = ? AND `key` = ? LIMIT 1",
+    )
+    .bind(&badge)
+    .bind(OLD_HOLDER)
+    .fetch_one(store.pool())
+    .await
+    .expect("the record that carried the old keys");
+    let archived: String = sqlx::query_scalar(
+        "SELECT status FROM fact_write WHERE entity = ? AND fact_id = ?
+         ORDER BY ordinal DESC LIMIT 1",
+    )
+    .bind(&badge)
+    .bind(&record_id)
+    .fetch_one(store.pool())
+    .await
+    .expect("the record's newest write");
+    if archived != "archived" {
+        fail(
+            "the move archiving the claim record it left empty",
+            &archived,
+        );
+    }
+    for (table, column) in [("fact", "id"), ("fact_write", "fact_id")] {
+        sqlx::query(&format!(
+            "UPDATE {table} SET status = 'active' WHERE entity = ? AND {column} = ?"
+        ))
+        .bind(&badge)
+        .bind(&record_id)
+        .execute(store.pool())
+        .await
+        .expect("the record that carried it stands again");
+    }
+    let seeded = held_on_the_bot(
+        &fields_every_thing_holds(store.pool()).await,
+        "upgrade-fixture-holder",
+    );
+    store.stop().await;
+    if seeded.len() != 2 {
+        fail(
+            "both old keys standing on the bot before the boot",
+            &format!("{seeded:?}"),
+        );
+    }
+
+    // The boot takes them off, and a second boot has nothing left to do.
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    first.stop().await;
+    let after_first = dump_store(&state_dir).await;
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    second.stop().await;
+    if after_first != dump_store(&state_dir).await {
+        fail(
+            "the second boot changing nothing",
+            "the pass wrote again over a store it had already cleared",
+        );
+    }
+
+    let store = Dolt::start(&state_dir.join("db"), store_port)
+        .await
+        .expect("the store comes up to be read");
+    let held = fields_every_thing_holds(store.pool()).await;
+    let mut store = store;
+    store.stop().await;
+    let left = held_on_the_bot(&held, "upgrade-fixture-holder");
+    if !left.is_empty() {
+        fail(
+            "the bot holding no key of the moved role",
+            &format!("{left:?}"),
+        );
+    }
+    // A role that never moved keeps its keys: they are its lease.
+    if held_on_the_bot(&held, "upgrade-fixture-recorder").is_empty() {
+        fail(
+            "the bot keeping the keys of a role that never moved",
+            &format!("{held:?}"),
+        );
+    }
+    let on_object = |key: &str| {
+        held.iter()
+            .find(|(handle, k, _)| handle == "role:upgrade-fixture-holder" && k == key)
+            .map(|(_, _, value)| value.clone())
+    };
+    if on_object("holder").as_deref() != Some(role_holder.as_str())
+        || on_object("claimed_at").is_none()
+    {
+        fail(
+            "the role object still holding the lease",
+            &format!("{held:?}"),
+        );
+    }
+
+    // And the lease is still the holder's: a rival is refused naming it.
+    let third = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let rival = surface
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new",
+                   "claim": "upgrade-fixture-holder"}),
+        )
+        .await;
+    let rival: serde_json::Value =
+        serde_json::from_str(&rival).unwrap_or_else(|_| fail("the rival's claim", &rival));
+    if rival["session"]["claim"]["status"] != "refused"
+        || rival["session"]["claim"]["holder"] != role_holder
+    {
+        fail("a rival refused, naming the holder", &rival.to_string());
+    }
+    surface.finish().await;
+    third.stop().await;
+    drop(scratch);
+}
+
 /// **A role field an older build left on a bot that does not own the role does
 /// not stop the owner.** The recording holds a role in the old shape on the
 /// assistant. A second bot is named its owner through `claims_role`, and its
