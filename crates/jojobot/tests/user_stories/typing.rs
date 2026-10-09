@@ -248,8 +248,21 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // column of this same table, so a needle for the type's name anywhere in
     // the table is answered by the key — and a beat written that way says
     // nothing about the Type column, on a page where that column is empty.
+    //
+    // **Its last two cells are empty**: nothing is lacking and nothing is held
+    // badly. That is the half that makes the row below mean something.
     page.section("conforms")
-        .says("<tr><td>service</td><td>whole</td>");
+        .says("<tr><td>service</td><td>whole</td>")
+        .says("<td></td><td></td></tr>");
+
+    // **A thing holding every key with one of them wrong is not whole, and the
+    // page names the key.** The pump's `serviced` is a phrase where the type
+    // declared a date. The keys it holds are the same two the bike holds, so
+    // only the verdict and the wrong-valued cell tell the two rows apart.
+    let pump = story.page("thing:floor-pump").await;
+    pump.section("conforms")
+        .says("<tr><td>service</td><td>partly</td>")
+        .says("<td>serviced: some time in may</td>");
 
     story.finish().await;
 }

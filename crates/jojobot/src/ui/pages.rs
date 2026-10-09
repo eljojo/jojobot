@@ -792,7 +792,7 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
 }
 
 /// **What the thing's fields add up to**: every declared type it answers, the
-/// keys it holds and the keys it lacks.
+/// keys it holds, the keys it lacks and the keys it holds badly.
 ///
 /// This is the payoff of the fold and the one thing on the page a reader cannot
 /// work out unaided — it would mean holding every declaration in mind.
@@ -820,12 +820,22 @@ async fn conforms_section(state: &AppState, folded: &BTreeMap<String, String>) -
         let Some(found) = declaration.matched_by(folded) else {
             continue;
         };
+        // **A key the thing holds badly is named with the value it holds.**
+        // `Holds` lists every key that is there, the wrong ones included, so
+        // the verdict alone would say "partly" and leave the reader to find
+        // which key.
+        let wrong: Vec<String> = found
+            .mistyped
+            .iter()
+            .map(|bad| format!("{}: {}", bad.key, bad.value))
+            .collect();
         rows.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             escape(&declaration.name),
             if found.complete() { "whole" } else { "partly" },
             escape(&found.held.join(", ")),
             escape(&found.lacking.join(", ")),
+            escape(&wrong.join(", ")),
         ));
     }
     if rows.is_empty() {
@@ -833,7 +843,7 @@ async fn conforms_section(state: &AppState, folded: &BTreeMap<String, String>) -
     }
     format!(
         "<h2>Conforms to</h2>\n<table id=\"conforms\">\n\
-         <tr><th>Type</th><th>How far</th><th>Holds</th><th>Lacks</th></tr>\n{rows}</table>\n"
+         <tr><th>Type</th><th>How far</th><th>Holds</th><th>Lacks</th><th>Wrong</th></tr>\n{rows}</table>\n"
     )
 }
 
