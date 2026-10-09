@@ -63,23 +63,158 @@ fn kinds() -> Vec<&'static str> {
     EntityKind::ALL.iter().map(|k| k.as_token()).collect()
 }
 
-/// The complete allowlist. Keep it sorted; keep it fictional.
+/// **The cast.** The people, pets, places and organisations of the four shows,
+/// and the greek letters. Keep it fictional.
 ///
-/// **The descriptive case labels are the synthetic branch of that rule**, not
-/// an exception to it: `thing:contract-clear-off-address` says what a case is
-/// about and names nobody. They are here because the fixture carrying one has
-/// to be visible to the scan, never because the list is a pool of approved
-/// words.
+/// **The bar prints every entry added here since `origin/main`** in its verdict,
+/// so a name that could be mistaken for somebody's life is read by a person on
+/// the way in. That is the whole reason it is a list of its own: a name that
+/// belongs here is one whose being fictional rests on the show it comes from,
+/// and a reviewer has to check that, once, in the diff that adds it. A borderline
+/// name (a brand, a street that sounds real) stays here for that reason.
+///
+/// The gate accepts a handle on this list or on [`ORDINARY`]; the two lists
+/// together are the allowlist, and no handle is on both.
+const ROSTER: &[&str] = &[
+    "bot:bart",
+    "bot:lisa",
+    "bot:lisa",
+    "bot:marge",
+    "bot:moe",
+    "bot:nelson",
+    "bot:patty",
+    "bot:ralph",
+    "bot:smithers",
+    "bot:alpha",
+    "bot:beta",
+    "bot:delta",
+    "bot:epsilon",
+    "bot:omega",
+    "bot:psi",
+    "bot:rho",
+    "bot:upsilon",
+    "bot:gamma",
+    "bot:milhouse",
+    "bot:otto",
+    "machine:omicron",
+    "machine:phi",
+    "machine:sigma",
+    "machine:tau",
+    "machine:theta",
+    "machine:upsilon",
+    "org:costingtons",
+    "org:globex",
+    "org:krusty-burger",
+    "org:moes-tavern",
+    // Homer's snowplow business, the Simpsons, repurposed here as a
+    // furnace-servicing company.
+    "org:mr-plow",
+    // Quahog is the fictional town Family Guy is set in.
+    // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
+    // stands for no real place, organisation or event. The sibling and distance shapes
+    // the tests measure come from the handles' spelling alone.
+    "org:springfield-town-council", // made up: the council of Springfield, a canon town
+    "org:quahog-community-college",
+    "org:springfield-cyclery",
+    "org:springfield-movers",
+    "person:bebe",
+    "person:butters",
+    "person:kenny",
+    "person:kyle",
+    "person:marjorine",
+    "person:alpha",
+    "person:apu",
+    "person:barney-gumble",
+    "person:bart",
+    "person:beta",
+    "person:burns",
+    "person:gamma",
+    // Bob's Burgers.
+    "person:gayle",
+    "person:gene",
+    "person:homer",
+    "person:homer-simpson",
+    "person:hugo",
+    "person:krusty",
+    "person:kappa",
+    "person:delta",
+    "person:epsilon",
+    "person:randy",
+    "person:sharon",
+    "person:stan",
+    "person:token",
+    "person:wendy",
+    "person:zeta",
+    "person:eta",
+    "person:theta",
+    "person:iota",
+    // Bob's Burgers.
+    "person:linda",
+    "person:lisa",
+    "person:louise",
+    "person:martin",
+    "person:maude",
+    // Homer's alias in The Simpsons.
+    "person:max-power",
+    "person:milhouse",
+    "person:ralph",
+    "person:ned-flanders",
+    "person:nelson",
+    "person:otto",
+    "person:skinner",
+    // Bob's Burgers.
+    "person:teddy",
+    "person:tina",
+    "pet:santas-little-helper",
+    "pet:snowball",
+    "place:capital-city",
+    "place:leftorium",
+    "place:moes-tavern",
+    "place:moes",
+    "place:daredevil-gorge", // made up: named for the gorge Homer tries to jump in "Bart the Daredevil"
+    "place:north-haverbrook",
+    // The Belcher family's street, Bob's Burgers.
+    "place:ocean-avenue",
+    "place:quahog",
+    "place:shelbyville",
+    "place:springfield",
+    "place:springfield-mall",
+    // Bob's Burgers.
+    "place:wagstaff-pool",
+    // Wonder Wharf is the amusement park in Bob's Burgers; the road is a plain road name.
+    "place:wharf-road",
+    // The amusement park in Bob's Burgers.
+    "place:wonder-wharf",
+    "thing:gamma",
+    "thing:sigma",
+    "thing:tau",
+    "work:phi",
+    "work:sigma",
+    "work:tau",
+    "bot:sigma",
+    "role:gamma",
+    "role:kappa",
+    "role:lambda",
+    "role:omega",
+    "role:sigma",
+];
+
+/// **Handles that name nobody.** A bike, a kitchen floor, a pair of chairs, a case
+/// label such as `thing:contract-clear-off-address` that says what a fixture is
+/// about. Entries here are not printed by the bar: the check is that the handle
+/// is a thing or a label and not a name, which the diff shows.
 ///
 /// **Some entries are engine material rather than fixtures**, and they are
 /// here deliberately rather than by drift: `bot:assistant`, the default
-/// identity jojobot ships with, and the views the build supplies. Each names a
-/// ROLE or a question the way the orientation essay names "the operator", and
-/// each identifies nobody's instance and nobody's life, which is the line this
-/// file exists to hold. **That is what a shipped name has to earn to sit
-/// here**, and the review that adds one asks it. Every other name here is
-/// fictional and must stay that way.
-const ROSTER: &[&str] = &[
+/// identity jojobot ships with, the software's own name, and the views the
+/// build supplies. Each names a ROLE or a question the way the orientation essay
+/// names "the operator", and each identifies nobody's instance and nobody's
+/// life, which is the line this file exists to hold.
+///
+/// **A person, a place or an organisation never goes here because it is
+/// convenient.** A handle of that kind that names somebody belongs on
+/// [`ROSTER`], where the bar shows it, or nowhere.
+const ORDINARY: &[&str] = &[
     "bot:assistant",
     // The views: the ones the software ships, and the ones a story or a page
     // case declares to stand beside them. **A shipped record names itself by
@@ -103,8 +238,6 @@ const ROSTER: &[&str] = &[
     "view:names-no-kind",
     "view:nobody-has-this",
     "view:the-old-loop",
-    "bot:bart",
-    "bot:lisa",
     "bot:conflict-not-a-failure",
     "bot:contract-ceiling-fold",
     "bot:contract-chart-apex",
@@ -151,13 +284,6 @@ const ROSTER: &[&str] = &[
     "bot:contract-ceiling-room-via-edit",
     "bot:contract-ceiling-room-with-space",
     "bot:contract-edit-ages-room",
-    "bot:lisa",
-    "bot:marge",
-    "bot:moe",
-    "bot:nelson",
-    "bot:patty",
-    "bot:ralph",
-    "bot:smithers",
     "bot:upgrade-fixture-heavy",
     "bot:upgrade-fixture-lead",
     "bot:contract-merge-cap",
@@ -225,17 +351,8 @@ const ROSTER: &[&str] = &[
     "bot:contract-ceiling-outsider",
     "bot:contract-ceiling-rival",
     "bot:contract-two-boxes-now",
-    "bot:alpha",
-    "bot:beta",
-    "bot:delta",
     "bot:epsilo",
-    "bot:epsilon",
-    "bot:omega",
-    "bot:psi",
-    "bot:rho",
-    "bot:upsilon",
     "bot:gamm",
-    "bot:gamma",
     // The software's own name, and the one name this repository owns. A
     // recorded session asked the room to boot as it and the room refused —
     // which is the whole point of that capture. It names no instance and
@@ -246,9 +363,7 @@ const ROSTER: &[&str] = &[
     "bot:mcp-thought-aging",
     "bot:mcp-thought-body-cap",
     "bot:mcp-thought-borrow",
-    "bot:milhouse",
     "bot:nobody",
-    "bot:otto",
     "bot:otto-prime",
     "bot:worker-1",
     "bot:worker-2",
@@ -290,40 +405,13 @@ const ROSTER: &[&str] = &[
     "event:wagstaff-fair",
     // Capital City is the state capital in The Simpsons; a trip there is a plain noun.
     "event:capital-city-trip",
-    "machine:omicron",
-    "machine:phi",
-    "machine:sigma",
-    "machine:tau",
-    "machine:theta",
-    "machine:upsilon",
-    "org:costingtons",
-    "org:globex",
     "org:guild",
-    "org:krusty-burger",
-    "org:moes-tavern",
-    // Homer's snowplow business, the Simpsons, repurposed here as a
-    // furnace-servicing company.
-    "org:mr-plow",
-    // Quahog is the fictional town Family Guy is set in.
-    // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
-    // stands for no real place, organisation or event. The sibling and distance shapes
-    // the tests measure come from the handles' spelling alone.
-    "org:springfield-town-council", // made up: the council of Springfield, a canon town
-    "org:quahog-community-college",
-    "org:springfield-cyclery",
-    "org:springfield-movers",
     "person:a",
     "person:acting-beta",
     "person:alias-rename-was",
     "person:alias-rekey-alpha",
-    "person:bebe",
-    "person:butters",
-    "person:kenny",
-    "person:kyle",
-    "person:marjorine",
     "person:noted-alpha",
     "person:already-here",
-    "person:alpha",
     "person:alpha-2",
     "person:alpha-a",
     "person:alpha-b",
@@ -336,16 +424,11 @@ const ROSTER: &[&str] = &[
     "person:badge-collision-blocker",
     "person:badge-collision-holder",
     "person:badge-collision-retried",
-    "person:apu",
     "person:badge-collision-stuck",
     "person:badge-gamma",
     "person:barn",
-    "person:barney-gumble",
     "person:barney-gumbel",
-    "person:bart",
     "person:bet",
-    "person:beta",
-    "person:burns",
     "person:contract-ages",
     "person:contract-blank-slate",
     "person:contract-chainless",
@@ -388,56 +471,19 @@ const ROSTER: &[&str] = &[
     "person:fill-beta",
     "person:frontdoor-probe",
     "person:gama",
-    "person:gamma",
-    // Bob's Burgers.
-    "person:gayle",
-    "person:gene",
     "person:ghost",
     "person:ghostly",
-    "person:homer",
-    "person:homer-simpson",
-    "person:hugo",
     "person:kept-alpha",
     "person:kept-beta",
-    "person:krusty",
-    "person:kappa",
-    "person:delta",
-    "person:epsilon",
     "person:plus-one",
-    "person:randy",
-    "person:sharon",
-    "person:stan",
-    "person:token",
-    "person:wendy",
-    "person:zeta",
-    "person:eta",
-    "person:theta",
-    "person:iota",
-    // Bob's Burgers.
-    "person:linda",
-    "person:lisa",
-    "person:louise",
-    "person:martin",
-    "person:maude",
-    // Homer's alias in The Simpsons.
-    "person:max-power",
-    "person:milhouse",
     "person:milhouse-2",
     "person:projected",
-    "person:ralph",
     "person:rekey-alpha",
     "person:flanders-original",
     "person:ned-flander",
-    "person:ned-flanders",
-    "person:nelson",
     "person:nelson-2",
     "person:nobody-such-handle",
-    "person:otto",
-    "person:skinner",
     "person:someone-else",
-    // Bob's Burgers.
-    "person:teddy",
-    "person:tina",
     "person:upgrade-fixture-person",
     "person:x",
     "person:y",
@@ -446,13 +492,10 @@ const ROSTER: &[&str] = &[
     "person:zenith",
     "person:zzz",
     "person:zzz-nobody",
-    "pet:santas-little-helper",
-    "pet:snowball",
     "place:a",
     "place:atlas",
     "place:bet",
     "place:capital-citty",
-    "place:capital-city",
     // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
     // stands for no real place, organisation or event. The sibling and distance shapes
     // the tests measure come from the handles' spelling alone.
@@ -462,28 +505,11 @@ const ROSTER: &[&str] = &[
     "place:far-country",
     "place:golden-daredevil-gorge", // made up: a containing near-name of the gorge, for a screen case
     "place:gorge-spot",
-    "place:leftorium",
-    "place:moes-tavern",
-    "place:moes",
-    "place:daredevil-gorge", // made up: named for the gorge Homer tries to jump in "Bart the Daredevil"
     "place:daredevil-gorge-2", // made up: a second-gorge near-name, for a screen case
     "place:north-haverbook",
-    "place:north-haverbrook",
-    // The Belcher family's street, Bob's Burgers.
-    "place:ocean-avenue",
-    "place:quahog",
     "place:shelbyvile",
-    "place:shelbyville",
     "place:shelbyvlle",
     "place:springfeild",
-    "place:springfield",
-    "place:springfield-mall",
-    // Bob's Burgers.
-    "place:wagstaff-pool",
-    // Wonder Wharf is the amusement park in Bob's Burgers; the road is a plain road name.
-    "place:wharf-road",
-    // The amusement park in Bob's Burgers.
-    "place:wonder-wharf",
     "place:x",
     "project:atlas",
     "project:atlas-two",
@@ -549,7 +575,6 @@ const ROSTER: &[&str] = &[
     "thing:folding-chairs",
     "thing:backup-drive",
     "thing:boots",
-    "thing:gamma",
     "thing:glasses",
     "thing:gravel-bike",
     "thing:house-keys",
@@ -563,9 +588,7 @@ const ROSTER: &[&str] = &[
     "thing:red-bikee",
     "thing:red-kite",
     "thing:road-bike",
-    "thing:sigma",
     "thing:standing-desk",
-    "thing:tau",
     "thing:that-search-summary",
     "thing:the-furnace",
     "thing:marge-wrench",
@@ -613,17 +636,13 @@ const ROSTER: &[&str] = &[
     "work:first-mix",
     "work:image-attachments",
     "work:loop-check-in",
-    "work:phi",
     "work:pm-state",
     "work:rule-58-replacement",
     "work:shipped-kind-fields",
-    "work:sigma",
-    "work:tau",
     // **The shared contract suite's own fixtures, and the case labels beside
     // them.** They were invisible until the fixtures named their handles whole:
     // a slug handed to a constructor carries no handle for this scan to read.
     // Most are labels saying what a case is about rather than names of anybody.
-    "bot:sigma",
     "bot:contract-epsilon",
     "bot:contract-ghost-bot",
     "bot:contract-graph-one",
@@ -933,14 +952,9 @@ const ROSTER: &[&str] = &[
     "role:dev2",
     "role:dev3",
     "role:dinners",
-    "role:gamma",
     "role:garden",
     "role:groceries",
-    "role:kappa",
-    "role:lambda",
     "role:laundry",
-    "role:omega",
-    "role:sigma",
     "role:upgrade-fixture-holder",
     "thing:contract-cleared-key",
     "thing:contract-clear-off-address",
@@ -1100,6 +1114,16 @@ const ROSTER: &[&str] = &[
     "thing:contract-blocks-ledger",
 ];
 
+/// **Every handle the gate accepts**: the cast and the ordinary names together.
+fn listed() -> impl Iterator<Item = &'static str> {
+    ROSTER.iter().chain(ORDINARY.iter()).copied()
+}
+
+/// Whether the gate accepts this handle.
+fn is_listed(handle: &str) -> bool {
+    listed().any(|entry| entry == handle)
+}
+
 /// Every file in the workspace that can carry a handle.
 ///
 /// **`.rs` is not the whole of it: a fixture recorded from a live store lands
@@ -1174,7 +1198,7 @@ fn violations_in(files: &[PathBuf]) -> Vec<String> {
             .into_iter()
             .chain(two_part_handles_in(&text))
         {
-            if !ROSTER.contains(&handle.as_str()) {
+            if !is_listed(&handle) {
                 violations.push(format!("{} in {}", handle, file.display()));
             }
         }
@@ -1318,7 +1342,7 @@ const PRONOUNS: &[&str] = &[
 /// person.
 fn character_names() -> Vec<String> {
     let mut names = Vec::new();
-    for entry in ROSTER {
+    for entry in listed() {
         let Some((kind, slug)) = entry.split_once(':') else {
             continue;
         };
@@ -1572,7 +1596,7 @@ fn off_roster_handles_in(commits: &[(String, String)]) -> Vec<String> {
             .into_iter()
             .chain(two_part_handles_in(message))
         {
-            if !ROSTER.contains(&handle.as_str()) {
+            if !is_listed(&handle) {
                 violations.push(format!("{commit}: {handle}"));
             }
         }
@@ -1707,6 +1731,28 @@ fn the_gate_still_reads_sources_under_crates() {
     );
 }
 
+/// **No handle is on both lists.** The bar prints what arrives on [`ROSTER`], and
+/// a handle listed on both would be read as ordinary by whoever looked at the
+/// second list. A repeat inside one list is older than the split and is left
+/// alone.
+#[test]
+fn no_handle_is_on_both_the_cast_and_the_ordinary_list() {
+    let both: Vec<&str> = ROSTER
+        .iter()
+        .copied()
+        .filter(|handle| ORDINARY.contains(handle))
+        .collect();
+    assert!(
+        both.is_empty(),
+        "these handles are on both lists; a name from the shows belongs on ROSTER only, \
+         and a handle that names nobody on ORDINARY only: {both:?}"
+    );
+    assert!(
+        !ROSTER.is_empty() && !ORDINARY.is_empty(),
+        "an empty list would pass this for the wrong reason"
+    );
+}
+
 /// **Every entry on the allowlist is one the workspace actually uses.**
 ///
 /// The roster's value is that adding a name is a conscious, reviewed diff. An
@@ -1742,9 +1788,7 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
     // side of this gate.
     let found = handles_in(&corpus);
     let built = two_part_handles_in(&corpus);
-    let orphaned: Vec<&str> = ROSTER
-        .iter()
-        .copied()
+    let orphaned: Vec<&str> = listed()
         .filter(|handle| !found.iter().any(|f| f == handle) && !built.iter().any(|b| b == handle))
         .collect();
     assert!(
@@ -1771,8 +1815,7 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
 /// coverage would be wrong in a way nothing on screen corrects.
 #[test]
 fn a_two_part_name_is_read_and_measured_against_the_roster() {
-    let on_it = ROSTER
-        .iter()
+    let on_it = listed()
         .find(|h| h.starts_with("thing:"))
         .expect("the roster names a thing");
     let (_, slug) = on_it.split_once(':').expect("a handle is kind:slug");
@@ -1789,7 +1832,7 @@ fn a_two_part_name_is_read_and_measured_against_the_roster() {
         "a name whose halves never meet as text was not read, so no allowlist sees it",
     );
     assert!(
-        !ROSTER.contains(&whole.as_str()),
+        !is_listed(&whole),
         "the case rests on this name being off the roster",
     );
 
@@ -1831,7 +1874,7 @@ fn every_handle_in_the_workspace_is_on_the_fictional_roster() {
     assert!(
         violations.is_empty(),
         "handles outside the fictional roster — if the name is openly fictional, \
-         add it to ROSTER in a conscious diff; if it names anything real from the \
+         add it to ROSTER (a name from the shows) or ORDINARY (a handle that names nobody) in a conscious diff; if it names anything real from the \
          operator's life, it must not enter this repo at all:\n{}",
         violations.join("\n")
     );

@@ -24,11 +24,12 @@ use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::dev;
 use jojobot_bar::{
-    CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
-    TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision, is_slow,
-    iso_utc, job_args, jobs_limit, load_known_reds, oversized_files, parse_call, parse_job,
-    read_history, render_size_report, report_line, report_plan, run_id, summarize_test_output,
-    test_healthy, test_jobs, write_call,
+    CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader,
+    Summary, TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision,
+    is_slow, iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, oversized_files,
+    parse_call, parse_job, read_history, render_roster_report, render_size_report, report_line,
+    report_plan, roster_entries, run_id, summarize_test_output, test_healthy, test_jobs,
+    write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -697,6 +698,28 @@ fn size_report() -> String {
     render_size_report(&over, &grown, &base)
 }
 
+/// **The cast names that arrived since `origin/main`.** The roster gate keeps
+/// the fictional cast on one list and the handles that name nobody on another,
+/// and a person reads the first because that is where a name that could be real
+/// would sit. Report only: nothing here touches `summary.green`.
+fn roster_report() -> String {
+    let base = git_stdout(&["merge-base", "HEAD", "origin/main"])
+        .trim()
+        .to_string();
+    let then = match base.is_empty() {
+        true => String::new(),
+        false => git_stdout(&["show", &format!("{base}:{ROSTER_FILE}")]),
+    };
+    // A base that cannot show the file is no base: say unknown, not "all new".
+    let base = match then.is_empty() {
+        true => String::new(),
+        false => base,
+    };
+    let now = fs::read_to_string(ROSTER_FILE).unwrap_or_default();
+    let arrived = new_roster_entries(&roster_entries(&now), &roster_entries(&then));
+    render_roster_report(&arrived, &base)
+}
+
 /// **Which jobs a run of the test phase covers.** The boundary level is every
 /// job; the report level is every job less the ones the history lets go.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -771,6 +794,7 @@ fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // after the phases because it never changes the verdict, and a reader
     // takes the verdict first.
     print!("{}", size_report());
+    print!("{}", roster_report());
     Ok(code)
 }
 

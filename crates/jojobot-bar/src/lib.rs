@@ -313,6 +313,65 @@ pub fn render_size_report(oversized: &[&FileSize], grown: &[&FileGrowth], base: 
     out
 }
 
+/// The source file whose cast the bar reports on.
+pub const ROSTER_FILE: &str = "crates/jojobot-domain/tests/fixture_roster.rs";
+
+/// **The handles on the `ROSTER` list of a roster source, in order.** It reads
+/// the string literals between `const ROSTER` and the line that closes the list,
+/// and nothing else: a comment is skipped, a trailing comment is ignored, and
+/// the `ORDINARY` list that follows is a separate constant that is never read.
+/// That separation is the whole mechanism — an entry on the other list is not
+/// here to be reported.
+pub fn roster_entries(source: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut inside = false;
+    for line in source.lines() {
+        let line = line.trim();
+        if !inside {
+            inside = line.starts_with("const ROSTER");
+            continue;
+        }
+        if line.starts_with("];") {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix('"')
+            && let Some(end) = rest.find('"')
+        {
+            entries.push(rest[..end].to_string());
+        }
+    }
+    entries
+}
+
+/// **The entries of `now` that `then` does not hold**, in the order `now` has
+/// them and once each. An entry removed since the base is not here: only a name
+/// arriving is what a reviewer has to read.
+pub fn new_roster_entries(now: &[String], then: &[String]) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for entry in now {
+        if !then.contains(entry) && !found.contains(entry) {
+            found.push(entry.clone());
+        }
+    }
+    found
+}
+
+/// **The cast names that arrived since the base, rendered.** Report only:
+/// nothing here changes `Summary::green`. A name on the other list passes
+/// silently, so what this prints is exactly what a person has to read.
+pub fn render_roster_report(new: &[String], base: &str) -> String {
+    if base.is_empty() {
+        return "roster names new since origin/main: unknown — no base ref (origin/main not \
+                found)\n"
+            .to_string();
+    }
+    let mut out = format!("roster names new since {base}: {}\n", new.len());
+    for entry in new {
+        out.push_str(&format!("  {entry}\n"));
+    }
+    out
+}
+
 /// **A single ten-line-or-fewer verdict a caller reads instead of the raw
 /// stream.** Every phase this build runs — `fmt-check`, `test`, `lint` — adds
 /// one line; a failing `test` phase adds a few more, capped, never the whole
@@ -1090,5 +1149,82 @@ mod tests {
         let new = rendered.find("NEW beyond known red").expect(&rendered);
         let known = rendered.find("m::tests::plain_known").expect(&rendered);
         assert!(new < known, "{rendered}");
+    }
+}
+
+#[cfg(test)]
+mod roster_report_tests {
+    use super::*;
+
+    const SOURCE: &str = r#"
+use std::fs;
+
+/// The cast.
+const ROSTER: &[&str] = &[
+    "bot:assistant",
+    // Bob's Burgers.
+    "person:gayle",
+    "person:stan", // made up: "Stan" the second
+];
+
+/// Handles that name nobody.
+const ORDINARY: &[&str] = &[
+    "thing:gravel-bike",
+];
+"#;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// **Only the cast list is read**, a comment is skipped, and a quotation in a
+    /// trailing comment is not an entry.
+    #[test]
+    fn only_the_roster_list_is_read() {
+        assert_eq!(
+            roster_entries(SOURCE),
+            names(&["bot:assistant", "person:gayle", "person:stan"])
+        );
+    }
+
+    /// **A name that arrives on the cast list is reported, and one that arrives on
+    /// the ordinary list is not** — the two cases side by side, because a report
+    /// that named everything would pass the first alone.
+    #[test]
+    fn a_new_cast_name_is_reported_and_a_new_ordinary_one_is_not() {
+        let before = roster_entries(SOURCE);
+        let with_both = SOURCE
+            .replace(
+                "    \"person:stan\", // made up: \"Stan\" the second\n",
+                "    \"person:stan\", // made up: \"Stan\" the second\n    \"person:kyle\",\n",
+            )
+            .replace(
+                "    \"thing:gravel-bike\",\n",
+                "    \"thing:gravel-bike\",\n    \"thing:folding-chairs\",\n",
+            );
+        let arrived = new_roster_entries(&roster_entries(&with_both), &before);
+        assert_eq!(arrived, names(&["person:kyle"]));
+        let rendered = render_roster_report(&arrived, "abc1234");
+        assert!(rendered.contains("person:kyle"), "{rendered}");
+        assert!(!rendered.contains("folding-chairs"), "{rendered}");
+        assert!(rendered.contains("new since abc1234: 1"), "{rendered}");
+    }
+
+    /// An entry that left the list is not new, one that stays is not new, and a
+    /// name written twice is reported once.
+    #[test]
+    fn removed_and_repeated_entries_are_not_reported_twice() {
+        let then = names(&["person:stan", "person:kyle"]);
+        let now = names(&["person:stan", "person:wendy", "person:wendy"]);
+        assert_eq!(new_roster_entries(&now, &then), names(&["person:wendy"]));
+    }
+
+    /// With no base to compare to the report says so rather than naming every
+    /// entry as new.
+    #[test]
+    fn no_base_ref_says_unknown() {
+        let rendered = render_roster_report(&names(&["person:kyle"]), "");
+        assert!(rendered.contains("unknown"), "{rendered}");
+        assert!(!rendered.contains("person:kyle"), "{rendered}");
     }
 }
