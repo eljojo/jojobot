@@ -632,6 +632,42 @@ fn add_entity_points_at_the_verb_that_reparents() {
     );
 }
 
+/// What an argument of a verb says about itself, as the schema serves it.
+fn argument_description(verb: &str, argument: &str) -> String {
+    let tools = Jojobot::tool_router().list_all();
+    let tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == verb)
+        .unwrap_or_else(|| panic!("the surface offers {verb}"));
+    let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+    schema["properties"][argument]["description"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{verb} describes {argument}: {schema}"))
+        .to_string()
+}
+
+/// **The two verbs that take a day-grained argument define it in one voice.**
+/// `capture` and `update_fact` each took `stale_after` and `happened_at` and
+/// worded the definition on their own, so the two drifted. The defining clause
+/// is written once in `memory::clauses` and each argument carries it; what a
+/// verb teaches around the clause stays its own.
+#[test]
+fn capture_and_update_fact_define_the_day_arguments_in_the_same_words() {
+    use crate::memory::clauses::{HAPPENED_AT_CLAUSE, STALE_AFTER_CLAUSE};
+    for (argument, clause) in [
+        ("stale_after", STALE_AFTER_CLAUSE),
+        ("happened_at", HAPPENED_AT_CLAUSE),
+    ] {
+        for verb in ["capture", "update_fact"] {
+            let described = argument_description(verb, argument);
+            assert!(
+                described.contains(clause),
+                "{verb}'s {argument} does not carry the shared defining clause: {described}"
+            );
+        }
+    }
+}
+
 /// **The orientation essay's list of kinds names `role`**, the kind a claimed
 /// role is made as, so a caller reading the list is not surprised by it in a
 /// listing.

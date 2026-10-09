@@ -5,6 +5,7 @@
 
 use jojobot_domain::attention;
 
+use super::clauses::{happened_at_clause, stale_after_clause};
 use super::*;
 use crate::teaching::{
     CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING,
@@ -55,12 +56,15 @@ pub struct UpdateFactArgs {
     /// silently record under the wrong one by mistake.
     #[serde(default)]
     pub recorded_at: Option<String>,
-    /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
-    ///
-    /// A different question from `recorded_at`, and **learning it late is ordinary**:
-    /// a claim written when nobody knew the day gains one here. Leaving it off
-    /// keeps whatever the record says, like every other field this patch does
-    /// not name.
+    // Described by attribute, not a doc comment: the defining clause is shared
+    // with `capture` (see `memory::clauses`) and a doc comment cannot take it.
+    #[schemars(description = concat!(
+        happened_at_clause!(),
+        "\n\n",
+        "**Learning it late is ordinary**: a claim written when nobody knew the\n",
+        "day gains one here. Leaving it off keeps whatever the record says, like\n",
+        "every other field this patch does not name."
+    ))]
     #[serde(default)]
     pub happened_at: Option<String>,
     /// **Take the happened-on day off**, leaving a claim that says nothing
@@ -165,12 +169,8 @@ pub struct UpdateFactArgs {
     /// same call.
     #[serde(default)]
     pub(crate) clear_fields: Option<Vec<String>>,
-    /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
-    ///
-    /// It is a fact about jojobot's knowledge rather than about the world: a
-    /// pass that runs out on a date is a claim about the world and belongs in
-    /// the content. Past this day a read SAYS SO and **nothing else happens** —
-    /// no sweep, no reminder, nobody is coming to check it.
+    // Described by attribute for the reason `happened_at` is.
+    #[schemars(description = stale_after_clause!())]
     #[serde(default)]
     pub(crate) stale_after: Option<String>,
     /// **Take the day off**, leaving a claim that makes no promise about how

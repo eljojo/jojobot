@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
+use super::clauses::{happened_at_clause, stale_after_clause};
 use super::*;
 use crate::session::session_declined;
 use crate::teaching::{
@@ -87,14 +88,17 @@ pub struct CaptureArgs {
     /// silently record under the wrong one by mistake.
     #[serde(default)]
     pub(crate) recorded_at: Option<String>,
-    /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
-    /// a different question from `recorded_at`, which is about the claim.
-    ///
-    /// ⛔️ **Leave it off unless you were told a day.** *Over the summer* is not
-    /// a day: a claim that says nothing about when the thing happened is a
-    /// complete claim, and approximating one puts a date nobody stated on a
-    /// record that may carry the operator's own authority. **jojobot never
-    /// fills this in.**
+    // Described by attribute, not a doc comment: the defining clause is shared
+    // with `update_fact` (see `memory::clauses`) and a doc comment cannot take it.
+    #[schemars(description = concat!(
+        happened_at_clause!(),
+        "\n\n",
+        "⛔️ **Leave it off unless you were told a day.** *Over the summer* is not\n",
+        "a day: a claim that says nothing about when the thing happened is a\n",
+        "complete claim, and approximating one puts a date nobody stated on a\n",
+        "record that may carry the operator's own authority. **jojobot never\n",
+        "fills this in.**"
+    ))]
     #[serde(default)]
     pub(crate) happened_at: Option<String>,
     /// **The far end, when the thing happened is a stretch of days rather
@@ -239,15 +243,14 @@ pub struct CaptureArgs {
     /// `counts_from` the rhythm does not hold.
     #[serde(default)]
     pub(crate) check_in: Option<String>,
-    /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
-    /// Optional, and most claims never carry one.
-    ///
-    /// It is a fact about jojobot's knowledge rather than about the world: a
-    /// pass that runs out on a date is a claim about the world and belongs in
-    /// the content. Past the day a read SAYS SO — **the claim does not stop
-    /// being true, it stops being trusted** — and **nothing else happens**: no
-    /// sweep, no reminder, nobody is coming to check it. **A claim carrying no
-    /// day made no promise**, which is neither fresh nor stale.
+    // Described by attribute for the reason `happened_at` is.
+    #[schemars(description = concat!(
+        stale_after_clause!(),
+        "\n\n",
+        "Optional, and most claims never carry one. **The claim does not stop being\n",
+        "true, it stops being trusted.** **A claim carrying no day made no\n",
+        "promise**, which is neither fresh nor stale."
+    ))]
     #[serde(default)]
     pub(crate) stale_after: Option<String>,
     /// **The address of a thought to drop, when this capture is what fills

@@ -888,14 +888,15 @@ attributed, never journalled.
 
 ```text
 **The day after which this reading stops being good**, `YYYY-MM-DD`.
-Optional, and most claims never carry one.
 
 It is a fact about jojobot's knowledge rather than about the world: a
 pass that runs out on a date is a claim about the world and belongs in
-the content. Past the day a read SAYS SO — **the claim does not stop
-being true, it stops being trusted** — and **nothing else happens**: no
-sweep, no reminder, nobody is coming to check it. **A claim carrying no
-day made no promise**, which is neither fresh nor stale.
+the content. Past the day a read SAYS SO and **nothing else happens**:
+no sweep, no reminder, nobody is coming to check it.
+
+Optional, and most claims never carry one. **The claim does not stop being
+true, it stops being trusted.** **A claim carrying no day made no
+promise**, which is neither fresh nor stale.
 ```
 
 #### `capture` — argument `/inputSchema.standing`
@@ -4607,12 +4608,12 @@ A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on 
 #### `update_fact` — argument `/inputSchema.happened_at`
 
 ```text
-**The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
+**The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
+a different question from `recorded_at`, which is about the claim.
 
-A different question from `recorded_at`, and **learning it late is ordinary**:
-a claim written when nobody knew the day gains one here. Leaving it off
-keeps whatever the record says, like every other field this patch does
-not name.
+**Learning it late is ordinary**: a claim written when nobody knew the
+day gains one here. Leaving it off keeps whatever the record says, like
+every other field this patch does not name.
 ```
 
 #### `update_fact` — argument `/inputSchema.happened_through`
@@ -4714,7 +4715,7 @@ attributed, never journalled.
 
 It is a fact about jojobot's knowledge rather than about the world: a
 pass that runs out on a date is a claim about the world and belongs in
-the content. Past this day a read SAYS SO and **nothing else happens** —
+the content. Past the day a read SAYS SO and **nothing else happens**:
 no sweep, no reminder, nobody is coming to check it.
 ```
 
