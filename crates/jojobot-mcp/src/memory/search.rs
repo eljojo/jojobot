@@ -590,7 +590,10 @@ impl Jojobot {
                        which each one lacks, fits_type keeps only the things with no gaps. Reach \
                        for answers_type unless you have a reason not to — a thing that arrives \
                        with its gaps named can be judged, and a thing fits_type leaves out looks \
-                       exactly like a thing that is not there. kind + edge answers a cross-entity question in one \
+                       exactly like a thing that is not there. An answers_type that matches \
+                       nothing carries type_keys, the type's keys, and the first such answer in \
+                       a session under a type the software ships also carries a teaching. kind \
+                       + edge answers a cross-entity question in one \
                        call (\"which people are in X\") by walking typed edges — prose that \
                        merely mentions X is not an answer. No hit comes back bare: a fact \
                        carries the whole claim, its address (feed that to update_fact), and who it \
@@ -689,6 +692,9 @@ impl Jojobot {
                 })
             })
             .transpose()?;
+        // **Kept for the answer.** The declaration moves into the query, and an
+        // empty answer under it has to be able to say what the type is.
+        let asked_answers = declared.clone();
         let query = SearchQuery {
             answers_type: declared,
             fits_type: fits,
@@ -851,6 +857,20 @@ impl Jojobot {
                 "use fewer words, drop a filter, or name the left-out population above",
             )
             .into();
+        }
+        // **An empty answer under a type says what the type is**, the same
+        // `type_keys` an empty `recall` carries, so the spelling to write under
+        // is in the answer. The first one under a type the software ships also
+        // teaches, through the same ledger row `recall` spends.
+        if hits.is_empty() && offset == 0 {
+            if let Some(declared) = asked_answers.as_ref() {
+                body["type_keys"] =
+                    serde_json::Value::Array(vec![crate::memory::wire::declared_type_json(
+                        declared,
+                    )]);
+                self.note_empty_answers_type(&mut body, declared, asking.as_ref())
+                    .await;
+            }
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());

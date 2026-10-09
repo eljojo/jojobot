@@ -376,3 +376,111 @@ async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_a
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn an_empty_search_for_a_shipped_type_names_its_keys_and_shares_the_teaching_with_recall() {
+    // **The same gap on the other front door.** A session that searched twice
+    // for a trip and found nothing wrote its own start and end keys, because the
+    // empty search named none of the shipped ones.
+    let story = Story::begin("bot:gamma").await;
+
+    // ── search first: the answer names the keys and carries the note ────────
+    let a = story.session().await;
+    let searched = a
+        .call("search", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(searched["count"], 0, "nothing is a trip yet: {searched}");
+    assert_eq!(searched["type_keys"][0]["name"], "trip", "{searched}");
+    assert_eq!(
+        searched["teaching"].as_array().map(Vec::len),
+        Some(1),
+        "the first empty search of a shipped type teaches: {searched}"
+    );
+    // …and the session taught on search is not taught again on recall.
+    let recalled = a
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(recalled["type_keys"][0]["name"], "trip", "{recalled}");
+    assert!(
+        recalled.get("teaching").is_none(),
+        "one ledger row for both verbs: {recalled}"
+    );
+
+    // ── recall first, then search: the other direction ──────────────────────
+    let b = story.session().await;
+    let recalled = b
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(
+        recalled["teaching"].as_array().map(Vec::len),
+        Some(1),
+        "{recalled}"
+    );
+    let searched = b
+        .call("search", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(
+        searched["type_keys"][0]["name"], "trip",
+        "the keys ride every empty answer, taught or not: {searched}"
+    );
+    assert!(
+        searched.get("teaching").is_none(),
+        "a session taught on recall is not taught again on search: {searched}"
+    );
+
+    // ── a search that holds something carries neither, and spends nothing ───
+    let c = story.session().await;
+    c.add("event:gorge-survey", "The Gorge Survey").await;
+    c.add("place:springfield", "Springfield").await;
+    c.add("place:north-gorge", "The North Gorge").await;
+    c.event_with(
+        "event:gorge-survey",
+        "four days up the gorge",
+        json!({
+            "departs_from": "place:springfield",
+            "arrives_at": "place:north-gorge",
+            "leaves_on": "2026-09-03",
+            "returns_on": "2026-09-07",
+        }),
+        &[],
+    )
+    .await;
+    let held = c
+        .call("search", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert!(held["count"].as_u64().is_some_and(|n| n > 0), "{held}");
+    assert!(held.get("type_keys").is_none(), "{held}");
+    assert!(held.get("teaching").is_none(), "{held}");
+
+    // A type the caller declared names its keys on an empty search and is not
+    // one the software ships, so it is not taught.
+    c.call(
+        "declare_type",
+        json!({ "name": "loan", "fields": [{ "key": "due_back", "holds": "date" }] }),
+    )
+    .await;
+    let declared = c
+        .call("search", json!({ "answers_type": "loan" }))
+        .await
+        .json();
+    assert_eq!(declared["type_keys"][0]["name"], "loan", "{declared}");
+    assert!(declared.get("teaching").is_none(), "{declared}");
+
+    // The reads above spent nothing: this session's first empty search of a
+    // shipped type still carries the note.
+    let empty = c
+        .call("search", json!({ "answers_type": "entitlement" }))
+        .await
+        .json();
+    assert_eq!(
+        empty["teaching"].as_array().map(Vec::len),
+        Some(1),
+        "{empty}"
+    );
+    story.finish().await;
+}

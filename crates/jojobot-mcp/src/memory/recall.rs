@@ -1630,7 +1630,10 @@ impl Jojobot {
                        name at least one of subject, kind, parent, answers_type or fields. AN \
                        answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
                        answer carries type_keys, the type's keys and what each holds, so the \
-                       spelling to write under it is in the empty answer. AN ANSWER STOPS AT THE \
+                       spelling to write under it is in the empty answer. The first such answer \
+                       in a session, under a type the software ships, also carries a teaching: \
+                       reading again finds nothing, and what you worked out is kept by capturing \
+                       under those keys. AN ANSWER STOPS AT THE \
                        ANSWER CEILING, never mid-record: it carries the objects that fit in its \
                        own order, and `not_shown` says how many it left out and the `offset` that \
                        reads on — repeat the same call with it. One subject with more facts than \
@@ -2741,21 +2744,11 @@ impl Jojobot {
         }
         // **The first empty read of a type the software ships says that reading
         // again finds nothing, and where to keep what the session worked out.**
-        // The ledger row is spent only when the note is shown, so a read that
-        // held something, or named a type the caller declared, spends none.
+        // Shared with `search`, so the ledger row is spent once across both.
         if nothing_selected {
-            if let Some(shipped) = asked_answers.as_ref().filter(|declared| {
-                declared.origin == jojobot_domain::memory::types::Origin::Shipped
-            }) {
-                if self
-                    .first_contact(crate::teaching::EMPTY_SHIPPED_TYPE_DOMAIN, caller.as_ref())
-                    .await
-                {
-                    crate::answer::note_teaching(
-                        &mut body,
-                        &crate::teaching::empty_shipped_type_teaching(&shipped.name),
-                    );
-                }
+            if let Some(declared) = asked_answers.as_ref() {
+                self.note_empty_answers_type(&mut body, declared, caller.as_ref())
+                    .await;
             }
         }
         // **A caller with no identity owns no run, and the count above is all

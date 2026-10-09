@@ -320,6 +320,25 @@ pub(crate) fn published_arguments(
 }
 
 impl Jojobot {
+    /// **Teach the first empty `answers_type` read of a type the software
+    /// ships, on whichever verb it arrives.** Both `recall` and `search` call
+    /// this, so they share one ledger row: a session taught on one is not
+    /// taught again on the other. A type the caller declared teaches nothing,
+    /// and nothing is spent unless the note is shown.
+    pub(crate) async fn note_empty_answers_type(
+        &self,
+        body: &mut serde_json::Value,
+        declared: &DeclaredType,
+        caller: Option<&Caller>,
+    ) {
+        if declared.origin != jojobot_domain::memory::types::Origin::Shipped {
+            return;
+        }
+        if self.first_contact(EMPTY_SHIPPED_TYPE_DOMAIN, caller).await {
+            crate::answer::note_teaching(body, &empty_shipped_type_teaching(&declared.name));
+        }
+    }
+
     /// Whether this call is the first time `domain` has reached this
     /// session's handle.
     ///

@@ -897,7 +897,14 @@ fn wrap_session_names_closing_focus_and_recall_points_at_it() {
 /// type's keys**, in the answer's own key for them.
 #[test]
 fn the_recall_description_names_type_keys() {
-    assert_description_names("recall", &["type_keys"]);
+    assert_description_names("recall", &["type_keys", "teaching"]);
+}
+
+/// **`search`'s description says the same of an empty `answers_type`**, since
+/// it now carries the keys and the teaching `recall` does.
+#[test]
+fn the_search_description_names_type_keys() {
+    assert_description_names("search", &["type_keys", "teaching"]);
 }
 
 /// **`merge_entities` names the refusal a merge into your own bot can meet**,
