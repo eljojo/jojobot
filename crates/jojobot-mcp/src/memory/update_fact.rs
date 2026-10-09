@@ -630,11 +630,15 @@ impl Jojobot {
                     crate::answer::note_recorded_at_mismatch(&mut body, stated, explicit);
                 }
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact));
-                crate::answer::note_postcondition(
-                    &mut body,
-                    self.what_an_update_left_standing(&fact, &cleared, keep)
-                        .await,
-                );
+                let mut line = self
+                    .what_an_update_left_standing(&fact, &cleared, keep)
+                    .await;
+                if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
+                {
+                    line.push(' ');
+                    line.push_str(&due);
+                }
+                crate::answer::note_postcondition(&mut body, line);
                 self.note_reach_and_hint(&mut body, &fact, &own_sent);
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 let unstarred_this_write =

@@ -697,6 +697,25 @@ pub(crate) fn note_reach(body: &mut serde_json::Value, reached: Vec<String>, sta
     fields.insert("stayed_on_the_record".into(), stayed.into());
 }
 
+/// **The sentence that ends a write's line when the write gave the thing a day to
+/// fall due on**: the thing and the day, so a day written onto the wrong thing is
+/// seen when it is written. A write that moved nothing says nothing. **A write
+/// that took the due moment off says nothing either**: that move also covers a
+/// schedule that cannot be read, and a thing whose schedule cannot be read is
+/// owed, so "nothing is owed" would be false there.
+pub(crate) fn falls_due_sentence(
+    thing: &jojobot_domain::memory::EntityId,
+    moved: jojobot_domain::attention::DueMove,
+) -> Option<String> {
+    match moved {
+        jojobot_domain::attention::DueMove::Set(day) => {
+            Some(format!("{} now falls due on {day}.", thing.as_str()))
+        }
+        jojobot_domain::attention::DueMove::Cleared
+        | jojobot_domain::attention::DueMove::Unchanged => None,
+    }
+}
+
 /// **A hint, for the release in which it is useful.** One sentence on the receipt
 /// of the write that earned it, and absent from every other.
 pub(crate) fn note_hint(body: &mut serde_json::Value, hint: String) {

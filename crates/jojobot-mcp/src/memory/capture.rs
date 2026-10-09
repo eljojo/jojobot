@@ -1050,11 +1050,15 @@ impl Jojobot {
                     None
                 };
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
-                crate::answer::note_postcondition(
-                    &mut body,
-                    self.what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
-                        .await,
-                );
+                let mut line = self
+                    .what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
+                    .await;
+                if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
+                {
+                    line.push(' ');
+                    line.push_str(&due);
+                }
+                crate::answer::note_postcondition(&mut body, line);
                 self.note_reach_and_hint(&mut body, &fact, &own_sent);
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
