@@ -48,6 +48,9 @@ pub struct InMemoryMailboxes {
     /// Whether a board read fails. Writes still land: this is the store being
     /// unreachable for a read, not gone.
     blind: Mutex<bool>,
+    /// **The outbox a post to a person's box writes into**, when this store was
+    /// made to push. `None` is a store that pushes nothing.
+    outbox: Option<std::sync::Arc<crate::push::testing::InMemoryOutbox>>,
 }
 
 impl InMemoryMailboxes {
@@ -68,6 +71,23 @@ impl InMemoryMailboxes {
             store.know_owner(&EntityId((*owner).to_string()));
         }
         store
+    }
+
+    /// **This store writes a push into its outbox for every message that lands
+    /// in a person's box**, as the real store does when the instance is set up to
+    /// push. The outbox is handed back by [`InMemoryMailboxes::outbox`].
+    #[must_use]
+    pub fn pushing(mut self) -> Self {
+        self.outbox = Some(std::sync::Arc::default());
+        self
+    }
+
+    /// The outbox this store writes into. Panics when the store was not made to
+    /// push, because a test that reads an outbox the store never wrote is wrong.
+    pub fn outbox(&self) -> std::sync::Arc<crate::push::testing::InMemoryOutbox> {
+        self.outbox
+            .clone()
+            .expect("this store was not made to push")
     }
 
     /// **Resolve any well-formed owner** — for tests whose subject is not
@@ -427,6 +447,21 @@ impl Mailboxes for InMemoryMailboxes {
             .lock()
             .expect("message lock")
             .push(stored.clone());
+        // **The intent is written with the message**, for a box a person owns.
+        if let Some(outbox) = &self.outbox {
+            let to_a_person =
+                self.owners
+                    .lock()
+                    .expect("owner lock")
+                    .iter()
+                    .any(|(name, owner)| {
+                        name == &stored.mailbox
+                            && owner.kind() == Some(crate::memory::EntityKind::PERSON)
+                    });
+            if to_a_person {
+                outbox.enqueue(&stored.id, Timestamp::now());
+            }
+        }
         Ok(Guarded::Written(stored))
     }
 

@@ -99,6 +99,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0070_charter_change",
     "0071_session_charter_told_at",
     "0072_store_pass",
+    "0073_push_outbox",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

@@ -568,6 +568,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0072_store_pass.sql"),
         leaves: Leaves::Table("store_pass"),
     },
+    Migration {
+        version: "0073_push_outbox",
+        sql: include_str!("../../migrations/0073_push_outbox.sql"),
+        leaves: Leaves::Table("push_outbox"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

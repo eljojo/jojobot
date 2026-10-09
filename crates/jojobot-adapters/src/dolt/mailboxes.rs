@@ -36,6 +36,7 @@ use jojobot_domain::mailbox::{
     validate_subject,
 };
 use jojobot_domain::memory::{Entity, EntityId, mention};
+use jojobot_domain::push::{Outbox, Push, PushError};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
@@ -50,6 +51,10 @@ pub struct DoltMailboxes {
     pool: MySqlPool,
     owners: Arc<dyn OwnerIndex>,
     draw: Draw,
+    /// **Whether a post to a person's box also writes a push**, in the same
+    /// transaction. Off unless the instance is set up to push, so an instance
+    /// with no push service keeps no outbox rows nobody will send.
+    pushing: bool,
     /// What the board reads have loaded so far, so a case can say which rows a
     /// verb asked the store for.
     #[cfg(test)]
@@ -76,9 +81,19 @@ impl DoltMailboxes {
             pool,
             owners,
             draw: ids::drawing(),
+            pushing: false,
             #[cfg(test)]
             loaded: Arc::default(),
         }
+    }
+
+    /// **Write a push for every message that lands in a person's box**, in the
+    /// transaction that stores it. Called once at wiring, when the instance is
+    /// set up to push.
+    #[must_use]
+    pub fn pushing(mut self) -> Self {
+        self.pushing = true;
+        self
     }
 
     /// **Rewrite a handle written into a message's body, subject or notes
@@ -186,6 +201,7 @@ impl DoltMailboxes {
             pool,
             owners,
             draw,
+            pushing: false,
             loaded: Arc::default(),
         }
     }
@@ -518,6 +534,123 @@ impl Card {
 /// **A conflict is told apart from every other failure here, at the one
 /// seam every write already passes through** — the same check the memory
 /// rail's own `store` runs, see its doc for why.
+/// **A moment as the outbox writes it**, every fractional digit kept so two
+/// stamps read back as the moments they were.
+fn push_stamp(at: Timestamp) -> String {
+    at.strftime("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
+}
+
+fn push_store(e: sqlx::Error) -> PushError {
+    PushError::Store(e.to_string())
+}
+
+fn push_moment(text: &str) -> Result<Timestamp, PushError> {
+    text.parse().map_err(|e| {
+        PushError::Store(format!(
+            "a push row holds a moment that is no moment ({text:?}): {e}"
+        ))
+    })
+}
+
+fn push_from(row: &sqlx::mysql::MySqlRow) -> Result<Push, PushError> {
+    Ok(Push {
+        message: MessageId(row.get::<String, _>("message_id")),
+        enqueued_at: push_moment(&row.get::<String, _>("enqueued_at"))?,
+        attempts: u32::try_from(row.get::<i32, _>("attempts")).unwrap_or(0),
+        next_attempt_at: push_moment(&row.get::<String, _>("next_attempt_at"))?,
+    })
+}
+
+#[async_trait]
+impl Outbox for DoltMailboxes {
+    async fn due(&self, now: Timestamp) -> Result<Vec<Push>, PushError> {
+        // **Filtered here and not in SQL**: the pending rows are the few that
+        // are inside their window, and a moment compared as text is only as
+        // right as the width it was written at.
+        let rows = sqlx::query(
+            "SELECT message_id, enqueued_at, attempts, next_attempt_at FROM push_outbox
+             WHERE state = 'pending' ORDER BY enqueued_at, message_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(push_store)?;
+        let mut due = Vec::new();
+        for row in &rows {
+            let push = push_from(row)?;
+            if push.next_attempt_at <= now {
+                due.push(push);
+            }
+        }
+        Ok(due)
+    }
+
+    async fn next_due(&self) -> Result<Option<Timestamp>, PushError> {
+        let rows = sqlx::query(
+            "SELECT message_id, enqueued_at, attempts, next_attempt_at FROM push_outbox
+             WHERE state = 'pending'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(push_store)?;
+        let mut earliest: Option<Timestamp> = None;
+        for row in &rows {
+            let at = push_from(row)?.next_attempt_at;
+            earliest = Some(earliest.map_or(at, |e| e.min(at)));
+        }
+        Ok(earliest)
+    }
+
+    async fn sent(&self, message: &MessageId, at: Timestamp) -> Result<(), PushError> {
+        self.finish(message, "sent", at).await
+    }
+
+    async fn failed(
+        &self,
+        message: &MessageId,
+        attempts: u32,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), PushError> {
+        sqlx::query(
+            "UPDATE push_outbox SET attempts = ?, next_attempt_at = ?
+             WHERE message_id = ? AND state = 'pending'",
+        )
+        .bind(i32::try_from(attempts).unwrap_or(i32::MAX))
+        .bind(push_stamp(next_attempt_at))
+        .bind(message.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(push_store)?;
+        Ok(())
+    }
+
+    async fn abandoned(&self, message: &MessageId, at: Timestamp) -> Result<(), PushError> {
+        self.finish(message, "abandoned", at).await
+    }
+}
+
+impl DoltMailboxes {
+    /// End a pending row in `state`. A row that is not pending is left as it is,
+    /// so a push that was sent is never marked abandoned afterwards.
+    async fn finish(
+        &self,
+        message: &MessageId,
+        state: &str,
+        at: Timestamp,
+    ) -> Result<(), PushError> {
+        sqlx::query(
+            "UPDATE push_outbox SET state = ?, finished_at = ?
+             WHERE message_id = ? AND state = 'pending'",
+        )
+        .bind(state)
+        .bind(push_stamp(at))
+        .bind(message.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(push_store)?;
+        Ok(())
+    }
+}
+
 fn store(e: sqlx::Error) -> MailboxError {
     if e.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
@@ -842,6 +975,35 @@ impl Mailboxes for DoltMailboxes {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
+        // **The intent is written with the message**, so a restart between the
+        // two cannot lose it and a crash cannot leave a message with none. Only
+        // a box a person owns is pushed.
+        if self.pushing {
+            let owner: Option<String> =
+                sqlx::query_scalar("SELECT owner FROM mailbox WHERE name = ?")
+                    .bind(stored.mailbox.as_str())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            let to_a_person = owner
+                .map(|owner| {
+                    EntityId(owner).kind() == Some(jojobot_domain::memory::EntityKind::PERSON)
+                })
+                .unwrap_or(false);
+            if to_a_person {
+                let now = push_stamp(Timestamp::now());
+                sqlx::query(
+                    "INSERT INTO push_outbox (message_id, state, enqueued_at, attempts, next_attempt_at)
+                     VALUES (?, 'pending', ?, 0, ?)",
+                )
+                .bind(stored.id.as_str())
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+            }
+        }
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(stored))
     }
@@ -2107,6 +2269,126 @@ mod tests {
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
 
+        store.stop().await;
+    }
+
+    /// **A post to a person's box writes its push in the same transaction**, a
+    /// post to a bot's box writes none, and the row walks pending → failed →
+    /// sent on the real store. The store is made to push; the case after this
+    /// one is the store that is not.
+    #[tokio::test]
+    async fn a_post_to_a_persons_box_writes_a_pending_push_and_a_bots_box_writes_none() {
+        let (_scratch, mut store, mail, in_a_bots_box) = board("push-outbox").await;
+        let mail = mail.pushing();
+        let person = EntityId("person:ned-flanders".into());
+        mail.create_mailbox(&MailboxName::named_for(&person), &person, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        let post = |to: String| {
+            let mail = mail.clone();
+            async move {
+                mail.post_message(NewMessage {
+                    mailbox: MailboxName(to),
+                    body: "a word for the person".into(),
+                    subject: Some("the lease".into()),
+                    sender: "gamma".into(),
+                    sent_at: "2026-01-05T00:00:00Z".parse().expect("a fixed instant"),
+                    in_reply_to: None,
+                    sender_mail_waiting_at_send: None,
+                    posted_by_session: None,
+                })
+                .await
+                .expect("post ok")
+                .written()
+                .expect("not blocked")
+                .id
+            }
+        };
+        let to_a_bot = post("inbox".into()).await;
+        let to_the_person = post("person-ned-flanders".into()).await;
+
+        let rows: Vec<(String, String, i32)> = sqlx::query_as(
+            "SELECT message_id, state, attempts FROM push_outbox ORDER BY message_id",
+        )
+        .fetch_all(store.pool())
+        .await
+        .expect("the outbox reads");
+        assert_eq!(
+            rows,
+            vec![(to_the_person.to_string(), "pending".to_string(), 0)],
+            "exactly the post to the person's box wrote a push (the bot's box held {in_a_bots_box} and {to_a_bot})"
+        );
+
+        // The row is stamped with the store's own clock, so the test reads from it.
+        let now = Timestamp::now();
+        let due = mail
+            .due(now.checked_add(std::time::Duration::from_secs(1)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].message, to_the_person);
+        assert_eq!(due[0].attempts, 0);
+
+        let later = now.checked_add(std::time::Duration::from_secs(90)).unwrap();
+        mail.failed(&to_the_person, 1, later).await.unwrap();
+        assert!(
+            mail.due(now.checked_add(std::time::Duration::from_secs(60)).unwrap())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(mail.next_due().await.unwrap(), Some(later));
+        let retried = mail.due(later).await.unwrap();
+        assert_eq!((retried.len(), retried[0].attempts), (1, 1));
+
+        mail.sent(&to_the_person, later).await.unwrap();
+        assert!(
+            mail.due(later).await.unwrap().is_empty(),
+            "a sent push is never due again"
+        );
+        assert_eq!(mail.next_due().await.unwrap(), None);
+        // A sent row is not abandoned afterwards: the first ending is the one kept.
+        mail.abandoned(&to_the_person, later).await.unwrap();
+        let state: String =
+            sqlx::query_scalar("SELECT state FROM push_outbox WHERE message_id = ?")
+                .bind(to_the_person.as_str())
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(state, "sent");
+        store.stop().await;
+    }
+
+    /// **A store not made to push writes no outbox row**, even for a post to a
+    /// person's box. This is the instance with no push service set up.
+    #[tokio::test]
+    async fn a_store_not_made_to_push_writes_no_outbox_row() {
+        let (_scratch, mut store, mail, _) = board("push-outbox-off").await;
+        let person = EntityId("person:ned-flanders".into());
+        mail.create_mailbox(&MailboxName::named_for(&person), &person, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        mail.post_message(NewMessage {
+            mailbox: MailboxName("person-ned-flanders".into()),
+            body: "a word for the person".into(),
+            subject: None,
+            sender: "gamma".into(),
+            sent_at: "2026-01-05T00:00:00Z".parse().expect("a fixed instant"),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        })
+        .await
+        .expect("post ok");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM push_outbox")
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+        assert_eq!(rows, 0);
         store.stop().await;
     }
 }
