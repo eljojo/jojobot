@@ -24,9 +24,9 @@ use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::{
     CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
-    TEST_JOBS_VARIABLE, grown_files, history_root, iso_utc, jobs_limit, load_known_reds,
-    oversized_files, parse_call, parse_job, render_size_report, run_id, summarize_test_output,
-    test_healthy, test_jobs, write_call,
+    TEST_JOBS_VARIABLE, grown_files, history_root, is_slow, iso_utc, jobs_limit, load_known_reds,
+    oversized_files, parse_call, parse_job, read_history, render_size_report, report_plan, run_id,
+    summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -61,13 +61,14 @@ fn main() -> ExitCode {
         None
     };
     let result = match args.first().map(String::as_str) {
-        Some("check") => run_check(&known),
+        Some("check") => run_check(&known, Level::Boundary),
+        Some("report") => run_check(&known, Level::Report),
         Some("narrow") => run_narrow(&args[1..], &known),
         Some("rooms") => run_rooms(&args[1..], &known),
         Some("call") => run_call(&args[1..]),
         _ => {
             eprintln!(
-                "usage: bar check | bar narrow --crate <name> [--filter <substring>] \
+                "usage: bar check | bar report | bar narrow --crate <name> [--filter <substring>] \
                  | bar rooms --test <name> [--test <name> ...] | bar call ..."
             );
             return ExitCode::from(2);
@@ -399,6 +400,9 @@ fn begin_history(level: &str, limit: usize) -> Option<Run> {
         started_at,
         bar_jobs: limit,
         load_average,
+        cpus: std::thread::available_parallelism()
+            .ok()
+            .map(std::num::NonZero::get),
     };
     match Run::begin(&root, header) {
         Ok(run) => Some(run),
@@ -500,8 +504,58 @@ fn size_report() -> String {
     render_size_report(&over, &grown, &base)
 }
 
-fn run_check(known: &KnownReds) -> std::io::Result<ExitCode> {
-    let code = run_check_phases(known)?;
+/// **Which jobs a run of the test phase covers.** The boundary level is every
+/// job; the report level is every job less the ones the history lets go.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Level {
+    Boundary,
+    Report,
+}
+
+impl Level {
+    /// The name the run's history and its log go by.
+    fn name(self) -> &'static str {
+        match self {
+            Level::Boundary => "check",
+            Level::Report => "report",
+        }
+    }
+}
+
+/// **The jobs a level runs, and the line that says which.** The boundary level
+/// runs the listing as it stands. The report level asks the history, which is
+/// empty when none can be read, so a missing history runs everything.
+fn jobs_for(level: Level, all: Vec<Vec<String>>) -> (Vec<Vec<String>>, String) {
+    match level {
+        Level::Boundary => {
+            let line = format!("boundary, {} jobs", all.len());
+            (all, line)
+        }
+        Level::Report => {
+            let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
+            let home = std::env::var("HOME").ok();
+            let history = history_root(variable.as_deref(), home.as_deref())
+                .map(|root| read_history(&root, &["check", "report"]))
+                .unwrap_or_default();
+            let plan = report_plan(&all, &history, &is_slow);
+            let left: Vec<&str> = plan.left_out.iter().map(|l| l.job.as_str()).collect();
+            let line = format!(
+                "report, {} of {} jobs, left to the boundary: {}",
+                plan.run.len(),
+                all.len(),
+                if left.is_empty() {
+                    "none".to_string()
+                } else {
+                    left.join(", ")
+                }
+            );
+            (plan.run, line)
+        }
+    }
+}
+
+fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
+    let code = run_check_phases(known, level)?;
     // **Printed after the verdict, and unconditionally.** A standing duty
     // gets a mechanism rather than diligence (rule 235) — this runs whichever
     // phase fails or passes, and never touches `summary.green`. It comes
@@ -511,7 +565,7 @@ fn run_check(known: &KnownReds) -> std::io::Result<ExitCode> {
     Ok(code)
 }
 
-fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
+fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // **Refused before any phase runs**, so a limit that is not a number never
     // costs a build and never reads as a green run at some other number.
     let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
@@ -522,7 +576,7 @@ fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
         }
     };
     let cargo = cargo_bin();
-    let log_path = PathBuf::from("target/bar/check.log");
+    let log_path = PathBuf::from(format!("target/bar/{}.log", level.name()));
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
 
@@ -582,16 +636,22 @@ fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
         &cargo,
         &["test", "--workspace", "--no-run", "--locked"],
     )?;
+    let mut level_line = None;
+    let mut wall = None;
     let (ok, text) = if listed {
-        let history = begin_history("check", limit);
+        let (jobs, line) = jobs_for(level, test_jobs(&listing));
+        level_line = Some(line);
+        let history = begin_history(level.name(), limit);
+        let started = std::time::Instant::now();
         let ran = run_test_jobs(
             &log_path,
             &cargo,
             &["--workspace"],
-            &test_jobs(&listing),
+            &jobs,
             limit,
             history.as_ref(),
         )?;
+        wall = Some(started.elapsed());
         finish_history(history.as_ref());
         ran
     } else {
@@ -602,9 +662,18 @@ fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
     let verdict = summarize_test_output(&text);
     // **The limit that produced the timing**, on the verdict, so a wall time
     // read later says what it was measured at.
+    if let Some(line) = &level_line {
+        summary.phase_ok("level", line);
+    }
     summary.phase_ok(
         "jobs",
-        &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
+        &match wall {
+            Some(wall) => format!(
+                "{limit} test binaries at a time ({TEST_JOBS_VARIABLE}), wall {}s",
+                wall.as_secs()
+            ),
+            None => format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
+        },
     );
     summary.test_phase(ok, &verdict, known);
     // **The lint runs whatever the tests said.** A red test step used to end

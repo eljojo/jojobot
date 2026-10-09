@@ -42,6 +42,15 @@ help: ## List the targets
 check: ## The DONE bar: formatted, green, clippy-clean
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- check
 
+# **The report bar.** What a dev's report runs: the boundary bar less the jobs
+# the recorded history lets go. A job leaves only with at least five recorded
+# runs, no red in its newest twenty that is not called a flake, and a
+# load-discounted median of thirty seconds or more; the upgrade gate never
+# leaves. With no history it runs everything the boundary bar runs. A carry, a
+# review and a push run `check`, not this.
+report: ## The report bar: check less the slow jobs the history lets go
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- report
+
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
 # It checks the format, then runs that crate's tests, then lints that crate.

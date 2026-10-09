@@ -13,11 +13,18 @@
 mod calls;
 mod history;
 mod known_reds;
+mod levels;
+mod reading;
 mod recording;
 pub mod sweep;
 pub use calls::{CALL_USAGE, Call, parse_call, write_call};
 pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
+pub use levels::{
+    ALWAYS_RUN, DEFECT_WINDOW, LEAVE_AT_MS, LeftOut, MIN_RUNS, Plan, Standing, discounted_ms,
+    is_slow, median_cost_ms, report_plan, standing,
+};
+pub use reading::{History, JobRun, RecordedCall, read_history};
 pub use recording::{HISTORY_DIR_VARIABLE, Run, RunHeader, history_root, iso_utc, run_id};
 
 /// **What a `cargo test` run said about itself**, summed across every suite

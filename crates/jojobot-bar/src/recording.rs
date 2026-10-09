@@ -54,6 +54,9 @@ pub struct RunHeader {
     pub bar_jobs: usize,
     /// The machine's one-minute load when the run began, when it could be read.
     pub load_average: Option<f64>,
+    /// How many CPUs the machine gave the bar, which turns a load into a share:
+    /// a load of 16 on 16 CPUs is a machine with room, and a load of 16 on 4 is not.
+    pub cpus: Option<usize>,
 }
 
 impl RunHeader {
@@ -73,6 +76,7 @@ impl RunHeader {
                 "load_average",
                 self.load_average.map_or("null".into(), |l| l.to_string()),
             ),
+            ("cpus", self.cpus.map_or("null".into(), |n| n.to_string())),
         ];
         if let Some(ended) = ended_at {
             fields.push(("ended_at", json_string(ended)));
@@ -257,6 +261,7 @@ mod tests {
             started_at: "2023-11-14T22:13:20Z".into(),
             bar_jobs: 8,
             load_average: Some(1.5),
+            cpus: Some(16),
         }
     }
 
@@ -323,7 +328,7 @@ mod tests {
             fs::read_to_string(dir.join("run.json")).expect("header"),
             "{\"run_id\":\"20231114T221320Z-jojobot-7\",\"level\":\"check\",\"checkout\":\"jojobot\",\
              \"head\":\"abc123\",\"dirty\":false,\"started_at\":\"2023-11-14T22:13:20Z\",\
-             \"bar_jobs\":8,\"load_average\":1.5}",
+             \"bar_jobs\":8,\"load_average\":1.5,\"cpus\":16}",
             "a run that has not ended says nothing of its end"
         );
         run.finish("2023-11-14T22:14:00Z").expect("finish");
