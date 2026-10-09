@@ -2074,13 +2074,19 @@ impl Jojobot {
                     .iter()
                     .map(|run| {
                         let mut doc = jojobot_domain::session::projected_summary(run);
-                        // **The day the run started, in the asking run's frame**:
-                        // what `near` places a run by, since a run holds no claim
-                        // for any clock to read. Read here, where the zone is
-                        // known, and not in the walk, which has none.
+                        // **The day the run started**: what `near` places a run
+                        // by, since a run holds no claim for any clock to read.
+                        // **The day the run stated, when it stated one**, because
+                        // a run played on a stated day began on that day whatever
+                        // the clock said when it did. A run that stated none is
+                        // placed by the instant it began, in the asking run's
+                        // frame. Read here, where the zone is known, and not in
+                        // the walk, which has none.
                         doc.fields.insert(
                             jojobot_domain::session::STARTED_ON.to_string(),
-                            day_frame.day(run.started_at).to_string(),
+                            run.started_on
+                                .unwrap_or_else(|| day_frame.day(run.started_at))
+                                .to_string(),
                         );
                         doc
                     })

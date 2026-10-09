@@ -564,6 +564,68 @@ async fn near_places_a_run_on_the_day_it_started() {
     story.finish().await;
 }
 
+/// "What was I doing in March?" A run that stated the day it was in is placed
+/// on THAT day, and a run that stated none on the day it started. Both are read
+/// back as a field of the run and by `near`.
+///
+/// **The positive is the pair**: the stated day is the one that is read, and the
+/// run that stated nothing still reads as the day the clock gave it. A run
+/// dated by the clock alone would pass the second half and fail the first, and a
+/// run dated by its stated day alone would fail the second.
+#[tokio::test]
+async fn a_run_that_stated_its_day_is_placed_on_that_day_and_one_that_stated_none_on_the_day_it_began()
+ {
+    let story = Story::begin("bot:otto").await;
+    let march = story.session_on("2026-03-30", None).await;
+    march
+        .journal("otto inspected the east gorge and found the bridge closed")
+        .await;
+    march.wrap("inspected the east gorge in March").await;
+    let unstated = story.session().await;
+    unstated
+        .journal("otto went back to the east gorge and found it open")
+        .await;
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date()
+        .to_string();
+
+    let all = unstated
+        .call("recall", json!({"kind": "session"}))
+        .await
+        .json();
+    let mut started: Vec<String> = all["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .filter_map(|run| run["fields"]["started_on"].as_str().map(str::to_string))
+        .collect();
+    started.sort();
+    assert!(
+        started.contains(&"2026-03-30".to_string()),
+        "the run that stated 30 March reads as started that day: {all}",
+    );
+    assert!(
+        started.contains(&today),
+        "the run that stated no day reads as started on the day the clock gave it ({today}): {all}",
+    );
+
+    // `near` places each on its own day, and the one run is not near the other.
+    let in_march = unstated
+        .call(
+            "recall",
+            json!({"kind": "session", "near": {"day": "2026-03-30", "within_days": 0}}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        runs_found(&in_march).len(),
+        1,
+        "exactly the run that stated 30 March is near 30 March: {in_march}",
+    );
+    story.finish().await;
+}
+
 /// "I tried the sid as the run's handle." The handle of a run is not its sid, and
 /// the refusal says which read finds a run by the sid held, rather than sending
 /// the caller to create an entity.

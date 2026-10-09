@@ -907,6 +907,10 @@ pub struct SessionSummary {
     pub last_beat: Timestamp,
     /// The running total of characters this session has been handed.
     pub served_chars: u64,
+    /// **The day this run said it began on**, when it stated one. A reader that
+    /// places a run on a day uses this before the clock: a run played on a stated
+    /// day began on that day whatever the clock said when it did.
+    pub started_on: Option<Date>,
 }
 
 impl SessionSummary {
@@ -924,6 +928,7 @@ impl SessionSummary {
             entry_count: session.entries.len(),
             last_beat: session.last_beat(),
             served_chars: session.served_chars,
+            started_on: session.started_on,
         }
     }
 }

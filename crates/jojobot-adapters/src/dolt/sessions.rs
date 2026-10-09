@@ -422,6 +422,9 @@ fn summary_from(
         })?,
         entry_count: row.try_get::<i64, _>("entry_count").map_err(store)? as usize,
         last_beat: instant(&last_beat)?,
+        started_on: day(row
+            .try_get::<Option<String>, _>("started_on")
+            .map_err(store)?)?,
     })
 }
 
@@ -582,13 +585,14 @@ impl Sessions for DoltSessions {
     ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
         let rows = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
+                    s.started_on,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
              FROM session s
              LEFT JOIN journal_entry j ON j.session = s.id
              WHERE s.bot = ?
-             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars
+             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars, s.started_on
              ORDER BY s.started_at DESC, s.id DESC",
         )
         .bind(bot.as_str())
@@ -606,12 +610,13 @@ impl Sessions for DoltSessions {
     ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
         let rows = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
+                    s.started_on,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
              FROM session s
              LEFT JOIN journal_entry j ON j.session = s.id
-             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars
+             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars, s.started_on
              ORDER BY s.started_at DESC, s.id DESC",
         )
         .fetch_all(&self.pool)
@@ -2022,7 +2027,7 @@ mod tests {
                 sid: Sid("bz01".into()),
                 focus: "a busy run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
-                started_on: None,
+                started_on: Some("2025-03-30".parse().expect("a day")),
             })
             .await
             .expect("begin ok");
@@ -2079,6 +2084,16 @@ mod tests {
             .iter()
             .find(|s| s.id == quiet.id)
             .expect("the quiet run is in the summary");
+        assert_eq!(
+            busy_summary.started_on,
+            Some("2025-03-30".parse().expect("a day")),
+            "a run that stated its day carries it on its summary, not the day the clock gave: \
+             {busy_summary:?}"
+        );
+        assert_eq!(
+            quiet_summary.started_on, None,
+            "a run that stated none carries none: {quiet_summary:?}"
+        );
         assert_eq!(quiet_summary.entry_count, 0, "{quiet_summary:?}");
         assert_eq!(
             quiet_summary.last_beat, quiet.started_at,
