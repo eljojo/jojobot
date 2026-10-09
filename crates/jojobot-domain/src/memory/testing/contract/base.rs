@@ -12453,6 +12453,9 @@ pub async fn a_filter_tree_gives_the_same_answer_from_every_store<M: Memory>(sto
                     .iter()
                     .map(|(key, value)| (key.to_string(), value.to_string()))
                     .collect(),
+                // The thing holds the keys the claim names in `sets`; the claim
+                // keeps all of them as its own, which the record questions read.
+                sets: fields.iter().map(|(key, _)| key.to_string()).collect(),
                 ..NewFact::about(id.clone(), "where it stands", date(2026, 10, 1))
             },
         )
