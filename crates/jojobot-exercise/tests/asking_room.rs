@@ -605,137 +605,117 @@ async fn answered(room: &Surface, sid: &str, subject: &str, slot: &str, answer: 
     .await;
 }
 
+/// **The answers a sitting that found everything gives**, as
+/// `(slot, the thing in the worked year, the thing in a year written in prose,
+/// the answer)`. The text is the same in both: the prose year differs only in
+/// what the year left in the store behind the answers.
+const ANSWERS: [(&str, &str, &str, &str); 16] = [
+    (
+        "1",
+        "bot:lisa",
+        "bot:lisa",
+        "Assistant: keeps the operator's year. Lisa: keeps the household's paperwork, the \
+         garden calendar and the appointments.",
+    ),
+    (
+        "2",
+        "rhythm:oil-the-chain",
+        "rhythm:oil-the-chain",
+        "Oil the chain: behind, last done 2026-05-31",
+    ),
+    (
+        "2",
+        "rhythm:call-randy",
+        "rhythm:call-randy",
+        "Call Randy: behind, last done 2026-09-27",
+    ),
+    (
+        "3",
+        "project:the-move",
+        "project:the-move",
+        "Ten sessions. In the one of 2026-03-30 the movers quoted 1,800.",
+    ),
+    (
+        "4",
+        "view:my-bikes",
+        "thing:gravel-bike",
+        "The gravel bike and the fat bike",
+    ),
+    (
+        "5",
+        "project:the-move",
+        "project:the-move",
+        "2026-01-10 the party on 13 June; 2026-03-30 the move to Quahog by the end of October; \
+         2026-08-09 sell the road bike",
+    ),
+    (
+        "6",
+        "bot:lisa",
+        "bot:lisa",
+        "Lisa keeps the household's paperwork, the garden calendar and the appointments. Her \
+         mailbox is hers and not mine to open.",
+    ),
+    (
+        "7",
+        "thing:road-bike",
+        "thing:road-bike",
+        "The knee came up in the sessions of 2026-02-21, 2026-05-31 and 2026-09-27.",
+    ),
+    (
+        "8",
+        "thing:gravel-bike",
+        "thing:gravel-bike",
+        "Gravel: 556 km against 151 km for the road bike, so 405 km more.",
+    ),
+    (
+        "9",
+        "event:goodbye-party",
+        "event:goodbye-party",
+        "No: nine people and eight chairs, so one short.",
+    ),
+    ("10", "person:marjorine", "person:butters", "Marjorine"),
+    (
+        "11",
+        "thing:fat-bike",
+        "thing:fat-bike",
+        "2026-01: 103 km; 2026-02: 123 km; 2026-03: 110 km; 2026-04: 144 km; 2026-08: 182 km; \
+         2026-10: 105 km; nothing in the other months.",
+    ),
+    (
+        "12",
+        "work:the-utilities",
+        "project:the-move",
+        "The utilities are still open. The lease, the movers, the vet certificate and the \
+         insurance are done.",
+    ),
+    (
+        "13",
+        "event:goodbye-party",
+        "event:goodbye-party",
+        "It went great. Stan, Wendy, Bebe, Token, Randy, Sharon, Butters and Marjorine came. \
+         Kyle cancelled.",
+    ),
+    (
+        "14",
+        "org:costingtons",
+        "org:costingtons",
+        "2026-02-21 Kenny: new chain and new brake pads; 2026-05-31 Token: trued the wheel; \
+         2026-09-27 Kenny: new tyres.",
+    ),
+    (
+        "15",
+        "project:the-move",
+        "project:the-move",
+        "2026-03-30, 2026-05-31, 2026-08-09, 2026-09-27 and 2026-10-31",
+    ),
+];
+
 /// **December: the cold sitting writes its fifteen answers**, the way a sitting
 /// that found everything would, each under the slot the operator named.
 async fn december(room: &Surface, sid: &str) {
-    answered(
-        room,
-        sid,
-        "bot:lisa",
-        "1",
-        "Assistant: keeps the operator's year. Lisa: keeps the household's paperwork, the garden \
-         calendar and the appointments.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "rhythm:oil-the-chain",
-        "2",
-        "Oil the chain: behind, last done 2026-05-31",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "rhythm:call-randy",
-        "2",
-        "Call Randy: behind, last done 2026-09-27",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "project:the-move",
-        "3",
-        "Ten sessions. In the one of 2026-03-30 the movers quoted 1,800.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "view:my-bikes",
-        "4",
-        "The gravel bike and the fat bike",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "project:the-move",
-        "5",
-        "2026-01-10 the party on 13 June; 2026-03-30 the move to Quahog by the end of October; \
-         2026-08-09 sell the road bike",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "bot:lisa",
-        "6",
-        "Lisa keeps the household's paperwork, the garden calendar and the appointments. Her \
-         mailbox is hers and not mine to open.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "thing:road-bike",
-        "7",
-        "The knee came up in the sessions of 2026-02-21, 2026-05-31 and 2026-09-27.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "thing:gravel-bike",
-        "8",
-        "Gravel: 556 km against 151 km for the road bike, so 405 km more.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "event:goodbye-party",
-        "9",
-        "No: nine people and eight chairs, so one short.",
-    )
-    .await;
-    answered(room, sid, "person:marjorine", "10", "Marjorine").await;
-    answered(
-        room,
-        sid,
-        "thing:fat-bike",
-        "11",
-        "2026-01: 103 km; 2026-02: 123 km; 2026-03: 110 km; 2026-04: 144 km; 2026-08: 182 km; \
-         2026-10: 105 km; nothing in the other months.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "work:the-utilities",
-        "12",
-        "The utilities are still open. The lease, the movers, the vet certificate and the \
-         insurance are done.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "event:goodbye-party",
-        "13",
-        "It went great. Stan, Wendy, Bebe, Token, Randy, Sharon, Butters and Marjorine came. Kyle \
-         cancelled.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "org:costingtons",
-        "14",
-        "2026-02-21 Kenny: new chain and new brake pads; 2026-05-31 Token: trued the wheel; \
-         2026-09-27 Kenny: new tyres.",
-    )
-    .await;
-    answered(
-        room,
-        sid,
-        "project:the-move",
-        "15",
-        "2026-03-30, 2026-05-31, 2026-08-09, 2026-09-27 and 2026-10-31",
-    )
-    .await;
+    for (slot, subject, _, answer) in ANSWERS {
+        answered(room, sid, subject, slot, answer).await;
+    }
 }
 
 type Sitting = for<'a> fn(
@@ -1435,4 +1415,296 @@ async fn a_year_that_read_lisas_session_as_the_operators_fails_only_the_knee_loc
         &judge_all(&surface, &[]).await,
         "the knee does not come back",
     );
+}
+
+/// A sentence on a thing and nothing else: no field, no edge, no check-in.
+async fn said(room: &Surface, sid: &str, subject: &str, content: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": subject, "content": content, "provenance": "testimony"}),
+    )
+    .await;
+}
+
+/// A thing that exists only so a sentence has somewhere to be said.
+async fn somewhere(room: &Surface, sid: &str, kind: &str, handle: &str, name: &str) {
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": kind, "handle": handle, "name": name, "source": "the operator"}),
+    )
+    .await;
+}
+
+/// **The same year, said entirely in sentences.** Every fact the worked year
+/// keeps as a key, an edge, a check-in, a status or a view is a sentence on the
+/// nearest thing here, and the sums are done by hand in the answers. The
+/// sittings are the same nine on the same days, each leaving the same dated
+/// beat, so a session can still be found by the day it stated.
+async fn prose_year(room: &Surface) {
+    let days = [
+        "2026-01-10",
+        "2026-02-21",
+        "2026-03-30",
+        "2026-04-26",
+        "2026-05-31",
+        "2026-06-14",
+        "2026-08-09",
+        "2026-09-27",
+        "2026-10-31",
+    ];
+    for (nth, day) in days.into_iter().enumerate() {
+        let sid = sitting(room, day).await;
+        match nth {
+            0 => {
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "my bikes are the gravel bike and the road bike; rode 62 km this month",
+                )
+                .await;
+                said(room, &sid, "thing:road-bike", "rode 41 km this month").await;
+                somewhere(room, &sid, "event", "goodbye-party", "The Goodbye Party").await;
+                said(
+                    room,
+                    &sid,
+                    "event:goodbye-party",
+                    "a goodbye party at home on 13 June",
+                )
+                .await;
+            }
+            1 => {
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "went into Costington's: Kenny put a new chain and new brake pads on it",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "rode 41 km three times this month",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "rhythm:oil-the-chain",
+                    "oiled the chain on 2026-02-21",
+                )
+                .await;
+            }
+            2 => {
+                somewhere(room, &sid, "project", "the-move", "The Move").await;
+                said(room, &sid, "project:the-move", "moving to Quahog by the end of October: the lease, the movers, the vet certificate, the insurance and the utilities").await;
+                said(
+                    room,
+                    &sid,
+                    "project:the-move",
+                    "the lease is signed; the movers quoted 1,800",
+                )
+                .await;
+                said(room, &sid, "thing:road-bike", "rode 55 km twice this month").await;
+                said(
+                    room,
+                    &sid,
+                    "rhythm:call-randy",
+                    "called Randy on 2026-03-30",
+                )
+                .await;
+            }
+            3 => {
+                said(room, &sid, "event:goodbye-party", "Stan, Kyle, Wendy, Token, Randy and Sharon said yes; Butters is bringing his partner").await;
+                somewhere(room, &sid, "thing", "fat-bike", "The Fat Bike").await;
+                said(room, &sid, "thing:fat-bike", "bought a fat bike").await;
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "rode 36 km four times this month",
+                )
+                .await;
+            }
+            4 => {
+                said(
+                    room,
+                    &sid,
+                    "thing:road-bike",
+                    "went into Costington's and Token trued the wheel",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "event:goodbye-party",
+                    "Kyle cannot make the party any more",
+                )
+                .await;
+                said(room, &sid, "project:the-move", "the movers are booked").await;
+                said(
+                    room,
+                    &sid,
+                    "rhythm:oil-the-chain",
+                    "oiled the chain on 2026-05-31",
+                )
+                .await;
+            }
+            5 => {
+                said(room, &sid, "event:goodbye-party", "went great, though we ran out of chairs for ten minutes; everybody who said yes came except Kyle; Wendy brought Bebe; Butters's partner is called Marjorine").await;
+                said(
+                    room,
+                    &sid,
+                    "rhythm:back-up-the-laptop",
+                    "backed up the laptop on 2026-06-14",
+                )
+                .await;
+            }
+            6 => {
+                said(
+                    room,
+                    &sid,
+                    "thing:road-bike",
+                    "sold the road bike to Stan; it is Stan's now",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "project:the-move",
+                    "the vet certificate is done",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "thing:fat-bike",
+                    "rode 20 km three times this month",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "rode 61 km twice this month",
+                )
+                .await;
+            }
+            7 => {
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "went into Costington's again: Kenny put new tyres on it",
+                )
+                .await;
+                said(room, &sid, "project:the-move", "the insurance is done").await;
+                said(
+                    room,
+                    &sid,
+                    "rhythm:call-randy",
+                    "called Randy on 2026-09-27",
+                )
+                .await;
+            }
+            _ => {
+                said(
+                    room,
+                    &sid,
+                    "project:the-move",
+                    "we moved; everything is done except the utilities",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "thing:gravel-bike",
+                    "rode 105 km once this month, in Quahog",
+                )
+                .await;
+                said(
+                    room,
+                    &sid,
+                    "rhythm:back-up-the-laptop",
+                    "backed up the laptop on 2026-10-31",
+                )
+                .await;
+            }
+        }
+        // The same dated beat the worked year leaves, so a session is still
+        // found by the day it stated.
+        journalled(
+            room,
+            &sid,
+            &format!("{day}: a sitting of the year, written down as sentences."),
+            "the year in prose",
+        )
+        .await;
+    }
+}
+
+/// **The cold sitting of the prose year**: the same fifteen answers, put on
+/// the things a year written as sentences has.
+async fn december_in_prose(room: &Surface, sid: &str) {
+    for (slot, _, subject, answer) in ANSWERS {
+        answered(room, sid, subject, slot, answer).await;
+    }
+}
+
+/// **A year written entirely in prose still has its answers, and fails the
+/// locks that read what was kept.**
+///
+/// The proving brief's bar is that a year said in sentences FAILS the locks and
+/// a year that reached for the capability passes. The unworked room cannot show
+/// it, because a lock that holds on any written answer passes both the empty
+/// room's opposite and the worked year. Here every fact is a sentence and every
+/// answer is correct, said in words with the sums done by hand.
+///
+/// **What fails** is what reads state the store keeps beyond the answer: the
+/// view that was never made (4), the work of the move that was never filed (12),
+/// the guests who were never recorded as attending (13) and the three visits
+/// that never held a mechanic as a key (14). **What holds** is what reads the
+/// answer's own words (2, 3, 7, 8, 9, 10, 11 and 15), because the sums were
+/// done correctly by hand; that is right for those cases, and the case says so
+/// rather than pretending a prose answer is a wrong one.
+#[tokio::test]
+async fn a_year_written_entirely_in_prose_fails_the_view_the_work_the_guests_and_the_visits() {
+    let (_room, surface) = furnished().await;
+    prose_year(&surface).await;
+    let sid = sitting(&surface, "2026-12-01").await;
+    december_in_prose(&surface, &sid).await;
+    let outcomes = judge_all(&surface, &[]).await;
+    let mut failed: Vec<&str> = outcomes
+        .iter()
+        .filter(|outcome| !outcome.held)
+        .map(|outcome| outcome.name.as_str())
+        .collect();
+    failed.sort_unstable();
+    let expected = [
+        "no view the year made",
+        "the work of the move is not done except",
+        "the guests recorded",
+        "of the February visit",
+        "of the September visit",
+        "of the May visit",
+    ];
+    assert_eq!(
+        failed.len(),
+        expected.len(),
+        "exactly the locks that read kept state fail on a year said in prose: {}",
+        saying(&outcomes),
+    );
+    for piece in expected {
+        assert!(
+            failed.iter().any(|name| name.contains(piece)),
+            "the lock saying {piece:?} held on a year with no view, no work, no guests and no \
+             keyed visits: {}",
+            saying(&outcomes),
+        );
+    }
 }
