@@ -781,3 +781,259 @@ async fn a_note_on_the_machine_itself_stands_in_for_neither_the_drive_nor_the_do
         vec![true, true, false, true]
     );
 }
+
+// ── The fair's ticket deadline, December ────────────────────────────────────
+//
+// August's sitting is told the ticket deadline in passing, by a person. The
+// deadline belongs to the fair. Two shipped types hold a day a thing is owed
+// by, `runs-out` under `runs_out` and `decide-by` under `decide_by`, and the
+// room's text allows either on the fair. The lock finds the day by its value,
+// across every kind, and must still fail a day filed anywhere else.
+
+const FAIR_DEADLINE_FRAGMENT: &str = "the fair's ticket deadline is either not on record";
+
+/// **The deadline the way August's sitting could file it**: a claim on
+/// `subject` carrying `fields`.
+async fn file_the_ticket_deadline(
+    surface: &Surface,
+    sid: &str,
+    subject: &str,
+    fields: serde_json::Value,
+) {
+    let answer = as_the_occupant(
+        surface,
+        sid,
+        "capture",
+        json!({
+            "subject": subject,
+            "content": "Tickets for the fair stop selling on 10 October.",
+            "provenance": "testimony",
+            "fields": fields,
+        }),
+    )
+    .await;
+    assert!(
+        !answer.contains("\"status\":\"blocked\""),
+        "the sitting's own write was refused: {answer}"
+    );
+}
+
+#[tokio::test]
+async fn the_fair_deadline_lock_holds_when_the_day_is_under_runs_out_on_the_fair() {
+    let (_room, surface, sid) = furnished().await;
+    file_the_ticket_deadline(
+        &surface,
+        &sid,
+        "event:wagstaff-fair",
+        json!({"runs_out": "2026-10-10"}),
+    )
+    .await;
+    let outcome = held(&surface, &lock_named(FAIR_DEADLINE_FRAGMENT)).await;
+    assert!(outcome.held, "{}", outcome.saying);
+}
+
+#[tokio::test]
+async fn the_fair_deadline_lock_holds_when_the_day_is_under_decide_by_on_the_fair() {
+    let (_room, surface, sid) = furnished().await;
+    file_the_ticket_deadline(
+        &surface,
+        &sid,
+        "event:wagstaff-fair",
+        json!({"decide_by": "2026-10-10"}),
+    )
+    .await;
+    let outcome = held(&surface, &lock_named(FAIR_DEADLINE_FRAGMENT)).await;
+    assert!(outcome.held, "{}", outcome.saying);
+}
+
+#[tokio::test]
+async fn the_fair_deadline_lock_fails_when_the_day_is_only_in_prose() {
+    let (_room, surface, sid) = furnished().await;
+    file_the_ticket_deadline(&surface, &sid, "event:wagstaff-fair", json!({})).await;
+    let outcome = held(&surface, &lock_named(FAIR_DEADLINE_FRAGMENT)).await;
+    assert!(!outcome.held, "a year written in prose must not hold");
+}
+
+#[tokio::test]
+async fn the_fair_deadline_lock_fails_when_the_day_is_under_a_key_no_shipped_type_holds() {
+    let (_room, surface, sid) = furnished().await;
+    file_the_ticket_deadline(
+        &surface,
+        &sid,
+        "event:wagstaff-fair",
+        json!({"deadline": "2026-10-10"}),
+    )
+    .await;
+    let outcome = held(&surface, &lock_named(FAIR_DEADLINE_FRAGMENT)).await;
+    assert!(!outcome.held, "a key nothing asks for must not hold");
+}
+
+#[tokio::test]
+async fn the_fair_deadline_lock_fails_when_the_day_is_filed_under_louise_instead() {
+    let (_room, surface, sid) = furnished().await;
+    file_the_ticket_deadline(
+        &surface,
+        &sid,
+        "person:louise",
+        json!({"runs_out": "2026-10-10"}),
+    )
+    .await;
+    let outcome = held(&surface, &lock_named(FAIR_DEADLINE_FRAGMENT)).await;
+    assert!(!outcome.held, "the day on Louise alone must not hold");
+}
+
+#[tokio::test]
+async fn the_fair_deadline_lock_fails_when_the_day_is_on_the_fair_and_on_louise() {
+    let (_room, surface, sid) = furnished().await;
+    for subject in ["event:wagstaff-fair", "person:louise"] {
+        file_the_ticket_deadline(&surface, &sid, subject, json!({"decide_by": "2026-10-10"})).await;
+    }
+    let outcome = held(&surface, &lock_named(FAIR_DEADLINE_FRAGMENT)).await;
+    assert!(!outcome.held, "Louise reading as owed must not hold");
+}
+
+// ── The piano's schedule, later December ────────────────────────────────────
+//
+// The operator asks for the reminder to stop outright. The room's own comments
+// name archiving the loop as the move that does it, and a loop whose cadence
+// was taken off does it as well. An archived loop still reads its cadence
+// through its own handle, so the lock asks which loops are still scheduled and
+// finds the piano among them only when it still is.
+
+const PIANO_CADENCE_FRAGMENT: &str = "the piano's loop still carries a cadence";
+
+/// **The cadence taken off the piano's loop**, the way a sitting that clears
+/// the schedule rather than dropping the loop would write it: the record the
+/// room furnished holds the cadence, so that is the record edited.
+async fn clear_the_piano_cadence(surface: &Surface, sid: &str) {
+    let answer = as_the_occupant(
+        surface,
+        sid,
+        "update_fact",
+        json!({
+            "address": "rhythm:sit-at-the-piano#f1",
+            "clear_fields": ["cadence_days", "advances_from", "counts_from"],
+        }),
+    )
+    .await;
+    assert!(
+        !answer.contains("\"status\":\"blocked\""),
+        "the sitting's own write was refused: {answer}"
+    );
+}
+
+#[tokio::test]
+async fn the_piano_cadence_lock_holds_when_the_loop_is_archived() {
+    let (_room, surface, sid) = furnished().await;
+    drop_the_piano_loop(&surface, &sid).await;
+    let outcome = held(&surface, &lock_named(PIANO_CADENCE_FRAGMENT)).await;
+    assert!(outcome.held, "{}", outcome.saying);
+}
+
+#[tokio::test]
+async fn the_piano_cadence_lock_holds_when_the_cadence_is_cleared() {
+    let (_room, surface, sid) = furnished().await;
+    clear_the_piano_cadence(&surface, &sid).await;
+    let outcome = held(&surface, &lock_named(PIANO_CADENCE_FRAGMENT)).await;
+    assert!(outcome.held, "{}", outcome.saying);
+}
+
+#[tokio::test]
+async fn the_piano_cadence_lock_fails_when_the_loop_is_only_checked_in() {
+    let (_room, surface, sid) = furnished().await;
+    write_piano_check_in(
+        &surface,
+        &sid,
+        "2026-12-05",
+        "played for about an hour at Tina's party on 2026-12-05",
+    )
+    .await;
+    let outcome = held(&surface, &lock_named(PIANO_CADENCE_FRAGMENT)).await;
+    assert!(
+        !outcome.held,
+        "a loop that is only postponed still carries its schedule"
+    );
+}
+
+// ── What only works with the laptop, October ────────────────────────────────
+//
+// "Leave alone anything that only goes with the laptop." The Theta lock walks
+// in from the machine, and a thing can point at the laptop without going only
+// with it: the drive's April claim says the laptop cannot read it, which is a
+// reference to the laptop and the opposite of a dependency. What only goes with
+// the laptop is what the walk from Theta reaches and the walk from Omicron
+// does not.
+
+/// **The year as the baseline run wrote it**: April's drive claim refs the
+/// laptop because the laptop cannot read the drive, June's dock is an edge to
+/// the laptop, and October's note on the drive carries `for` the server.
+async fn the_year_with_a_drive_the_laptop_cannot_read(surface: &Surface, sid: &str) {
+    for (handle, name) in [
+        ("backup-drive", "The Backup Drive"),
+        ("laptop-dock", "The Laptop Dock"),
+    ] {
+        let added = as_the_occupant(
+            surface,
+            sid,
+            "add_entity",
+            json!({"kind": "thing", "handle": handle, "name": name, "source": "the operator"}),
+        )
+        .await;
+        assert!(!added.contains("\"status\":\"blocked\""), "{added}");
+    }
+    note_on(
+        surface,
+        sid,
+        "thing:backup-drive",
+        "2026-04-19",
+        json!({
+            "content": "formatted for the server, so the laptop can't read it",
+            "provenance": "testimony",
+            "refs": ["machine:theta"],
+        }),
+    )
+    .await;
+    note_on(
+        surface,
+        sid,
+        "thing:laptop-dock",
+        "2026-06-14",
+        saying_for(Route::Edge, "machine:theta", "only works with the laptop"),
+    )
+    .await;
+    note_on(
+        surface,
+        sid,
+        "thing:backup-drive",
+        "2026-10-11",
+        json!({
+            "content": "goes with the server when it goes",
+            "provenance": "testimony",
+            "fields": {"for": "machine:omicron"},
+        }),
+    )
+    .await;
+}
+
+/// **A drive that points at the laptop to say the laptop cannot read it is not
+/// something that only goes with the laptop**, so October's note on it, and the
+/// dock left alone, hold all four locks.
+#[tokio::test]
+async fn a_drive_the_laptop_cannot_read_and_the_server_note_hold_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_with_a_drive_the_laptop_cannot_read(&surface, &sid).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![true; 4]);
+}
+
+/// **The dock still convicts when it is linked by a reference.** The link route
+/// is the sitting's choice; a note on a thing that points at the laptop and at
+/// nothing else is a note on something that only goes with the laptop.
+#[tokio::test]
+async fn a_note_on_a_dock_linked_by_reference_reddens_only_the_theta_selection_lock() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Ref, true).await;
+    assert_eq!(
+        the_four_for_locks(&surface).await,
+        vec![true, true, true, false]
+    );
+}

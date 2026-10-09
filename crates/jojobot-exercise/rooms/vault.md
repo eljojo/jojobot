@@ -669,6 +669,14 @@ say     October: the thing that only works with Omicron carries no note from thi
 # goes with the laptop.** June's record is the positive; a note dated today
 # on the dock is a sitting that put a note on everything that points at a
 # machine. The machine's own claims are not read here either.
+#
+# **"Only" is the operator's word, and the check counts it.** What is left
+# alone is what points at the laptop and not at the server, by any link. The
+# drive points at the laptop too: April's claim says the laptop cannot read it,
+# which is a reference to the laptop and no dependency, and October's note says
+# the drive is for the server. That note is the right answer. **The cost,
+# accepted:** a drive noted in October and linked to nothing at the server is
+# convicted here as well as by the lock above, which already convicts it.
 check   what_goes_with_theta_was_left_alone_in_october
 say     October: the thing that only works with Theta was either lost or given a note it was not supposed to get, so the selection was on the key rather than on the machine
 
@@ -857,10 +865,18 @@ window  phase-end
 # under the fair would make Louise read as owed, and the fair as having
 # nothing due at all. Found across every kind by the day itself, never by a
 # handle either lock could have been written to expect.
-recall {"fields": [{"key": "runs_out", "value": "2026-10-10"}]}
+#
+# **Either shipped deadline key is right on the fair.** The ticket deadline is
+# a day the operator is owed by, and two shipped types hold one: `runs-out`
+# under `runs_out` and `decide-by` under `decide_by`. The query asks for the
+# day under no key, so the fair is found whichever one the sitting chose, and
+# the assertion names the two spellings that are right. A day under any other
+# key, or written only in prose, is neither.
+recall {"fields": [{"value": "2026-10-10"}]}
+carries-either "runs_out":"2026-10-10" | "decide_by":"2026-10-10"
 carries event:wagstaff-fair
 lacks   person:louise
-say     December: the fair's ticket deadline is either not on record under the fair or is on record under Louise instead, so what the operator actually owes reads as the wrong thing or as nothing at all
+say     December: the fair's ticket deadline is either not on record under the fair, or not under a key a shipped type holds, or is on record under Louise instead, so what the operator actually owes reads as the wrong thing or as nothing at all
 ```
 
 ## Phase 13 — later in December, what went quiet and why
@@ -952,10 +968,20 @@ say     later December: the kitchen floor was given a decide_by, so a project th
 # away. A loop that was only paused would fall due again on its own before
 # long; one that was actually dropped never will, however far forward the
 # question is asked — so the check is not today, it is next year.
-recall {"subject": "rhythm:sit-at-the-piano"}
-carries "Sit at the piano"
-carries rhythm:sit-at-the-piano
-lacks   "cadence_days"
+#
+# **Two ways of stopping are right, and the lock asks about the schedule rather
+# than about either way.** Archiving the loop is the move the room's earlier
+# comments expect, and an archived loop still shows its cadence on a read of
+# its own handle, so a read of the handle can never see it gone. Taking the
+# cadence off the loop is the other. The question that is the same for both is
+# which loops are still scheduled: an archived loop is out of a kind-scoped
+# read, and a loop with no cadence holds no such key. A loop still carrying its
+# cadence is in the answer, so a postponed one fails. That the piano exists at
+# all is the party lock's business above, which reads it by its own handle; the
+# call loop here is the positive that the read finds scheduled loops.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days"}]}
+carries "parent":"person:gayle"
+lacks   rhythm:sit-at-the-piano
 say     later December: the piano's loop still carries a cadence, so asking jojobot to stop reminding altogether left the schedule standing rather than dropping it
 
 # The positive control this needs: the CALL loop, never cleared and never

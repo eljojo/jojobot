@@ -282,8 +282,9 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     NegativeControl {
         room: expectations::VAULT_ROOM,
         lock: "Phase 12 — December: the fair's ticket deadline is either not on record under \
-               the fair or is on record under Louise instead, so what the operator actually \
-               owes reads as the wrong thing or as nothing at all",
+               the fair, or not under a key a shipped type holds, or is on record under \
+               Louise instead, so what the operator actually owes reads as the wrong thing or \
+               as nothing at all",
         file: "tests/vault_room.rs",
         function: "the_ticket_deadline_lock_reds_when_filed_on_the_wrong_subject",
         strength: Strength::Discriminating,

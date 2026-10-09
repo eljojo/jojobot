@@ -897,6 +897,17 @@ fn collect_values(value: &Value, into: &mut Vec<String>) {
 /// read as a note on what points at it. This reads the reached things only,
 /// which is the one thing the lock vocabulary cannot say.
 async fn days_on_what_points_at(seen: &Observed<'_>, machine: &str) -> Result<Vec<String>, String> {
+    let reached = what_points_at(seen, machine).await?;
+    Ok(reached.into_iter().flat_map(|(_, days)| days).collect())
+}
+
+/// **Each thing the inbound walk from a machine reached, with the days its
+/// claims were made.** Over every kind of link: an edge, a mention, a reference
+/// and a key holding the machine's handle all reach the machine's end.
+async fn what_points_at(
+    seen: &Observed<'_>,
+    machine: &str,
+) -> Result<Vec<(String, Vec<String>)>, String> {
     let read = seen
         .room
         .call(
@@ -908,18 +919,44 @@ async fn days_on_what_points_at(seen: &Observed<'_>, machine: &str) -> Result<Ve
     let Some(root) = parsed["objects"].as_array().and_then(|found| found.first()) else {
         return Err(format!("{machine} did not come back at all: {read}"));
     };
-    let days = root["connected"]
+    let reached = root["connected"]
         .as_array()
         .map(|reached| {
             reached
                 .iter()
-                .filter_map(|one| one["facts"].as_array())
-                .flatten()
-                .filter_map(|fact| fact["recorded_at"].as_str().map(str::to_string))
+                .filter_map(|one| {
+                    let id = one["id"].as_str()?.to_string();
+                    let days = one["facts"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|fact| fact["recorded_at"].as_str().map(str::to_string))
+                        .collect();
+                    Some((id, days))
+                })
                 .collect()
         })
         .unwrap_or_default();
-    Ok(days)
+    Ok(reached)
+}
+
+/// **The days on what points at `machine` and not at `other`** — what only goes
+/// with that machine. A thing can point at a machine without going with it: a
+/// claim that the laptop cannot read the drive is a reference to the laptop, and
+/// the same drive is for the server. Whatever the link, what the other machine
+/// also reaches is not only this machine's.
+async fn days_on_what_points_only_at(
+    seen: &Observed<'_>,
+    machine: &str,
+    other: &str,
+) -> Result<Vec<String>, String> {
+    let also = what_points_at(seen, other).await?;
+    let only = what_points_at(seen, machine).await?;
+    Ok(only
+        .into_iter()
+        .filter(|(id, _)| !also.iter().any(|(also_id, _)| also_id == id))
+        .flat_map(|(_, days)| days)
+        .collect())
 }
 
 /// October's day, and the days April and June filed what is for each machine.
@@ -944,6 +981,18 @@ async fn what_goes_with_omicron_carries_octobers_note(seen: &Observed<'_>) -> Re
 
 /// **What only works with Theta is still there and carries no note from
 /// October**, so the sitting selected on the machine and not on the key.
+///
+/// "Only" is the operator's word: leave alone what goes with the laptop and
+/// with nothing else. A thing that points at Theta and also at Omicron is not
+/// that, whatever the links say. The drive is the case: April's claim refers to
+/// the laptop because the laptop cannot read it, and October's note says the
+/// drive is for the server. The note on it is the right answer, and a lock that
+/// counted every thing the walk from Theta reaches convicted it.
+///
+/// **The cost, accepted:** a drive noted in October and linked to nothing at
+/// Omicron is convicted here as well as by the Omicron lock, which already
+/// convicts it. The positive half stays unrestricted: the dock is reached from
+/// Theta by whatever route the sitting chose.
 async fn what_goes_with_theta_was_left_alone_in_october(seen: &Observed<'_>) -> Result<(), String> {
     let days = days_on_what_points_at(seen, "machine:theta").await?;
     // The positive the absence rests on: a lost link would pass the second.
@@ -953,9 +1002,11 @@ async fn what_goes_with_theta_was_left_alone_in_october(seen: &Observed<'_>) -> 
              the days on what does: {days:?}"
         ));
     }
-    match days.iter().any(|day| day == OCTOBER_ELEVENTH) {
+    let only = days_on_what_points_only_at(seen, "machine:theta", "machine:omicron").await?;
+    match only.iter().any(|day| day == OCTOBER_ELEVENTH) {
         true => Err(format!(
-            "something that points at machine:theta carries a claim made on {OCTOBER_ELEVENTH}"
+            "something that points at machine:theta and not at machine:omicron carries a claim \
+             made on {OCTOBER_ELEVENTH}"
         )),
         false => Ok(()),
     }
