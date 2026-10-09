@@ -105,6 +105,17 @@ pub(crate) fn what_describes_its_claim(keys: &[String]) -> String {
     )
 }
 
+/// **Where each key of one record went**: see [`Jojobot::reach_of`].
+#[derive(Debug, Default)]
+pub(crate) struct Reach {
+    /// Keys that describe their record and never fold onto the thing.
+    pub(crate) describing: Vec<String>,
+    /// Keys written as the record's own fields, which the store holds off the thing.
+    pub(crate) kept: Vec<String>,
+    /// Keys that reached the thing.
+    pub(crate) reached: Vec<String>,
+}
+
 impl Jojobot {
     /// **What this write should do to the stored due moment.**
     /// [`attention::DueMove::Unchanged`] covers both "this write cannot move
@@ -231,19 +242,20 @@ impl Jojobot {
     ///
     /// `own_sent` is the keys this call sent as the claim's own fields, so a key
     /// already in the setting bag, or one a call did not send, is never hinted.
-    pub(crate) fn note_reach_and_hint(
+    pub(crate) async fn note_reach_and_hint(
         &self,
         body: &mut serde_json::Value,
         fact: &Fact,
         own_sent: &[String],
     ) {
-        let describing = crate::seed::describing_keys();
-        let (stayed, reached): (Vec<String>, Vec<String>) = fact
-            .fields
-            .keys()
+        let reach = self.reach_of(fact).await;
+        let stayed: Vec<String> = reach
+            .describing
+            .iter()
+            .chain(&reach.kept)
             .cloned()
-            .partition(|key| describing.contains(key));
-        crate::answer::note_reach(body, reached, stayed);
+            .collect();
+        crate::answer::note_reach(body, reach.reached, stayed);
         let read = self.keys_read_off_a_thing(&fact.subject);
         let to_move: Vec<&String> = own_sent.iter().filter(|key| read.contains(*key)).collect();
         if to_move.is_empty() {
@@ -265,6 +277,72 @@ impl Jojobot {
                 if to_move.len() == 1 { "it" } else { "them" },
             ),
         );
+    }
+
+    /// **What a thing holds right now**, read before a record is taken off it so
+    /// [`Jojobot::note_what_left`] can say what the taking-off cost. `None` when
+    /// the store could not answer: a receipt then says nothing about it, because
+    /// an empty list would claim that no key left.
+    pub(crate) async fn held_by(
+        &self,
+        subject: &EntityId,
+    ) -> Option<std::collections::BTreeMap<String, String>> {
+        self.memory.fields(subject).await.ok()
+    }
+
+    /// **The keys the thing held before a record was archived or retracted and
+    /// does not hold now.** A key the record shared with an earlier one goes back
+    /// to that record's value and has not left; a key the record alone set is
+    /// gone; a key that stayed on the record was never on the thing.
+    pub(crate) async fn note_what_left(
+        &self,
+        body: &mut serde_json::Value,
+        subject: &EntityId,
+        before: Option<std::collections::BTreeMap<String, String>>,
+    ) {
+        let (Some(before), Some(after)) = (before, self.held_by(subject).await) else {
+            return;
+        };
+        let left = before
+            .keys()
+            .filter(|key| !after.contains_key(*key))
+            .cloned()
+            .collect();
+        crate::answer::note_left_the_thing(body, left);
+    }
+
+    /// **Where each key of a record went**, from what the store kept rather than a
+    /// list of names: the keys that only describe the record, the keys the store
+    /// holds off the thing because they were written as its own fields, and the
+    /// keys that reached.
+    ///
+    /// A store that cannot answer leaves the second group empty and says so in the
+    /// log: the write has landed (rule 130), and a receipt that failed the call
+    /// would report a landed write as lost.
+    pub(crate) async fn reach_of(&self, fact: &Fact) -> Reach {
+        let describing = crate::seed::describing_keys();
+        let kept_off = match self.memory.keys_kept_off_the_thing(&fact.address()).await {
+            Ok(kept) => kept,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    address = %fact.address(),
+                    "the keys held off the thing could not be read for a receipt",
+                );
+                Default::default()
+            }
+        };
+        let mut reach = Reach::default();
+        for key in fact.fields.keys() {
+            if describing.contains(key) {
+                reach.describing.push(key.clone());
+            } else if kept_off.contains(key) {
+                reach.kept.push(key.clone());
+            } else {
+                reach.reached.push(key.clone());
+            }
+        }
+        reach
     }
 
     /// **The keys a thing of this subject's kind, or a carrier, reads off the

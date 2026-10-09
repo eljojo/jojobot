@@ -819,6 +819,14 @@ impl super::Memory for Mentioning {
         }
         Ok(chain)
     }
+    /// **Straight through**: the keys of a record are names, and no mention is
+    /// rendered in one.
+    async fn keys_kept_off_the_thing(
+        &self,
+        address: &super::FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, super::MemoryError> {
+        self.inner.keys_kept_off_the_thing(address).await
+    }
     /// **Every chain renders exactly as [`Self::claim_history`] renders one**,
     /// so the batched read and the single read cannot disagree about what a
     /// mention in an earlier wording says.
@@ -1187,6 +1195,19 @@ mod tests {
             vec![(4..20, EntityId("person:milhouse".into()))],
             "found: {spans:?}, in: {served:?}",
         );
+    }
+
+    /// The mention layer forwards which keys of a record the store holds off the
+    /// thing.
+    #[tokio::test]
+    async fn the_mention_layer_forwards_the_keys_a_switched_store_holds_off_a_thing() {
+        let store = Mentioning::new(std::sync::Arc::new(
+            crate::memory::testing::InMemoryMemory::booted().with_own_fields_staying(),
+        ));
+        crate::memory::testing::contract::own_fields_stay_while_settings_and_computed_keys_reach(
+            &store,
+        )
+        .await;
     }
 
     /// **The stored mark is jojobot's, so a caller's text may not carry one.**

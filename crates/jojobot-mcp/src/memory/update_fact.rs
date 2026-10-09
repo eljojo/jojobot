@@ -93,7 +93,8 @@ pub struct UpdateFactArgs {
     /// sentence about what is not so where a claim about what is true belongs. A
     /// negative is still an ordinary fact when it is not correcting anything: "the guest
     /// did not attend" stands on its own, written with `capture` like any other
-    /// claim.
+    /// claim. The receipt of an archive names the keys the thing lost, under
+    /// `left_the_thing`.
     #[serde(default)]
     pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
@@ -482,6 +483,7 @@ impl Jojobot {
         // key would, without ever naming the key in this patch. Checked
         // against the record's OWN fields — the ones it was captured or last
         // edited with — because that is what would leave the fold.
+        let mut held_before_archive = None;
         if archives_this_write {
             // **A store that cannot be read refuses, it does not pass** — see
             // `retract`'s own copy of this check.
@@ -495,14 +497,18 @@ impl Jojobot {
                 Err(MemoryError::UnknownEntity { .. }) => Vec::new(),
                 Err(e) => return memory_declined("update_fact", e),
             };
-            let refused = carried
-                .iter()
-                .find(|fact| fact.id == address.local)
-                .and_then(|fact| {
-                    jojobot_domain::memory::refuses_role_fields(&address.home, fact.fields.keys())
-                });
+            let record = carried.iter().find(|fact| fact.id == address.local);
+            let refused = record.and_then(|fact| {
+                jojobot_domain::memory::refuses_role_fields(&address.home, fact.fields.keys())
+            });
             if let Some(refused) = refused {
                 return memory_declined("update_fact", refused);
+            }
+            // What the thing holds before the record comes off it, for the
+            // receipt's account of the keys that left.
+            if let Some(record) = record {
+                held_before_archive =
+                    Some((record.subject.clone(), self.held_by(&record.subject).await));
             }
         }
         // **No extra read: the written fact's own `subject` is what
@@ -625,7 +631,10 @@ impl Jojobot {
                     line.push_str(&due);
                 }
                 crate::answer::note_postcondition(&mut body, line);
-                self.note_reach_and_hint(&mut body, &fact, &own_sent);
+                self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
+                if let Some((subject, before)) = held_before_archive {
+                    self.note_what_left(&mut body, &subject, before).await;
+                }
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_status_word(&fact, &mut body).await;
                 let unstarred_this_write =

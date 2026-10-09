@@ -3929,6 +3929,26 @@ impl Memory for DoltMemory {
         Ok(FieldAges { newest, keys })
     }
 
+    async fn keys_kept_off_the_thing(
+        &self,
+        address: &FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((key, _handle)) = self.resolve(&mut tx, &address.home).await? else {
+            let index = self.known(&mut tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, &[], &index),
+            });
+        };
+        Ok(Self::held_classes(&mut tx, &key, &address.local)
+            .await?
+            .into_iter()
+            .filter(|(_, class)| !jojobot_domain::memory::reaches_the_thing(*class))
+            .map(|(key, _)| key)
+            .collect())
+    }
+
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // A miss on the HANDLE is an entity miss, exactly as every other

@@ -6359,6 +6359,26 @@ pub trait Memory: Send + Sync {
     /// record" and "the record says nothing" are different answers.
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError>;
 
+    /// **The keys of one record that stay on it**: each key whose newest write on
+    /// the record was made under a class that does not reach the thing
+    /// ([`reaches_the_thing`]). A receipt reads this to say which keys reached the
+    /// thing and which did not, from the class the store kept rather than from a
+    /// list of key names.
+    ///
+    /// The keys that only DESCRIBE their record are not in it: no class marks
+    /// them, the type that declares them does. A record that holds no key, or
+    /// whose keys all reach, answers with the empty set.
+    ///
+    /// ⚠️ **Defaulted to the empty set so a test double need not answer it, and a
+    /// decorator must forward it:** one that leaves it to the default serves "every
+    /// key reached" in production. The contract holds each decorator to that.
+    async fn keys_kept_off_the_thing(
+        &self,
+        _address: &FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        Ok(std::collections::BTreeSet::new())
+    }
+
     /// **Every write of every claim on one entity, in one round trip** — the
     /// batched sibling of [`claim_history`](Memory::claim_history), keyed by
     /// each claim's local id.

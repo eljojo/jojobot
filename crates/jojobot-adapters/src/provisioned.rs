@@ -480,6 +480,12 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         self.inner.claim_history(address).await
     }
+    async fn keys_kept_off_the_thing(
+        &self,
+        address: &FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        self.inner.keys_kept_off_the_thing(address).await
+    }
     async fn claim_histories(
         &self,
         entity: &EntityId,
@@ -578,6 +584,16 @@ mod tests {
             Provisions::new(vec![Provision::prose(bot.clone(), CORE)]),
         );
         (over, bot)
+    }
+
+    /// The layer forwards which keys of a record the store holds off the thing.
+    #[tokio::test]
+    async fn the_layer_forwards_the_keys_a_switched_store_holds_off_a_thing() {
+        let over = Provisioned::new(
+            InMemoryMemory::booted().with_own_fields_staying(),
+            Provisions::new(vec![]),
+        );
+        jojobot_domain::memory::testing::contract::own_fields_stay_while_settings_and_computed_keys_reach(&over).await;
     }
 
     /// The prose a reader gets for that entity, through the read every reader

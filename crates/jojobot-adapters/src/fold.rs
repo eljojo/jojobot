@@ -309,6 +309,12 @@ impl Memory for Folded {
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         self.inner.claim_history(address).await
     }
+    async fn keys_kept_off_the_thing(
+        &self,
+        address: &FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        self.inner.keys_kept_off_the_thing(address).await
+    }
 
     /// **Straight through**, for the reason [`backing`](Self::backing) is: the
     /// default walks `recall` and `claim_history` one claim at a time over a
@@ -818,6 +824,15 @@ mod tests {
     #[tokio::test]
     async fn fake_satisfies_the_contract_when_folded() {
         contract::run_all(&Folded::new(Arc::new(InMemoryMemory::booted()))).await;
+    }
+
+    /// The fold forwards which keys of a record the store holds off the thing.
+    #[tokio::test]
+    async fn the_fold_forwards_the_keys_a_switched_store_holds_off_a_thing() {
+        contract::own_fields_stay_while_settings_and_computed_keys_reach(&Folded::new(Arc::new(
+            InMemoryMemory::booted().with_own_fields_staying(),
+        )))
+        .await;
     }
 
     /// **A store whose WRITE succeeds and whose immediate re-read fails** —

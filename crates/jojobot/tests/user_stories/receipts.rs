@@ -300,3 +300,49 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
     s.wrap("wrote a mark and an ordinary key").await;
     story.finish().await;
 }
+
+/// **Taking a record back says which keys the thing lost.** Archiving a record
+/// and retracting one both take its writes off the thing. A key the record set
+/// alone is gone, a key an earlier record also set goes back to that record's
+/// value, and the receipt names the first kind in `left_the_thing`, so a bot
+/// does not have to read the thing before and after to learn what it cost.
+#[tokio::test]
+async fn taking_a_record_back_says_which_keys_the_thing_lost() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:the-fern", "The fern").await;
+    let set = |content: &str, sets: serde_json::Value| {
+        let call = json!({
+            "subject": "thing:the-fern", "content": content,
+            "provenance": "testimony", "sets": sets,
+        });
+        let s = &s;
+        async move { s.call("capture", call).await.json() }
+    };
+    set("measured", json!({"height": "short", "leaves": "few"})).await;
+    let second = set("measured again", json!({"height": "tall", "pot": "clay"})).await;
+
+    let archived = s
+        .call(
+            "update_fact",
+            json!({"address": second["address"], "status": "archived"}),
+        )
+        .await
+        .json();
+    assert_eq!(archived["left_the_thing"], json!(["pot"]), "{archived}");
+    let thing = s.recall("thing:the-fern").await.json()["objects"][0].clone();
+    assert_eq!(thing["fields"]["height"], "short", "{thing}");
+    assert!(thing["fields"]["pot"].is_null(), "{thing}");
+
+    let third = set("repotted", json!({"pot": "glass"})).await;
+    let retracted = s
+        .call(
+            "retract",
+            json!({"address": third["address"], "reason": "that was another plant"}),
+        )
+        .await
+        .json();
+    assert_eq!(retracted["left_the_thing"], json!(["pot"]), "{retracted}");
+
+    story.finish().await;
+}

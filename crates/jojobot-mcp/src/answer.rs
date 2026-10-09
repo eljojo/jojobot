@@ -716,6 +716,16 @@ pub(crate) fn falls_due_sentence(
     }
 }
 
+/// **Which keys a thing lost when a record was taken off it.** Always present on
+/// the receipt of an archive or a retraction, empty included, so a caller reads
+/// "no key left" rather than inferring it from a missing field.
+pub(crate) fn note_left_the_thing(body: &mut serde_json::Value, left: Vec<String>) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert("left_the_thing".into(), left.into());
+}
+
 /// **A hint, for the release in which it is useful.** One sentence on the receipt
 /// of the write that earned it, and absent from every other.
 pub(crate) fn note_hint(body: &mut serde_json::Value, hint: String) {

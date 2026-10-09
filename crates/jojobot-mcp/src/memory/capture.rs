@@ -483,32 +483,34 @@ impl Jojobot {
         // receipt that said every key had moved to it told a bot that starred a
         // rule that the star was now the bot's. The set is the shipped
         // `record-labels` type, so a seventh key is placed with no edit here.
-        let describing = crate::seed::describing_keys();
-        let (stayed, reached): (Vec<&String>, Vec<&String>) = fact
-            .fields
-            .keys()
-            .partition(|key| describing.contains(*key));
-        let join = |keys: &[&String]| {
-            keys.iter()
-                .map(|key| key.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
+        // A key written as the record's own field stays on it too once the store
+        // holds own fields off the thing: the store says which, by the class it kept.
+        let reach = self.reach_of(fact).await;
+        let join = |keys: &[String]| keys.join(", ");
         let keys = {
             let mut said = String::new();
-            if !reached.is_empty() {
+            if !reach.reached.is_empty() {
                 said.push_str(&format!(
                     " This record carries {}, so what those keys answer for {} has moved to \
                      it; the records that set them are untouched and still say what they said.",
-                    join(&reached),
+                    join(&reach.reached),
                     fact.subject.as_str(),
                 ));
             }
-            if !stayed.is_empty() {
+            if !reach.describing.is_empty() {
                 said.push_str(&format!(
                     " {} stay on this record only: they describe it and do not fold onto {}. \
                      Read them with facts: true.",
-                    join(&stayed),
+                    join(&reach.describing),
+                    fact.subject.as_str(),
+                ));
+            }
+            if !reach.kept.is_empty() {
+                said.push_str(&format!(
+                    " {} stay on this record only: they were sent as its own fields, and own \
+                     fields do not fold onto {}. Send a key in `sets` to put it on the thing. \
+                     Read them with facts: true.",
+                    join(&reach.kept),
                     fact.subject.as_str(),
                 ));
             }
@@ -1062,7 +1064,7 @@ impl Jojobot {
                     line.push_str(&due);
                 }
                 crate::answer::note_postcondition(&mut body, line);
-                self.note_reach_and_hint(&mut body, &fact, &own_sent);
+                self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_status_word(&fact, &mut body).await;
                 self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);

@@ -287,3 +287,211 @@ async fn the_role_keys_a_claim_writes_reach_the_role_object() {
         "the release left the holder on the role object: {thing:?}"
     );
 }
+
+/// **What a thing holds**, as a reader sees it: the keys of the folded object.
+async fn thing_keys(jojobot: &Jojobot, subject: &str) -> BTreeSet<String> {
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(recall_args(subject)))
+            .await
+            .expect("recall ok"),
+    );
+    body["objects"][0]["fields"]
+        .as_object()
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// **Two records on one thing, the second the one taken back.** The first sets
+/// `size` and `depth`; the second sets `size` again and `tint`, and keeps `colour`
+/// as an own field, which stays on it. Returns the second record's address.
+async fn a_shelf_with_a_record_to_take_back(jojobot: &Jojobot) -> String {
+    ensure(jojobot, "thing:shelf").await;
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            sets: Some(
+                [
+                    ("size".to_string(), "small".to_string()),
+                    ("depth".to_string(), "deep".to_string()),
+                ]
+                .into(),
+            ),
+            ..capture_args("thing:shelf", "measured")
+        },
+    )
+    .await;
+    let second = capture_ok(
+        jojobot,
+        CaptureArgs {
+            sets: Some(
+                [
+                    ("size".to_string(), "large".to_string()),
+                    ("tint".to_string(), "red".to_string()),
+                ]
+                .into(),
+            ),
+            fields: Some([("colour".to_string(), "green".to_string())].into()),
+            ..capture_args("thing:shelf", "measured again and painted")
+        },
+    )
+    .await;
+    let held = thing_keys(jojobot, "thing:shelf").await;
+    assert!(held.contains("tint") && held.contains("size"), "{held:?}");
+    assert!(!held.contains("colour"), "an own field reached: {held:?}");
+    second["address"].as_str().expect("an address").to_string()
+}
+
+/// **Archiving a record names the keys that left the thing.** `tint` was set by
+/// the archived record alone and is gone. `size` goes back to the earlier
+/// record's value and has not left. `colour` stayed on the record and never
+/// reached, so it is not named: a list that named it would say the thing lost
+/// something it never held.
+#[tokio::test]
+async fn archiving_a_record_names_the_keys_that_left_the_thing() {
+    let jojobot = handler_switched();
+    let address = a_shelf_with_a_record_to_take_back(&jojobot).await;
+    let receipt = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&address)
+            }))
+            .await
+            .expect("update ok"),
+    );
+    assert_eq!(
+        receipt["left_the_thing"],
+        serde_json::json!(["tint"]),
+        "{receipt}"
+    );
+    let held = thing_keys(&jojobot, "thing:shelf").await;
+    assert!(!held.contains("tint"), "the key stayed: {held:?}");
+    assert!(
+        held.contains("size"),
+        "the earlier value went too: {held:?}"
+    );
+}
+
+/// **A retraction takes back what the record set, and says which keys left.**
+/// Retracting archives the record, so the thing loses what only that record set
+/// and the receipt names it the same way an archive does.
+#[tokio::test]
+async fn retracting_a_record_takes_back_what_it_set_and_names_the_keys_that_left() {
+    let jojobot = handler_switched();
+    let address = a_shelf_with_a_record_to_take_back(&jojobot).await;
+    let sid = writing_as(&jojobot);
+    let receipt = json_of(
+        &jojobot
+            .retract(Parameters(RetractArgs {
+                address,
+                reason: Some("measured the wrong shelf".into()),
+                recorded_at: None,
+                sid: Some(sid),
+            }))
+            .await
+            .expect("retract ok"),
+    );
+    assert_eq!(
+        receipt["left_the_thing"],
+        serde_json::json!(["tint"]),
+        "{receipt}"
+    );
+    let held = thing_keys(&jojobot, "thing:shelf").await;
+    assert!(!held.contains("tint"), "the key stayed: {held:?}");
+}
+
+/// **Nothing left is said as an empty list**, so a caller reads "no key left" and
+/// does not infer it from a missing field. The record archived here set a key an
+/// earlier record set too, so the thing still holds it.
+#[tokio::test]
+async fn archiving_a_record_that_took_nothing_with_it_says_so() {
+    let jojobot = handler_switched();
+    ensure(&jojobot, "thing:shelf").await;
+    for said in ["measured", "measured again"] {
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("size".to_string(), "small".to_string())].into()),
+                ..capture_args("thing:shelf", said)
+            },
+        )
+        .await;
+    }
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                facts: Some(true),
+                ..recall_args("thing:shelf")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let address = body["objects"][0]["facts"]
+        .as_array()
+        .expect("facts")
+        .iter()
+        .find(|fact| fact["content"] == "measured again")
+        .and_then(|fact| fact["address"].as_str())
+        .expect("the second record")
+        .to_string();
+    let receipt = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&address)
+            }))
+            .await
+            .expect("update ok"),
+    );
+    assert_eq!(
+        receipt["left_the_thing"],
+        serde_json::json!([]),
+        "{receipt}"
+    );
+}
+
+/// **A receipt places each key by the class the store kept.** In a switched store
+/// the key sent as an own field stays on the record and the key sent in `sets`
+/// reaches. The same call on a store that has not switched places both on the
+/// thing, so the list follows the store and not a list of key names.
+#[tokio::test]
+async fn a_receipt_places_each_key_by_the_class_the_store_kept() {
+    for (jojobot, own_field_reaches) in [(handler_switched(), false), (handler(), true)] {
+        ensure(&jojobot, "thing:shelf").await;
+        let receipt = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("size".to_string(), "large".to_string())].into()),
+                fields: Some([("colour".to_string(), "green".to_string())].into()),
+                ..capture_args("thing:shelf", "measured and painted")
+            },
+        )
+        .await;
+        let (reached, stayed) = if own_field_reaches {
+            (serde_json::json!(["colour", "size"]), serde_json::json!([]))
+        } else {
+            (serde_json::json!(["size"]), serde_json::json!(["colour"]))
+        };
+        assert_eq!(receipt["reached_the_thing"], reached, "{receipt}");
+        assert_eq!(receipt["stayed_on_the_record"], stayed, "{receipt}");
+
+        // An edit that changes the own field keeps the key where it was written.
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some([("colour".to_string(), "blue".to_string())].into()),
+                    ..update_args(receipt["address"].as_str().expect("an address"))
+                }))
+                .await
+                .expect("update ok"),
+        );
+        let (reached, stayed) = if own_field_reaches {
+            (serde_json::json!(["colour", "size"]), serde_json::json!([]))
+        } else {
+            (serde_json::json!(["size"]), serde_json::json!(["colour"]))
+        };
+        assert_eq!(edited["reached_the_thing"], reached, "{edited}");
+        assert_eq!(edited["stayed_on_the_record"], stayed, "{edited}");
+    }
+}

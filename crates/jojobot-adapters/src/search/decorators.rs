@@ -299,6 +299,12 @@ impl Memory for IndexedMemory {
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         self.inner.claim_history(address).await
     }
+    async fn keys_kept_off_the_thing(
+        &self,
+        address: &FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        self.inner.keys_kept_off_the_thing(address).await
+    }
 
     /// **Straight through, and it does not touch the index**, for the reason
     /// [`claim_history`](Self::claim_history) does not. A decorator that

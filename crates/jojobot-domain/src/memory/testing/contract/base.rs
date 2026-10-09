@@ -15051,6 +15051,18 @@ pub async fn own_fields_stay_while_settings_and_computed_keys_reach<M: Memory>(s
     let held = store.fields(&thing).await.expect("fields read");
     assert_eq!(held["computed_key"], "c2", "the rewritten key reached");
     assert!(!held.contains_key("own_key"), "{held:?}");
+
+    // **The store says which keys of the record it holds off the thing**, from the
+    // class it kept: the own field, and neither the setting nor the computed key.
+    // Every decorator over a store forwards this read or answers the empty default.
+    assert_eq!(
+        store
+            .keys_kept_off_the_thing(&claim.address())
+            .await
+            .expect("the record's classes read"),
+        named(&["own_key"]),
+        "the keys held off the thing",
+    );
 }
 
 /// **A record sets keys on its thing from a bag of its own, and a key stays in

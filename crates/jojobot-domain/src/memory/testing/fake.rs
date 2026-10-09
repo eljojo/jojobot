@@ -2348,6 +2348,28 @@ impl Memory for InMemoryMemory {
         Ok(mine)
     }
 
+    async fn keys_kept_off_the_thing(
+        &self,
+        address: &FactAddress,
+    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        // The same misses `claim_history` answers, then the classes the record holds.
+        self.claim_history(address).await?;
+        let index = self.known();
+        let former = self.former();
+        let entity = super::resolve_handle(&address.home, &index, &former)
+            .expect("claim_history found the home");
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        Ok(self
+            .held_classes(&key, &address.local)
+            .into_iter()
+            .filter(|(_, class)| !super::super::reaches_the_thing(*class))
+            .map(|(key, _)| key)
+            .collect())
+    }
+
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let index = self.known();
         let former = self.former();

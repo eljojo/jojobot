@@ -52,7 +52,8 @@ impl Jojobot {
                        Nothing is removed: the record keeps its address, its words and its \
                        place and is marked archived, and beside it lands a dated record of \
                        the retraction itself, naming what it takes back and the reason if you \
-                       give one. The two read as one story. recall returns claims of every \
+                       give one. The two read as one story. The receipt names the keys the \
+                       thing lost under left_the_thing. recall returns claims of every \
                        status unless you ask it for one, so a retracted record is out of a \
                        default search, not out of a recall. Nothing edits an archived claim, \
                        a status flip back included, so if you are unsure, capture what is so \
@@ -106,15 +107,19 @@ impl Jojobot {
             Err(MemoryError::UnknownEntity { .. }) => Vec::new(),
             Err(e) => return memory_declined("retract", e),
         };
-        let refused = carried
-            .iter()
-            .find(|fact| fact.id == address.local)
-            .and_then(|fact| {
-                jojobot_domain::memory::refuses_role_fields(&address.home, fact.fields.keys())
-            });
+        let record = carried.iter().find(|fact| fact.id == address.local);
+        let refused = record.and_then(|fact| {
+            jojobot_domain::memory::refuses_role_fields(&address.home, fact.fields.keys())
+        });
         if let Some(refused) = refused {
             return memory_declined("retract", refused);
         }
+        // What the thing holds before the record comes off it, for the receipt's
+        // account of the keys that left.
+        let held_before = match record {
+            Some(record) => Some((record.subject.clone(), self.held_by(&record.subject).await)),
+            None => None,
+        };
 
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
@@ -162,6 +167,9 @@ impl Jojobot {
         });
         if let Some(behind) = fold_behind {
             crate::answer::note_fold_behind(&mut body, behind);
+        }
+        if let Some((subject, before)) = held_before {
+            self.note_what_left(&mut body, &subject, before).await;
         }
         crate::answer::note_postcondition(
             &mut body,

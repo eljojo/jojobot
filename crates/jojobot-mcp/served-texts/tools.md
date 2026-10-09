@@ -3281,6 +3281,7 @@ A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 Nothing is removed: the record keeps its address, its words and its place and is marked archived, and beside it lands a dated record of the retraction itself, naming what it takes back and the reason if you give one.
 The two read as one story.
+The receipt names the keys the thing lost under left_the_thing.
 recall returns claims of every status unless you ask it for one, so a retracted record is out of a default search, not out of a recall.
 Nothing edits an archived claim, a status flip back included, so if you are unsure, capture what is so now instead.
 A refusal is an answer with status: blocked and nothing written.
@@ -4761,7 +4762,8 @@ does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
 sentence about what is not so where a claim about what is true belongs. A
 negative is still an ordinary fact when it is not correcting anything: "the guest
 did not attend" stands on its own, written with `capture` like any other
-claim.
+claim. The receipt of an archive names the keys the thing lost, under
+`left_the_thing`.
 ```
 
 ### Tool `wrap_session`
