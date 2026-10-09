@@ -325,13 +325,19 @@ impl Jojobot {
     /// this, so they share one ledger row: a session taught on one is not
     /// taught again on the other. A type the caller declared teaches nothing,
     /// and nothing is spent unless the note is shown.
+    ///
+    /// **`only_narrowing` says whether the type was the only thing the read
+    /// asked.** The note says no record answers the type, which an answer left
+    /// empty by a second narrowing cannot say, so such a read neither teaches
+    /// nor spends the row — a later plain empty read still teaches.
     pub(crate) async fn note_empty_answers_type(
         &self,
         body: &mut serde_json::Value,
         declared: &DeclaredType,
         caller: Option<&Caller>,
+        only_narrowing: bool,
     ) {
-        if declared.origin != jojobot_domain::memory::types::Origin::Shipped {
+        if !only_narrowing || declared.origin != jojobot_domain::memory::types::Origin::Shipped {
             return;
         }
         if self.first_contact(EMPTY_SHIPPED_TYPE_DOMAIN, caller).await {

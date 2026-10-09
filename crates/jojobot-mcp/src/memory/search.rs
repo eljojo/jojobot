@@ -592,7 +592,7 @@ impl Jojobot {
                        with its gaps named can be judged, and a thing fits_type leaves out looks \
                        exactly like a thing that is not there. An answers_type that matches \
                        nothing carries type_keys, the type's keys, and the first such answer in \
-                       a session under a type the software ships also carries a teaching. kind \
+                       a session under a type the software ships, with nothing else narrowing the search, also carries a teaching. kind \
                        + edge answers a cross-entity question in one \
                        call (\"which people are in X\") by walking typed edges — prose that \
                        merely mentions X is not an answer. No hit comes back bare: a fact \
@@ -868,7 +868,15 @@ impl Jojobot {
                     serde_json::Value::Array(vec![crate::memory::wire::declared_type_json(
                         declared,
                     )]);
-                self.note_empty_answers_type(&mut body, declared, asking.as_ref())
+                let only_narrowing = query.terms().is_none()
+                    && query.kind.is_none()
+                    && query.status.is_none()
+                    && query.provenance.is_none()
+                    && query.standing.is_none()
+                    && query.subject.is_none()
+                    && query.edge.is_none()
+                    && query.fits_type.is_none();
+                self.note_empty_answers_type(&mut body, declared, asking.as_ref(), only_narrowing)
                     .await;
             }
         }

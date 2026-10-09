@@ -1631,7 +1631,7 @@ impl Jojobot {
                        answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
                        answer carries type_keys, the type's keys and what each holds, so the \
                        spelling to write under it is in the empty answer. The first such answer \
-                       in a session, under a type the software ships, also carries a teaching: \
+                       in a session, under a type the software ships and with nothing else narrowing the read, also carries a teaching: \
                        reading again finds nothing, and what you worked out is kept by capturing \
                        under those keys. AN ANSWER STOPS AT THE \
                        ANSWER CEILING, never mid-record: it carries the objects that fit in its \
@@ -2747,7 +2747,14 @@ impl Jojobot {
         // Shared with `search`, so the ledger row is spent once across both.
         if nothing_selected {
             if let Some(declared) = asked_answers.as_ref() {
-                self.note_empty_answers_type(&mut body, declared, caller.as_ref())
+                let select = &query.select;
+                let only_narrowing = select.subject.is_none()
+                    && select.kind.is_none()
+                    && select.parent.is_none()
+                    && select.fields.is_empty()
+                    && select.near.is_none()
+                    && as_of.is_none();
+                self.note_empty_answers_type(&mut body, declared, caller.as_ref(), only_narrowing)
                     .await;
             }
         }

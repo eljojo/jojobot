@@ -484,3 +484,61 @@ async fn an_empty_search_for_a_shipped_type_names_its_keys_and_shares_the_teachi
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn an_empty_read_narrowed_a_second_way_names_the_keys_but_teaches_nothing_and_spends_nothing()
+{
+    // **An answer that is empty for another reason says nothing about the
+    // type.** Records may answer it; the extra narrowing is what left nothing.
+    // The keys are still true and still ride. The teaching claims no record
+    // answers the type, so it waits for a read that asks nothing else, and the
+    // narrowed read leaves its ledger row for that one.
+    let story = Story::begin("bot:gamma").await;
+
+    // ── recall ──────────────────────────────────────────────────────────────
+    let a = story.session().await;
+    let narrowed = a
+        .call(
+            "recall",
+            json!({ "answers_type": "trip", "kind": "person" }),
+        )
+        .await
+        .json();
+    assert!(
+        narrowed["objects"].as_array().is_some_and(Vec::is_empty),
+        "{narrowed}"
+    );
+    assert_eq!(narrowed["type_keys"][0]["name"], "trip", "{narrowed}");
+    assert!(narrowed.get("teaching").is_none(), "{narrowed}");
+    let plain = a
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(
+        plain["teaching"].as_array().map(Vec::len),
+        Some(1),
+        "the narrowed read left the row unspent: {plain}"
+    );
+
+    // ── search: a kind, then words, then nothing else ───────────────────────
+    let b = story.session().await;
+    for narrowing in [
+        json!({ "answers_type": "trip", "kind": "person" }),
+        json!({ "answers_type": "trip", "query": "gorge" }),
+    ] {
+        let narrowed = b.call("search", narrowing).await.json();
+        assert_eq!(narrowed["count"], 0, "{narrowed}");
+        assert_eq!(narrowed["type_keys"][0]["name"], "trip", "{narrowed}");
+        assert!(narrowed.get("teaching").is_none(), "{narrowed}");
+    }
+    let plain = b
+        .call("search", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(
+        plain["teaching"].as_array().map(Vec::len),
+        Some(1),
+        "the narrowed reads left the row unspent: {plain}"
+    );
+    story.finish().await;
+}
