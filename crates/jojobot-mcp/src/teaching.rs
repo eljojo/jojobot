@@ -142,6 +142,17 @@ pub(crate) const PROJECTS_SKILL_TEACHING: &str = "You are writing about a projec
     open question and what you worked out from what was said. It also holds the keys that say \
     where a piece of work stands (`status`) and whose it is (`owner`).";
 
+/// **Quoting the operator — taught once, on a session's first post into their
+/// box.** The one moment a bot is about to say what the operator said.
+pub(crate) const OPERATOR_QUOTE_DOMAIN: &str = "operator-quote";
+
+/// **Ships in the binary, exactly as the other teachings do.**
+pub(crate) const OPERATOR_QUOTE_TEACHING: &str = "To quote the operator, write the address of the \
+    claim that holds their words, `@kind:slug#fN`, and jojobot writes those words into the \
+    message beside the address. The claim must be one they said (testimony); an inference is \
+    refused. Quotation marks you type yourself are left alone and prove nothing. A record's \
+    content is a claim, not a transcript, so a quote by address does not prove verbatim speech.";
+
 /// **The sixth domain — a creation forced past a near-miss refusal.** Named on
 /// the call that makes the deliberate near-duplicate, which is the one moment
 /// the repair can be told before it is needed. It rides a creation that was

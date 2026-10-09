@@ -131,6 +131,9 @@ mod promises;
 mod quarantining;
 #[path = "user_stories/quiet_answers.rs"]
 mod quiet_answers;
+/// A bot that quotes the operator quotes a record.
+#[path = "user_stories/quoting_the_operator.rs"]
+mod quoting_the_operator;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
 #[path = "user_stories/refusal_words.rs"]

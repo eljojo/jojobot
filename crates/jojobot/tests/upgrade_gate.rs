@@ -2353,3 +2353,60 @@ async fn links_field_link_holds(pool: &sqlx::MySqlPool) -> std::collections::BTr
     .map(|(entity, key, target)| (named(entity), key, named(target)))
     .collect()
 }
+
+/// **A message stored before addresses could be quoted reads back as it was
+/// written.** A body that holds `@kind:slug#fN` in a box was written when
+/// `@kind:slug` was all a mention could be, and nothing expands it now: only a
+/// post to the operator made after this build is read for addresses. The row is
+/// put in by hand, as the older build would have stored it, and read through the
+/// served surface after the boot has migrated the older mail onto permanent ids.
+#[tokio::test]
+async fn an_old_message_carrying_the_address_shape_reads_back_as_written() {
+    const WRITTEN: &str = "you said @thing:upgrade-fixture-thing#f1 once";
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before: _,
+        handles: _,
+    } = restore_the_fixture("old-quote").await;
+    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be edited");
+    sqlx::query(
+        "INSERT INTO message (id, mailbox, ordinal, body, subject, sender, sent_at, state,
+             sender_mail_waiting_at_send, posted_by_session)
+         VALUES ('0ldquot', 'assistant', 5, ?, NULL, 'rt1fq4', '2026-10-08T13:55:00Z', 'new', 0,
+             '3zd1aq')",
+    )
+    .bind(WRITTEN)
+    .execute(editing.pool())
+    .await
+    .expect("an older message is stored");
+    editing.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let role_holder = std::fs::read_to_string(format!("{FIXTURE_DIR}/role_holder.txt"))
+        .expect("the recorded role holder")
+        .trim()
+        .to_string();
+    let read = surface
+        .call(
+            "read_message",
+            json!({"message_id": "0ldquot", "sid": role_holder}),
+        )
+        .await;
+    let message: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| panic!("a message: {read}"));
+    assert_eq!(
+        message["body"], WRITTEN,
+        "the older message reads back as it was written: {read}"
+    );
+    surface.finish().await;
+    booted.stop().await;
+    drop(scratch);
+}

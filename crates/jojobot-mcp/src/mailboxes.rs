@@ -19,6 +19,7 @@ pub mod list_sent;
 pub mod mark_processed;
 pub mod post_message;
 pub mod private;
+pub mod quote;
 pub mod read_mailbox;
 pub mod read_message;
 #[cfg(test)]

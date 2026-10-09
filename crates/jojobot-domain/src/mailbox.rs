@@ -29,6 +29,7 @@ use crate::text;
 
 pub mod guard;
 pub mod mention;
+pub mod quote;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

@@ -76,6 +76,15 @@ A check-in's schedule is dated by recorded_at, never by happened_at — happened
 This check-in named both, for different days: to record a turn that happened on an earlier day, send that day as recorded_at.
 ```
 
+### Teaching `OPERATOR_QUOTE_TEACHING`
+
+```text
+To quote the operator, write the address of the claim that holds their words, `@kind:slug#fN`, and jojobot writes those words into the message beside the address.
+The claim must be one they said (testimony); an inference is refused.
+Quotation marks you type yourself are left alone and prove nothing.
+A record's content is a claim, not a transcript, so a quote by address does not prove verbatim speech.
+```
+
 ### Teaching `session_id_teaching` (with a sample sid and session)
 
 ```text

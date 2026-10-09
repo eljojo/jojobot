@@ -352,6 +352,7 @@ impl Jojobot {
         }
         // **A person is addressed by their handle, and only the operator has a
         // box.** Posting to the operator is what opens it the first time.
+        let to_the_operator = addressee.kind() == Some(EntityKind::PERSON);
         let destination = match addressee.kind() {
             Some(EntityKind::PERSON) => match self.operators_box(&addressee).await {
                 Ok(name) => name,
@@ -396,9 +397,21 @@ impl Jojobot {
                 }
             }
         };
+        // **A post to the operator quotes them by address, and the address is
+        // checked.** Expanded here, before the body is measured and before it is
+        // written, so what is stored and what is measured against the ceiling are
+        // the same words.
+        let body = if to_the_operator {
+            match self.quotes_expanded(&args.body).await {
+                Ok(expanded) => expanded,
+                Err(e) => return mailbox_declined(e),
+            }
+        } else {
+            args.body
+        };
         let new = NewMessage {
             mailbox: destination,
-            body: args.body,
+            body,
             subject: args.subject,
             sender: caller.bot.as_str().to_string(),
             // Stamped here, at the edge, for the same reason `capture` stamps a
@@ -464,6 +477,16 @@ impl Jojobot {
                     &mut body,
                     what_a_post_left_standing(&message, collected),
                 );
+                if to_the_operator
+                    && self
+                        .first_contact(crate::teaching::OPERATOR_QUOTE_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(
+                        &mut body,
+                        crate::teaching::OPERATOR_QUOTE_TEACHING,
+                    );
+                }
                 if let Some((mut delivered, delivery)) = delivered {
                     // **The delivery shares the ceiling with the receipt.**
                     // Fitted last, against everything else the answer holds,
