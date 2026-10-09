@@ -11,7 +11,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid refresh-upgrade-fixture carried
+.PHONY: help check narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -252,6 +252,21 @@ paid: build ## Drive a REAL model through a playbook — reaches the network and
 	$(CARGO) run -q --locked -p jojobot-exercise -- \
 		$(if $(PLAYBOOK),--playbook $(PLAYBOOK),) $(if $(MODEL),--model $(MODEL),) \
 		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)
+
+# **Send a paid run's recorded calls to this build, and list every call whose
+# class changed.** No model runs and nothing is billed. It reports and never
+# fails: an intended fix changes a class too, and the deploy's notes accept it by
+# name. It runs after `make rooms` at a deploy cut, against the newest stream of
+# each paid room, kept outside the repository (REPLAY_BASELINES, else the state
+# directory). `JOJOBOT_BIN` names another build as the candidate.
+#
+#     make replay [STREAM=<path>] [ROOM=<name>] [CANDIDATE=<label>]
+STREAM ?=
+CANDIDATE ?=
+replay: build ## Replay a paid run's recorded calls on this build; reports the calls whose class changed
+	$(CARGO) run -q --locked -p jojobot-exercise --bin replay -- \
+		$(if $(STREAM),--stream $(STREAM),) $(if $(ROOM),--room $(ROOM),) \
+		$(if $(CANDIDATE),--candidate $(CANDIDATE),)
 
 # **Refreshing the upgrade fixture is one command.** It builds a binary at a
 # named ref in a DETACHED worktree — this checkout's own HEAD never moves and

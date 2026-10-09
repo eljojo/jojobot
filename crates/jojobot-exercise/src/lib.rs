@@ -35,6 +35,7 @@ pub mod failability;
 pub mod isolate;
 pub mod lock;
 pub mod playbook;
+pub mod replay;
 pub mod room;
 pub mod run;
 pub mod spawn_gate;

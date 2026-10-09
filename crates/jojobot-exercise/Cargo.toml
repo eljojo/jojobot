@@ -140,6 +140,10 @@ name = "repair_room"
 required-features = ["rooms"]
 
 [[test]]
+name = "replay_room"
+required-features = ["rooms"]
+
+[[test]]
 name = "room"
 required-features = ["rooms"]
 
