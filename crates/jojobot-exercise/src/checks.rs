@@ -146,6 +146,17 @@
 //!   a merge moves them to the survivor, so the same record is the evidence
 //!   for either route; the placeholder's own handle is the occupant's and no
 //!   lock can spell it.
+//! * **`the_shed_holds_a_status_the_instance_can_read`**,
+//!   **`the_kitchen_floors_history_carries_a_first_status_the_instance_can_read`**
+//!   and
+//!   **`the_kitchen_floors_history_carries_a_move_to_the_working_status_the_instance_can_read`**
+//!   — accept a status word that is a shipped word, or the operator's own word
+//!   once the instance BINDS it. A word binds by `columns` on `topic:instance`,
+//!   by `columns` on the project, or by a `status_word/<word>` mapping on
+//!   `topic:instance` to a shipped word. The status itself is one answer and
+//!   the binding is three other records; an assertion is a substring of one
+//!   answer, and it cannot say that a word is held on one record AND listed on
+//!   another, or that one of three routes holds.
 //! * **`question_*_rule_answer`** — inspect only live answer records on the
 //!   named work item. The lock vocabulary matches substrings in timestamps
 //!   and cannot distinguish a whole rule number in content or details.
@@ -173,7 +184,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 50] = [
+pub const CHECKS: [Hatch; 53] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -377,6 +388,29 @@ pub const CHECKS: [Hatch; 50] = [
                 Box::pin(the_my_bikes_view_returns_exactly_the_bikes_still_owned(
                     seen,
                 ))
+            })
+        },
+    ),
+    ("the_shed_holds_a_status_the_instance_can_read", || {
+        checked(|seen| Box::pin(the_shed_holds_a_status_the_instance_can_read(seen)))
+    }),
+    (
+        "the_kitchen_floors_history_carries_a_first_status_the_instance_can_read",
+        || {
+            checked(|seen| {
+                Box::pin(
+                    the_kitchen_floors_history_carries_a_first_status_the_instance_can_read(seen),
+                )
+            })
+        },
+    ),
+    (
+        "the_kitchen_floors_history_carries_a_move_to_the_working_status_the_instance_can_read",
+        || {
+            checked(|seen| {
+                Box::pin(
+                    the_kitchen_floors_history_carries_a_move_to_the_working_status_the_instance_can_read(seen),
+                )
             })
         },
     ),
@@ -3390,6 +3424,184 @@ fn ids_of(answer: &Value) -> Vec<String> {
         .unwrap_or_default();
     ids.sort();
     ids
+}
+
+/// **The words a status accepts without the instance saying anything**, the
+/// shipped five. A copy of the build's list: this crate reads the room through
+/// its surface and does not link the domain.
+const SHIPPED_STATUSES: [&str; 5] = ["someday", "next", "now", "waiting", "done"];
+
+/// **The prefix of the keys that map the operator's word onto a shipped one.**
+/// Pinned by the vault locks suite, which binds a word through it.
+const STATUS_WORD: &str = "status_word/";
+
+/// A comma list as its trimmed, non-empty items.
+fn listed(fields: &Value, key: &str) -> Vec<String> {
+    fields[key]
+        .as_str()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// **The folded fields of one thing, or the plain statement that it could not
+/// be read** — never an empty map standing in for a thing nobody read.
+async fn folded_fields(seen: &Observed<'_>, handle: &str) -> Result<Value, String> {
+    let read = seen.room.call("recall", json!({"subject": handle})).await;
+    if read.contains("\"status\":\"blocked\"") {
+        return Err(format!(
+            "{handle} is not readable, so nothing was measured: {read}"
+        ));
+    }
+    let parsed = read_json(&read)?;
+    Ok(parsed["objects"][0]["fields"].clone())
+}
+
+/// **Whether the instance binds this word on this project's board**, by any of
+/// the three ways the server accepts: `columns` on the instance, `columns` on
+/// the project that governs the board (the project itself, or the project it is
+/// filed under), or a `status_word/<word>` mapping on the instance to a
+/// shipped word.
+async fn word_is_bound(seen: &Observed<'_>, project: &str, word: &str) -> Result<bool, String> {
+    // An instance record nobody wrote binds nothing; it is not a failure to read.
+    let instance = folded_fields(seen, "topic:instance")
+        .await
+        .unwrap_or(Value::Null);
+    if listed(&instance, "columns").iter().any(|held| held == word) {
+        return Ok(true);
+    }
+    let mapped = instance[format!("{STATUS_WORD}{word}")]
+        .as_str()
+        .unwrap_or("")
+        .trim();
+    if SHIPPED_STATUSES.contains(&mapped) {
+        return Ok(true);
+    }
+    let projects = read_json(&seen.room.call("recall", json!({"kind": "project"})).await)?;
+    for governing in ids_of(&projects) {
+        let governs = governing == project
+            || ids_of(&read_json(
+                &seen.room.call("recall", json!({"parent": governing})).await,
+            )?)
+            .iter()
+            .any(|child| child == project);
+        if governs
+            && listed(&folded_fields(seen, &governing).await?, "columns")
+                .iter()
+                .any(|held| held == word)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// **The statuses a project was written with**: the folded one, or every write
+/// of the key when the project moves and only its history keeps them all.
+async fn statuses_written(
+    seen: &Observed<'_>,
+    project: &str,
+    whole_history: bool,
+) -> Result<Vec<String>, String> {
+    if !whole_history {
+        let fields = folded_fields(seen, project).await?;
+        return Ok(fields["status"]
+            .as_str()
+            .map(str::to_string)
+            .into_iter()
+            .collect());
+    }
+    let read = seen
+        .room
+        .call("recall", json!({"subject": project, "history": "status"}))
+        .await;
+    if read.contains("\"status\":\"blocked\"") {
+        return Err(format!(
+            "{project} is not readable, so nothing was measured: {read}"
+        ));
+    }
+    let parsed = read_json(&read)?;
+    Ok(parsed["objects"][0]["history"]["writes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|write| write["value"].as_str().map(str::to_string))
+        .collect())
+}
+
+/// **A status the instance can read: a shipped word the lock accepts, or the
+/// operator's own word once it is bound.** A bare word lands and counts as not
+/// finished, so a word nothing binds is not a status anything downstream can
+/// act on.
+async fn holds_a_status_the_instance_can_read(
+    seen: &Observed<'_>,
+    project: &str,
+    whole_history: bool,
+    shipped: &[&str],
+    operators: &[&str],
+) -> Result<(), String> {
+    let written = statuses_written(seen, project, whole_history).await?;
+    let mut unbound = Vec::new();
+    for word in &written {
+        if shipped.contains(&word.as_str()) {
+            return Ok(());
+        }
+        if operators.contains(&word.as_str()) {
+            if word_is_bound(seen, project, word).await? {
+                return Ok(());
+            }
+            unbound.push(word.clone());
+        }
+    }
+    match (written.is_empty(), unbound.is_empty()) {
+        (true, _) => Err(format!("{project} was never written a status")),
+        (false, false) => Err(format!(
+            "{project} was written {unbound:?}, and no `columns` on the instance or the project \
+             and no `{STATUS_WORD}` mapping binds it, so it landed bare"
+        )),
+        (false, true) => Err(format!(
+            "{project} was written {written:?}, none of {shipped:?} or the operator's {operators:?}"
+        )),
+    }
+}
+
+/// **January's shed: a first status, folded.**
+async fn the_shed_holds_a_status_the_instance_can_read(seen: &Observed<'_>) -> Result<(), String> {
+    holds_a_status_the_instance_can_read(
+        seen,
+        "project:the-shed",
+        false,
+        &["someday", "next"],
+        &["considering"],
+    )
+    .await
+}
+
+/// **January's kitchen floor: a first status, asked of the key's own history**
+/// because the floor moves on afterwards.
+async fn the_kitchen_floors_history_carries_a_first_status_the_instance_can_read(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    holds_a_status_the_instance_can_read(
+        seen,
+        "project:kitchen-floor",
+        true,
+        &["someday", "next"],
+        &["considering"],
+    )
+    .await
+}
+
+/// **April's kitchen floor: the move to the working status**, from the same
+/// history.
+async fn the_kitchen_floors_history_carries_a_move_to_the_working_status_the_instance_can_read(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    holds_a_status_the_instance_can_read(seen, "project:kitchen-floor", true, &["now"], &["doing"])
+        .await
 }
 
 /// **"My bikes" is a view the store holds, and run today it returns the two

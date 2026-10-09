@@ -118,6 +118,33 @@ async fn write_status(surface: &Surface, sid: &str, subject: &str, status: &str)
     .await
 }
 
+/// **A write to the instance's own record**, where `columns` and the
+/// `status_word/` mappings live.
+async fn write_instance(surface: &Surface, sid: &str, fields: serde_json::Value) {
+    // The furnished room holds no instance record yet. A record already there
+    // refuses the second add, which is the state wanted either way.
+    as_the_occupant(
+        surface,
+        sid,
+        "add_entity",
+        json!({"kind": "topic", "handle": "instance", "name": "Instance", "source": "the operator"}),
+    )
+    .await;
+    let written = as_the_occupant(
+        surface,
+        sid,
+        "capture",
+        json!({
+            "subject": "topic:instance",
+            "content": "how this instance words its statuses",
+            "provenance": "testimony",
+            "fields": fields,
+        }),
+    )
+    .await;
+    assert!(!written.contains("\"status\":\"blocked\""), "{written}");
+}
+
 /// **The year's status writes**: both projects start at `first`, the floor
 /// moves to `working` in April and to `done` in July.
 async fn the_year_of_the_statuses(surface: &Surface, sid: &str, first: &str, working: &str) {
@@ -232,12 +259,14 @@ async fn the_status_locks_hold_when_the_operators_words_are_kept_as_columns() {
     assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
 }
 
-/// **The operator's word as free text on a project that refuses it.** The
-/// store refuses the write, so nothing holds the status afterwards. The refusal
-/// is asserted first, so the red below is about a status that never landed and
-/// not about a write that was never made.
+/// **The operator's word, written bare.** The status lands, and the receipt
+/// says the word is not bound. Nothing carries the word across: no `columns`
+/// on the instance or the project, and no `status_word/` mapping. The locks
+/// measure whether the model BOUND the word, so all three redden. The landing is
+/// asserted first, so the red is about a word that landed unbound and not about
+/// a write that never happened.
 #[tokio::test]
-async fn the_status_locks_redden_when_the_operators_word_is_refused_and_never_lands() {
+async fn the_status_locks_redden_when_the_operators_word_lands_bare_and_is_never_bound() {
     let (_room, surface, sid) = furnished().await;
     for (subject, word) in [
         ("project:the-shed", "considering"),
@@ -246,10 +275,62 @@ async fn the_status_locks_redden_when_the_operators_word_is_refused_and_never_la
     ] {
         let said = write_status(&surface, &sid, subject, word).await;
         assert!(
-            said.contains("\"status\":\"blocked\""),
-            "the shipped columns were expected to refuse {word:?}: {said}"
+            !said.contains("\"status\":\"blocked\""),
+            "a status word lands: {said}"
+        );
+        assert!(
+            said.contains("status_word_note"),
+            "the receipt says {word:?} is not bound: {said}"
         );
     }
+    assert_eq!(the_three_status_locks(&surface).await, [false; 3]);
+}
+
+/// **The same words, bound by `columns` on the instance.** Listing the words
+/// on `topic:instance` binds them on every board, so the same bare writes now
+/// hold all three locks. Paired with the case above, so the locks are not simply
+/// locks that hold on anything.
+#[tokio::test]
+async fn the_status_locks_hold_when_the_operators_words_are_bound_by_instance_columns() {
+    let (_room, surface, sid) = furnished().await;
+    write_instance(
+        &surface,
+        &sid,
+        json!({"columns": "someday, considering, next, doing, now, waiting, done"}),
+    )
+    .await;
+    the_year_of_the_statuses(&surface, &sid, "considering", "doing").await;
+    assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
+}
+
+/// **The same words, bound by a `status_word/` mapping on the instance.** The
+/// mapping says what each word means in the shipped five, which is the second
+/// way to bind a word without listing it as a column.
+#[tokio::test]
+async fn the_status_locks_hold_when_the_operators_words_are_bound_by_a_status_word_mapping() {
+    let (_room, surface, sid) = furnished().await;
+    write_instance(
+        &surface,
+        &sid,
+        json!({"status_word/considering": "next", "status_word/doing": "now"}),
+    )
+    .await;
+    the_year_of_the_statuses(&surface, &sid, "considering", "doing").await;
+    assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
+}
+
+/// **A mapping to a word outside the shipped five binds nothing.** The server
+/// ignores such a mapping, so the lock does too.
+#[tokio::test]
+async fn the_status_locks_redden_when_the_mapping_names_no_shipped_word() {
+    let (_room, surface, sid) = furnished().await;
+    write_instance(
+        &surface,
+        &sid,
+        json!({"status_word/considering": "pondering", "status_word/doing": "busy"}),
+    )
+    .await;
+    the_year_of_the_statuses(&surface, &sid, "considering", "doing").await;
     assert_eq!(the_three_status_locks(&surface).await, [false; 3]);
 }
 

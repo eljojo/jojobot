@@ -190,18 +190,27 @@ say     January: the glasses carry no spare, so the one thing the operator said 
 # The project's state, as the operator's own word. December counts how many
 # times this key was written on this project and what it said each time; a
 # status in prose is not a status that can be counted.
-recall {"subject": "project:the-shed"}
-carries-either "status":"someday" | "status":"next" | "status":"considering"
-say     January: the shed holds no status under the operator's own key, so December cannot see how long it has been going round
+#
+# ⚠️ **A word the operator uses must be BOUND, not only written.** A status the
+# shipped words do not hold lands bare, and the receipt says it counts as not
+# finished. The operator says the words once and only a declaration carries
+# them across, so this accepts `someday` or `next`, or `considering` once the
+# instance binds it: `columns` on the instance, `columns` on the project, or a
+# `status_word/considering` mapping on the instance to a shipped word. A bare
+# word with none of those fails.
+check   the_shed_holds_a_status_the_instance_can_read
+say     January: the shed holds no status under the operator's own key that the instance can read, so December cannot see how long it has been going round
 
 # 🚨 **Asked of the key's OWN HISTORY, not the folded value.** The floor is
 # the one project the room moves on: April sends it to its working status and July to
 # done, so a lock on the folded value can never hold once the year finishes
 # moving it — a fact true in January and superseded on purpose is not a
 # fact this lock may forget. `history` reads every write, not the newest.
-recall {"subject": "project:kitchen-floor", "history": "status"}
-carries-either "value":"someday" | "value":"next" | "value":"considering"
-say     January: the kitchen floor's status history carries no first status, so it cannot be told apart from the shed when December asks which one moved
+#
+# **The same binding as the shed's.** The first status is `someday` or `next`,
+# or `considering` once the instance binds it.
+check   the_kitchen_floors_history_carries_a_first_status_the_instance_can_read
+say     January: the kitchen floor's status history carries no first status the instance can read, so it cannot be told apart from the shed when December asks which one moved
 
 # The first timing on the usual road. October needs to count these — four on
 # this road against one on the other — and a number in prose is not a write of
@@ -387,9 +396,11 @@ say     April: no thing is on record as being for Omicron, so what gets packed o
 # directly, the same reason January's own lock on this key now does: July
 # sends the floor on to done, and a lock on the folded value cannot survive
 # a project finishing what this lock is checking it started.
-recall {"subject": "project:kitchen-floor", "history": "status"}
-carries-either "value":"now" | "value":"doing"
-say     April: the kitchen floor's status history carries no move to the working status, so the one project that moves this year does not read as having moved
+#
+# **The working status is bound the same way**: `now`, or `doing` once the
+# instance binds it.
+check   the_kitchen_floors_history_carries_a_move_to_the_working_status_the_instance_can_read
+say     April: the kitchen floor's status history carries no move to the working status the instance can read, so the one project that moves this year does not read as having moved
 
 recall {"subject": "place:ocean-avenue", "history": "minutes"}
 carries "value":"41"
@@ -897,9 +908,13 @@ three different responses**, and the reasons are on three other subjects:
 
 **And the projects:** the shed has held `considering` in January, February,
 May and August; the floor went considering, doing, done. **Either route
-is right:** the operator's words mapped onto the shipped `someday`, `next`
-and `now` (a want held for months reads as `someday` as readily as `next`), or
-kept as columns of the project the two are filed under.
+is right, and a bare word is not enough:** the operator's words mapped onto
+the shipped `someday`, `next` and `now` (a want held for months reads as
+`someday` as readily as `next`), or bound as the operator's own words. A word
+that lands with nothing binding it counts as not finished. It is bound by
+`columns` on the instance, by `columns` on the project the two are filed
+under, or by a `status_word/<word>` mapping on the instance to a shipped
+word.
 
 > This is a role-play: play the day below as if it is really today.
 >
