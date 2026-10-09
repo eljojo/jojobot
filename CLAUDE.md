@@ -261,10 +261,14 @@ Shipped and live:
   **A record carries two bags**: its own fields, and what it `sets` on its
   thing — `capture`, `update_fact` and `update_entity` take `sets` too, so one
   call records a claim and sets the thing, and a key stays in the bag it was
-  first written under. Every write still reaches its thing today; the receipt
-  names which keys reached the thing and which stayed on the record, and hints
-  once when a claim's own field is one the kind declares, because own fields
-  will stop reaching the thing. **Conformance is asked of the THING, across all its records,
+  first written under. **Only the setting bag and the keys jojobot computes
+  reach the thing; a key written under `fields` stays on the record** (the
+  class `stays`). A row written before that keeps reaching its thing, and no
+  boot rewrites a class. The receipt names which keys reached the thing and
+  which stayed, from the class the store kept, and hints once when an own field
+  that the kind declares stayed. Archiving or retracting a record takes off the
+  thing the keys it set, and the receipt names them under `left_the_thing`.
+  **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
   things with no gaps. **Which of the two you want is the reader's question**,
