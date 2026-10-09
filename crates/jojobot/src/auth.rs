@@ -52,10 +52,16 @@ pub enum AuthError {
 /// so an issuer that grows a claim does not fail every token.
 ///
 /// ⚠️ **A scope is not read, and that is a decision rather than an omission.**
-/// One client holds one audience, and the two are revoked together, so a scope
-/// would discriminate nothing that the subject allowlist does not already
-/// decide. **A second client on a different audience is the condition that
-/// makes a scope mean something, and this is due again the day one exists.**
+/// This issuer serves two audiences: the resource, which `/mcp` requires of a
+/// bearer token, and the browser UI's client id, which the login requires of the
+/// ID token that says who logged in. Both are checked in this module against the
+/// same keys and the same subject allowlist, and each refuses a token minted for
+/// the other. **No token passes from the UI to `/mcp`.** The login uses its ID
+/// token once, to learn the subject, and keeps a session of its own; `/mcp` reads
+/// a bearer header and no cookie. So a scope would discriminate nothing that the
+/// audience and the subject allowlist do not already decide. **A client that
+/// presents a token to `/mcp` with less authority than its subject holds is the
+/// condition that makes a scope mean something**, and the UI is not one.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Claims {
     /// Subject — the stable, issuer-assigned principal id. This is the
