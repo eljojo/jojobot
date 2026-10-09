@@ -1025,6 +1025,14 @@ async fn migrate_reference_fields_refuses_to_guess_at_an_unresolvable_value() {
             .expect("the row reads");
     assert_eq!(still_there, never_existed);
 
+    // The pass examined every row, so it is finished: the value is reported
+    // once and a second run neither reports it nor reads it.
+    let again = memory
+        .migrate_reference_fields()
+        .await
+        .expect("a finished pass reports nothing again");
+    assert_eq!(again, 0, "a second run rewrites nothing");
+
     store.stop().await;
 }
 
@@ -6643,9 +6651,13 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
         (0, 0, 0),
         "a second pass changes nothing: {again:?}",
     );
-    assert_eq!(
-        again.left_as_text, report.left_as_text,
-        "and the value it cannot name is still listed",
+    assert!(
+        !report.left_as_text.is_empty(),
+        "the first pass named the value it cannot lower, or this proves nothing",
+    );
+    assert!(
+        again.left_as_text.is_empty() && again.settled,
+        "and the value it cannot name is not listed again: {again:?}",
     );
 
     // **A derived index is rebuilt from the writes**: a stray row goes, a lost one returns.

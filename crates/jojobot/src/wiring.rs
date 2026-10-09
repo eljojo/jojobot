@@ -456,8 +456,8 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
         Err(e) => tracing::error!(
             error = %e,
             "REFERENCE FIELDS NOT RESOLVED — the values named above still hold a stale handle \
-             rather than a badge, and a person has to repair them. Nothing already resolved was \
-             undone; a restart repeats the scan and finds less to do."
+             rather than a badge. Nothing already resolved was undone. The pass has finished \
+             and is not repeated, so this is the one report; a person has to repair them."
         ),
     }
 
@@ -466,14 +466,27 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
     // writes.** Runs after the reference-field pass above, which owns the declared
     // keys, and after the kinds are loaded, for the reason that pass does. **A
     // value whose handle names no one thing stays as written and is named here**,
-    // one line each, because the pass does not guess; a restart repeats the list
-    // for as long as the value stays.
+    // one line each, because the pass does not guess; the pass is marked finished
+    // after that report, so it is made once and never repeated. The link table is
+    // checked cheaply on every boot and rebuilt only when it disagrees.
     // **Over an instance that is told what the build supplies**, which `badging`
     // is not: a value naming a shipped record has no row to resolve through, and
     // an instance with no provisions reads that handle as naming nothing and
     // leaves the value as text with no link.
     match linking.migrate_field_links().await {
         Ok(report) => {
+            if report.disagreed {
+                tracing::warn!(
+                    linked = report.linked,
+                    unlinked = report.unlinked,
+                    "LINK TABLE DISAGREED WITH THE FIELD WRITES — it was rebuilt from them. The \
+                     table is derived, so nothing was lost; a disagreement means a build or a \
+                     failure left it behind."
+                );
+            }
+            if report.settled {
+                tracing::info!("store: field value lowering: already done");
+            }
             if report.lowered > 0 || report.linked > 0 || report.unlinked > 0 {
                 tracing::info!(
                     lowered = report.lowered,

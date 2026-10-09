@@ -164,7 +164,9 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     let after_first = dump_store(&state_dir).await;
-    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    // The first boot reported the recording's handle; the passes are marked, so the
+    // next boots report nothing.
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     second.stop().await;
     let after_second = dump_store(&state_dir).await;
     if after_first != after_second {
@@ -186,7 +188,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     }
 
     // The third boot is the one every read below goes through.
-    let third = boot_current(&state_dir, store_port, &git_ref).await;
+    let third = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     // **The boot measured the stored records and found none over the ceiling**, and
     // said so: a boot that logged nothing here would be a pass that did not run.
     assert!(
@@ -338,8 +340,10 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
     assert_eq!(
         finished,
         [
+            "field value lowering",
             "mail mentions",
             "message sender column",
+            "reference field lowering",
             "session bot column",
             "session mentions"
         ],
@@ -361,7 +365,7 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
         .expect("the run is written again");
     store.stop().await;
 
-    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     let done = second
         .log
         .iter()
@@ -535,7 +539,12 @@ const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
 /// **The warning a boot logs for the handle two things have worn**, naming the
 /// field it sits under. The recording writes that handle on purpose.
 fn is_the_recorded_ambiguous_handle(line: &str) -> bool {
-    line.contains("FIELD VALUE LEFT AS TEXT") && line.contains("upgrade_fixture_points_at")
+    is_left_as_text_under(line, "upgrade_fixture_points_at")
+}
+
+/// **Whether a boot line is the left-as-text warning for a value under `key`.**
+fn is_left_as_text_under(line: &str, key: &str) -> bool {
+    line.contains("FIELD VALUE LEFT AS TEXT") && line.contains(key)
 }
 
 /// **Whether the recording made at `git_ref` holds the handle two things have
@@ -584,7 +593,8 @@ impl Booted {
 /// boot's own account of itself: it reaches its serving line, and it says no
 /// part of its own boot failed.
 async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &str) -> Booted {
-    boot_current_allowing(state_dir, store_port, git_ref, false).await
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(git_ref));
+    boot_current_expecting(state_dir, store_port, git_ref, Some(reports), &[]).await
 }
 
 /// **The same boot, for a store that holds a record over the ceiling on purpose.**
@@ -595,6 +605,49 @@ async fn boot_current_allowing(
     store_port: u16,
     git_ref: &str,
     stored_over_the_ceiling: bool,
+) -> Booted {
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(git_ref));
+    boot_current_with(
+        state_dir,
+        store_port,
+        git_ref,
+        stored_over_the_ceiling,
+        Some(reports),
+        &[],
+    )
+    .await
+}
+
+/// **The same boot, told how many times it must report the recording's
+/// ambiguous handle (`None` leaves the count to the caller), and which other
+/// warnings it may log, each named by a word the line holds.** A first boot
+/// reports the recording's handle when the recording holds it.
+async fn boot_current_expecting(
+    state_dir: &std::path::Path,
+    store_port: u16,
+    git_ref: &str,
+    ambiguous_reports: Option<usize>,
+    tolerated_warnings: &[&str],
+) -> Booted {
+    boot_current_with(
+        state_dir,
+        store_port,
+        git_ref,
+        false,
+        ambiguous_reports,
+        tolerated_warnings,
+    )
+    .await
+}
+
+/// The boot every other one is a case of.
+async fn boot_current_with(
+    state_dir: &std::path::Path,
+    store_port: u16,
+    git_ref: &str,
+    stored_over_the_ceiling: bool,
+    ambiguous_reports: Option<usize>,
+    tolerated_warnings: &[&str],
 ) -> Booted {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let http_port = free_port();
@@ -667,7 +720,8 @@ async fn boot_current_allowing(
         .filter(|line| {
             let expected = line.contains(WARNING_THE_GATE_CAUSES)
                 || is_the_recorded_ambiguous_handle(line)
-                || (stored_over_the_ceiling && line.contains("OVER THE CEILING"));
+                || (stored_over_the_ceiling && line.contains("OVER THE CEILING"))
+                || tolerated_warnings.iter().any(|named| line.contains(named));
             line.contains("ERROR") || (line.contains("WARN") && !expected)
         })
         .collect();
@@ -686,17 +740,17 @@ async fn boot_current_allowing(
     // lower, so a store it filled holds no such row and its boot says nothing,
     // and a boot that reported one there would be inventing it. The recording
     // itself says which it is.
-    let holds_it = recording_holds_the_plain_ambiguous_handle(git_ref);
     let reported = seen
         .iter()
         .filter(|line| is_the_recorded_ambiguous_handle(line))
         .count();
-    assert_eq!(
-        reported,
-        usize::from(holds_it),
-        "the boot of a store recorded at {git_ref} must report the ambiguous handle exactly when \
-         the recording holds it as plain text (it does: {holds_it}): {seen:?}"
-    );
+    if let Some(ambiguous_reports) = ambiguous_reports {
+        assert_eq!(
+            reported, ambiguous_reports,
+            "the boot of a store recorded at {git_ref} must report the ambiguous handle \
+             {ambiguous_reports} time(s): {seen:?}"
+        );
+    }
     Booted {
         child,
         http_port,
@@ -782,7 +836,7 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
         );
     }
 
-    let fourth = boot_current(state_dir, store_port, git_ref).await;
+    let fourth = boot_current_expecting(state_dir, store_port, git_ref, Some(0), &[]).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", fourth.http_port))
         .await
         .expect("connecting to the current binary");
@@ -2409,4 +2463,264 @@ async fn an_old_message_carrying_the_address_shape_reads_back_as_written() {
     surface.finish().await;
     booted.stop().await;
     drop(scratch);
+}
+
+/// The thing the injected field writes sit on, and a record of its own it
+/// already holds.
+const INJECTED_ON: (&str, &str) = ("gwd5wp", "f2");
+const LOWERABLE_KEY: &str = "upgrade_gate_lowerable";
+const UNGUESSABLE_KEY: &str = "upgrade_gate_unguessable";
+const LATER_UNDECLARED_KEY: &str = "upgrade_gate_later";
+const LATER_REFERENCE_KEY: &str = "waiting_on";
+/// A word the warning for a rebuilt link table holds.
+const LINK_TABLE_REBUILT: &str = "LINK TABLE DISAGREED";
+const NAMED_THING: &str = "person:upgrade-fixture-person";
+/// A roster handle no store in the gate holds, so it names nothing.
+const NAMELESS_THING: &str = "person:noted-alpha";
+
+/// **Plain handle text written into the stopped store as an older build wrote
+/// it**: one field write per `(key, value)`, on the thing every injection uses.
+async fn inject_plain_field_writes(state_dir: &std::path::Path, writes: &[(&str, &str)]) {
+    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be edited");
+    for (key, value) in writes {
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+             VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind(INJECTED_ON.0)
+        .bind(key)
+        .bind(value)
+        .bind(INJECTED_ON.1)
+        .execute(editing.pool())
+        .await
+        .expect("a field write is injected");
+    }
+    editing.stop().await;
+}
+
+/// What the stopped store holds under `key` on the injected-on thing, and how
+/// many `field_link` rows that key has.
+async fn stored_under(state_dir: &std::path::Path, key: &str) -> (Option<String>, i64) {
+    let mut reading = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be read");
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value FROM field_write WHERE entity = ? AND `key` = ?")
+            .bind(INJECTED_ON.0)
+            .bind(key)
+            .fetch_optional(reading.pool())
+            .await
+            .expect("the field write reads")
+            .flatten();
+    let links: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM field_link WHERE entity = ? AND `key` = ?")
+            .bind(INJECTED_ON.0)
+            .bind(key)
+            .fetch_one(reading.pool())
+            .await
+            .expect("the link rows count");
+    reading.stop().await;
+    (value, links)
+}
+
+/// **A boot after the field passes have settled reads no `field_write` for
+/// them and reports nothing again.**
+///
+/// The first boot lowers plain handle text an older build left and reports the
+/// value it cannot lower, once. Then plain handle text is written into the
+/// stopped store again, under an undeclared key and under a declared reference
+/// key. A second boot that read `field_write` would lower both, so both staying
+/// as written proves it read neither pass's table. The second boot logs no
+/// left-as-text warning, neither for the injected value nor for the
+/// recording's own.
+async fn a_settled_store_is_not_read_again(fixture_dir: &str, label: &str) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before: _,
+        handles: _,
+    } = restore_a_fixture(fixture_dir, label).await;
+    inject_plain_field_writes(
+        &state_dir,
+        &[
+            (LOWERABLE_KEY, NAMED_THING),
+            (UNGUESSABLE_KEY, NAMELESS_THING),
+        ],
+    )
+    .await;
+
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
+    let first = boot_current_expecting(
+        &state_dir,
+        store_port,
+        &git_ref,
+        Some(reports),
+        &[UNGUESSABLE_KEY],
+    )
+    .await;
+    let unguessable_reports = first
+        .log
+        .iter()
+        .filter(|line| is_left_as_text_under(line, UNGUESSABLE_KEY))
+        .count();
+    first.stop().await;
+    assert_eq!(
+        unguessable_reports, 1,
+        "the first boot names the value it cannot lower, once"
+    );
+    let (lowered, linked) = stored_under(&state_dir, LOWERABLE_KEY).await;
+    assert_ne!(
+        lowered.as_deref(),
+        Some(NAMED_THING),
+        "the first boot lowers plain handle text that names one thing"
+    );
+    assert_eq!(linked, 1, "the first boot links the value it lowered");
+    assert_eq!(
+        stored_under(&state_dir, UNGUESSABLE_KEY).await.0.as_deref(),
+        Some(NAMELESS_THING),
+        "a value that names nothing stays as written"
+    );
+
+    inject_plain_field_writes(
+        &state_dir,
+        &[
+            (LATER_UNDECLARED_KEY, NAMED_THING),
+            (LATER_REFERENCE_KEY, NAMED_THING),
+        ],
+    )
+    .await;
+    let second =
+        boot_current_expecting(&state_dir, store_port, &git_ref, None, &[UNGUESSABLE_KEY]).await;
+    let repeated: Vec<String> = second
+        .log
+        .iter()
+        .filter(|line| line.contains("FIELD VALUE LEFT AS TEXT"))
+        .cloned()
+        .collect();
+    let rebuilt = second
+        .log
+        .iter()
+        .any(|line| line.contains(LINK_TABLE_REBUILT));
+    second.stop().await;
+    assert!(
+        !rebuilt,
+        "a healthy store's second boot ran the full link reconcile"
+    );
+    assert!(
+        repeated.is_empty(),
+        "a second boot repeats a left-as-text warning: {repeated:?}"
+    );
+    assert_eq!(
+        stored_under(&state_dir, LATER_UNDECLARED_KEY).await,
+        (Some(NAMED_THING.to_string()), 0),
+        "the second boot read field_write for the link pass: it lowered text written after the first"
+    );
+    assert_eq!(
+        stored_under(&state_dir, LATER_REFERENCE_KEY)
+            .await
+            .0
+            .as_deref(),
+        Some(NAMED_THING),
+        "the second boot read field_write for the reference pass: it lowered text written after the first"
+    );
+    drop(scratch);
+}
+
+#[tokio::test]
+async fn a_second_boot_does_not_read_the_field_passes_again() {
+    a_settled_store_is_not_read_again(FIXTURE_DIR, "settled").await;
+}
+
+#[tokio::test]
+async fn a_second_boot_does_not_read_the_field_passes_again_on_the_deploy_3_store() {
+    a_settled_store_is_not_read_again(DEPLOY_3_FIXTURE_DIR, "settled-deploy3").await;
+}
+
+/// **A link table lost after the lowering finished is rebuilt at the next
+/// boot.** The lowering is marked and reads no field write, but the table is a
+/// derived index: a boot compares it with the writes cheaply and rebuilds it,
+/// with a warning, when they disagree. The pair of the case above, where a
+/// healthy store logs no rebuild.
+async fn a_lost_link_table_is_rebuilt(fixture_dir: &str, label: &str) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before: _,
+        handles: _,
+    } = restore_a_fixture(fixture_dir, label).await;
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
+    let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(reports), &[]).await;
+    let first_rebuilt = first
+        .log
+        .iter()
+        .any(|line| line.contains(LINK_TABLE_REBUILT));
+    first.stop().await;
+    assert!(
+        !first_rebuilt,
+        "a store that had never been booted by this build and held a consistent table logged a \
+         rebuild"
+    );
+
+    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be edited");
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_link")
+        .fetch_one(editing.pool())
+        .await
+        .expect("the link rows count");
+    assert!(
+        held > 0,
+        "the recording implies links, or this proves nothing"
+    );
+    sqlx::query("DELETE FROM field_link")
+        .execute(editing.pool())
+        .await
+        .expect("the link table is emptied");
+    editing.stop().await;
+
+    let second = boot_current_expecting(
+        &state_dir,
+        store_port,
+        &git_ref,
+        None,
+        &[LINK_TABLE_REBUILT],
+    )
+    .await;
+    let rebuilt = second
+        .log
+        .iter()
+        .filter(|line| line.contains(LINK_TABLE_REBUILT))
+        .count();
+    second.stop().await;
+    assert_eq!(rebuilt, 1, "the boot reports the rebuild once");
+    let reading = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be read");
+    let restored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_link")
+        .fetch_one(reading.pool())
+        .await
+        .expect("the link rows count");
+    let mut reading = reading;
+    reading.stop().await;
+    assert_eq!(
+        restored, held,
+        "the rebuilt table holds the links the writes imply"
+    );
+    drop(scratch);
+}
+
+#[tokio::test]
+async fn a_lost_link_table_is_rebuilt_at_the_next_boot() {
+    a_lost_link_table_is_rebuilt(FIXTURE_DIR, "rebuilt").await;
+}
+
+#[tokio::test]
+async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_3_store() {
+    a_lost_link_table_is_rebuilt(DEPLOY_3_FIXTURE_DIR, "rebuilt-deploy3").await;
 }

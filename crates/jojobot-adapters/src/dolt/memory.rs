@@ -63,7 +63,21 @@ pub struct FieldLinkReport {
     /// Values that stay plain text because the handle they hold does not name
     /// one thing: one line each, naming the thing, the key and the value.
     pub left_as_text: Vec<String>,
+    /// The lowering had finished at an earlier boot, so this one read none of
+    /// the field writes for it and reports nothing left as text.
+    pub settled: bool,
+    /// The link table disagreed with the field writes, so the full reconcile
+    /// ran on a store whose lowering had finished.
+    pub disagreed: bool,
 }
+
+/// **The name the lowering of plain handle text under undeclared keys is marked
+/// under** in `store_pass`. The link table's repair is not part of it: that is
+/// a derived index and it heals itself.
+const FIELD_LOWERING_PASS: &str = "field value lowering";
+
+/// **The name the rewrite of reference-typed field values is marked under.**
+const REFERENCE_LOWERING_PASS: &str = "reference field lowering";
 
 /// Memory kept in the SQL store jojobot runs.
 ///
@@ -473,12 +487,27 @@ impl DoltMemory {
     /// no write implies is removed. The table is derived, so this is also the
     /// repair for one that was lost or filled by a build that did not keep it.
     ///
-    /// **Idempotent.** A second run lowers nothing and changes no row; the values
-    /// left as text are listed again, because they are still there.
+    /// **The lowering runs once on a store.** It is marked finished after it has
+    /// examined every write, and a later run reads none of them for it: the values
+    /// left as text are listed in the run that left them and never again, because
+    /// a handle that named nothing when it was written must not be linked to
+    /// whatever takes the name later. **The link table is still checked on every
+    /// run**, cheaply and inside the store; the reconcile above runs again only
+    /// when the check finds a disagreement, and says so in the report.
     pub async fn migrate_field_links(&self) -> Result<FieldLinkReport, MemoryError> {
         use std::collections::{BTreeMap, BTreeSet};
 
         let mut report = FieldLinkReport::default();
+        let lowered_before = super::finished_passes(&self.pool)
+            .await
+            .contains(FIELD_LOWERING_PASS);
+        if lowered_before {
+            if !self.link_table_disagrees().await? {
+                report.settled = true;
+                return Ok(report);
+            }
+            report.disagreed = true;
+        }
         let mut tx = self.pool.begin().await.map_err(store)?;
         let declared = Self::types_in(&mut tx).await?;
 
@@ -526,6 +555,9 @@ impl DoltMemory {
         .map_err(store)?;
 
         for (entity, key, ordinal, value) in &mut writes {
+            if lowered_before {
+                break;
+            }
             let handles = jojobot_domain::memory::handles_in_value(value);
             if handles.is_empty() {
                 continue;
@@ -611,7 +643,94 @@ impl DoltMemory {
             report.linked += 1;
         }
         tx.commit().await.map_err(store)?;
+        if !lowered_before {
+            super::finish_pass(&self.pool, FIELD_LOWERING_PASS).await;
+        }
         Ok(report)
+    }
+
+    /// **Whether the link table disagrees with the field writes**, asked without
+    /// shipping a value to this process.
+    ///
+    /// Two questions, both answered inside the store. A link row whose write is
+    /// gone is exact: the primary keys do not join. A write that should have a
+    /// link row and has none is asked by the shape of its value: every comma item
+    /// wears the mark, or the key is a declared reference and every item is an id.
+    /// A value of another shape that implies a link is not seen here, and the
+    /// full reconcile repairs it whenever either question answers yes. **The
+    /// known blind spot:** a list under a reference key with one prose item
+    /// among its ids is missed by this check, and the next full reconcile
+    /// repairs it.
+    async fn link_table_disagrees(&self) -> Result<bool, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let declared = Self::types_in(&mut tx).await?;
+        let reference_keys: Vec<String> = declared
+            .iter()
+            .flat_map(|d| &d.fields)
+            .filter(|f| f.holds == jojobot_domain::memory::types::ValueType::Reference)
+            .map(|f| f.key.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let orphans: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM field_link l
+             WHERE NOT EXISTS (SELECT 1 FROM field_write w
+                               WHERE w.entity = l.entity AND w.`key` = l.`key`
+                                 AND w.ordinal = l.ordinal)",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(store)?;
+        if orphans > 0 {
+            return Ok(true);
+        }
+        let mark = jojobot_domain::memory::marked_stored_handle("");
+        let marked_item = format!("{mark}[^,]+");
+        let marked_list = format!("^[[:space:]]*{marked_item}(,[[:space:]]*{marked_item})*$");
+        let unlinked_marked: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM field_write w
+             WHERE w.value REGEXP ?
+               AND NOT EXISTS (SELECT 1 FROM field_link l
+                               WHERE l.entity = w.entity AND l.`key` = w.`key`
+                                 AND l.ordinal = w.ordinal)",
+        )
+        .bind(&marked_list)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(store)?;
+        if unlinked_marked > 0 {
+            return Ok(true);
+        }
+        if reference_keys.is_empty() {
+            return Ok(false);
+        }
+        let id = format!(
+            "[{}]+",
+            std::str::from_utf8(jojobot_domain::handle::ALPHABET).expect("an ascii alphabet")
+        );
+        let id_list = format!("^[[:space:]]*{id}[[:space:]]*(,[[:space:]]*{id}[[:space:]]*)*$");
+        let marks = reference_keys
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT COUNT(*) FROM field_write w
+             WHERE w.`key` IN ({marks}) AND w.value REGEXP ?
+               AND NOT EXISTS (SELECT 1 FROM field_link l
+                               WHERE l.entity = w.entity AND l.`key` = w.`key`
+                                 AND l.ordinal = w.ordinal)"
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        for key in &reference_keys {
+            query = query.bind(key);
+        }
+        let unlinked_reference: i64 = query
+            .bind(&id_list)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
+        Ok(unlinked_reference > 0)
     }
 
     /// **Rewrite every reference-typed field value stored as plain handle
@@ -626,15 +745,20 @@ impl DoltMemory {
     /// badged entity list and the declared reference keys, which exist only
     /// once the store has already run its own boot steps.
     ///
-    /// **Idempotent**: an item already lowered names no `kind:slug` handle
-    /// this store has ever worn, so a second run finds nothing left to
-    /// rewrite. An item that resolves through neither a current handle nor
-    /// a former one stops the migration and is named, exactly as
-    /// [`Self::resolve_stale_pointer_columns`] answers the same shape of
-    /// failure — a person has to repair it rather than have it guessed at.
+    /// **Runs once on a store.** It is marked finished after it has examined
+    /// every write, and a later run reads none of them. An item that resolves
+    /// through neither a current handle nor a former one is not guessed at: it
+    /// stays as written, is named in the one error this run returns, and is
+    /// not reported again.
     ///
     /// Returns how many writes it rewrote.
     pub async fn migrate_reference_fields(&self) -> Result<usize, MemoryError> {
+        if super::finished_passes(&self.pool)
+            .await
+            .contains(REFERENCE_LOWERING_PASS)
+        {
+            return Ok(0);
+        }
         let known: Vec<(String, String)> =
             sqlx::query_as("SELECT id, badge FROM entity WHERE badge IS NOT NULL")
                 .fetch_all(&self.pool)
@@ -735,13 +859,16 @@ impl DoltMemory {
             rewritten += 1;
         }
 
+        // Every row was examined, so the pass is finished even when a value stays
+        // as written: it is reported here, once, and never read again.
+        super::finish_pass(&self.pool, REFERENCE_LOWERING_PASS).await;
         if unresolved.is_empty() {
             Ok(rewritten)
         } else {
             Err(MemoryError::Store(format!(
                 "{} stored reference-field value{} cannot be resolved to anything this store has \
-                 ever named, through a current handle or a former one — a person has to repair \
-                 these before the migration can finish: {}",
+                 ever named, through a current handle or a former one, and stays as written. \
+                 This pass has finished and does not run again: {}",
                 unresolved.len(),
                 if unresolved.len() == 1 { "" } else { "s" },
                 unresolved.join("; "),
