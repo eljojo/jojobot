@@ -39,8 +39,8 @@ pub enum MatchReason {
     /// Same kind, and the names (or a name and the other's slug) agree once
     /// case and whitespace are folded.
     SameName,
-    /// The names agree, but the kinds differ — `project:atlas` vs
-    /// `place:atlas`. Usually two real things; sometimes a mis-kinded write.
+    /// The names agree, but the kinds differ — `project:contract-atlas` vs
+    /// `place:contract-atlas`. Usually two real things; sometimes a mis-kinded write.
     SameNameOtherKind,
     /// Same kind, slugs within a typo of each other (edit distance ≤ 2).
     NearSlug,
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn the_same_name_under_another_kind_is_reported_not_hidden() {
         assert_eq!(
-            reasons("place:atlas", Some("Atlas")),
+            reasons("place:contract-atlas", Some("Atlas")),
             vec![MatchReason::SameNameOtherKind]
         );
     }

@@ -494,7 +494,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-zzz",
     "person:contract-zzz-nobody",
     "place:contract-a",
-    "place:atlas",
+    "place:contract-atlas",
     "place:bet",
     "place:capital-citty",
     // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
@@ -1173,7 +1173,6 @@ const EXEMPT: &[(&str, &str)] = &[
     ("place:golden-daredevil-gorge", NEAR_MISS),
     ("place:daredevil-gorge-2", NEAR_MISS),
     ("person:plus-one", ROOM_PLACEHOLDER),
-    ("place:atlas", ROOM_PLACEHOLDER),
     ("place:bet", NEAR_MISS),
     ("person:upgrade-fixture-person", RECORDED),
     ("place:upgrade-fixture-place", RECORDED),

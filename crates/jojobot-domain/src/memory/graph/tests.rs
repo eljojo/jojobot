@@ -1531,7 +1531,7 @@ async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
     for (handle, name, parent) in [
         ("place:springfield", "Springfield", None),
         ("place:quahog", "Quahog", None),
-        ("place:atlas", "Atlas", None),
+        ("place:contract-atlas", "Atlas", None),
         ("place:gorge-spot", "Gorge Spot", Some("place:springfield")),
         ("place:far-country", "Far Country", None),
         ("person:bart", "Bart", None),
@@ -1548,7 +1548,7 @@ async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
     // **A thing folded into another keeps its row**, which a merge leaves behind;
     // staged here because the fixture has no merge to run.
     store.past_the_guard(Entity {
-        merged_into: Some(EntityId("place:atlas".into())),
+        merged_into: Some(EntityId("place:contract-atlas".into())),
         ..entity("place:wharf-road", "Wharf Road")
     });
     let strangers_run = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
@@ -1581,7 +1581,7 @@ async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
     assert_eq!(
         handles(&browsed.objects),
         vec![
-            "place:atlas",
+            "place:contract-atlas",
             "place:gorge-spot",
             "place:quahog",
             "place:springfield"

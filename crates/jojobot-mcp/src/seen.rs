@@ -302,7 +302,7 @@ mod tests {
         ledger.record(
             "s1",
             vec![
-                place("place:atlas", "Old Mill Road"),
+                place("place:contract-atlas", "Old Mill Road"),
                 place("place:bet", "Mill Pond"),
             ],
         );
@@ -316,11 +316,11 @@ mod tests {
                 None,
             )
             .expect("a thing shared words with the creation");
-        assert_eq!(noticed.handle, "place:atlas", "{noticed:?}");
+        assert_eq!(noticed.handle, "place:contract-atlas", "{noticed:?}");
 
         // A tie goes to the more recently shown.
         let mut ledger = Ledger::default();
-        ledger.record("s2", vec![place("place:atlas", "Aaa Wharf")]);
+        ledger.record("s2", vec![place("place:contract-atlas", "Aaa Wharf")]);
         ledger.record("s2", vec![place("place:bet", "Bbb Wharf")]);
         let noticed = ledger
             .consult("s2", "place:wharf-road", "place", "Wharf Road", &[], None)
@@ -392,7 +392,7 @@ mod tests {
         let body = serde_json::json!({
             "results": [
                 {"id": "place:wonder-wharf", "name": "Wonder Wharf", "alternateName": ["The Wharf"]},
-                {"id": "place:atlas#f3", "name": "a claim address"},
+                {"id": "place:contract-atlas#f3", "name": "a claim address"},
                 {"id": "fxjy1w", "name": "a message"},
                 {"id": "mystery:thing", "name": "an unknown kind"},
                 {"id": "place:bet"},
