@@ -7440,7 +7440,7 @@ async fn every_payload_value_that_is_a_handle_is_walkable_and_nothing_else_is() 
         ]
         .into_iter()
         .collect(),
-        refs: vec![EntityId("place:north-gorge".into())],
+        refs: vec![EntityId("place:daredevil-gorge".into())],
         ..fact("person:alpha", "f1", "the kiln was lit", date(2026, 1, 1))
     };
     let index = index_of(vec![scan(
@@ -7463,7 +7463,7 @@ async fn every_payload_value_that_is_a_handle_is_walkable_and_nothing_else_is() 
     };
 
     assert!(
-        walks("place:north-gorge"),
+        walks("place:daredevil-gorge"),
         "the unnamed reference is walkable"
     );
     assert!(

@@ -247,16 +247,17 @@ const ROSTER: &[&str] = &[
     "event:birthday-party",
     "event:contract-krusty-fest",
     "event:departure-flight",
-    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
-    // no real club. The noun is as long as the one it replaced, so the sibling and
-    // distance shapes the tests measure are unchanged.
-    "event:gorge-survey",
-    "event:gorge-survey-2026",
+    // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
+    // stands for no real place, organisation or event. The sibling and distance shapes
+    // the tests measure come from the handles' spelling alone.
+    "event:gorge-safety-inspection", // made up: the town council's safety inspection of the gorge path
+    "event:gorge-stunt-show", // canon-flavoured, made up: a stunt show at the gorge, as in "Bart the Daredevil"
+    "event:gorge-safety-inspection-2026", // made up: a near-name of the inspection, for a screen case
     // Krusty the Clown's festival, The Simpsons.
     "event:krusty-fest",
     "event:the-booking",
     "event:the-jotting",
-    "event:erosion-review",
+    "event:rockslide-review", // made up: what the inspection is renamed to
     "event:kitchen-safety-course-oct-2026",
     "event:moe-open-mic",
     "event:otto-benefit-show",
@@ -282,10 +283,10 @@ const ROSTER: &[&str] = &[
     // furnace-servicing company.
     "org:mr-plow",
     // Quahog is the fictional town Family Guy is set in.
-    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
-    // no real club. The noun is as long as the one it replaced, so the sibling and
-    // distance shapes the tests measure are unchanged.
-    "org:north-gorge-club",
+    // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
+    // stands for no real place, organisation or event. The sibling and distance shapes
+    // the tests measure come from the handles' spelling alone.
+    "org:springfield-town-council", // made up: the council of Springfield, a canon town
     "org:quahog-community-college",
     "org:springfield-cyclery",
     "org:springfield-movers",
@@ -419,20 +420,20 @@ const ROSTER: &[&str] = &[
     "place:bet",
     "place:capital-citty",
     "place:capital-city",
-    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
-    // no real club. The noun is as long as the one it replaced, so the sibling and
-    // distance shapes the tests measure are unchanged.
-    "place:contract-north-gorge",
+    // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
+    // stands for no real place, organisation or event. The sibling and distance shapes
+    // the tests measure come from the handles' spelling alone.
+    "place:contract-daredevil-gorge", // made up: a contract fixture beside the gorge
     "place:contract-shelbyville",
     "place:contract-shelbyvlle",
     "place:far-country",
-    "place:golden-north-gorge",
+    "place:golden-daredevil-gorge", // made up: a containing near-name of the gorge, for a screen case
     "place:gorge-spot",
     "place:leftorium",
     "place:moes-tavern",
     "place:moes",
-    "place:north-gorge",
-    "place:north-gorge-2",
+    "place:daredevil-gorge", // made up: named for the gorge Homer tries to jump in "Bart the Daredevil"
+    "place:daredevil-gorge-2", // made up: a second-gorge near-name, for a screen case
     "place:north-haverbook",
     "place:north-haverbrook",
     // The Belcher family's street, Bob's Burgers.
@@ -458,6 +459,7 @@ const ROSTER: &[&str] = &[
     "project:visa",
     "rhythm:abseiling",
     "rhythm:call-gayle",
+    "rhythm:bearings-check", // made up: the skateboard's bearings loop
     "rhythm:chain-check",
     "rhythm:deep-clean",
     "rhythm:descale",
@@ -473,10 +475,10 @@ const ROSTER: &[&str] = &[
     "rhythm:swim",
     "rhythm:weekly-review",
     "rhythm:worming",
-    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
-    // no real club. The noun is as long as the one it replaced, so the sibling and
-    // distance shapes the tests measure are unchanged.
     "thing:dinners",
+    // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
+    // stands for no real place, organisation or event. The sibling and distance shapes
+    // the tests measure come from the handles' spelling alone.
     "thing:gorge-email",
     "thing:jukebox",
     "thing:recorded-twin",
@@ -495,11 +497,14 @@ const ROSTER: &[&str] = &[
     "thing:bar-tape",
     "thing:battery",
     "thing:bike-chain",
-    "thing:bike-lock",
+    "thing:board-lock", // made up: a lock for the skateboard
     "thing:blue-kite",
+    "thing:longboard", // made up: a second board, a longboard
     "thing:canoe",
     "thing:commit-omicron",
+    "thing:skate-tool", // made up: a tool for the skateboard, lent out
     "thing:floor-pump",
+    "thing:skateboard", // canon: Bart's skateboard
     "thing:folding-chairs",
     "thing:backup-drive",
     "thing:boots",

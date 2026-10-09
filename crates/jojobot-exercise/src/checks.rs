@@ -37,7 +37,7 @@
 //!   `outcome` beside `last_check_in` on the same record, and an assertion
 //!   cannot ask whether two keys landed together on one object out of a
 //!   folded answer.
-//! * **`septembers_account_of_the_pump_is_superseded_by_a_derived_correction`**
+//! * **`septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correction`**
 //!   — say that September's address is archived, still saying Ralph's
 //!   account, and that a standing claim about Nelson names it in
 //!   `derived_from`. A retraction is marked rather than filtered — `recall`
@@ -46,7 +46,7 @@
 //!   an edge it found, and a retraction reads like an archive to a substring;
 //!   what tells them apart is the record under `retracts`. And no single
 //!   query answers both which claim is archived and which one stands in its
-//!   place: only a caller that reads the address's own history and the pump's
+//!   place: only a caller that reads the address's own history and the skate tool's
 //!   other claims can tell a correction from a retraction, an untouched
 //!   claim, or a second claim filed beside the first.
 //! * **`late_decembers_corrections_name_the_jobs_they_replace`** — say that a
@@ -60,25 +60,25 @@
 //!   record and the claims beside it can tell a correction that can be followed
 //!   back from words that merely came out right. The jobs are found by their
 //!   figures, never by the words a sitting chose for them.
-//! * **`junes_survey_drew_a_standing_attendee_for_each`** — say that a
+//! * **`junes_inspection_drew_a_standing_attendee_for_each`** — say that a
 //!   record's own edge and its own status are the SAME record's, asked in
 //!   June's own window. A retraction is marked rather than filtered, so
 //!   `carries person:nelson` cannot see the `status` key beside the edge it
 //!   found, and late October legitimately retracts Nelson's own attendance
-//!   at this same survey — the pump lock's own historical bug, on
-//!   attendance rather than the pump.
-//! * **`februarys_club_drew_a_standing_member_for_each`** — the same
-//!   correlation, on the club's membership edge rather than the survey's
+//!   at this same inspection — the skate tool lock's own historical bug, on
+//!   attendance rather than the skate tool.
+//! * **`februarys_council_drew_a_standing_member_for_each`** — the same
+//!   correlation, on the council's membership edge rather than the inspection's
 //!   attendee one, asked in February's own window.
 //! * **`aprils_move_drew_a_standing_location_edge`** — the same
 //!   correlation, on Milhouse's move to Shelbyville, asked in April's own
 //!   window. Also pins the OBJECT, not only the shape: Milhouse already
 //!   carries a `location` edge to Springfield when April opens.
 //! * **`octobers_note_drew_a_standing_location_edge_to_the_gorge`** — the
-//!   same correlation again, on where the survey was held, asked in
+//!   same correlation again, on where the inspection was held, asked in
 //!   October's own window. No subject is pinned: October renames the
-//!   survey's own event in the same sitting that writes this claim.
-//! * **`late_octobers_club_drew_a_standing_member_for_bart`** — the same
+//!   inspection's own event in the same sitting that writes this claim.
+//! * **`late_octobers_council_drew_a_standing_member_for_bart`** — the same
 //!   correlation again, on Bart's membership, asked in late October's own
 //!   window.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
@@ -86,7 +86,7 @@
 //!   answer, so two of them hold on two records naming one thing each, which is
 //!   the easy case rather than the one being watched. Naming the kinds is not a
 //!   way out either: the sitting chooses which things it points at.
-//! * **`junes_survey_mention_renders_under_the_current_handle`** — say that
+//! * **`junes_inspection_mention_renders_under_the_current_handle`** — say that
 //!   ONE mention's rendering CHANGED between two readings. `carries` is a
 //!   claim about the answer as it stands, never about a difference from an
 //!   earlier answer, and pinning either handle is not a way out: January and
@@ -97,18 +97,18 @@
 //!   three are about *whichever bot is not the one that ships*. Nothing in the
 //!   query surface computes that, and pinning a handle would assert the
 //!   occupant guessed the same word the room did.
-//! * **`a_late_sitting_folds_the_canoes_pile_without_being_told_to`** — say
+//! * **`a_late_sitting_folds_the_longboards_pile_without_being_told_to`** — say
 //!   that a mark is NEW in one sitting's own window rather than merely
 //!   present on the finished board. A plain "does a mark exist" question
 //!   cannot tell a mark this sitting made from one that happened to exist
 //!   before the room asked anything.
-//! * **`the_canoes_five_repairs_are_still_active_and_named_by_the_fold`** —
+//! * **`the_longboards_five_repairs_are_still_active_and_named_by_the_fold`** —
 //!   correlate a mark's `stands_for` list against the STATUS of each address
 //!   it should cover, across five separate records. An assertion is a
 //!   substring of the whole answer, so it cannot ask whether every one of
 //!   five specific addresses is both active and named, only whether some
 //!   address somewhere is.
-//! * **`the_canoes_fold_invents_no_date_the_repairs_never_gave`** — compare
+//! * **`the_longboards_fold_invents_no_date_the_repairs_never_gave`** — compare
 //!   one record's own date-bearing fields and prose against the union of
 //!   every OTHER record's dates. Nothing on the query surface computes a set
 //!   difference across records.
@@ -217,8 +217,8 @@ pub const CHECKS: [Hatch; 45] = [
     ("what_goes_with_theta_was_left_alone_in_october", || {
         checked(|seen| Box::pin(what_goes_with_theta_was_left_alone_in_october(seen)))
     }),
-    ("the_club_was_given_a_claim_in_march", || {
-        checked(|seen| Box::pin(the_club_was_given_a_claim_in_march(seen)))
+    ("the_council_was_given_a_claim_in_march", || {
+        checked(|seen| Box::pin(the_council_was_given_a_claim_in_march(seen)))
     }),
     (
         "the_service_landed_on_the_loop_that_already_existed",
@@ -234,10 +234,14 @@ pub const CHECKS: [Hatch; 45] = [
         checked(|seen| Box::pin(julys_claim_is_withdrawn_rather_than_rewritten(seen)))
     }),
     (
-        "septembers_account_of_the_pump_is_superseded_by_a_derived_correction",
+        "septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correction",
         || {
             checked(|seen| {
-                Box::pin(septembers_account_of_the_pump_is_superseded_by_a_derived_correction(seen))
+                Box::pin(
+                    septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correction(
+                        seen,
+                    ),
+                )
             })
         },
     ),
@@ -245,27 +249,33 @@ pub const CHECKS: [Hatch; 45] = [
         "late_decembers_corrections_name_the_jobs_they_replace",
         || checked(|seen| Box::pin(late_decembers_corrections_name_the_jobs_they_replace(seen))),
     ),
-    ("august_put_nobody_new_at_the_survey", || {
-        checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
+    ("august_put_nobody_new_at_the_inspection", || {
+        checked(|seen| Box::pin(august_put_nobody_new_at_the_inspection(seen)))
     }),
-    ("late_october_put_nobody_new_at_the_survey", || {
-        checked(|seen| Box::pin(late_october_put_nobody_new_at_the_survey(seen)))
+    ("late_october_put_nobody_new_at_the_inspection", || {
+        checked(|seen| Box::pin(late_october_put_nobody_new_at_the_inspection(seen)))
     }),
-    ("the_pump_reached_its_holder_in_february", || {
-        checked(|seen| Box::pin(the_pump_reached_its_holder_in_february(seen)))
+    ("the_skate_tool_reached_its_holder_in_february", || {
+        checked(|seen| Box::pin(the_skate_tool_reached_its_holder_in_february(seen)))
     }),
     ("one_record_points_at_two_kinds", || {
         checked(|seen| Box::pin(one_record_points_at_two_kinds(seen)))
     }),
     (
-        "junes_survey_mention_renders_under_the_current_handle",
-        || checked(|seen| Box::pin(junes_survey_mention_renders_under_the_current_handle(seen))),
+        "junes_inspection_mention_renders_under_the_current_handle",
+        || {
+            checked(|seen| {
+                Box::pin(junes_inspection_mention_renders_under_the_current_handle(
+                    seen,
+                ))
+            })
+        },
     ),
-    ("junes_survey_drew_a_standing_attendee_for_each", || {
-        checked(|seen| Box::pin(junes_survey_drew_a_standing_attendee_for_each(seen)))
+    ("junes_inspection_drew_a_standing_attendee_for_each", || {
+        checked(|seen| Box::pin(junes_inspection_drew_a_standing_attendee_for_each(seen)))
     }),
-    ("februarys_club_drew_a_standing_member_for_each", || {
-        checked(|seen| Box::pin(februarys_club_drew_a_standing_member_for_each(seen)))
+    ("februarys_council_drew_a_standing_member_for_each", || {
+        checked(|seen| Box::pin(februarys_council_drew_a_standing_member_for_each(seen)))
     }),
     (
         "januarys_note_drew_a_standing_location_edge_to_springfield",
@@ -293,36 +303,41 @@ pub const CHECKS: [Hatch; 45] = [
             })
         },
     ),
-    ("late_octobers_club_drew_a_standing_member_for_bart", || {
-        checked(|seen| Box::pin(late_octobers_club_drew_a_standing_member_for_bart(seen)))
-    }),
+    (
+        "late_octobers_council_drew_a_standing_member_for_bart",
+        || checked(|seen| Box::pin(late_octobers_council_drew_a_standing_member_for_bart(seen))),
+    ),
     ("late_octobers_note_retracts_nelsons_attendance", || {
         checked(|seen| Box::pin(late_octobers_note_retracts_nelsons_attendance(seen)))
     }),
     (
-        "a_late_sitting_folds_the_canoes_pile_without_being_told_to",
+        "a_late_sitting_folds_the_longboards_pile_without_being_told_to",
         || {
             checked(|seen| {
-                Box::pin(a_late_sitting_folds_the_canoes_pile_without_being_told_to(
+                Box::pin(a_late_sitting_folds_the_longboards_pile_without_being_told_to(seen))
+            })
+        },
+    ),
+    (
+        "the_longboards_five_repairs_are_still_active_and_named_by_the_fold",
+        || {
+            checked(|seen| {
+                Box::pin(the_longboards_five_repairs_are_still_active_and_named_by_the_fold(seen))
+            })
+        },
+    ),
+    (
+        "the_longboards_fold_invents_no_date_the_repairs_never_gave",
+        || {
+            checked(|seen| {
+                Box::pin(the_longboards_fold_invents_no_date_the_repairs_never_gave(
                     seen,
                 ))
             })
         },
     ),
-    (
-        "the_canoes_five_repairs_are_still_active_and_named_by_the_fold",
-        || {
-            checked(|seen| {
-                Box::pin(the_canoes_five_repairs_are_still_active_and_named_by_the_fold(seen))
-            })
-        },
-    ),
-    (
-        "the_canoes_fold_invents_no_date_the_repairs_never_gave",
-        || checked(|seen| Box::pin(the_canoes_fold_invents_no_date_the_repairs_never_gave(seen))),
-    ),
-    ("the_bike_locks_mistake_is_rewritten_in_place", || {
-        checked(|seen| Box::pin(the_bike_locks_mistake_is_rewritten_in_place(seen)))
+    ("the_board_locks_mistake_is_rewritten_in_place", || {
+        checked(|seen| Box::pin(the_board_locks_mistake_is_rewritten_in_place(seen)))
     }),
     (
         "decembers_note_is_reachable_by_the_walk_back_from_the_cadence",
@@ -948,7 +963,7 @@ async fn what_goes_with_theta_was_left_alone_in_october(seen: &Observed<'_>) -> 
 
 /// The sitting whose window this reads, and the subject it counts records on.
 const MARCH: &str = "Phase 3";
-const CLUB: &str = "\"subject\":\"org:north-gorge-club\"";
+const COUNCIL: &str = "\"subject\":\"org:springfield-town-council\"";
 
 /// 🚨 **What ONE SITTING recorded, asked in that sitting's own window.**
 ///
@@ -965,7 +980,7 @@ const CLUB: &str = "\"subject\":\"org:north-gorge-club\"";
 /// only because the sentence that replaced it happens to keep one — which is a
 /// check standing on an accident.
 ///
-/// **So this reads the world either side of March and asks whether the club
+/// **So this reads the world either side of March and asks whether the council
 /// gained a record in that window.** Only March writes there. It is structural,
 /// it is phrasing-free, and no later sitting can take it away.
 ///
@@ -973,19 +988,19 @@ const CLUB: &str = "\"subject\":\"org:north-gorge-club\"";
 /// passed an empty boundary list until this shipped, so a check that held
 /// against no boundaries would pass everywhere it had not been wired up — which
 /// is the worst answer available, because it looks like coverage.
-async fn the_club_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), String> {
+async fn the_council_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), String> {
     let Some((before, after)) = seen.across(MARCH) else {
         return Err(format!(
             "this run took no reading either side of {MARCH}, so nothing here can say what that \
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    let had = before.world.matches(CLUB).count();
-    let has = after.world.matches(CLUB).count();
+    let had = before.world.matches(COUNCIL).count();
+    let has = after.world.matches(COUNCIL).count();
     match has > had {
         true => Ok(()),
         false => Err(format!(
-            "the club carried {had} records before {MARCH} and {has} after, so that sitting \
+            "the council carried {had} records before {MARCH} and {has} after, so that sitting \
              recorded nothing about it and July has nothing to take back",
         )),
     }
@@ -996,12 +1011,12 @@ async fn the_club_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), 
 const FEBRUARY: &str = "Phase 2";
 const HOLDS_IT: &str = "\"object\":\"person:ralph\"";
 
-/// 🚨 **Who had the pump was recorded by FEBRUARY, asked in February's own
+/// 🚨 **Who had the skate tool was recorded by FEBRUARY, asked in February's own
 /// window.**
 ///
 /// ⛔️ **Asked of the finished room, this claim belongs to nobody.** September
-/// records that the pump came back and draws a second link at the same person,
-/// on the same subject — so *the pump reaches its holder*, graded at the end of
+/// records that the skate tool came back and draws a second link at the same person,
+/// on the same subject — so *the skate tool reaches its holder*, graded at the end of
 /// the year, is satisfied by September's record. **A February that recorded
 /// nothing about who had the thing passes on work done seven months later.**
 ///
@@ -1010,7 +1025,7 @@ const HOLDS_IT: &str = "\"object\":\"person:ralph\"";
 ///
 /// **So the link is counted across February alone.** September is outside the
 /// window and cannot reach it.
-async fn the_pump_reached_its_holder_in_february(seen: &Observed<'_>) -> Result<(), String> {
+async fn the_skate_tool_reached_its_holder_in_february(seen: &Observed<'_>) -> Result<(), String> {
     let Some((before, after)) = seen.across(FEBRUARY) else {
         return Err(format!(
             "this run took no reading either side of {FEBRUARY}, so nothing here can say what \
@@ -1023,23 +1038,23 @@ async fn the_pump_reached_its_holder_in_february(seen: &Observed<'_>) -> Result<
     match has > had {
         true => Ok(()),
         false => Err(format!(
-            "nothing came to point at the person holding the pump in {FEBRUARY}'s window, so who \
+            "nothing came to point at the person holding the skate tool in {FEBRUARY}'s window, so who \
              had it is only in the prose of a sitting that is gone",
         )),
     }
 }
 
-/// The two sittings that each write one account of the pump's return, named
+/// The two sittings that each write one account of the skate tool's return, named
 /// by the phase whose window carries the write — not by content, which an
 /// occupant may word any way it likes.
 const SEPTEMBER: &str = "Phase 9";
 const OCTOBER: &str = "Phase 10";
 
-/// **Every address on the pump, either side of a phase's window.** Diffing
+/// **Every address on the skate tool, either side of a phase's window.** Diffing
 /// the two tells which address that window wrote, without needing to know
 /// what the occupant said — the same reason the day assertion reads addresses
 /// rather than prose.
-fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
+fn skate_tool_addresses(world: &str) -> std::collections::HashSet<String> {
     let mut found = std::collections::HashSet::new();
     for line in world.lines() {
         let Ok(parsed) = serde_json::from_str::<Value>(line) else {
@@ -1050,7 +1065,7 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
         };
         for hit in hits {
             if let Some(address) = hit["address"].as_str()
-                && address.starts_with("thing:floor-pump#")
+                && address.starts_with("thing:skate-tool#")
             {
                 found.insert(address.to_string());
             }
@@ -1059,12 +1074,12 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
     found
 }
 
-/// 🚨 **October corrects September's account of the pump: the claim is
+/// 🚨 **October corrects September's account of the skate tool: the claim is
 /// archived and the correction names it.**
 ///
 /// The operator ruled 2026-09-10: a later statement is a correction whether
 /// or not it is worded as one. September's sentence about who returned the
-/// pump is not sealed against October's — October's account is the same
+/// skate tool is not sealed against October's — October's account is the same
 /// claim, better informed. The product's route for words an EARLIER session
 /// wrote is to archive that claim and capture the corrected claim with
 /// `derived_from` naming it, so what the record must show afterwards is
@@ -1083,30 +1098,30 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
 /// it removed an account and put none in its place.
 ///
 /// ⛔️ **Naming the edge is not enough.** February also draws a `connection`
-/// edge at Ralph — lending the pump, not returning it — and that edge
+/// edge at Ralph — lending the skate tool, not returning it — and that edge
 /// outlives everything this lock is about. So this is scoped by WHICH WINDOW
 /// wrote the address, the same technique February's own neighbour lock uses
 /// for the identical ambiguity.
 ///
 /// ⛔️ **A hatch, and it needs two reads a document assertion cannot give
 /// together.** The record's own history says what September's address said
-/// and what it says now; the pump's claims say which standing claim names that
+/// and what it says now; the skate tool's claims say which standing claim names that
 /// address as its source. Neither read answers alone.
 ///
 /// 🚨 **September's own wording survives EITHER as an edge or as a mention in
 /// content, and this reads both.** A paid run named Ralph by drawing a
 /// `connection` edge at him; a later one drew an `attendance` edge at the
 /// event instead and named Ralph inside the sentence — both are reasonable
-/// accounts of who returned the pump, and a check that recognised only the
+/// accounts of who returned the skate tool, and a check that recognised only the
 /// first read the second's history as destroyed rather than superseded. An
 /// account that named nobody at all, by either route, still fails.
-async fn septembers_account_of_the_pump_is_superseded_by_a_derived_correction(
+async fn septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correction(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let Some((before_sep, after_sep)) = seen.across(SEPTEMBER) else {
         return Err(format!(
             "this run took no reading either side of {SEPTEMBER}, so nothing here can say which \
-             address is Ralph's account of the pump's return",
+             address is Ralph's account of the skate tool's return",
         ));
     };
     if seen.across(OCTOBER).is_none() {
@@ -1115,13 +1130,13 @@ async fn septembers_account_of_the_pump_is_superseded_by_a_derived_correction(
              that sitting corrected Ralph's account",
         ));
     }
-    let ralphs: Vec<String> = floor_pump_addresses(&after_sep.world)
-        .difference(&floor_pump_addresses(&before_sep.world))
+    let ralphs: Vec<String> = skate_tool_addresses(&after_sep.world)
+        .difference(&skate_tool_addresses(&before_sep.world))
         .cloned()
         .collect();
     let [address] = ralphs.as_slice() else {
         return Err(format!(
-            "{SEPTEMBER}'s window wrote {} address(es) on the pump rather than one, so nothing \
+            "{SEPTEMBER}'s window wrote {} address(es) on the skate tool rather than one, so nothing \
              here can say which is Ralph's account to watch get corrected: {ralphs:?}",
             ralphs.len(),
         ));
@@ -1130,7 +1145,7 @@ async fn septembers_account_of_the_pump_is_superseded_by_a_derived_correction(
         .room
         .call(
             "recall",
-            json!({"subject": "thing:floor-pump", "facts": true, "history_record": address}),
+            json!({"subject": "thing:skate-tool", "facts": true, "history_record": address}),
         )
         .await;
     let parsed: Value = read_json(&read)?;
@@ -1141,7 +1156,7 @@ async fn septembers_account_of_the_pump_is_superseded_by_a_derived_correction(
             .find(|fact| fact["address"] == address.as_str())
     }) else {
         return Err(format!(
-            "{address} is no longer on the pump's record at all, so nothing here can say it was \
+            "{address} is no longer on the skate tool's record at all, so nothing here can say it was \
              corrected rather than something else: {read}"
         ));
     };
@@ -1155,7 +1170,7 @@ async fn septembers_account_of_the_pump_is_superseded_by_a_derived_correction(
     });
     if current["status"] == "active" {
         return Err(format!(
-            "{address} still stands, so October's statement about the pump either went nowhere \
+            "{address} still stands, so October's statement about the skate tool either went nowhere \
              or was filed as a second claim instead of a correction: {read}"
         ));
     }
@@ -1267,13 +1282,13 @@ fn hits_naming_subject(world: &str, subject: &str) -> Vec<String> {
 /// here to weigh, unlike the reader-visibility question this used to ask.
 ///
 /// ⛔️ **Asked of the finished room, the positive half belongs to nobody.** The
-/// club gains records after July — August writes on it — and any later
+/// council gains records after July — August writes on it — and any later
 /// sitting that took a claim back would put a retraction on that subject with
 /// July's name on the credit. **A count over a whole subject, graded at the
 /// end of the year, credits whichever sitting the sentence happens to name.**
 ///
 /// **So this is asked across July alone.** Late October also retracts, on
-/// Nelson's attendance rather than the club's schedule, and it is four
+/// Nelson's attendance rather than the council's schedule, and it is four
 /// sittings away.
 async fn julys_claim_is_withdrawn_rather_than_rewritten(seen: &Observed<'_>) -> Result<(), String> {
     let Some((before, after)) = seen.across(JULY) else {
@@ -1282,17 +1297,17 @@ async fn julys_claim_is_withdrawn_rather_than_rewritten(seen: &Observed<'_>) -> 
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    // 🚨 **Scoped to the CLUB's own records, not the whole window.** July now
+    // 🚨 **Scoped to the COUNCIL's own records, not the whole window.** July now
     // does other business too — every woven thread adds one more sitting that
     // does — so counting the needle across the whole world would be satisfied
     // by a retraction anywhere, on any subject.
-    let club_before = hits_naming_subject(&before.world, "org:north-gorge-club");
-    let club_after = hits_naming_subject(&after.world, "org:north-gorge-club");
+    let council_before = hits_naming_subject(&before.world, "org:springfield-town-council");
+    let council_after = hits_naming_subject(&after.world, "org:springfield-town-council");
     let count = |hits: &[String], needle: &str| hits.iter().filter(|h| h.contains(needle)).count();
-    match count(&club_after, TAKEN_BACK) > count(&club_before, TAKEN_BACK) {
+    match count(&council_after, TAKEN_BACK) > count(&council_before, TAKEN_BACK) {
         true => Ok(()),
         false => Err(format!(
-            "no retraction appeared on the club in {JULY}'s window, so the March claim about \
+            "no retraction appeared on the council in {JULY}'s window, so the March claim about \
              Tuesdays was either left standing or rewritten in place instead of withdrawn",
         )),
     }
@@ -1306,7 +1321,7 @@ const WAS_THERE: &str = "\"type\":\"attendee\"";
 /// 🚨 **August answered out of the record and added nobody to it — asked in
 /// August's own window.**
 ///
-/// The sitting is asked which club members were at the survey. **The answer is
+/// The sitting is asked which council members were at the inspection. **The answer is
 /// two people and the store must still say two**: a sitting that cannot find
 /// them and fills the gap writes a third, and an invented attendee is the
 /// failure this room exists to catch.
@@ -1318,23 +1333,23 @@ const WAS_THERE: &str = "\"type\":\"attendee\"";
 /// August's name. **The first is a check that cannot fail. The second is a
 /// check that blames the wrong sitting.**
 ///
-/// **So it counts the links instead.** Somebody was at the survey before August
+/// **So it counts the links instead.** Somebody was at the inspection before August
 /// ran, and August added nobody. That is falsifiable by August and by nothing
-/// else: a later sitting putting a person on the CLUB draws a different link,
+/// else: a later sitting putting a person on the COUNCIL draws a different link,
 /// and a later sitting taking an attendance back is four sittings away.
 ///
 /// ⚠️ **The positive is the half that stops this holding on an empty room.** A
 /// year where June recorded nothing has no links to add to, and *August added
 /// none* would hold there perfectly.
-async fn august_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Result<(), String> {
-    nobody_new_was_put_at_the_survey(seen, AUGUST).await
+async fn august_put_nobody_new_at_the_inspection(seen: &Observed<'_>) -> Result<(), String> {
+    nobody_new_was_put_at_the_inspection(seen, AUGUST).await
 }
 
 /// The sitting that takes an attendance back, and the one that first has
 /// somebody to invent.
 const LATE_OCTOBER: &str = "Phase 11";
 
-/// 🚨 **The late sitting put nobody new at the survey either.**
+/// 🚨 **The late sitting put nobody new at the inspection either.**
 ///
 /// **The fault this catches belongs to a sitting late in the year, and until
 /// now nothing caught it under its own name.** August's lock used to, by naming
@@ -1344,13 +1359,13 @@ const LATE_OCTOBER: &str = "Phase 11";
 ///
 /// **This is the first sitting that CAN.** It is handed a new person and told
 /// to take an attendance back, so it holds both halves of the mistake: somebody
-/// to file, and a reason to be writing about the survey at all.
+/// to file, and a reason to be writing about the inspection at all.
 ///
 /// ⚠️ **It is the same question as August's and asked the same way**, in this
 /// sitting's own window. Taking an attendance back is welcome here and lowers
 /// the count; adding one is not.
-async fn late_october_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Result<(), String> {
-    nobody_new_was_put_at_the_survey(seen, LATE_OCTOBER).await
+async fn late_october_put_nobody_new_at_the_inspection(seen: &Observed<'_>) -> Result<(), String> {
+    nobody_new_was_put_at_the_inspection(seen, LATE_OCTOBER).await
 }
 
 /// **Whether one sitting added an attendance link**, asked in that sitting's
@@ -1359,7 +1374,10 @@ async fn late_october_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Resul
 /// One body and two names because it is one question asked of two sittings, and
 /// the names are what the room's documents call. A second copy would be a
 /// second thing to keep in step.
-async fn nobody_new_was_put_at_the_survey(seen: &Observed<'_>, phase: &str) -> Result<(), String> {
+async fn nobody_new_was_put_at_the_inspection(
+    seen: &Observed<'_>,
+    phase: &str,
+) -> Result<(), String> {
     let Some((before, after)) = seen.across(phase) else {
         return Err(format!(
             "this run took no reading either side of {phase}, so nothing here can say what that \
@@ -1370,14 +1388,14 @@ async fn nobody_new_was_put_at_the_survey(seen: &Observed<'_>, phase: &str) -> R
     let has = after.world.matches(WAS_THERE).count();
     if had == 0 {
         return Err(format!(
-            "nobody was at the survey before {phase} ran, so this sitting had nothing to answer \
+            "nobody was at the inspection before {phase} ran, so this sitting had nothing to answer \
              out of and *it invented nobody* holds over an empty record",
         ));
     }
     match has > had {
         false => Ok(()),
         true => Err(format!(
-            "the survey carried {had} attendance links before {phase} and {has} after, so that \
+            "the inspection carried {had} attendance links before {phase} and {has} after, so that \
              sitting put somebody at an event instead of answering out of what was already there",
         )),
     }
@@ -1392,12 +1410,12 @@ const SERVICED: &str = "2026-11-22";
 
 /// **The late turn landed on the loop that already existed.**
 ///
-/// The operator asks about the drivetrain and the loop is a chain check, so the
+/// The operator asks about the wheels and the loop is a bearings check, so the
 /// sitting has to reach the record through something other than the words it
 /// was given. **What is watched is where the turn ended up**, and the failure
 /// is a second loop rather than silence: a sitting that searched, found
 /// nothing, and opened a new loop leaves a store holding two, each with half
-/// the history, and neither able to say when the chain was last done.
+/// the history, and neither able to say when the bearings were last done.
 ///
 /// **The loop is identified by the day January opened it with rather than by a
 /// handle**, because the handle is a word the occupant invents.
@@ -1504,7 +1522,7 @@ fn handle_run(text: &str) -> &str {
 ///
 /// ⛔️ **No kind is named here and no slug is.** The kinds a sitting reaches for
 /// are its own choice, exactly as the slugs are: January invents the event's
-/// handle, and a sitting that pointed at the club and the gorge rather than at
+/// handle, and a sitting that pointed at the council and the gorge rather than at
 /// a person and an event did the identical thing. A check that spelled either
 /// would fail a run for the word it chose rather than for what it wrote — the
 /// fault this room removed from its late November lock.
@@ -1715,27 +1733,29 @@ async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Resu
 /// names — asked in June's own window.**
 ///
 /// The finished board is the wrong place to ask this: late October
-/// legitimately retracts Nelson's own attendance at this same survey, and a
+/// legitimately retracts Nelson's own attendance at this same inspection, and a
 /// retraction is marked rather than filtered — `recall` serves the retracted
 /// record's own edge back, so `carries person:nelson` could not see the
 /// `status` key beside it. The old lock held on that dead text exactly as
-/// the pump lock once held on Ralph's, before its own fix.
+/// the skate tool lock once held on Ralph's, before its own fix.
 ///
 /// **Scoped to June's own window rather than corrected in place**, unlike
-/// the pump: nothing here is ever corrected, and a later retraction of
+/// the skate tool: nothing here is ever corrected, and a later retraction of
 /// Nelson's attendance is legitimate rather than a mistake to catch — the
 /// question this asks is only what June itself left standing, the same
-/// question July's own lock asks about the club's schedule.
+/// question July's own lock asks about the council's schedule.
 ///
 /// ⛔️ **No handle is named here, on either side.** January invents the
-/// survey's own handle just as it invents everything else about it — a
-/// check pinning `event:gorge-survey` would fail a run that chose a
+/// inspection's own handle just as it invents everything else about it — a
+/// check pinning `event:gorge-safety-inspection` would fail a run that chose a
 /// different word for the identical thing, the fault this room's own
 /// `one_record_points_at_two_kinds` and October's location-edge check
 /// already remove for their own handles. **The object is matched by KIND**
 /// rather than left unpinned entirely, because an unpinned object would
 /// also hold on an edge to the wrong kind of thing.
-async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> Result<(), String> {
+async fn junes_inspection_drew_a_standing_attendee_for_each(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
     let Some((before, after)) = seen.across(JUNE) else {
         return Err(format!(
             "this run took no reading either side of {JUNE}, so nothing here can say what that \
@@ -1775,7 +1795,9 @@ async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> 
 /// carries over both is standing by February's own end: Nelson's, newly
 /// drawn here, and Milhouse's, drawn earlier and undisturbed since — read at
 /// February's own boundary either way, never the finished board's.
-async fn februarys_club_drew_a_standing_member_for_each(seen: &Observed<'_>) -> Result<(), String> {
+async fn februarys_council_drew_a_standing_member_for_each(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
     let Some((before, after)) = seen.across(FEBRUARY) else {
         return Err(format!(
             "this run took no reading either side of {FEBRUARY}, so nothing here can say what \
@@ -1783,15 +1805,16 @@ async fn februarys_club_drew_a_standing_member_for_each(seen: &Observed<'_>) -> 
              boundaries.",
         ));
     };
-    let club = "org:north-gorge-club";
-    let nelson_gained = !has_standing_edge(&before.world, Some("person:nelson"), "memberOf", club)
-        && has_standing_edge(&after.world, Some("person:nelson"), "memberOf", club);
+    let council = "org:springfield-town-council";
+    let nelson_gained =
+        !has_standing_edge(&before.world, Some("person:nelson"), "memberOf", council)
+            && has_standing_edge(&after.world, Some("person:nelson"), "memberOf", council);
     let milhouse_stands =
-        has_standing_edge(&after.world, Some("person:milhouse"), "memberOf", club);
+        has_standing_edge(&after.world, Some("person:milhouse"), "memberOf", council);
     match (milhouse_stands, nelson_gained) {
         (true, true) => Ok(()),
         _ => Err(format!(
-            "by the end of {FEBRUARY} the club does not carry a standing membership edge for \
+            "by the end of {FEBRUARY} the council does not carry a standing membership edge for \
              both — milhouse standing: {milhouse_stands}, nelson gained here: {nelson_gained}",
         )),
     }
@@ -1844,17 +1867,17 @@ async fn aprils_move_drew_a_standing_location_edge(seen: &Observed<'_>) -> Resul
 /// 🚨 **October drew a standing location edge to the gorge — asked in
 /// October's own window.**
 ///
-/// Asked of the finished board, `carries place:north-gorge` holds on a
+/// Asked of the finished board, `carries place:daredevil-gorge` holds on a
 /// retracted claim exactly as on a standing one — nothing in this room's
 /// honest storyline ever retracts it, so the gap is structural rather than
 /// reproducing today, the same shape as June's attendance walk carried
 /// before its fix.
 ///
 /// **No subject is pinned, unlike June's, February's or April's own
-/// checks.** October renames the survey's own event in the SAME sitting
+/// checks.** October renames the inspection's own event in the SAME sitting
 /// that writes this claim — the rename moves no id, but it does move which
 /// handle a read renders the record's subject under, so a check pinning
-/// `event:gorge-survey` would miss its own record the moment the rename
+/// `event:gorge-safety-inspection` would miss its own record the moment the rename
 /// runs first. Only the event ever draws a `location` edge to this place, so
 /// the object alone is enough to correlate on.
 async fn octobers_note_drew_a_standing_location_edge_to_the_gorge(
@@ -1867,21 +1890,21 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_gorge(
              boundaries.",
         ));
     };
-    let gained = !has_standing_edge(&before.world, None, "location", "place:north-gorge")
-        && has_standing_edge(&after.world, None, "location", "place:north-gorge");
+    let gained = !has_standing_edge(&before.world, None, "location", "place:daredevil-gorge")
+        && has_standing_edge(&after.world, None, "location", "place:daredevil-gorge");
     match gained {
         true => Ok(()),
         false => Err(format!(
-            "{OCTOBER}'s window did not draw a standing location edge to place:north-gorge, so \
-             where the survey was held was not recorded where a later reader would find it",
+            "{OCTOBER}'s window did not draw a standing location edge to place:daredevil-gorge, so \
+             where the inspection was held was not recorded where a later reader would find it",
         )),
     }
 }
 
-/// 🚨 **Late October retracts Nelson's own survey attendance — correlated on
+/// 🚨 **Late October retracts Nelson's own inspection attendance — correlated on
 /// that ONE record, not read as two substrings of his whole page.**
 ///
-/// Nelson also carries a club membership, never archived or retracted in
+/// Nelson also carries a council membership, never archived or retracted in
 /// this room's honest storyline. A bare `"status":"archived"` and a bare
 /// `"retracts":` needle each hold if EITHER of his records satisfies it —
 /// asking them of his whole answer correlates nothing between them, the
@@ -1909,7 +1932,7 @@ async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> 
     };
     if fact["status"] != "archived" {
         return Err(format!(
-            "Nelson's survey attendance is still standing as current, so a session reading his \
+            "Nelson's inspection attendance is still standing as current, so a session reading his \
              page later still finds him at an event he never went to: {read}"
         ));
     }
@@ -1930,9 +1953,9 @@ async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> 
 /// Asked of the finished board, `carries person:bart` holds on a retracted
 /// membership exactly as on a standing one — nothing in this room's honest
 /// storyline ever retracts it, so the gap is structural rather than
-/// reproducing today, the same shape February's own club walk carried
+/// reproducing today, the same shape February's own council walk carried
 /// before its fix.
-async fn late_octobers_club_drew_a_standing_member_for_bart(
+async fn late_octobers_council_drew_a_standing_member_for_bart(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let Some((before, after)) = seen.across(LATE_OCTOBER) else {
@@ -1942,9 +1965,9 @@ async fn late_octobers_club_drew_a_standing_member_for_bart(
              boundaries.",
         ));
     };
-    let club = "org:north-gorge-club";
-    let gained = !has_standing_edge(&before.world, Some("person:bart"), "memberOf", club)
-        && has_standing_edge(&after.world, Some("person:bart"), "memberOf", club);
+    let council = "org:springfield-town-council";
+    let gained = !has_standing_edge(&before.world, Some("person:bart"), "memberOf", council)
+        && has_standing_edge(&after.world, Some("person:bart"), "memberOf", council);
     match gained {
         true => Ok(()),
         false => Err(format!(
@@ -1970,7 +1993,7 @@ async fn late_octobers_club_drew_a_standing_member_for_bart(
 /// same way, crediting June for work it did not do.
 ///
 /// **So this reads the world either side of June and asks whether a
-/// two-kind record landed there**, the same pattern the club's and the pump's
+/// two-kind record landed there**, the same pattern the council's and the skate tool's
 /// locks use. No later sitting can satisfy it, because no later sitting's
 /// window is read.
 ///
@@ -2117,9 +2140,9 @@ fn subject_of(address: &str) -> &str {
 /// 🚨 **A stored mention renders under whichever handle its thing wears NOW,
 /// and this is where that is watched rather than assumed.**
 ///
-/// June points at the survey by handle, not by word — the claim
+/// June points at the inspection by handle, not by word — the claim
 /// [`one_record_points_at_two_kinds`] exists to prove happened. October gives
-/// a reason to rename the survey. Nothing about a rename touches June's own
+/// a reason to rename the inspection. Nothing about a rename touches June's own
 /// words: the badge behind its mention is permanent, and what changes is
 /// what a READ of that claim renders back.
 ///
@@ -2130,12 +2153,12 @@ fn subject_of(address: &str) -> &str {
 ///
 /// 🚨 **Anchored to June's own RECORDS, not to whichever claim currently
 /// points at an event.** A sitting can reach the same end state two ways: it
-/// can rename the survey, or it can retract June's claim and write a fresh
+/// can rename the inspection, or it can retract June's claim and write a fresh
 /// one naming a different event. Both leave a claim pointing at an event
 /// under a handle June's own words never used — but only one of them is a
 /// rename, and only one is what October's reason was given for. **A
 /// retraction never appears in a boundary at all** — `search` serves active
-/// records only, [`septembers_account_of_the_pump_is_superseded_by_a_derived_correction`]
+/// records only, [`septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correction`]
 /// says why — so this
 /// finds June's own addresses by the same window-diff that check uses, and
 /// asks a LIVE, status-aware read of each one whether it is still active
@@ -2144,28 +2167,28 @@ fn subject_of(address: &str) -> &str {
 /// unrelated handle as unchanged.
 ///
 /// 🚨 **Plural, on purpose — a run 19 transcript wrote June's claim as more
-/// than one record**, an attendance claim per person as well as the club's
-/// own, each pointing at the survey by its own mention. **Every one of them
+/// than one record**, an attendance claim per person as well as the council's
+/// own, each pointing at the inspection by its own mention. **Every one of them
 /// must clear the bar, and a zero stays refused.** A pass on any single
 /// candidate would let a rename that reached half of June's claims and left
 /// the rest stale call itself done; a run where the count happens to be one
 /// is this at its smallest, not a different question.
 ///
 /// ⛔️ **No handle is named here, on either side.** January invents the
-/// survey's first one and October's reason invents its second, and a lock
+/// inspection's first one and October's reason invents its second, and a lock
 /// that spelled either would fail a run that chose different words for
 /// either sitting — the fault this room already removed from June's own
 /// lock. **What is locked is that every one of June's own addresses, read
 /// live, renders a different handle than the one its own window first
 /// recorded**: a build that stores the word June typed shows the same
 /// handle either time; a build that stores the pointer does not.
-async fn junes_survey_mention_renders_under_the_current_handle(
+async fn junes_inspection_mention_renders_under_the_current_handle(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let Some((before, after)) = seen.across(JUNE) else {
         return Err(format!(
             "this run took no reading either side of {JUNE}, so nothing here can say which \
-             record is June's own claim about the survey",
+             record is June's own claim about the inspection",
         ));
     };
     let earlier = event_mentions_by_address(&before.world);
@@ -2185,7 +2208,7 @@ async fn junes_survey_mention_renders_under_the_current_handle(
         ));
     }
     // **One live read per distinct subject, never per candidate.** June may
-    // point at the survey from more than one subject — the club's own claim,
+    // point at the inspection from more than one subject — the council's own claim,
     // an attendance claim on a person — and a read is asked once of each.
     let mut subjects: Vec<&str> = candidates
         .iter()
@@ -2217,13 +2240,13 @@ async fn junes_survey_mention_renders_under_the_current_handle(
     for (address, original) in &candidates {
         let Some(fact) = current.get(address) else {
             return Err(format!(
-                "{address} — one of {JUNE}'s own claims pointing at the survey — is not on its \
+                "{address} — one of {JUNE}'s own claims pointing at the inspection — is not on its \
                  subject's record any more"
             ));
         };
         if fact["status"] != "active" {
             return Err(format!(
-                "{address} — one of {JUNE}'s own claims pointing at the survey — is {} rather \
+                "{address} — one of {JUNE}'s own claims pointing at the inspection — is {} rather \
                  than active, so whatever satisfies a different mention there is a fresh claim \
                  naming a different event rather than a rename of the one {JUNE} pointed at",
                 fact["status"],
@@ -2236,7 +2259,7 @@ async fn junes_survey_mention_renders_under_the_current_handle(
             Some(now) if now != *original => {}
             Some(now) => {
                 return Err(format!(
-                    "{address} still renders the survey under {now}, the handle {JUNE}'s own \
+                    "{address} still renders the inspection under {now}, the handle {JUNE}'s own \
                      window recorded there, so nothing here shows that mention resolving to a \
                      handle it did not wear when it was written"
                 ));
@@ -2470,20 +2493,20 @@ async fn a_records_trace_matches_the_writes_the_run_made(
     ))
 }
 
-/// The canoe's own subject, and the sitting whose entry asks the operator's
+/// The longboard's own subject, and the sitting whose entry asks the operator's
 /// real question — pull the year together without losing anything and
 /// without a stack of separate notes — never the word "fold" or a mark's
 /// name.
-const CANOE: &str = "thing:canoe";
+const LONGBOARD: &str = "thing:longboard";
 const LATER_DECEMBER: &str = "Phase 15";
 
-/// Every fact `recall` currently reports for the canoe.
-async fn canoes_facts(seen: &Observed<'_>) -> Vec<Value> {
+/// Every fact `recall` currently reports for the longboard.
+async fn longboards_facts(seen: &Observed<'_>) -> Vec<Value> {
     let read = seen
         .room
         .call(
             "recall",
-            json!({"subject": CANOE, "facts": true, "stood_for": true}),
+            json!({"subject": LONGBOARD, "facts": true, "stood_for": true}),
         )
         .await;
     serde_json::from_str::<Value>(&read)
@@ -2505,7 +2528,7 @@ fn the_fold(facts: &[Value]) -> Option<&Value> {
     })
 }
 
-/// 🚨 **A sitting late in the year folds the canoe's pile, and nothing in its
+/// 🚨 **A sitting late in the year folds the longboard's pile, and nothing in its
 /// entry told it to.** The document's own entry for {LATER_DECEMBER} asks the
 /// operator's real question — pull the year together without losing anything
 /// and without a stack of separate notes — and never names a mark, a verb, or
@@ -2518,7 +2541,7 @@ fn the_fold(facts: &[Value]) -> Option<&Value> {
 /// sitting choosing to make it. So this reads the board either side of
 /// {LATER_DECEMBER}'s own window and asks whether the mark is new there — the
 /// same technique March's own lock uses for the identical shape of claim.
-async fn a_late_sitting_folds_the_canoes_pile_without_being_told_to(
+async fn a_late_sitting_folds_the_longboards_pile_without_being_told_to(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let Some((before, after)) = seen.across(LATER_DECEMBER) else {
@@ -2529,13 +2552,16 @@ async fn a_late_sitting_folds_the_canoes_pile_without_being_told_to(
     };
     let had = before
         .world
-        .matches("\"stands_for\":[\"thing:canoe")
+        .matches("\"stands_for\":[\"thing:longboard")
         .count();
-    let has = after.world.matches("\"stands_for\":[\"thing:canoe").count();
+    let has = after
+        .world
+        .matches("\"stands_for\":[\"thing:longboard")
+        .count();
     match has > had {
         true => Ok(()),
         false => Err(format!(
-            "no record standing for the canoe's other claims appeared in {LATER_DECEMBER}'s own \
+            "no record standing for the longboard's other claims appeared in {LATER_DECEMBER}'s own \
              window — the pile of small repairs is still just a pile",
         )),
     }
@@ -2545,7 +2571,7 @@ async fn a_late_sitting_folds_the_canoes_pile_without_being_told_to(
 /// layers and never discards (rule 263).** A run where the fold made the pile
 /// look like one right up until the pile stopped existing is a worse failure
 /// than never folding at all, however tidy the finished board reads — so this
-/// asks whether EVERY one of the canoe's five small repairs is still active,
+/// asks whether EVERY one of the longboard's five small repairs is still active,
 /// and whether the fold's own mark actually names each of them, rather than
 /// asking either question alone.
 ///
@@ -2561,17 +2587,17 @@ async fn a_late_sitting_folds_the_canoes_pile_without_being_told_to(
 /// active, not that the mark lists it.
 ///
 /// 🚨 **EVERY record on a day, not the first one `recorded_at` happens to
-/// list.** February plausibly writes two canoe facts on the same date —
+/// list.** February plausibly writes two longboard facts on the same date —
 /// picking it up, and finding the soft spot — and a fold that named one but
 /// not the other left the second exactly as lost as if it named neither. A
 /// day is a SELECTION, never an address by another name.
-async fn the_canoes_five_repairs_are_still_active_and_named_by_the_fold(
+async fn the_longboards_five_repairs_are_still_active_and_named_by_the_fold(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
-    let facts = canoes_facts(seen).await;
+    let facts = longboards_facts(seen).await;
     let Some(fold) = the_fold(&facts) else {
         return Err(
-            "no record on the canoe stands for any other, so there is no fold to check the \
+            "no record on the longboard stands for any other, so there is no fold to check the \
              sources of"
                 .into(),
         );
@@ -2584,7 +2610,7 @@ async fn the_canoes_five_repairs_are_still_active_and_named_by_the_fold(
         .filter_map(|address| address.as_str())
         .collect();
     let mut missing = Vec::new();
-    for (day, _) in CANOE_DAYS {
+    for (day, _) in LONGBOARD_DAYS {
         let sources: Vec<&Value> = facts
             .iter()
             .filter(|fact| fact["recorded_at"] == day)
@@ -2619,18 +2645,18 @@ async fn the_canoes_five_repairs_are_still_active_and_named_by_the_fold(
     }
 }
 
-/// The five days the canoe gains a small repair — read by the lock above to
+/// The five days the longboard gains a small repair — read by the lock above to
 /// find each one, and by the sentence beside it to say what a reader loses.
-const CANOE_DAYS: [(&str, &str); 5] = [
+const LONGBOARD_DAYS: [(&str, &str); 5] = [
     ("2026-02-08", "the soft spot was noticed"),
     ("2026-03-15", "the soft spot was patched"),
-    ("2026-05-10", "the seat was varnished"),
-    ("2026-07-05", "the foot brace was replaced"),
+    ("2026-05-10", "the longboard was re-gripped"),
+    ("2026-07-05", "the truck was replaced"),
     ("2026-09-13", "a new crack was patched"),
 ];
 
 /// 🚨 **THE FABRICATION CHECK.** The folded record must not assert a date
-/// that none of the canoe's other records ever gave — the failure this mark
+/// that none of the longboard's other records ever gave — the failure this mark
 /// is most likely to produce, being asked to say less while sounding more
 /// certain than any one part of the pile it is drawn from.
 ///
@@ -2641,7 +2667,7 @@ const CANOE_DAYS: [(&str, &str); 5] = [
 /// a confidence nobody earned" that is a plain fact, checkable without
 /// reading anyone's prose for how it sounds.
 ///
-/// **`recorded_at` is sourced against EVERY canoe record, the fold's own
+/// **`recorded_at` is sourced against EVERY longboard record, the fold's own
 /// included — `happened_at` is not.** The fold's own `recorded_at` is the
 /// day it was actually written, and stating that day is not invention;
 /// excluding it convicted an honest fold for naming the day it was itself
@@ -2649,13 +2675,13 @@ const CANOE_DAYS: [(&str, &str); 5] = [
 /// invention would land on — a single day claimed for a pile that spans
 /// several — so the fold's OWN `happened_at` cannot be a source for judging
 /// itself, only the other five records' can be.
-async fn the_canoes_fold_invents_no_date_the_repairs_never_gave(
+async fn the_longboards_fold_invents_no_date_the_repairs_never_gave(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
-    let facts = canoes_facts(seen).await;
+    let facts = longboards_facts(seen).await;
     let Some(fold) = the_fold(&facts) else {
         return Err(
-            "no record on the canoe stands for any other, so there is nothing here to check for \
+            "no record on the longboard stands for any other, so there is nothing here to check for \
              an invented date"
                 .into(),
         );
@@ -2675,7 +2701,7 @@ async fn the_canoes_fold_invents_no_date_the_repairs_never_gave(
         && !known.contains(claimed)
     {
         return Err(format!(
-            "the fold says the pile happened on {claimed}, a day none of the canoe's other \
+            "the fold says the pile happened on {claimed}, a day none of the longboard's other \
              records give"
         ));
     }
@@ -2683,7 +2709,7 @@ async fn the_canoes_fold_invents_no_date_the_repairs_never_gave(
     for date in iso_dates_in(content) {
         if !known.contains(date.as_str()) {
             return Err(format!(
-                "the fold's own words name {date}, a day none of the canoe's other records give"
+                "the fold's own words name {date}, a day none of the longboard's other records give"
             ));
         }
     }
@@ -2723,9 +2749,9 @@ fn iso_dates_in(text: &str) -> Vec<String> {
 /// The same-breath mistake December's own entry asks a sitting to make and
 /// catch, and the subject it lands on — invented for this alone, so nothing
 /// else in the year ever reads or writes it.
-const BIKE_LOCK: &str = "thing:bike-lock";
+const BOARD_LOCK: &str = "thing:board-lock";
 
-/// 🚨 **The bike lock's mistake is rewritten in place, not withdrawn — because
+/// 🚨 **The board lock's mistake is rewritten in place, not withdrawn — because
 /// this sitting is the one that made it.**
 ///
 /// The operator ruled 2026-09-12: the axis is which SESSION wrote a claim, not
@@ -2745,27 +2771,27 @@ const BIKE_LOCK: &str = "thing:bike-lock";
 /// that never actually corrected anything.
 ///
 /// **The entry's own `was` annotation is a second, legitimate record on this
-/// same subject, and it is not this claim.** [`the_bike_locks_mistake_is_rewritten_in_place`]'s
+/// same subject, and it is not this claim.** [`the_board_locks_mistake_is_rewritten_in_place`]'s
 /// neighbour lock asks the sitting to capture a note carrying a `was` field
 /// once it has read the trace; counting that note as a second account of the
-/// bike lock's own mistake would fail the honest year. It is told apart
+/// board lock's own mistake would fail the honest year. It is told apart
 /// structurally, by the field the entry itself names, rather than by its
 /// prose.
 ///
 /// **The fold-in's own job is a third, legitimate record on this same
-/// subject, told apart the same way.** The bike lock is where the fold-in's
+/// subject, told apart the same way.** The board lock is where the fold-in's
 /// second control lives — its own `cost`/`settled` fields, filed correctly
 /// and left alone — and that record carries neither `was` nor an empty
 /// field set, so it is excluded on the same structural basis.
-async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Result<(), String> {
+async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call("recall", json!({"subject": BIKE_LOCK, "facts": true}))
+        .call("recall", json!({"subject": BOARD_LOCK, "facts": true}))
         .await;
     let parsed: Value = read_json(&read)?;
     let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
         return Err(format!(
-            "nothing is on file for {BIKE_LOCK} at all, so this sitting never made the mistake \
+            "nothing is on file for {BOARD_LOCK} at all, so this sitting never made the mistake \
              its own entry asks it to catch: {read}"
         ));
     };
@@ -2779,7 +2805,7 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
         .collect();
     let [fact] = active.as_slice() else {
         return Err(format!(
-            "{BIKE_LOCK} carries {} active record(s) of its own mistake rather than one, so the \
+            "{BOARD_LOCK} carries {} active record(s) of its own mistake rather than one, so the \
              correction was filed as a fresh claim beside the first — or beside a retraction of \
              it — instead of a rewrite of the one record: {read}",
             active.len(),
@@ -2787,14 +2813,14 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
     };
     let Some(address) = fact["address"].as_str() else {
         return Err(format!(
-            "the claim on {BIKE_LOCK} carries no address: {read}"
+            "the claim on {BOARD_LOCK} carries no address: {read}"
         ));
     };
     let trace = seen
         .room
         .call(
             "recall",
-            json!({"subject": BIKE_LOCK, "history_record": address, "history_most": 1}),
+            json!({"subject": BOARD_LOCK, "history_record": address, "history_most": 1}),
         )
         .await;
     let parsed_trace: Value = read_json(&trace)?;
@@ -3162,7 +3188,7 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
 /// **The two jobs the year files, by the subject they sit on and what they
 /// cost.** Found by their figures and never by their words, because a sitting
 /// words a job as it likes and the figure is what the operator said.
-const JOBS: [(&str, &str); 2] = [("thing:gravel-bike", "45"), ("thing:floor-pump", "20")];
+const JOBS: [(&str, &str); 2] = [("thing:skateboard", "45"), ("thing:skate-tool", "20")];
 
 /// The three words the operator uses for where a payment stands, as January
 /// declares them. A job under any other word is filed under a wrong one.

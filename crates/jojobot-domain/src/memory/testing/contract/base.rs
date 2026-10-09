@@ -3357,11 +3357,11 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
 
 /// `list_entities(kind)` narrows to one kind and never leaks another's.
 pub async fn list_entities_filters_by_kind<M: Memory>(store: &M) {
-    let place = EntityId("place:contract-north-gorge".into());
+    let place = EntityId("place:contract-daredevil-gorge".into());
     let topic = EntityId("topic:contract-widgets".into());
     add(
         store,
-        NewEntity::new(place.clone(), "North Gorge", "user-named"),
+        NewEntity::new(place.clone(), "Daredevil Gorge", "user-named"),
     )
     .await;
     add(

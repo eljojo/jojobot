@@ -37,7 +37,7 @@ struct Allowed<'a> {
 /// instead of an entry here whenever that is the real fix — an entry is for
 /// the exposures that are staying, with the sentence that says why.
 ///
-/// **Empty, as of the September pump lock's own fix.** Its bare
+/// **Empty, as of the September skate tool lock's own fix.** Its bare
 /// `person:ralph` needle was not only exposed to the retraction this
 /// allowlist used to accept — it was satisfied by February's own loan edge
 /// regardless of anything September did, so removing it was a strictly

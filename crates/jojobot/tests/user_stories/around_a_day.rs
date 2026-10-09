@@ -16,7 +16,8 @@ async fn what_was_recorded_around_a_day() {
     let s = story.session().await;
 
     s.add("person:milhouse", "Milhouse").await;
-    s.add("org:north-gorge-club", "North Gorge Club").await;
+    s.add("org:springfield-town-council", "Springfield Town Council")
+        .await;
 
     // A year of claims about one person, spread across it. Read back by
     // subject they are one undifferentiated list; what makes any of them
@@ -25,7 +26,7 @@ async fn what_was_recorded_around_a_day() {
         .await;
     s.fact_on(
         "person:milhouse",
-        "said the club needs a new pump",
+        "said the council needs a new pump",
         "2026-08-16",
     )
     .await;

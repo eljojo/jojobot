@@ -11,14 +11,14 @@
 //!   exception: `carries-either` takes any one of several end states a room
 //!   accepts as right. Pushing more into jojobot would grow a test framework
 //!   inside a query surface, which is worse than the cost it saves;
-//! * the **sentence** is authored prose and is never generated. *The pump says
+//! * the **sentence** is authored prose and is never generated. *The skate tool says
 //!   `sent` for where the job has got to* is worth more than a boolean because
 //!   somebody wrote it about this room.
 //!
 //! ```text
 //! recall  {"kind": "rhythm", "overdue": {"as_of": "2026-06-14"}}
-//! carries thing:floor-pump
-//! say     the pump was not offered as due, so months passed and nothing noticed
+//! carries thing:skate-tool
+//! say     the skate tool was not offered as due, so months passed and nothing noticed
 //! ```
 //!
 //! # 🚨 The rule this format exists to hold
@@ -177,7 +177,7 @@ pub struct Lock {
     /// The authored sentence a reader sees when this does not hold.
     pub(crate) say: String,
     /// **What the run calls this check**, which is the sentence under the key
-    /// of the phase it was written beneath — `Phase 2 — the pump says sent`.
+    /// of the phase it was written beneath — `Phase 2 — the skate tool says sent`.
     ///
     /// The run names a phase nothing asserts over, and it keys a check to a
     /// phase by the `Phase N` its name opens with. An author who wrote the
@@ -631,8 +631,8 @@ mod tests {
         let read = read(
             "```locks\n\
              recall {\"kind\": \"rhythm\", \"overdue\": {\"as_of\": \"2026-06-14\"}}\n\
-             carries thing:floor-pump\n\
-             say     the pump was not offered as due\n\
+             carries thing:skate-tool\n\
+             say     the skate tool was not offered as due\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -647,9 +647,9 @@ mod tests {
         );
         assert_eq!(
             read[0].expects,
-            vec![Expect::Carries("thing:floor-pump".into())]
+            vec![Expect::Carries("thing:skate-tool".into())]
         );
-        assert_eq!(read[0].say, "the pump was not offered as due");
+        assert_eq!(read[0].say, "the skate tool was not offered as due");
     }
 
     /// 🚨 **A lock that only says what is absent is refused, and the refusal
@@ -901,7 +901,7 @@ mod tests {
             "## Phase 1 — the room\n\n\
              ```locks\n\
              check   the_cost_reads_as_a_number\n\
-             say     what the pump cost did not normalise\n\
+             say     what the skate tool cost did not normalise\n\
              window  own-phase\n\
              ```\n",
         )
@@ -925,7 +925,7 @@ mod tests {
         let read = read(
             "```locks\n\
              check   the_cost_reads_as_a_number\n\
-             say     what the pump cost did not normalise\n\
+             say     what the skate tool cost did not normalise\n\
              ```\n",
         )
         .expect("the hatch reads");
@@ -945,7 +945,7 @@ mod tests {
         let read = read(
             "```locks\n\
              check   the_cost_reads_as_a_number\n\
-             say     what the pump cost did not normalise\n\
+             say     what the skate tool cost did not normalise\n\
              \n\
              recall {\"kind\": \"person\"}\n\
              carries person:milhouse\n\
@@ -1050,7 +1050,7 @@ mod tests {
             lock.resolve(&|named| match named {
                 "a_check_that_holds" => Some(crate::run::checked(|_| Box::pin(async { Ok(()) }))),
                 "a_check_that_misses" => Some(crate::run::checked(|_| {
-                    Box::pin(async { Err("the pump says nothing".to_string()) })
+                    Box::pin(async { Err("the skate tool says nothing".to_string()) })
                 })),
                 _ => None,
             });
@@ -1067,7 +1067,7 @@ mod tests {
         assert!(!missed.held, "a check that misses was reported as holding");
         assert!(
             missed.saying.contains("the other thing the room is about")
-                && missed.saying.contains("the pump says nothing"),
+                && missed.saying.contains("the skate tool says nothing"),
             "a reader gets the sentence and what the check found: {}",
             missed.saying,
         );
@@ -1714,19 +1714,19 @@ mod standing_tests {
 
     /// **The known-bad instance, taken from history rather than invented.**
     ///
-    /// This is the pump lock exactly as it stood before commit 18a4cfb: two
+    /// This is the skate tool lock exactly as it stood before commit 18a4cfb: two
     /// bare-handle needles, no companion, run against the finished room. A
     /// paid run had Ralph's account retracted and this lock held anyway,
     /// because a retraction is marked rather than filtered. **If the
     /// classifier does not flag this shape, it measures nothing.**
     #[test]
-    fn the_historical_pump_lock_is_flagged() {
+    fn the_historical_skate_tool_lock_is_flagged() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             recall {\"subject\": \"thing:skate-tool\", \"facts\": true}\n\
              carries person:ralph\n\
              carries person:nelson\n\
-             say     one of the two accounts of how the pump came back is gone\n\
+             say     one of the two accounts of how the skate tool came back is gone\n\
              ```\n",
         )
         .expect("the historical lock reads");
@@ -1744,9 +1744,9 @@ mod standing_tests {
     fn a_folded_field_needle_is_not_flagged() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:gravel-bike\"}\n\
+             recall {\"subject\": \"thing:skateboard\"}\n\
              carries \"settled\":\"paid\"\n\
-             say     the bike's tally is not settled\n\
+             say     the skateboard's tally is not settled\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1768,7 +1768,7 @@ mod standing_tests {
     fn a_bare_handle_paired_with_an_active_status_needle_is_not_flagged() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             recall {\"subject\": \"thing:skate-tool\", \"facts\": true}\n\
              carries person:ralph\n\
              carries \"status\":\"active\"\n\
              say     ralph's account is not standing\n\
@@ -1822,7 +1822,7 @@ mod standing_tests {
     fn a_needle_that_only_mentions_status_does_not_pin() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             recall {\"subject\": \"thing:skate-tool\", \"facts\": true}\n\
              carries person:ralph\n\
              carries \"status_note\":\"checked\"\n\
              say     ralph's account is not standing\n\
@@ -1844,9 +1844,9 @@ mod standing_tests {
     fn a_bare_numeric_needle_is_flagged_as_broad() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:gravel-bike\"}\n\
+             recall {\"subject\": \"thing:skateboard\"}\n\
              carries 35\n\
-             say     the bike's tally reads 35\n\
+             say     the skateboard's tally reads 35\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1871,9 +1871,9 @@ mod standing_tests {
     fn the_same_value_quoted_as_a_folded_field_is_not_flagged_as_broad() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:gravel-bike\"}\n\
+             recall {\"subject\": \"thing:skateboard\"}\n\
              carries \"cost\":\"35\"\n\
-             say     the bike's cost is not settled\n\
+             say     the skateboard's cost is not settled\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1900,9 +1900,9 @@ mod standing_tests {
     fn a_check_lock_is_never_flagged() {
         let locks = read(
             "```locks\n\
-             check   both_accounts_of_the_pump_stand\n\
+             check   both_accounts_of_the_skate_tool_stand\n\
              carries person:ralph\n\
-             say     one of the two accounts of how the pump came back is gone\n\
+             say     one of the two accounts of how the skate tool came back is gone\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1912,15 +1912,15 @@ mod standing_tests {
     /// **A bare handle out of a query that asks for no facts and follows no
     /// edge is not flagged.** Retraction lives on a fact's or an edge's own
     /// status, and neither rides on a bare `{"kind": "thing"}` listing — the
-    /// real instance is Phase 2's `thing:floor-pump` needle, which no longer
+    /// real instance is Phase 2's `thing:skate-tool` needle, which no longer
     /// needs its own allowlist entry once the classifier reads this.
     #[test]
     fn a_bare_handle_out_of_a_kind_listing_is_not_flagged() {
         let locks = read(
             "```locks\n\
              recall {\"kind\": \"thing\"}\n\
-             carries thing:floor-pump\n\
-             say     the pump the operator lent is not a thing jojobot knows\n\
+             carries thing:skate-tool\n\
+             say     the skate tool the operator lent is not a thing jojobot knows\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1942,9 +1942,9 @@ mod standing_tests {
     fn the_same_needle_asked_with_facts_is_still_flagged() {
         let locks = read(
             "```locks\n\
-             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
-             carries thing:floor-pump\n\
-             say     the pump is not on the record\n\
+             recall {\"subject\": \"thing:skate-tool\", \"facts\": true}\n\
+             carries thing:skate-tool\n\
+             say     the skate tool is not on the record\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1952,7 +1952,7 @@ mod standing_tests {
         assert!(
             found
                 .iter()
-                .any(|f| f.needle == "thing:floor-pump" && f.risk == Risk::Retraction),
+                .any(|f| f.needle == "thing:skate-tool" && f.risk == Risk::Retraction),
             "a needle out of a facts-bearing query was not flagged: {:?}",
             found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
         );
@@ -1967,8 +1967,8 @@ mod standing_tests {
         let locks = read(
             "```locks\n\
              recall {\"kind\": \"person\", \"follow\": {\"shape\": \"membership\"}}\n\
-             carries org:north-gorge-club\n\
-             say     nothing walks to the club\n\
+             carries org:springfield-town-council\n\
+             say     nothing walks to the council\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1976,7 +1976,7 @@ mod standing_tests {
         assert!(
             found
                 .iter()
-                .any(|f| f.needle == "org:north-gorge-club" && f.risk == Risk::Retraction),
+                .any(|f| f.needle == "org:springfield-town-council" && f.risk == Risk::Retraction),
             "a needle out of a query that follows an edge was not flagged: {:?}",
             found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
         );
@@ -1990,8 +1990,8 @@ mod standing_tests {
         let locks = read(
             "```locks\n\
              recall not-json-at-all\n\
-             carries thing:floor-pump\n\
-             say     the pump is not on the record\n\
+             carries thing:skate-tool\n\
+             say     the skate tool is not on the record\n\
              ```\n",
         )
         .expect("the lock reads");
@@ -1999,7 +1999,7 @@ mod standing_tests {
         assert!(
             found
                 .iter()
-                .any(|f| f.needle == "thing:floor-pump" && f.risk == Risk::Retraction),
+                .any(|f| f.needle == "thing:skate-tool" && f.risk == Risk::Retraction),
             "unparsable arguments were exempted rather than flagged: {:?}",
             found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
         );

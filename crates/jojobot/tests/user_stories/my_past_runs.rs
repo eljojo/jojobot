@@ -45,7 +45,7 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
     // ── ① otto does some work ───────────────────────────────────────────────
     let otto = story.session().await;
     otto.add("bot:epsilon", "Epsilon").await;
-    otto.journal("otto surveyed the east gorge and found the bridge closed")
+    otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
     let before = my_past_runs(&otto).await;
     let withheld_before = before["withheld"]
@@ -167,7 +167,7 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
     // ── ① an instance with a run on it, asked by a caller carrying no sid ───
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.journal("otto surveyed the east gorge and found the bridge closed")
+    otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
     // What an identified caller sees: its own run shown, the rest counted.
     let identified = my_past_runs(&otto).await;
@@ -309,10 +309,10 @@ async fn a_wrapped_run_is_read_by_the_next_run_of_its_bot_and_not_by_another_bot
     let first = story.session().await;
     first.add("bot:epsilon", "Epsilon").await;
     first
-        .journal("otto surveyed the east gorge and found the bridge closed")
+        .journal("otto inspected the east gorge and found the bridge closed")
         .await;
     first
-        .wrap("surveyed the east gorge; the bridge is closed")
+        .wrap("inspected the east gorge; the bridge is closed")
         .await;
 
     let epsilon = story.as_bot("bot:epsilon").await;
@@ -358,7 +358,7 @@ async fn a_runs_owner_follows_its_bot_through_a_rename() {
     let first = story.session().await;
     first.add("bot:epsilon", "Epsilon").await;
     first
-        .journal("otto surveyed the east gorge and found the bridge closed")
+        .journal("otto inspected the east gorge and found the bridge closed")
         .await;
     let epsilon = story.as_bot("bot:epsilon").await;
     epsilon
@@ -410,7 +410,7 @@ async fn a_runs_owner_follows_its_bot_through_a_rename() {
 async fn a_filter_that_leaves_out_my_own_runs_says_how_many_apart_from_those_withheld() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.journal("otto surveyed the east gorge and found the bridge closed")
+    otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
 
     // The positive: the plain browse finds my run, and excluded none of mine.
@@ -454,7 +454,7 @@ async fn a_runs_sid_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
     otto.add("bot:epsilon", "Epsilon").await;
-    otto.journal("otto surveyed the east gorge and found the bridge closed")
+    otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
     let sid = otto.sid().to_string();
 
@@ -526,7 +526,7 @@ async fn a_runs_sid_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
 async fn near_places_a_run_on_the_day_it_started() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.journal("otto surveyed the east gorge and found the bridge closed")
+    otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
     let today = jiff::Timestamp::now()
         .to_zoned(jiff::tz::TimeZone::UTC)
@@ -571,7 +571,7 @@ async fn near_places_a_run_on_the_day_it_started() {
 async fn naming_a_run_by_its_sid_is_refused_with_the_read_that_finds_it() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.journal("otto surveyed the east gorge").await;
+    otto.journal("otto inspected the east gorge").await;
     let refused = otto
         .refused(
             "recall",

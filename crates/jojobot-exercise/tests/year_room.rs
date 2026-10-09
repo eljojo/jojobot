@@ -190,7 +190,7 @@ async fn boot_sitting(room: &Surface, day: &str) -> String {
         .to_string()
 }
 
-/// **What June's survey claim says, in the four shapes the year can be driven
+/// **What June's inspection claim says, in the four shapes the year can be driven
 /// with.**
 ///
 /// They differ in one thing: what the claim's own words POINT AT. Everything
@@ -202,44 +202,47 @@ async fn boot_sitting(room: &Surface, day: &str) -> String {
 /// wrapped literal whose continuation is lost stores runs of spaces
 /// mid-sentence, every check on it still passes, and the fault reaches a
 /// reader — five instances of it across three crates so far.
-const WHAT_JUNE_SAW: &str =
-    "@event:gorge-survey ran on @place:north-gorge with @person:milhouse and @person:nelson";
+const WHAT_JUNE_SAW: &str = "@event:gorge-safety-inspection ran on @place:daredevil-gorge with @person:milhouse and @person:nelson";
 
 /// The three nouns as words, which is what a sitting that never reached for a
 /// mention leaves behind.
-const IN_WORDS: &str = "the gorge survey ran on the north gorge with Milhouse and Nelson";
+const IN_WORDS: &str =
+    "the gorge safety inspection ran on the Daredevil Gorge with Milhouse and Nelson";
 
 /// **Two kinds on one record and not the three the lock used to name.** The
 /// event is the claim's own topic and is spelled rather than pointed at; the
 /// place and the people are pointers, so the claim leads somewhere in two
 /// directions.
 const A_PLACE_AND_A_PERSON: &str =
-    "the survey ran on @place:north-gorge with @person:milhouse and @person:nelson";
+    "the inspection ran on @place:daredevil-gorge with @person:milhouse and @person:nelson";
 
 /// **Pointers, all of one kind.** Every mention leads to a person, so no claim
 /// links a thing of one kind to a thing of another.
-const PEOPLE_ONLY: &str = "@person:milhouse and @person:nelson were both at the survey";
+const PEOPLE_ONLY: &str = "@person:milhouse and @person:nelson were both at the inspection";
 
-/// **The five days the canoe gains a small repair**, and what each is — read
-/// off `recorded_at` by `checks.rs`'s canoe hatches, so the wording here is
+/// **The five days the longboard gains a small repair**, and what each is — read
+/// off `recorded_at` by `checks.rs`'s longboard hatches, so the wording here is
 /// free to change and the day is not.
-const CANOE_DAYS: [(&str, &str); 5] = [
+const LONGBOARD_DAYS: [(&str, &str); 5] = [
     (
         "2026-02-08",
-        "there is a soft spot in the canoe's hull near the bow",
+        "there is a soft spot in the longboard's deck near the nose",
     ),
-    ("2026-03-15", "patched that soft spot in the canoe's hull"),
+    (
+        "2026-03-15",
+        "patched that soft spot in the longboard's deck",
+    ),
     (
         "2026-05-10",
-        "gave the canoe seat a coat of varnish since it was getting rough",
+        "re-gripped the longboard since the grip tape was getting worn",
     ),
     (
         "2026-07-05",
-        "replaced the canoe's rear foot brace, the old one had cracked",
+        "replaced the longboard's rear truck, the old one had cracked",
     ),
     (
         "2026-09-13",
-        "patched a new crack near the canoe's bow before it gets worse",
+        "patched a new crack near the longboard's nose before it gets worse",
     ),
 ];
 
@@ -437,13 +440,13 @@ async fn january(room: &Surface, sid: &str) {
         room,
         sid,
         "add_entity",
-        json!({"kind": "rhythm", "handle": "chain-check", "name": "Chain check",
-               "source": "the operator", "parent": "thing:gravel-bike"}),
+        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
+               "source": "the operator", "parent": "thing:skateboard"}),
     )
     .await;
     // **The loop is declared, then opened by a back-dated check-in.** The
     // cadence and the policy are the operator's word and no check-in can state
-    // them. The basis is not sent: the chain was last done before this sitting
+    // them. The basis is not sent: the bearings were last done before this sitting
     // opened the loop, so the opening turn is a check-in dated that day and
     // jojobot derives `counts_from` from it. Sending the basis by hand is what
     // this room's own lock on derivations exists to catch.
@@ -451,9 +454,9 @@ async fn january(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
+        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Chain check", "cadence_days": "90",
+               "fields": {"name": "Bearings check", "cadence_days": "90",
                           "advances_from": "due_date"}}),
     )
     .await;
@@ -461,7 +464,7 @@ async fn january(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "last did the chain just before christmas",
+        json!({"subject": "rhythm:bearings-check", "content": "last did the bearings just before christmas",
                "provenance": "testimony",
                "check_in": "ran", "recorded_at": "2025-12-20"}),
     )
@@ -479,16 +482,16 @@ async fn january(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:milhouse", "content": "rides with the club",
+        json!({"subject": "person:milhouse", "content": "sits on the council",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-gorge-club"}),
+               "shape": "membership", "object": "org:springfield-town-council"}),
     )
     .await;
     did(
         room,
         sid,
         "add_entity",
-        json!({"kind": "event", "handle": "gorge-survey", "name": "The gorge survey",
+        json!({"kind": "event", "handle": "gorge-safety-inspection", "name": "The gorge safety inspection",
                "source": "the operator"}),
     )
     .await;
@@ -501,7 +504,7 @@ async fn january(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "event:gorge-survey", "content": "planning to attend",
+        json!({"subject": "event:gorge-safety-inspection", "content": "planning to attend",
                "provenance": "testimony", "standing": "open"}),
     )
     .await;
@@ -526,7 +529,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "post_message",
         json!({"to": "assistant", "subject": "where the year stands",
-               "body": "The bike chain loop is on file and the club is on the roster."}),
+               "body": "The skateboard bearings loop is on file and the council is on the roster."}),
     )
     .await;
 }
@@ -535,8 +538,8 @@ async fn february(room: &Surface, sid: &str) {
     for (kind, handle, name) in [
         ("person", "ralph", "Ralph"),
         ("person", "nelson", "Nelson"),
-        ("thing", "floor-pump", "The Floor Pump"),
-        ("thing", "canoe", "The Canoe"),
+        ("thing", "skate-tool", "The Skate Tool"),
+        ("thing", "longboard", "The Longboard"),
     ] {
         did(
             room,
@@ -550,7 +553,7 @@ async fn february(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
+        json!({"subject": "thing:skate-tool", "content": "lent out, wanted back before the inspection",
                "provenance": "testimony",
                "shape": "connection", "object": "person:ralph"}),
     )
@@ -559,22 +562,22 @@ async fn february(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:nelson", "content": "joined the club",
+        json!({"subject": "person:nelson", "content": "joined the council",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-gorge-club"}),
+               "shape": "membership", "object": "org:springfield-town-council"}),
     )
     .await;
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[0].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[0].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[0].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[0].0}),
     )
     .await;
 }
 
-/// **A February that stands the things up and never says who has the pump.**
+/// **A February that stands the things up and never says who has the skate tool.**
 ///
 /// The fault the lock names, played: the entities exist, the prose of the
 /// sitting says it was lent out, and nothing on the record points at the
@@ -584,8 +587,8 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
     for (kind, handle, name) in [
         ("person", "ralph", "Ralph"),
         ("person", "nelson", "Nelson"),
-        ("thing", "floor-pump", "The Floor Pump"),
-        ("thing", "canoe", "The Canoe"),
+        ("thing", "skate-tool", "The Skate Tool"),
+        ("thing", "longboard", "The Longboard"),
     ] {
         did(
             room,
@@ -604,7 +607,7 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
+        json!({"subject": "thing:skate-tool", "content": "lent out, wanted back before the inspection",
                "provenance": "testimony", "recorded_at": "2026-02-08"}),
     )
     .await;
@@ -612,17 +615,17 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:nelson", "content": "joined the club",
+        json!({"subject": "person:nelson", "content": "joined the council",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-gorge-club"}),
+               "shape": "membership", "object": "org:springfield-town-council"}),
     )
     .await;
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[0].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[0].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[0].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[0].0}),
     )
     .await;
 }
@@ -632,7 +635,7 @@ async fn march(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club", "content": "meets on Tuesdays",
+        json!({"subject": "org:springfield-town-council", "content": "meets on Tuesdays",
                "provenance": "testimony", "recorded_at": "2026-03-15"}),
     )
     .await;
@@ -643,8 +646,8 @@ async fn march(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[1].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[1].0,
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[1].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[1].0,
                "fields": {"cost": "30", "settled": "paid"}}),
     )
     .await;
@@ -675,7 +678,7 @@ async fn may(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "place:north-gorge", "content": "washed out at the top end this spring",
+        json!({"subject": "place:daredevil-gorge", "content": "closed by a rockslide at the top end this spring",
                "provenance": "testimony", "recorded_at": "2026-05-10"}),
     )
     .await;
@@ -683,8 +686,8 @@ async fn may(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[2].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[2].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[2].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[2].0}),
     )
     .await;
 }
@@ -695,14 +698,14 @@ async fn june(room: &Surface, sid: &str) {
 
 /// **June, with attendance filed as a mention on each person too** — the
 /// shape a live paid run actually wrote, rather than the edge this room's
-/// default June uses for the same claim. Three records point at the survey
-/// afterward: the club's own and one per person, all by the same entity.
+/// default June uses for the same claim. Three records point at the inspection
+/// afterward: the council's own and one per person, all by the same entity.
 async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club",
+        json!({"subject": "org:springfield-town-council",
                "content": WHAT_JUNE_SAW,
                "provenance": "testimony"}),
     )
@@ -712,9 +715,9 @@ async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the gorge survey, @event:gorge-survey",
+            json!({"subject": who, "content": "was at the gorge safety inspection, @event:gorge-safety-inspection",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:gorge-survey"}),
+                   "shape": "attendance", "object": "event:gorge-safety-inspection"}),
         )
         .await;
     }
@@ -722,7 +725,7 @@ async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+        json!({"subject": "rhythm:bearings-check", "content": "did the skateboard bearings this morning",
                "provenance": "testimony",
                "check_in": "ran"}),
     )
@@ -731,7 +734,7 @@ async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
 
 /// **June, plus a second event nothing in October ever touches.**
 ///
-/// The partial-rename shape: October renames the survey and this second
+/// The partial-rename shape: October renames the inspection and this second
 /// event is never named in its reason, so a rename that reached every one
 /// of June's addresses would still leave this one exactly as written.
 async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
@@ -748,7 +751,7 @@ async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club",
+        json!({"subject": "org:springfield-town-council",
                "content": "already looking ahead to @event:krusty-fest",
                "provenance": "testimony"}),
     )
@@ -758,13 +761,13 @@ async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
 /// **June, drawing its attendee edges at an event under a differently
 /// spelled handle than the one January happened to invent.**
 ///
-/// Nothing tells a model what to call the survey — January's own handle is
+/// Nothing tells a model what to call the inspection — January's own handle is
 /// that sitting's invention, not a word the operator used — so a June that
 /// lands on a different spelling has done the same work as one that landed
-/// on `event:gorge-survey` by chance. `event:gorge-survey` itself is left
+/// on `event:gorge-safety-inspection` by chance. `event:gorge-safety-inspection` itself is left
 /// standing, unused: the point is that June's own lock must not care which
 /// event carries the edges, only that one does.
-async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) {
+async fn june_points_at_a_differently_spelled_inspection(room: &Surface, sid: &str) {
     did(
         room,
         sid,
@@ -777,7 +780,7 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club",
+        json!({"subject": "org:springfield-town-council",
                "content": WHAT_JUNE_SAW,
                "provenance": "testimony"}),
     )
@@ -787,7 +790,7 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the gorge survey",
+            json!({"subject": who, "content": "was at the gorge safety inspection",
                    "provenance": "testimony",
                    "shape": "attendance", "object": "event:the-june-gorge-day"}),
         )
@@ -797,14 +800,14 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+        json!({"subject": "rhythm:bearings-check", "content": "did the skateboard bearings this morning",
                "provenance": "testimony",
                "check_in": "ran"}),
     )
     .await;
 }
 
-/// **June, with the survey claim saying `said`.**
+/// **June, with the inspection claim saying `said`.**
 ///
 /// One body for every June the suite drives, because the sittings differ in one
 /// sentence and separate bodies for them are copies of the same twenty lines.
@@ -814,14 +817,14 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
 /// the lock about handles a case about the sentence rather than about a sitting
 /// that did less.
 ///
-/// The claim is filed on the club because the good version of it names the
+/// The claim is filed on the council because the good version of it names the
 /// event, and a claim cannot mention the thing it is already filed against.
 async fn june_saying(room: &Surface, sid: &str, said: &str) {
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club",
+        json!({"subject": "org:springfield-town-council",
                "content": said,
                "provenance": "testimony"}),
     )
@@ -831,9 +834,9 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the gorge survey",
+            json!({"subject": who, "content": "was at the gorge safety inspection",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:gorge-survey"}),
+                   "shape": "attendance", "object": "event:gorge-safety-inspection"}),
         )
         .await;
     }
@@ -841,7 +844,7 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+        json!({"subject": "rhythm:bearings-check", "content": "did the skateboard bearings this morning",
                "provenance": "testimony",
                "check_in": "ran"}),
     )
@@ -862,7 +865,7 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "around 800 kilometres since the spring",
+        json!({"subject": "thing:skateboard", "content": "around 800 kilometres since the spring",
                "provenance": "testimony", "fields": {"km": "800"}}),
     )
     .await;
@@ -881,9 +884,9 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the gorge survey",
+            json!({"subject": who, "content": "was at the gorge safety inspection",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:gorge-survey"}),
+                   "shape": "attendance", "object": "event:gorge-safety-inspection"}),
         )
         .await;
     }
@@ -891,7 +894,7 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+        json!({"subject": "rhythm:bearings-check", "content": "did the skateboard bearings this morning",
                "fields": {"last_check_in": "2026-06-14"}}),
     )
     .await;
@@ -904,7 +907,7 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
+        json!({"subject": "rhythm:bearings-check", "content": "did the bearings again today",
                "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
@@ -916,7 +919,7 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
 ///
 /// The room's own document names this failure at Phase 13: the store then
 /// holds two loops, each with half the history, and neither can say when the
-/// chain was last done. This one is also written by hand rather than checked
+/// bearings were last done. This one is also written by hand rather than checked
 /// in, so the second loop carries the same defect June and this sitting's
 /// other guilty variant do — a fixture giving the derivations lock's own
 /// scoping something to be wrong about, since January's loop is left
@@ -926,15 +929,15 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
         room,
         sid,
         "add_entity",
-        json!({"kind": "rhythm", "handle": "orphan", "name": "Drivetrain service",
-               "source": "the operator", "parent": "thing:gravel-bike"}),
+        json!({"kind": "rhythm", "handle": "orphan", "name": "Wheels service",
+               "source": "the operator", "parent": "thing:skateboard"}),
     )
     .await;
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:orphan", "content": "did the drivetrain again today",
+        json!({"subject": "rhythm:orphan", "content": "did the wheels again today",
                "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
@@ -950,14 +953,14 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
 /// corrected one derived from it. The words end up right either way, which is
 /// exactly why the room needs a lock that can tell it from a retraction.
 async fn july(room: &Surface, sid: &str) {
-    let wrong = address_of(room, "org:north-gorge-club", "Tuesdays").await;
+    let wrong = address_of(room, "org:springfield-town-council", "Tuesdays").await;
     corrects_an_earlier_claim(
         room,
         sid,
         &wrong,
         "the operator was mistaken in March",
-        json!({"subject": "org:north-gorge-club",
-               "content": "The North Gorge Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
+        json!({"subject": "org:springfield-town-council",
+               "content": "The Springfield Town Council does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
                "provenance": "testimony", "recorded_at": "2026-07-05"}),
     )
     .await;
@@ -965,24 +968,24 @@ async fn july(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[3].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[3].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[3].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[3].0}),
     )
     .await;
 }
 
-/// **A July that writes only the canoe record and does nothing to the
-/// club.** The case a review found this room could not yet fail: once the
-/// canoe thread gave July a second subject, a whole-world count of "a record
-/// gained July's day" was satisfied by the canoe alone, and "no retraction
+/// **A July that writes only the longboard record and does nothing to the
+/// council.** The case a review found this room could not yet fail: once the
+/// longboard thread gave July a second subject, a whole-world count of "a record
+/// gained July's day" was satisfied by the longboard alone, and "no retraction
 /// appeared" holds trivially over a subject nobody touched.
-async fn july_writes_only_the_canoe(room: &Surface, sid: &str) {
+async fn july_writes_only_the_longboard(room: &Surface, sid: &str) {
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[3].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[3].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[3].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[3].0}),
     )
     .await;
 }
@@ -995,13 +998,13 @@ async fn july_writes_only_the_canoe(room: &Surface, sid: &str) {
 /// complete here — there is nothing else the record needs to say, exactly as
 /// Nelson's own retracted attendance needs no replacement claim either.
 async fn july_takes_the_claim_back(room: &Surface, sid: &str) {
-    let wrong = address_of(room, "org:north-gorge-club", "Tuesdays").await;
+    let wrong = address_of(room, "org:springfield-town-council", "Tuesdays").await;
     did(
         room,
         sid,
         "retract",
         json!({"address": wrong,
-               "reason": "the club does not meet on Tuesdays and the operator was mistaken",
+               "reason": "the council does not meet on Tuesdays and the operator was mistaken",
                "recorded_at": "2026-07-05"}),
     )
     .await;
@@ -1009,15 +1012,15 @@ async fn july_takes_the_claim_back(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[3].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[3].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[3].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[3].0}),
     )
     .await;
 }
 
 /// **An August that cannot find the two and writes a third.**
 ///
-/// The failure this sitting exists to catch: asked who was at the survey, a
+/// The failure this sitting exists to catch: asked who was at the inspection, a
 /// session that does not reach the record fills the gap rather than saying it
 /// does not know.
 async fn august_puts_a_third_person_there(room: &Surface, sid: &str) {
@@ -1026,9 +1029,9 @@ async fn august_puts_a_third_person_there(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:ralph", "content": "was at the gorge survey",
+        json!({"subject": "person:ralph", "content": "was at the gorge safety inspection",
                "provenance": "inference",
-               "shape": "attendance", "object": "event:gorge-survey"}),
+               "shape": "attendance", "object": "event:gorge-safety-inspection"}),
     )
     .await;
 }
@@ -1038,7 +1041,7 @@ async fn august(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club", "content": "the operator is standing for election to the club board",
+        json!({"subject": "org:springfield-town-council", "content": "the operator is standing for election to the council board",
                "provenance": "testimony", "recorded_at": "2026-08-16"}),
     )
     .await;
@@ -1052,9 +1055,9 @@ async fn september(room: &Surface, sid: &str) {
         // ⚠️ **The one write in the year about a day that is not the
         // sitting's.** Every other claim here is recorded on the day it is
         // made, which the run's own frame now supplies. This one says WHEN
-        // THE THING HAPPENED — the pump came back at the June survey — and
+        // THE THING HAPPENED — the skate tool came back at the June inspection — and
         // that is a different field from when the record was made.
-        json!({"subject": "thing:floor-pump", "content": "came back at the survey",
+        json!({"subject": "thing:skate-tool", "content": "came back at the inspection",
                    "provenance": "testimony", "happened_at": "2026-06-14",
                    "shape": "connection", "object": "person:ralph"}),
     )
@@ -1063,8 +1066,8 @@ async fn september(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": CANOE_DAYS[4].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[4].0}),
+        json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[4].1,
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[4].0}),
     )
     .await;
 }
@@ -1072,22 +1075,22 @@ async fn september(room: &Surface, sid: &str) {
 /// **A different, equally honest September, naming Ralph in prose rather than
 /// by edge.** Run 20's own model wrote the account this way: an `attendance`
 /// edge at the event, with Ralph named inside the sentence — a reasonable
-/// account of who returned the pump that the pump lock's history check must
+/// account of who returned the skate tool that the skate tool lock's history check must
 /// recognise exactly as it recognises the edge-shaped one.
 async fn september_names_ralph_in_prose(room: &Surface, sid: &str) {
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump",
-               "content": "@person:ralph gave the floor pump back at @event:gorge-survey",
+        json!({"subject": "thing:skate-tool",
+               "content": "@person:ralph gave the skate tool back at @event:gorge-safety-inspection",
                "provenance": "testimony", "happened_at": "2026-06-14",
-               "shape": "attendance", "object": "event:gorge-survey"}),
+               "shape": "attendance", "object": "event:gorge-safety-inspection"}),
     )
     .await;
 }
 
-/// **A guilty September: the pump came back and nobody is named at all.** No
+/// **A guilty September: the skate tool came back and nobody is named at all.** No
 /// edge, no mention — so the account behind October's later correction
 /// genuinely carries nothing about who returned it.
 async fn september_names_nobody(room: &Surface, sid: &str) {
@@ -1095,7 +1098,7 @@ async fn september_names_nobody(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "came back at the survey",
+        json!({"subject": "thing:skate-tool", "content": "came back at the inspection",
                "provenance": "testimony", "happened_at": "2026-06-14"}),
     )
     .await;
@@ -1118,7 +1121,7 @@ async fn september_sits_in_the_wrong_day(room: &Surface, _sid: &str) {
         room,
         &confused,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "came back at the survey",
+        json!({"subject": "thing:skate-tool", "content": "came back at the inspection",
                "provenance": "testimony", "happened_at": "2026-06-14",
                "shape": "connection", "object": "person:ralph"}),
     )
@@ -1126,7 +1129,7 @@ async fn september_sits_in_the_wrong_day(room: &Surface, _sid: &str) {
 }
 
 async fn october(room: &Surface, sid: &str) {
-    october_writes_the_pump_and_the_place(room, sid).await;
+    october_writes_the_skate_tool_and_the_place(room, sid).await;
     // **The reason is given in words; the rename is the move it was given
     // for.** The operator never names the verb, and finding it is the
     // measurement — the same posture this room takes with every walk it
@@ -1135,37 +1138,37 @@ async fn october(room: &Surface, sid: &str) {
         room,
         sid,
         "rename_entity",
-        json!({"handle": "event:gorge-survey", "to": "event:erosion-review"}),
+        json!({"handle": "event:gorge-safety-inspection", "to": "event:rockslide-review"}),
     )
     .await;
 }
 
 /// **October, minus the one move its reason was given for.**
 ///
-/// Everything else this sitting is asked to do is done — the pump's account
-/// and the survey's place are both on the record — so a run built on this
+/// Everything else this sitting is asked to do is done — the skate tool's account
+/// and the inspection's place are both on the record — so a run built on this
 /// fails only the lock that watches for the rename, never a lock that would
 /// fail for an unrelated reason.
-async fn october_without_renaming_the_survey(room: &Surface, sid: &str) {
-    october_writes_the_pump_and_the_place(room, sid).await;
+async fn october_without_renaming_the_inspection(room: &Surface, sid: &str) {
+    october_writes_the_skate_tool_and_the_place(room, sid).await;
 }
 
 /// **October reaches the rename's END STATE without ever calling the verb.**
 ///
-/// June's own claim is retracted and a fresh one is written on the club
+/// June's own claim is retracted and a fresh one is written on the council
 /// naming a different event by a mention — the same shape a rename leaves,
 /// arrived at a different way. A lock anchored to whichever claim currently
 /// points at an event cannot tell this from a rename; one anchored to June's
 /// own address can, because that address is retracted rather than renamed.
 async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &str) {
-    october_writes_the_pump_and_the_place(room, sid).await;
-    let junes = address_of(room, "org:north-gorge-club", "ran on").await;
+    october_writes_the_skate_tool_and_the_place(room, sid).await;
+    let junes = address_of(room, "org:springfield-town-council", "ran on").await;
     did(
         room,
         sid,
         "retract",
         json!({"address": junes,
-               "reason": "filing the survey under its proper record instead"}),
+               "reason": "filing the inspection under its proper record instead"}),
     )
     .await;
     did(
@@ -1180,8 +1183,8 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-gorge-club",
-               "content": "the survey ran on @place:north-gorge, filed now as @event:the-jotting",
+        json!({"subject": "org:springfield-town-council",
+               "content": "the inspection ran on @place:daredevil-gorge, filed now as @event:the-jotting",
                "provenance": "testimony"}),
     )
     .await;
@@ -1191,43 +1194,43 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
 /// called happen underneath it.** Neither existing variant tests this
 /// combination: the honest October renames and touches nothing retracted;
 /// `october_retracts_junes_claim_instead_of_renaming` retracts and never
-/// renames. Here the survey is renamed for real, so a live read of June's
+/// renames. Here the inspection is renamed for real, so a live read of June's
 /// now-retracted address renders the NEW handle — the same content a
 /// genuine rename would leave — even though this address is not standing.
 /// Only a check that reads the address's own status, ahead of comparing
 /// what it renders, can tell this dead address from a live one that was
 /// actually carried across the rename.
-async fn october_retracts_junes_claim_and_renames_the_survey_anyway(room: &Surface, sid: &str) {
-    october_writes_the_pump_and_the_place(room, sid).await;
-    let junes = address_of(room, "org:north-gorge-club", "ran on").await;
+async fn october_retracts_junes_claim_and_renames_the_inspection_anyway(room: &Surface, sid: &str) {
+    october_writes_the_skate_tool_and_the_place(room, sid).await;
+    let junes = address_of(room, "org:springfield-town-council", "ran on").await;
     did(
         room,
         sid,
         "retract",
         json!({"address": junes,
-               "reason": "filing the survey under its proper record instead"}),
+               "reason": "filing the inspection under its proper record instead"}),
     )
     .await;
     did(
         room,
         sid,
         "rename_entity",
-        json!({"handle": "event:gorge-survey", "to": "event:erosion-review"}),
+        json!({"handle": "event:gorge-safety-inspection", "to": "event:rockslide-review"}),
     )
     .await;
 }
 
-/// **September's own address on the pump, whatever it said.** Excludes
+/// **September's own address on the skate tool, whatever it said.** Excludes
 /// February's fixed wording rather than matching September's, because
 /// September's own wording is what varies between plays here — a prose
 /// account and an edge-shaped one say nothing alike, and finding "the record
 /// to correct" by a phrase only one of them uses is how a play meant to work
 /// for either ends up silently capturing a second claim instead.
-async fn septembers_pump_address(room: &Surface) -> Option<String> {
+async fn septembers_skate_tool_address(room: &Surface) -> Option<String> {
     let read = room
         .call(
             "recall",
-            json!({"subject": "thing:floor-pump", "facts": true}),
+            json!({"subject": "thing:skate-tool", "facts": true}),
         )
         .await;
     let parsed: Value = serde_json::from_str(&read).ok()?;
@@ -1235,9 +1238,9 @@ async fn septembers_pump_address(room: &Surface) -> Option<String> {
         .as_array()?
         .iter()
         .find(|fact| {
-            fact["content"]
-                .as_str()
-                .is_some_and(|content| !content.contains("lent out, wanted back before the survey"))
+            fact["content"].as_str().is_some_and(|content| {
+                !content.contains("lent out, wanted back before the inspection")
+            })
         })
         .and_then(|fact| fact["address"].as_str())
         .map(str::to_string)
@@ -1249,18 +1252,18 @@ async fn septembers_pump_address(room: &Surface) -> Option<String> {
 /// to correct, and a plain `capture` only when nothing did — the shape a year
 /// that skipped September actually meets.
 ///
-/// **The correction restates the day the pump came back.** The old claim keeps
+/// **The correction restates the day the skate tool came back.** The old claim keeps
 /// its own, but it is archived, and a reader looking for the day among the
 /// standing claims finds it only if the correction says it.
-async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
-    match septembers_pump_address(room).await {
+async fn corrects_or_captures_the_skate_tool(room: &Surface, sid: &str) {
+    match septembers_skate_tool_address(room).await {
         Some(ralphs) => {
             corrects_an_earlier_claim(
                 room,
                 sid,
                 &ralphs,
-                "Nelson brought the pump back, not Ralph",
-                json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+                "Nelson brought the skate tool back, not Ralph",
+                json!({"subject": "thing:skate-tool", "content": "brought round over the summer",
                        "provenance": "testimony", "happened_at": "2026-06-14",
                        "shape": "connection", "object": "person:nelson"}),
             )
@@ -1271,7 +1274,7 @@ async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
                 room,
                 sid,
                 "capture",
-                json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+                json!({"subject": "thing:skate-tool", "content": "brought round over the summer",
                        "provenance": "testimony",
                        "shape": "connection", "object": "person:nelson"}),
             )
@@ -1280,61 +1283,61 @@ async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
     }
 }
 
-/// **October corrects the pump exactly as usual, and ALSO clears the day it
+/// **October corrects the skate tool exactly as usual, and ALSO clears the day it
 /// came back** — the shape run 20's own model actually wrote. "Over the
-/// summer" borrows no precision from "at the survey", so the exact day
+/// summer" borrows no precision from "at the inspection", so the exact day
 /// Ralph's account carried is no longer accurate and a correction is
-/// entitled to remove it. Kept apart from [`corrects_or_captures_the_pump`]:
+/// entitled to remove it. Kept apart from [`corrects_or_captures_the_skate_tool`]:
 /// clearing the day is what exposes September's own lock to a legitimate
 /// edit from a later sitting, and the canonical play every other case in
 /// this file builds on does not need to carry that.
-async fn october_corrects_the_pump_and_clears_its_day(room: &Surface, sid: &str) {
-    let Some(ralphs) = septembers_pump_address(room).await else {
-        panic!("september wrote nothing on the pump for october to correct");
+async fn october_corrects_the_skate_tool_and_clears_its_day(room: &Surface, sid: &str) {
+    let Some(ralphs) = septembers_skate_tool_address(room).await else {
+        panic!("september wrote nothing on the skate tool for october to correct");
     };
     corrects_an_earlier_claim(
         room,
         sid,
         &ralphs,
-        "Nelson brought the pump back, not Ralph",
-        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+        "Nelson brought the skate tool back, not Ralph",
+        json!({"subject": "thing:skate-tool", "content": "brought round over the summer",
                "provenance": "testimony",
                "shape": "connection", "object": "person:nelson"}),
     )
     .await;
 }
 
-async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
+async fn october_writes_the_skate_tool_and_the_place(room: &Surface, sid: &str) {
     // **A correction of September's claim.** The operator's ruling makes
     // October's account a correction of September's, not a second thing that
     // happened, so September's claim is archived and the correction is derived
     // from it, rather than a fresh claim standing beside an unrevised one.
-    corrects_or_captures_the_pump(room, sid).await;
+    corrects_or_captures_the_skate_tool(room, sid).await;
     // **The note lands on the place, which this sitting had to find.** The
-    // operator says where we held the survey and never says where that was;
+    // operator says where we held the inspection and never says where that was;
     // June's claim is the one record that answers it.
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "event:gorge-survey",
+        json!({"subject": "event:gorge-safety-inspection",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-gorge"}),
+               "shape": "location", "object": "place:daredevil-gorge"}),
     )
     .await;
 }
 
-/// **An October that picks a winner between the two accounts of how the pump
+/// **An October that picks a winner between the two accounts of how the skate tool
 /// came back, instead of leaving both to stand.**
 ///
-/// The pump lock's own comment says what is locked is the WRITE: neither
+/// The skate tool lock's own comment says what is locked is the WRITE: neither
 /// account quietly replacing the other. This is that replacement, played —
 /// September's account is retracted rather than left standing, in the same
 /// sitting that records Nelson's. The location note is still filed exactly as
 /// the honest October files it, so this targets one lock and not two.
 async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
-    let ralphs = address_of(room, "thing:floor-pump", "came back at the survey").await;
+    let ralphs = address_of(room, "thing:skate-tool", "came back at the inspection").await;
     did(
         room,
         sid,
@@ -1348,7 +1351,7 @@ async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+        json!({"subject": "thing:skate-tool", "content": "brought round over the summer",
                "provenance": "testimony",
                "shape": "connection", "object": "person:nelson"}),
     )
@@ -1357,10 +1360,10 @@ async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "event:gorge-survey",
+        json!({"subject": "event:gorge-safety-inspection",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-gorge"}),
+               "shape": "location", "object": "place:daredevil-gorge"}),
     )
     .await;
 }
@@ -1368,16 +1371,16 @@ async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
 /// **An October that writes the note and never says where.**
 ///
 /// The sitting does everything else it is asked and files the note on the event
-/// itself, so the pump lock still holds and the note is really there. **What it
-/// never did is work out WHERE the survey was held** — the one thing only
+/// itself, so the skate tool lock still holds and the note is really there. **What it
+/// never did is work out WHERE the inspection was held** — the one thing only
 /// June's claim says, and the one thing the walk asks for.
 async fn october_files_the_note_on_the_event(room: &Surface, sid: &str) {
-    corrects_or_captures_the_pump(room, sid).await;
+    corrects_or_captures_the_skate_tool(room, sid).await;
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "event:gorge-survey",
+        json!({"subject": "event:gorge-safety-inspection",
                "content": "the ground needs a look before next year",
                "provenance": "testimony"}),
     )
@@ -1394,7 +1397,7 @@ async fn october_captures_a_second_account_instead_of_correcting(room: &Surface,
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+        json!({"subject": "thing:skate-tool", "content": "brought round over the summer",
                "provenance": "testimony",
                "shape": "connection", "object": "person:nelson"}),
     )
@@ -1403,10 +1406,10 @@ async fn october_captures_a_second_account_instead_of_correcting(room: &Surface,
         room,
         sid,
         "capture",
-        json!({"subject": "event:gorge-survey",
+        json!({"subject": "event:gorge-safety-inspection",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-gorge"}),
+               "shape": "location", "object": "place:daredevil-gorge"}),
     )
     .await;
 }
@@ -1417,22 +1420,22 @@ async fn october_captures_a_second_account_instead_of_correcting(room: &Surface,
 /// reader cannot follow the correction to what it corrected. The location note
 /// is filed exactly as the honest October files it, so this targets one lock.
 async fn october_archives_the_account_and_names_nothing(room: &Surface, sid: &str) {
-    let Some(ralphs) = septembers_pump_address(room).await else {
-        panic!("september wrote nothing on the pump for october to archive");
+    let Some(ralphs) = septembers_skate_tool_address(room).await else {
+        panic!("september wrote nothing on the skate tool for october to archive");
     };
     did(
         room,
         sid,
         "update_fact",
         json!({"address": ralphs, "status": "archived",
-               "details": "Nelson brought the pump back, not Ralph"}),
+               "details": "Nelson brought the skate tool back, not Ralph"}),
     )
     .await;
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+        json!({"subject": "thing:skate-tool", "content": "brought round over the summer",
                "provenance": "testimony", "happened_at": "2026-06-14",
                "shape": "connection", "object": "person:nelson"}),
     )
@@ -1441,28 +1444,28 @@ async fn october_archives_the_account_and_names_nothing(room: &Surface, sid: &st
         room,
         sid,
         "capture",
-        json!({"subject": "event:gorge-survey",
+        json!({"subject": "event:gorge-safety-inspection",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-gorge"}),
+               "shape": "location", "object": "place:daredevil-gorge"}),
     )
     .await;
 }
 
 /// **The retraction case, worked for the first time all year.** Nelson's
-/// survey attendance was never true, and the record it corrects is a June
+/// inspection attendance was never true, and the record it corrects is a June
 /// fact that only exists because January stood up the event and February
 /// stood up Nelson — the dependency the room is built to test. Bart's
 /// membership is folded in beside it, the same shape February used for
 /// Nelson himself.
 async fn late_october(room: &Surface, sid: &str) {
-    let wrong = address_of(room, "person:nelson", "gorge survey").await;
+    let wrong = address_of(room, "person:nelson", "gorge safety inspection").await;
     did(
         room,
         sid,
         "retract",
         json!({"address": wrong,
-               "reason": "Nelson never actually made it to the survey — he was fixing a flat that morning",
+               "reason": "Nelson never actually made it to the inspection — he was fixing a cracked deck that morning",
                "recorded_at": "2026-10-24"}),
     )
     .await;
@@ -1477,34 +1480,34 @@ async fn late_october(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:bart", "content": "joined the club",
+        json!({"subject": "person:bart", "content": "joined the council",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-gorge-club"}),
+               "shape": "membership", "object": "org:springfield-town-council"}),
     )
     .await;
 }
 
-/// **A late October that files the new arrival at the survey too.**
+/// **A late October that files the new arrival at the inspection too.**
 ///
 /// The mistake this sitting is the first one able to make: it is handed a new
-/// person and it is already writing about the survey, so putting the two
+/// person and it is already writing about the inspection, so putting the two
 /// together is one plausible step rather than an invention out of nothing.
 async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
     late_october(room, sid).await;
-    let survey = handle_of_kind(room, "event").await;
+    let inspection = handle_of_kind(room, "event").await;
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "person:bart", "content": "was at the gorge survey",
+        json!({"subject": "person:bart", "content": "was at the gorge safety inspection",
                "provenance": "inference",
-               "shape": "attendance", "object": survey}),
+               "shape": "attendance", "object": inspection}),
     )
     .await;
 }
 
 /// **The turn asked for in words the record does not use.** The operator says
-/// drivetrain and service; the loop January opened is a chain check. A sitting
+/// wheels and service; the loop January opened is a bearings check. A sitting
 /// that reaches the loop records the turn on it, and one that does not stands a
 /// second loop beside it.
 async fn late_november(room: &Surface, sid: &str) {
@@ -1512,8 +1515,8 @@ async fn late_november(room: &Surface, sid: &str) {
         room,
         sid,
         [
-            "the shop serviced the drivetrain",
-            "the pump needed a new washer",
+            "the shop serviced the wheels",
+            "the skate tool needed a new washer",
         ],
         ["sent", "billed"],
     )
@@ -1528,7 +1531,7 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
+        json!({"subject": "rhythm:bearings-check", "content": "did the bearings again today",
                "provenance": "testimony",
                "check_in": "ran"}),
     )
@@ -1539,19 +1542,19 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
         room,
         sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "around 600 kilometres since June",
+        json!({"subject": "thing:skateboard", "content": "around 600 kilometres since June",
                "provenance": "testimony", "fields": {"km": "600"}}),
     )
     .await;
     // **The job off the vocabulary January declared — on its own subject,
     // not sharing a key with any other job.** `cost`/`settled` are fresh on
-    // `thing:gravel-bike`, so nothing here folds against another job's own
+    // `thing:skateboard`, so nothing here folds against another job's own
     // figures the way two jobs on one subject would.
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": said[0],
+        json!({"subject": "thing:skateboard", "content": said[0],
                "provenance": "testimony", "fields": {"cost": "45", "settled": words[0]}}),
     )
     .await;
@@ -1563,7 +1566,7 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": said[1],
+        json!({"subject": "thing:skate-tool", "content": said[1],
                "provenance": "testimony", "fields": {"cost": "20", "settled": words[1]}}),
     )
     .await;
@@ -1581,12 +1584,12 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
 /// ends — the positive case the operator's session-boundary rule needs: the
 /// mistake and its correction are one session, so a rewrite in place is
 /// right, unlike March's claim four sittings before July's.
-async fn bike_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> String {
+async fn board_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> String {
     did(
         room,
         sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -1594,7 +1597,7 @@ async fn bike_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> St
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "bought a U-lock for the bike",
+        json!({"subject": "thing:board-lock", "content": "bought a U-lock for the skateboard",
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
     )
     .await;
@@ -1602,14 +1605,14 @@ async fn bike_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> St
         .ok()
         .and_then(|v| v["address"].as_str().map(str::to_string))
         .unwrap_or_else(|| {
-            panic!("the bike lock's own capture answers with its address: {captured}")
+            panic!("the board lock's own capture answers with its address: {captured}")
         });
     did(
         room,
         sid,
         "update_fact",
         json!({"address": address,
-               "content": "bought a cable lock for the bike, not the other kind", "provenance": "testimony"}),
+               "content": "bought a cable lock for the skateboard, not the other kind", "provenance": "testimony"}),
     )
     .await;
     address
@@ -1671,11 +1674,11 @@ async fn off_vocabulary_job(room: &Surface, subject: &str, needle: &str) -> Opti
 const OPERATORS_WORDS: [&str; 3] = ["invoiced", "paid", "waived"];
 
 async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool) {
-    let address = bike_lock_corrected_in_the_same_breath(room, sid).await;
+    let address = board_lock_corrected_in_the_same_breath(room, sid).await;
     let trace = room
         .call(
             "recall",
-            json!({"subject": "thing:bike-lock", "history_record": address}),
+            json!({"subject": "thing:board-lock", "history_record": address}),
         )
         .await;
     let parsed: Value = serde_json::from_str(&trace).expect("the trace is json");
@@ -1687,14 +1690,14 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the record was corrected during the year",
+        json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
                "fields": {"was": was}}),
     )
     .await;
     // **The control this rests on, filed under the operator's own word in
-    // the same breath the bike lock is created.** No separate sitting to
-    // hold it: the bike lock exists only from this entry on, so what
+    // the same breath the board lock is created.** No separate sitting to
+    // hold it: the board lock exists only from this entry on, so what
     // "filed correctly from the start" means here is that this sitting,
     // with two other wrong words to fix in the same breath, does not
     // touch this one.
@@ -1702,7 +1705,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+        json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
                "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
     )
     .await;
@@ -1714,14 +1717,14 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
     // reachable only by having kept the declaration, since nothing about
     // "sent" looks wrong on its own.
     if let Some(wrong_word) =
-        off_vocabulary_job(room, "thing:gravel-bike", "serviced the drivetrain").await
+        off_vocabulary_job(room, "thing:skateboard", "serviced the wheels").await
     {
         corrects_a_job(
             room,
             sid,
             &wrong_word,
             names_the_source,
-            json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+            json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
                    "provenance": "testimony",
                    "fields": {"cost": "45", "settled": "invoiced"}}),
         )
@@ -1731,14 +1734,14 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
     // subject, its own address, if late November's own job is there to
     // find.**
     if let Some(wrong_word) =
-        off_vocabulary_job(room, "thing:floor-pump", "needed a new washer").await
+        off_vocabulary_job(room, "thing:skate-tool", "needed a new washer").await
     {
         corrects_a_job(
             room,
             sid,
             &wrong_word,
             names_the_source,
-            json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+            json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
                    "provenance": "testimony",
                    "fields": {"cost": "20", "settled": "invoiced"}}),
         )
@@ -1753,11 +1756,11 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         room,
         sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "what is actually invoiced across this year's jobs",
+        json!({"subject": "thing:skateboard", "content": "what is actually invoiced across this year's jobs",
                "provenance": "inference", "fields": {"owed": owed.to_string()}}),
     )
     .await;
-    fold_the_canoes_pile(room, sid).await;
+    fold_the_longboards_pile(room, sid).await;
 }
 
 /// **THE SELECTIVE SUM, done properly.** Every job-bearing thing the year
@@ -1766,10 +1769,10 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
 async fn invoiced_total(room: &Surface) -> u32 {
     let mut total = 0;
     for subject in [
-        "thing:canoe",
-        "thing:gravel-bike",
-        "thing:floor-pump",
-        "thing:bike-lock",
+        "thing:longboard",
+        "thing:skateboard",
+        "thing:skate-tool",
+        "thing:board-lock",
     ] {
         let read = room.call("recall", json!({"subject": subject})).await;
         let Ok(parsed) = serde_json::from_str::<Value>(&read) else {
@@ -1786,10 +1789,13 @@ async fn invoiced_total(room: &Surface) -> u32 {
     total
 }
 
-/// Every fact `recall` currently reports for the canoe.
-async fn canoe_facts(room: &Surface) -> Vec<Value> {
+/// Every fact `recall` currently reports for the longboard.
+async fn longboard_facts(room: &Surface) -> Vec<Value> {
     let read = room
-        .call("recall", json!({"subject": "thing:canoe", "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": "thing:longboard", "facts": true}),
+        )
         .await;
     serde_json::from_str::<Value>(&read)
         .ok()
@@ -1798,12 +1804,12 @@ async fn canoe_facts(room: &Surface) -> Vec<Value> {
 }
 
 /// **The fold this room's own lock is watching for, done honestly.** A fresh
-/// record stands for the canoe's five small repairs, none of which is
+/// record stands for the longboard's five small repairs, none of which is
 /// touched — the pile stays fully readable and gains a single answer on top
 /// of it, which is the shape the operator's own request asked for without
 /// naming.
-async fn fold_the_canoes_pile(room: &Surface, sid: &str) {
-    let sources: Vec<String> = canoe_facts(room)
+async fn fold_the_longboards_pile(room: &Surface, sid: &str) {
+    let sources: Vec<String> = longboard_facts(room)
         .await
         .iter()
         .filter_map(|fact| fact["address"].as_str().map(str::to_string))
@@ -1812,8 +1818,8 @@ async fn fold_the_canoes_pile(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe",
-               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+        json!({"subject": "thing:longboard",
+               "content": "the longboard needed a handful of small repairs this year — the details are on the records this stands for",
                "provenance": "inference"}),
     )
     .await;
@@ -1830,16 +1836,16 @@ async fn fold_the_canoes_pile(room: &Surface, sid: &str) {
     .await;
 }
 
-/// **A later December that answers the bike-lock question and never folds
-/// the canoe's pile at all.** The wrong shape this room's canoe locks exist
+/// **A later December that answers the board-lock question and never folds
+/// the longboard's pile at all.** The wrong shape this room's longboard locks exist
 /// to catch: five small repairs sit on the record and nothing marks any of
 /// them as standing for the others.
-async fn later_december_never_folds_the_canoe(room: &Surface, sid: &str) {
-    let address = bike_lock_corrected_in_the_same_breath(room, sid).await;
+async fn later_december_never_folds_the_longboard(room: &Surface, sid: &str) {
+    let address = board_lock_corrected_in_the_same_breath(room, sid).await;
     let trace = room
         .call(
             "recall",
-            json!({"subject": "thing:bike-lock", "history_record": address}),
+            json!({"subject": "thing:board-lock", "history_record": address}),
         )
         .await;
     let parsed: Value = serde_json::from_str(&trace).expect("the trace is json");
@@ -1851,7 +1857,7 @@ async fn later_december_never_folds_the_canoe(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the record was corrected during the year",
+        json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
                "fields": {"was": was}}),
     )
@@ -1863,8 +1869,8 @@ async fn later_december_never_folds_the_canoe(room: &Surface, sid: &str) {
 /// repairs it just named, which is the shape `stands_for` promises never
 /// happens — synthesis layers and never discards.
 async fn later_december_folds_but_loses_a_source(room: &Surface, sid: &str) {
-    later_december_never_folds_the_canoe(room, sid).await;
-    let sources: Vec<String> = canoe_facts(room)
+    later_december_never_folds_the_longboard(room, sid).await;
+    let sources: Vec<String> = longboard_facts(room)
         .await
         .iter()
         .filter_map(|fact| fact["address"].as_str().map(str::to_string))
@@ -1873,8 +1879,8 @@ async fn later_december_folds_but_loses_a_source(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe",
-               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+        json!({"subject": "thing:longboard",
+               "content": "the longboard needed a handful of small repairs this year — the details are on the records this stands for",
                "provenance": "inference"}),
     )
     .await;
@@ -1898,13 +1904,13 @@ async fn later_december_folds_but_loses_a_source(room: &Surface, sid: &str) {
     .await;
 }
 
-/// **A fold that invents a date none of the canoe's five repairs ever gave.**
+/// **A fold that invents a date none of the longboard's five repairs ever gave.**
 /// The mark itself is honest and names every source; the fold's own
 /// `happened_at` claims a single day for a pile that spans half the year,
 /// which none of the five repairs said.
 async fn later_december_folds_with_an_invented_date(room: &Surface, sid: &str) {
-    later_december_never_folds_the_canoe(room, sid).await;
-    let sources: Vec<String> = canoe_facts(room)
+    later_december_never_folds_the_longboard(room, sid).await;
+    let sources: Vec<String> = longboard_facts(room)
         .await
         .iter()
         .filter_map(|fact| fact["address"].as_str().map(str::to_string))
@@ -1913,8 +1919,8 @@ async fn later_december_folds_with_an_invented_date(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe",
-               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+        json!({"subject": "thing:longboard",
+               "content": "the longboard needed a handful of small repairs this year — the details are on the records this stands for",
                "provenance": "inference",
                "happened_at": "2026-04-01"}),
     )
@@ -1938,8 +1944,8 @@ async fn later_december_folds_with_an_invented_date(room: &Surface, sid: &str) {
 /// likely to say a day than to carry one as a value nobody asked for — and
 /// until this, nothing planted one there.
 async fn later_december_folds_with_an_invented_date_in_prose(room: &Surface, sid: &str) {
-    later_december_never_folds_the_canoe(room, sid).await;
-    let sources: Vec<String> = canoe_facts(room)
+    later_december_never_folds_the_longboard(room, sid).await;
+    let sources: Vec<String> = longboard_facts(room)
         .await
         .iter()
         .filter_map(|fact| fact["address"].as_str().map(str::to_string))
@@ -1948,8 +1954,8 @@ async fn later_december_folds_with_an_invented_date_in_prose(room: &Surface, sid
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe",
-               "content": "the canoe needed a handful of small repairs this year, wrapping up on 2026-04-01 — the details are on the records this stands for",
+        json!({"subject": "thing:longboard",
+               "content": "the longboard needed a handful of small repairs this year, wrapping up on 2026-04-01 — the details are on the records this stands for",
                "provenance": "inference"}),
     )
     .await;
@@ -1970,8 +1976,8 @@ async fn later_december_folds_with_an_invented_date_in_prose(room: &Surface, sid
 /// a record was itself written is not invention — a review found the
 /// fabrication check once excluded the fold's own date from what it treated
 /// as known, which would have convicted exactly this honest fold.
-async fn fold_the_canoes_pile_naming_its_own_day(room: &Surface, sid: &str) {
-    let sources: Vec<String> = canoe_facts(room)
+async fn fold_the_longboards_pile_naming_its_own_day(room: &Surface, sid: &str) {
+    let sources: Vec<String> = longboard_facts(room)
         .await
         .iter()
         .filter_map(|fact| fact["address"].as_str().map(str::to_string))
@@ -1980,8 +1986,8 @@ async fn fold_the_canoes_pile_naming_its_own_day(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe",
-               "content": "as of 2026-12-20 the canoe has needed five small repairs this year — the details are on the records this stands for",
+        json!({"subject": "thing:longboard",
+               "content": "as of 2026-12-20 the longboard has needed five small repairs this year — the details are on the records this stands for",
                "provenance": "inference"}),
     )
     .await;
@@ -1998,21 +2004,21 @@ async fn fold_the_canoes_pile_naming_its_own_day(room: &Surface, sid: &str) {
     .await;
 }
 
-/// **Two canoe facts on the same day, and a fold that names only one of
+/// **Two longboard facts on the same day, and a fold that names only one of
 /// them.** February plausibly writes an acquisition and a defect as two
 /// separate claims on the same date; a review found the sources check once
 /// found only the FIRST record `recorded_at` reported for a day, so a fold
 /// missing this one's sibling would have read as complete.
-async fn fold_the_canoes_pile_missing_a_same_day_sibling(room: &Surface, sid: &str) {
+async fn fold_the_longboards_pile_missing_a_same_day_sibling(room: &Surface, sid: &str) {
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": "picked it up at a yard sale",
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[0].0}),
+        json!({"subject": "thing:longboard", "content": "picked it up at a yard sale",
+               "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[0].0}),
     )
     .await;
-    let facts = canoe_facts(room).await;
+    let facts = longboard_facts(room).await;
     let sources: Vec<String> = facts
         .iter()
         .filter(|fact| fact["content"] != "picked it up at a yard sale")
@@ -2022,8 +2028,8 @@ async fn fold_the_canoes_pile_missing_a_same_day_sibling(room: &Surface, sid: &s
         room,
         sid,
         "capture",
-        json!({"subject": "thing:canoe",
-               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+        json!({"subject": "thing:longboard",
+               "content": "the longboard needed a handful of small repairs this year — the details are on the records this stands for",
                "provenance": "inference"}),
     )
     .await;
@@ -2047,23 +2053,23 @@ async fn fold_the_canoes_pile_missing_a_same_day_sibling(room: &Surface, sid: &s
 /// **It answers, under the key it was asked for, and it is the opposite of
 /// what the claim used to say.**
 async fn later_december_answers_from_the_claim_as_it_stands(room: &Surface, sid: &str) {
-    bike_lock_corrected_in_the_same_breath(room, sid).await;
+    board_lock_corrected_in_the_same_breath(room, sid).await;
     let read = room
         .call(
             "recall",
-            json!({"subject": "thing:bike-lock", "facts": true}),
+            json!({"subject": "thing:board-lock", "facts": true}),
         )
         .await;
     let parsed: Value = serde_json::from_str(&read).expect("json");
     let now = parsed["objects"][0]["facts"][0]["content"]
         .as_str()
-        .expect("the bike lock's claim")
+        .expect("the board lock's claim")
         .to_string();
     did(
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the record was corrected during the year",
+        json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
                "fields": {"was": now}}),
     )
@@ -2087,7 +2093,7 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
         room,
         sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -2095,9 +2101,9 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the record was corrected during the year",
+        json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
-               "fields": {"was": "bought a U-lock for the bike (recorded 2026-12-13, corrected the same sitting)"}}),
+               "fields": {"was": "bought a U-lock for the skateboard (recorded 2026-12-13, corrected the same sitting)"}}),
     )
     .await;
 }
@@ -2107,7 +2113,7 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
 /// The sitting is asked to look back — an enumeration this room's own text
 /// says no lock can reach. What it CAN reach is the one part of the answer
 /// that is jojobot's own arithmetic rather than the sitting's memory: the
-/// chain loop, ninety days from June, is overdue by now. A session that
+/// bearings loop, ninety days from June, is overdue by now. A session that
 /// finds that loop and records today against it has noticed; this is that
 /// write, on the loop's own handle — which the harness knows and the
 /// occupant does not, exactly as January's own furniture does.
@@ -2116,7 +2122,7 @@ async fn december(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:chain-check",
+        json!({"subject": "rhythm:bearings-check",
                "content": "gone quiet — overdue since roughly mid September",
                "provenance": "inference", "recorded_at": "2026-12-13",
                // **Grounded in the claim that makes it arithmetic rather than
@@ -2125,7 +2131,7 @@ async fn december(room: &Surface, sid: &str) {
                // to a loop before the sitting that creates it — so the
                // address is stable across every valid playthrough without
                // being looked up.
-               "derived_from": "rhythm:chain-check#f1"}),
+               "derived_from": "rhythm:bearings-check#f1"}),
     )
     .await;
 }
@@ -2146,9 +2152,9 @@ async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) 
         sid,
         "person:bart#f1",
         "Bart joined in the autumn",
-        json!({"subject": "person:bart", "content": "joined the club in the autumn",
+        json!({"subject": "person:bart", "content": "joined the council in the autumn",
                "provenance": "testimony", "recorded_at": "2026-12-13",
-               "shape": "membership", "object": "org:north-gorge-club"}),
+               "shape": "membership", "object": "org:springfield-town-council"}),
     )
     .await;
 }
@@ -2189,20 +2195,20 @@ const SEPTEMBER_AT: usize = 8;
 
 /// **A different, honest September, named the same way as June's variants.**
 /// Run 20's own model named Ralph in prose, with an `attendance` edge at the
-/// event rather than a `connection` edge at Ralph — the pump lock's history
+/// event rather than a `connection` edge at Ralph — the skate tool lock's history
 /// check must recognise this shape exactly as it recognises the other.
 const SEPTEMBER_NAMES_RALPH_IN_PROSE: usize = 26;
 
 /// **A guilty September, named the same way.** Nobody is named at all — no
 /// edge, no mention — so the account behind October's correction genuinely
-/// carries nothing about who returned the pump. This is the one shape the
-/// pump lock's history check must still redden on.
+/// carries nothing about who returned the skate tool. This is the one shape the
+/// skate tool lock's history check must still redden on.
 const SEPTEMBER_NAMES_NOBODY: usize = 27;
 
 /// Where October sits in the year, named for the reason `JUNE_AT` is.
 const OCTOBER_AT: usize = 9;
 
-/// **A different October, named the same way, that also clears the pump's
+/// **A different October, named the same way, that also clears the skate tool's
 /// day.** Run 20's own model wrote it this way: a vaguer later account is
 /// entitled to remove the exact day it inherited from a more precise earlier
 /// one. Kept apart from every other October variant, because clearing the
@@ -2215,14 +2221,14 @@ const OCTOBER_ALSO_CLEARS_THE_DAY: usize = 28;
 /// reason June's variants are — the year holds fifteen sittings, so 19
 /// addresses none of them. Index 9 already carries a different wrong (the
 /// note filed on the event rather than the place); this is a second, about
-/// the pump's two accounts rather than the survey's location, and the two
+/// the skate tool's two accounts rather than the inspection's location, and the two
 /// must stay apart for the reason June's own variants do.
 const OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS: usize = 19;
 
 /// **October's third guilt, named the same way.** Everything else this
 /// sitting is asked to do is done; the one thing missing is the rename its
 /// own reason was given for.
-const OCTOBER_DOES_NOT_RENAME_THE_SURVEY: usize = 20;
+const OCTOBER_DOES_NOT_RENAME_THE_INSPECTION: usize = 20;
 
 /// **October's fourth guilt, named the same way.** The rename's end state
 /// without the rename: June's claim retracted, a fresh one written naming a
@@ -2230,7 +2236,7 @@ const OCTOBER_DOES_NOT_RENAME_THE_SURVEY: usize = 20;
 const OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING: usize = 21;
 
 /// **October's sixth guilt, named the same way.** June's claim is retracted
-/// AND the survey is renamed for real underneath it — the case the rename
+/// AND the inspection is renamed for real underneath it — the case the rename
 /// lock's status guard exists to catch, apart from
 /// [`OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING`], where nothing is
 /// ever renamed.
@@ -2239,7 +2245,7 @@ const OCTOBER_RETRACTS_JUNES_CLAIM_AND_RENAMES_ANYWAY: usize = 29;
 /// **A different, honest June, named the same way as its guilty siblings.**
 /// Attendance filed as a mention per person rather than an edge — the shape
 /// a live run actually wrote — so more than one of June's own addresses
-/// points at the survey.
+/// points at the inspection.
 const JUNE_ATTENDANCE_AS_MENTIONS: usize = 22;
 
 /// **A guilty June, named the same way.** A second event neither October nor
@@ -2248,16 +2254,16 @@ const JUNE_ATTENDANCE_AS_MENTIONS: usize = 22;
 const JUNE_ALSO_POINTS_AT_A_SECOND_EVENT: usize = 23;
 
 /// **A different, honest June, named the same way as its variant siblings.**
-/// Nothing tells a model what to call the survey it is attending, so a
+/// Nothing tells a model what to call the inspection it is attending, so a
 /// sitting that spells the event's handle differently from the one January
 /// happened to invent has done exactly as well as one that landed on the
 /// same spelling by chance.
-const JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY: usize = 25;
+const JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_INSPECTION: usize = 25;
 
 /// **October's fifth guilt, named the same way.** Nelson's account is filed
 /// as a fresh claim instead of a correction, so September's own address is
 /// left exactly as it was — unrevised, still Ralph's. This is the play the
-/// pump lock used to require before the operator's ruling overturned it.
+/// skate tool lock used to require before the operator's ruling overturned it.
 const OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING: usize = 24;
 
 /// **October's seventh guilt, named the same way.** September's account is
@@ -2332,13 +2338,13 @@ async fn work_the_year(
         let june_second_event_variant =
             at == JUNE_AT && guilty.contains(&JUNE_ALSO_POINTS_AT_A_SECOND_EVENT);
         let june_differently_spelled_variant =
-            at == JUNE_AT && guilty.contains(&JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY);
+            at == JUNE_AT && guilty.contains(&JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_INSPECTION);
         let late_november_variant =
             at == LATE_NOVEMBER_AT && guilty.contains(&LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP);
         let october_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS);
         let october_no_rename_variant =
-            at == OCTOBER_AT && guilty.contains(&OCTOBER_DOES_NOT_RENAME_THE_SURVEY);
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_DOES_NOT_RENAME_THE_INSPECTION);
         let october_retracts_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING);
         let october_retracts_and_renames_variant =
@@ -2404,28 +2410,28 @@ async fn work_the_year(
         } else if june_second_event_variant {
             june_also_points_at_a_second_event(room, sid).await;
         } else if june_differently_spelled_variant {
-            june_points_at_a_differently_spelled_survey(room, sid).await;
+            june_points_at_a_differently_spelled_inspection(room, sid).await;
         } else if late_november_variant {
             late_november_stands_up_a_second_loop(room, sid).await;
         } else if october_variant {
             october_removes_one_of_the_two_accounts(room, sid).await;
         } else if october_no_rename_variant {
-            october_without_renaming_the_survey(room, sid).await;
+            october_without_renaming_the_inspection(room, sid).await;
         } else if october_retracts_variant {
             october_retracts_junes_claim_instead_of_renaming(room, sid).await;
         } else if october_retracts_and_renames_variant {
-            october_retracts_junes_claim_and_renames_the_survey_anyway(room, sid).await;
+            october_retracts_junes_claim_and_renames_the_inspection_anyway(room, sid).await;
         } else if october_second_account_variant {
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
         } else if october_clears_the_day_variant {
-            october_corrects_the_pump_and_clears_its_day(room, sid).await;
+            october_corrects_the_skate_tool_and_clears_its_day(room, sid).await;
         } else if late_november_files_right_variant {
             late_november_filing(
                 room,
                 sid,
                 [
-                    "drivetrain service at the bike shop",
-                    "a washer for the floor pump",
+                    "wheels service at the skateboard shop",
+                    "a washer for the skate tool",
                 ],
                 ["invoiced", "invoiced"],
             )
@@ -2678,7 +2684,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     let outcomes = judge_all(&surface, &boundaries).await;
     // **Nineteen of the twenty locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
-    // committee note against a club that came with the furniture.
+    // committee note against a council that came with the furniture.
     let stands_alone = AUGUST[1];
     for at in JANUARY
         .iter()
@@ -2730,17 +2736,17 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
     for (subject, said, day) in [
         (
             "person:milhouse",
-            "he lives in Springfield and rides with the north gorge club",
+            "he lives in Springfield and sits on the Springfield town council",
             "2026-01-12",
         ),
         (
-            "thing:gravel-bike",
-            "the chain wants looking at every ninety days, last done 2025-12-20",
+            "thing:skateboard",
+            "the bearings want looking at every ninety days, last done 2025-12-20",
             "2026-01-12",
         ),
         (
-            "org:north-gorge-club",
-            "Ralph has the floor pump on loan and Nelson has joined",
+            "org:springfield-town-council",
+            "Ralph has the skate tool on loan and Nelson has joined",
             "2026-02-08",
         ),
     ] {
@@ -2909,7 +2915,7 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
 /// 🚨 **December's lock, discriminated.**
 ///
 /// Reads the finished board rather than a window either side of the sitting,
-/// unlike March's: nothing after December ever touches the chain loop again,
+/// unlike March's: nothing after December ever touches the bearings loop again,
 /// so there is no later sitting whose work could be mistaken for December's
 /// own.
 ///
@@ -2944,17 +2950,17 @@ async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
         &surface,
         &jan,
         "add_entity",
-        json!({"kind": "rhythm", "handle": "chain-check", "name": "Chain check",
-               "source": "the operator", "parent": "thing:gravel-bike"}),
+        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
+               "source": "the operator", "parent": "thing:skateboard"}),
     )
     .await;
     did(
         &surface,
         &jan,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
+        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Chain check", "cadence_days": "90", "advances_from": "due_date"}}),
+               "fields": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
     )
     .await;
     let dec = sitting(&surface, "2026-12-13").await;
@@ -2962,7 +2968,7 @@ async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
         &surface,
         &dec,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "gone quiet",
+        json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
                "provenance": "inference", "recorded_at": "2026-12-13"}),
     )
     .await;
@@ -3002,17 +3008,17 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
         &surface,
         &jan,
         "add_entity",
-        json!({"kind": "rhythm", "handle": "chain-check", "name": "Chain check",
-               "source": "the operator", "parent": "thing:gravel-bike"}),
+        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
+               "source": "the operator", "parent": "thing:skateboard"}),
     )
     .await;
     did(
         &surface,
         &jan,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
+        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Chain check", "cadence_days": "90", "advances_from": "due_date"}}),
+               "fields": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
     )
     .await;
     // A second, unrelated record on the same subject — the wrong address the
@@ -3022,17 +3028,17 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
         &surface,
         &jan,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "an unrelated later note",
+        json!({"subject": "rhythm:bearings-check", "content": "an unrelated later note",
                "provenance": "testimony"}),
     )
     .await;
-    let elsewhere = address_of(&surface, "rhythm:chain-check", "an unrelated later note").await;
+    let elsewhere = address_of(&surface, "rhythm:bearings-check", "an unrelated later note").await;
     let dec = sitting(&surface, "2026-12-13").await;
     did(
         &surface,
         &dec,
         "capture",
-        json!({"subject": "rhythm:chain-check", "content": "gone quiet",
+        json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
                "provenance": "inference", "recorded_at": "2026-12-13",
                "derived_from": elsewhere}),
     )
@@ -3053,21 +3059,21 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
     );
 }
 
-/// 🚨 **The survey's own hedge, discriminated.**
+/// 🚨 **The inspection's own hedge, discriminated.**
 ///
 /// The negative omits `standing` entirely rather than naming a wrong value:
 /// `capture`'s own default for testimony is `settled`, so a plain claim with
 /// no standing sent is the honest shape of a session that never marked the
 /// plan a hedge at all — not a contrived wrong value nobody would send.
 #[tokio::test]
-async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
+async fn the_inspections_hedge_lock_fails_when_nothing_is_marked_open() {
     let (_room, surface) = furnished().await;
     let jan = sitting(&surface, "2026-01-12").await;
     did(
         &surface,
         &jan,
         "add_entity",
-        json!({"kind": "event", "handle": "gorge-survey", "name": "The gorge survey",
+        json!({"kind": "event", "handle": "gorge-safety-inspection", "name": "The gorge safety inspection",
                "source": "the operator"}),
     )
     .await;
@@ -3075,7 +3081,7 @@ async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
         &surface,
         &jan,
         "capture",
-        json!({"subject": "event:gorge-survey", "content": "planning to attend",
+        json!({"subject": "event:gorge-safety-inspection", "content": "planning to attend",
                "provenance": "testimony"}),
     )
     .await;
@@ -3089,17 +3095,17 @@ async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
     );
 }
 
-/// 🚨 **The drivetrain job's word lock, discriminated against no
+/// 🚨 **The wheels job's word lock, discriminated against no
 /// correction at all.**
 #[tokio::test]
-async fn the_drivetrains_job_lock_fails_when_nothing_corrects_the_word() {
+async fn the_wheelss_job_lock_fails_when_nothing_corrects_the_word() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-11-22").await;
     did(
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+        json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
                "provenance": "testimony", "fields": {"cost": "45", "settled": "sent"}}),
     )
     .await;
@@ -3107,7 +3113,7 @@ async fn the_drivetrains_job_lock_fails_when_nothing_corrects_the_word() {
     let outcomes = judge_all(&surface, &[now]).await;
     assert!(
         !outcomes[LATE_DECEMBER[10]].held,
-        "a job left with the wrong word, never corrected, held the drivetrain lock: {}",
+        "a job left with the wrong word, never corrected, held the wheels lock: {}",
         saying(&outcomes),
     );
 }
@@ -3126,7 +3132,7 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "canoe", "name": "The Canoe",
+        json!({"kind": "thing", "handle": "longboard", "name": "The Longboard",
                "source": "the operator"}),
     )
     .await;
@@ -3134,7 +3140,7 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": "the soft spot was patched",
+        json!({"subject": "thing:longboard", "content": "the soft spot was patched",
                "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
     )
     .await;
@@ -3144,7 +3150,7 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": "the soft spot was patched",
+        json!({"subject": "thing:longboard", "content": "the soft spot was patched",
                "provenance": "inference", "fields": {"settled": "invoiced"}}),
     )
     .await;
@@ -3157,18 +3163,18 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
     );
 }
 
-/// 🚨 **The floor pump's job word lock, discriminated against no correction
+/// 🚨 **The skate tool's job word lock, discriminated against no correction
 /// at all — the second off-vocabulary word, independent of the
-/// drivetrain's.**
+/// wheels's.**
 #[tokio::test]
-async fn the_floor_pumps_job_lock_fails_when_nothing_corrects_the_word() {
+async fn the_skate_tools_job_lock_fails_when_nothing_corrects_the_word() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-11-22").await;
     did(
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "floor-pump", "name": "The Floor Pump",
+        json!({"kind": "thing", "handle": "skate-tool", "name": "The Skate Tool",
                "source": "the operator"}),
     )
     .await;
@@ -3176,7 +3182,7 @@ async fn the_floor_pumps_job_lock_fails_when_nothing_corrects_the_word() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+        json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
                "provenance": "testimony", "fields": {"cost": "20", "settled": "billed"}}),
     )
     .await;
@@ -3184,23 +3190,23 @@ async fn the_floor_pumps_job_lock_fails_when_nothing_corrects_the_word() {
     let outcomes = judge_all(&surface, &[now]).await;
     assert!(
         !outcomes[LATE_DECEMBER[12]].held,
-        "a job left with the wrong word, never corrected, held the floor pump lock: {}",
+        "a job left with the wrong word, never corrected, held the skate tool lock: {}",
         saying(&outcomes),
     );
 }
 
-/// 🚨 **The bike lock's control lock, discriminated against a sitting that
+/// 🚨 **The board lock's control lock, discriminated against a sitting that
 /// repaints a job that was never wrong — the second control, under a word
-/// neither the canoe's nor the drivetrain's own fix uses.**
+/// neither the longboard's nor the wheels's own fix uses.**
 #[tokio::test]
-async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
+async fn the_board_locks_job_control_fails_when_it_gets_repainted_too() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-12-20").await;
     did(
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -3208,7 +3214,7 @@ async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+        json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
                "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
     )
     .await;
@@ -3218,7 +3224,7 @@ async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+        json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
                "provenance": "inference", "fields": {"settled": "invoiced"}}),
     )
     .await;
@@ -3226,7 +3232,7 @@ async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
     let outcomes = judge_all(&surface, &[now]).await;
     assert!(
         !outcomes[LATE_DECEMBER[13]].held,
-        "a job that was already right, repainted anyway, held the bike lock control lock: {}",
+        "a job that was already right, repainted anyway, held the board lock control lock: {}",
         saying(&outcomes),
     );
 }
@@ -3238,7 +3244,10 @@ async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
 async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-12-20").await;
-    for (handle, name) in [("canoe", "The Canoe"), ("floor-pump", "The Floor Pump")] {
+    for (handle, name) in [
+        ("longboard", "The Longboard"),
+        ("skate-tool", "The Skate Tool"),
+    ] {
         did(
             &surface,
             &sid,
@@ -3251,7 +3260,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:canoe", "content": "the soft spot was patched",
+        json!({"subject": "thing:longboard", "content": "the soft spot was patched",
                "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
     )
     .await;
@@ -3259,7 +3268,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+        json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
                "provenance": "testimony", "fields": {"cost": "45", "settled": "invoiced"}}),
     )
     .await;
@@ -3267,7 +3276,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -3275,7 +3284,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+        json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
                "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
     )
     .await;
@@ -3283,7 +3292,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+        json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
                "provenance": "testimony", "fields": {"cost": "20", "settled": "invoiced"}}),
     )
     .await;
@@ -3293,7 +3302,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "what is actually invoiced across this year's jobs",
+        json!({"subject": "thing:skateboard", "content": "what is actually invoiced across this year's jobs",
                "provenance": "inference", "fields": {"owed": "110"}}),
     )
     .await;
@@ -3306,9 +3315,9 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
     );
 }
 
-/// 🚨 **The bike's summed kilometres, discriminated.**
+/// 🚨 **The skateboard's summed kilometres, discriminated.**
 ///
-/// Late November is the sitting excluded: without its own figure, the bike
+/// Late November is the sitting excluded: without its own figure, the skateboard
 /// carries June's 800 alone, never 1400 — the wrong total a plain
 /// newest-write-wins fold would also produce, which is exactly the failure
 /// this lock exists to catch.
@@ -3317,7 +3326,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
 /// both sittings are in [`WORKED`] and that case already asserts every lock
 /// holds on the properly worked year.
 #[tokio::test]
-async fn the_bikes_summed_kilometres_fail_when_only_one_sitting_wrote_a_figure() {
+async fn the_skateboards_summed_kilometres_fail_when_only_one_sitting_wrote_a_figure() {
     let without: Vec<usize> = WORKED.iter().copied().filter(|&at| at != 12).collect();
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(&surface, &room_document(), &without, &[]).await;
@@ -3332,16 +3341,16 @@ async fn the_bikes_summed_kilometres_fail_when_only_one_sitting_wrote_a_figure()
 
 /// 🚨 **July's window, asked both ways in one case.**
 ///
-/// July's claim needs a positive: a July that does nothing to the club must
+/// July's claim needs a positive: a July that does nothing to the council must
 /// not satisfy *no retraction appeared*, which is why the check counts a
-/// retraction APPEARING rather than absence. And the club gains records after
-/// July — August writes on it — so a later sitting taking any OTHER club
+/// retraction APPEARING rather than absence. And the council gains records after
+/// July — August writes on it — so a later sitting taking any OTHER council
 /// claim back must not put July's name on credit it did nothing to earn.
 ///
 /// **Both halves here, because either alone is worthless.** A July that is
 /// guilty — rewrites in place instead of withdrawing — must still be caught,
 /// or the narrowing produced a check that cannot fail. And a later sitting
-/// retracting something else on the club must no longer reach July's window.
+/// retracting something else on the council must no longer reach July's window.
 #[tokio::test]
 async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     // ① The accused sitting, guilty: July rewrites the March claim in place
@@ -3358,10 +3367,15 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     );
 
     // ② The year worked honestly, and then a later sitting takes a DIFFERENT
-    //    club claim back — an act July's own window must not be credited for.
+    //    council claim back — an act July's own window must not be credited for.
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
-    let committee = address_of(&surface, "org:north-gorge-club", "standing for election").await;
+    let committee = address_of(
+        &surface,
+        "org:springfield-town-council",
+        "standing for election",
+    )
+    .await;
     // **A sitting after the year's last**, which is what makes it a later one.
     let later = sitting(&surface, "2026-12-22").await;
     did(
@@ -3376,7 +3390,7 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[JULY[0]].held,
-        "a later sitting taking a different club claim back changed whether July's own lock \
+        "a later sitting taking a different council claim back changed whether July's own lock \
          holds, so the window is not scoped to July alone: {}",
         saying(&judged),
     );
@@ -3385,23 +3399,23 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
 /// 🚨 **July's lock, re-proven once July had a second subject to write.**
 ///
 /// A review of this room found the lock's needle counted across the whole
-/// world rather than the club's own records — so a July that wrote only the
-/// canoe repair and never touched the club satisfied "no retraction appeared"
-/// trivially, since nobody touched the club at all. This is the case that did
+/// world rather than the council's own records — so a July that wrote only the
+/// longboard repair and never touched the council satisfied "no retraction appeared"
+/// trivially, since nobody touched the council at all. This is the case that did
 /// not exist before the fix, and it is the one that proves it.
 #[tokio::test]
-async fn julys_lock_reddens_when_july_writes_only_the_canoe() {
+async fn julys_lock_reddens_when_july_writes_only_the_longboard() {
     const BEFORE_JULY: [usize; 6] = [0, 1, 2, 3, 4, 5];
     let (_room, surface) = furnished().await;
     let mut boundaries = work_the_year(&surface, &room_document(), &BEFORE_JULY, &[]).await;
     let sid = sitting(&surface, "2026-07-05").await;
-    july_writes_only_the_canoe(&surface, &sid).await;
+    july_writes_only_the_longboard(&surface, &sid).await;
     let named = boundary_names(&room_document());
     boundaries[7] = boundary(&surface, &named[7]).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[JULY[0]].held,
-        "a July that wrote only the canoe record — nothing on the club at all — held the club's \
+        "a July that wrote only the longboard record — nothing on the council at all — held the council's \
          own correction lock: {}",
         saying(&judged),
     );
@@ -3426,7 +3440,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[AUGUST[0]].held,
-        "an August that put a third person at the survey held August's lock, so the check can no \
+        "an August that put a third person at the inspection held August's lock, so the check can no \
          longer fail for the reason it exists: {}",
         saying(&judged),
     );
@@ -3435,22 +3449,22 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
     //    It is a fault, and it is not August's.
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
-    let survey = handle_of_kind(&surface, "event").await;
+    let inspection = handle_of_kind(&surface, "event").await;
     // **A sitting after the year's last**, which is what makes it a later one.
     let later = sitting(&surface, "2026-12-22").await;
     did(
         &surface,
         &later,
         "capture",
-        json!({"subject": "person:bart", "content": "was at the gorge survey",
+        json!({"subject": "person:bart", "content": "was at the gorge safety inspection",
                "provenance": "inference",
-               "shape": "attendance", "object": survey}),
+               "shape": "attendance", "object": inspection}),
     )
     .await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[AUGUST[0]].held,
-        "a later sitting putting somebody at the survey reddened August, which answered honestly \
+        "a later sitting putting somebody at the inspection reddened August, which answered honestly \
          four months earlier: {}",
         saying(&judged),
     );
@@ -3461,7 +3475,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
 /// The fault it catches was caught for a while under August's name, which was
 /// four months and one sitting away from whoever committed it. **Attribution
 /// follows the act.** This is the first sitting handed somebody to invent and a
-/// reason to be writing about the survey, so it is where the lock belongs.
+/// reason to be writing about the inspection, so it is where the lock belongs.
 ///
 /// ⚠️ **The honest half is not a formality here.** This sitting takes an
 /// attendance AWAY, and a check that could not tell taking one away from adding
@@ -3473,7 +3487,7 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[LATE_OCTOBER[2]].held,
-        "a late October that put the new arrival at the survey held its own lock, so nothing in \
+        "a late October that put the new arrival at the inspection held its own lock, so nothing in \
          this room catches an invented attendee under the name of whoever invented one: {}",
         saying(&judged),
     );
@@ -3493,19 +3507,19 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
 /// for.** Everything else it is asked to do is done, so a red here is about
 /// the rename and nothing else.
 #[tokio::test]
-async fn junes_mention_lock_catches_a_survey_that_was_never_renamed() {
+async fn junes_mention_lock_catches_a_inspection_that_was_never_renamed() {
     let (_room, surface) = furnished().await;
     let guilty = work_the_year(
         &surface,
         &room_document(),
         &WORKED,
-        &[OCTOBER_DOES_NOT_RENAME_THE_SURVEY],
+        &[OCTOBER_DOES_NOT_RENAME_THE_INSPECTION],
     )
     .await;
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[LATE_OCTOBER[3]].held,
-        "an October that was given a reason to rename the survey and never did held the lock \
+        "an October that was given a reason to rename the inspection and never did held the lock \
          that watches for it: {}",
         saying(&judged),
     );
@@ -3522,7 +3536,7 @@ async fn junes_mention_lock_catches_a_survey_that_was_never_renamed() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_OCTOBER[3]].held,
-        "the honest year, which does rename the survey, failed the lock that watches for it: {}",
+        "the honest year, which does rename the inspection, failed the lock that watches for it: {}",
         saying(&judged),
     );
 }
@@ -3559,10 +3573,10 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retraction_and_a_fresh_claim()
     );
 }
 
-/// **The status guard's own case: June's claim retracted, and the survey
+/// **The status guard's own case: June's claim retracted, and the inspection
 /// renamed for real underneath it anyway.** A retracted address's content is
 /// frozen at what it said when it was written, but a mention inside it still
-/// resolves to whatever its subject is called NOW — so once the survey is
+/// resolves to whatever its subject is called NOW — so once the inspection is
 /// actually renamed, a live read of June's dead address renders the new
 /// handle too, exactly as a genuine rename would leave it. Only a check that
 /// first asks whether the address is still active can tell this apart from
@@ -3580,7 +3594,7 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retracted_address_the_rename_a
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[LATE_OCTOBER[3]].held,
-        "an October that retracted June's claim and then renamed the survey anyway held the \
+        "an October that retracted June's claim and then renamed the inspection anyway held the \
          lock that watches for a rename, so a dead address that merely re-renders under the \
          new handle satisfies it: {}",
         saying(&judged),
@@ -3589,20 +3603,20 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retracted_address_the_rename_a
     // lock fails: October's other work is still there.
     assert!(
         judged[OCTOBER[1]].held,
-        "the sitting that retracted June's claim and renamed the survey failed a lock that has \
+        "the sitting that retracted June's claim and renamed the inspection failed a lock that has \
          nothing to do with it: {}",
         saying(&judged),
     );
 }
 
-/// **More than one of June's own addresses, all pointing at the survey, all
+/// **More than one of June's own addresses, all pointing at the inspection, all
 /// renamed together — the shape a live paid run actually wrote.** The lock
 /// must hold on every one of them, not refuse for finding more than one.
 #[tokio::test]
 async fn junes_mention_lock_holds_when_every_one_of_junes_addresses_is_renamed_together() {
     // **Late October left out on purpose.** Its own honest work retracts
     // Nelson's June attendance for a reason that has nothing to do with a
-    // rename — he was never at the survey — and this case is about the
+    // rename — he was never at the inspection — and this case is about the
     // rename alone. The lock itself does not read late October's boundary at
     // all, so nothing here needs it to have run.
     const WORKED_WITHOUT_LATE_OCTOBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14];
@@ -3617,15 +3631,15 @@ async fn junes_mention_lock_holds_when_every_one_of_junes_addresses_is_renamed_t
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_OCTOBER[3]].held,
-        "three of June's own addresses point at the survey and October renamed it, so all three \
+        "three of June's own addresses point at the inspection and October renamed it, so all three \
          render under the new handle — and the lock still failed: {}",
         saying(&judged),
     );
 }
 
 /// **A second event nothing in October's reason ever touches.** One of
-/// June's own addresses gets renamed along with the survey and the other
-/// never does, because it never pointed at the survey. A rename that reached
+/// June's own addresses gets renamed along with the inspection and the other
+/// never does, because it never pointed at the inspection. A rename that reached
 /// only some of June's claims is worse than one that reached none, and the
 /// lock must redden on it rather than pass on the address that did move.
 #[tokio::test]
@@ -3646,7 +3660,7 @@ async fn junes_mention_lock_reddens_when_only_some_of_junes_addresses_are_rename
         saying(&judged),
     );
     // The half that stops the assertion above passing on a room where every
-    // lock fails: the survey itself was still renamed and found.
+    // lock fails: the inspection itself was still renamed and found.
     assert!(
         judged[OCTOBER[1]].held,
         "the sitting that added a second event failed a lock that has nothing to do with it: {}",
@@ -3709,7 +3723,7 @@ async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
 /// nobody trusts the next time it fires.**
 ///
 /// **Two readings in one case**, over Junes that differ in nothing but what the
-/// survey claim points at:
+/// inspection claim points at:
 ///
 /// * a claim pointing at a place and a person HOLDS — two kinds on one record
 ///   is a link between two things, whichever two they are;
@@ -3766,7 +3780,7 @@ async fn the_handle_lock_reads_two_kinds_on_one_record_rather_than_a_named_three
 /// 🚨 **An October that recorded the note and never said WHERE fails, and
 /// everything else it recorded still holds.**
 ///
-/// The operator asks where the survey was held and never says. **June's claim
+/// The operator asks where the inspection was held and never says. **June's claim
 /// is the one record in the year that answers it**, so a sitting that never
 /// read it has the note and not the place.
 ///
@@ -3776,16 +3790,16 @@ async fn the_handle_lock_reads_two_kinds_on_one_record_rather_than_a_named_three
 /// August's walk. **What moves it is the write.**
 ///
 /// **Paired in one case.** The guilty October files the note on the event and
-/// records the pump exactly as the good one does, so its other lock holds and
+/// records the skate tool exactly as the good one does, so its other lock holds and
 /// the one that moves is the walk to the place.
 #[tokio::test]
-async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
+async fn an_october_that_never_said_where_leaves_the_inspection_unplaceable() {
     let (_room, surface) = furnished().await;
     let nowhere = work_the_year(&surface, &room_document(), &WORKED, &[9]).await;
     let judged = judge_all(&surface, &nowhere).await;
     assert!(
         !judged[OCTOBER[1]].held,
-        "an October that never said where the survey was held satisfied the walk to the place, so the lock is not about where it happened: {}",
+        "an October that never said where the inspection was held satisfied the walk to the place, so the lock is not about where it happened: {}",
         saying(&judged),
     );
     // **The positive that says the guilty sitting is otherwise a good one.**
@@ -3801,21 +3815,21 @@ async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[OCTOBER[1]].held,
-        "the year recorded where the survey was held and the walk still failed: {}",
+        "the year recorded where the inspection was held and the walk still failed: {}",
         saying(&judged),
     );
 }
 
 /// 🚨 **The walk to the place holds whatever the event is actually called.**
 ///
-/// A paid run named the event `event:gorge-survey-2026` — a reasonable slug
+/// A paid run named the event `event:gorge-safety-inspection-2026` — a reasonable slug
 /// nothing in the year rules out. The scripted sittings above always use the
 /// one slug this file's own `january` picks, so they cannot catch a lock
 /// that secretly depends on it — this test picks a different one on purpose.
 ///
 /// **No subject is pinned in the hatch this proves**, for the same reason:
 /// `has_standing_edge` is asked with `None`, so it is the object alone —
-/// `place:north-gorge` — that has to carry the claim, whatever handle the
+/// `place:daredevil-gorge` — that has to carry the claim, whatever handle the
 /// event wears.
 #[tokio::test]
 async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
@@ -3826,7 +3840,7 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "event", "handle": "gorge-survey-2026", "name": "The gorge survey",
+        json!({"kind": "event", "handle": "gorge-safety-inspection-2026", "name": "The gorge safety inspection",
                "source": "the operator"}),
     )
     .await;
@@ -3834,10 +3848,10 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "event:gorge-survey-2026",
+        json!({"subject": "event:gorge-safety-inspection-2026",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-gorge"}),
+               "shape": "location", "object": "place:daredevil-gorge"}),
     )
     .await;
     let after = boundary(&surface, "the end").await;
@@ -3846,7 +3860,7 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
     assert!(
         judged[OCTOBER[1]].held,
         "the walk to the place failed against an event named something other than \
-         event:gorge-survey: {}",
+         event:gorge-safety-inspection: {}",
         saying(&judged),
     );
 }
@@ -3927,12 +3941,12 @@ async fn the_cached_year_reads_the_same_as_a_live_furnish() {
 
     for (surface, label) in [(&live, "live"), (&cached, "cached")] {
         let recall = surface
-            .call("recall", json!({"subject": "org:north-gorge-club"}))
+            .call("recall", json!({"subject": "org:springfield-town-council"}))
             .await;
         let read: Value = serde_json::from_str(&recall).expect("a JSON read");
         assert_eq!(
-            read["objects"][0]["id"], "org:north-gorge-club",
-            "{label} room: the club from the opening furniture is not there: {recall}"
+            read["objects"][0]["id"], "org:springfield-town-council",
+            "{label} room: the council from the opening furniture is not there: {recall}"
         );
     }
 
@@ -4025,7 +4039,7 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[JUNE[1]].held,
-        "a year where June never touched the loop held June's chain lock, so it is satisfied by \
+        "a year where June never touched the loop held June's bearings lock, so it is satisfied by \
          something other than that sitting: {}",
         saying(&judged),
     );
@@ -4044,14 +4058,14 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
 
 /// 🚨 **A retracted account does not stand, and `carries` could not see that.**
 ///
-/// A paid run had October retract September's account of the pump rather than
+/// A paid run had October retract September's account of the skate tool rather than
 /// leave it beside Nelson's — a sitting picking a winner, which is exactly the
 /// thing the lock beside it exists to catch. **The old lock held anyway**: a
 /// retraction is marked rather than filtered, so `recall` served the retracted
 /// record's own text back, edge and all, and a substring assertion cannot see
 /// the `status` key that would have told the two apart.
 #[tokio::test]
-async fn a_retracted_account_does_not_satisfy_the_pump_lock() {
+async fn a_retracted_account_does_not_satisfy_the_skate_tool_lock() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
@@ -4063,7 +4077,7 @@ async fn a_retracted_account_does_not_satisfy_the_pump_lock() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[OCTOBER[0]].held,
-        "October retracted Ralph's account instead of leaving it beside Nelson's, and the pump \
+        "October retracted Ralph's account instead of leaving it beside Nelson's, and the skate tool \
          lock held anyway: {}",
         saying(&judged),
     );
@@ -4075,14 +4089,14 @@ async fn a_retracted_account_does_not_satisfy_the_pump_lock() {
     );
 }
 
-/// 🚨 **An archive with no correction derived from it does not satisfy the pump
+/// 🚨 **An archive with no correction derived from it does not satisfy the skate tool
 /// lock.** The product's route for correcting words an earlier session wrote is
 /// to archive the claim AND capture the correction with `derived_from` naming
 /// it. A sitting that does the first half and files Nelson's account with no
 /// source has removed one account and put another beside it that nothing links
 /// to the first.
 #[tokio::test]
-async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_pump_lock() {
+async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_skate_tool_lock() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
@@ -4095,7 +4109,7 @@ async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_pump
     assert!(
         !judged[OCTOBER[0]].held,
         "October archived Ralph's account and filed Nelson's with nothing derived from the \
-         archived claim, and the pump lock held anyway: {}",
+         archived claim, and the skate tool lock held anyway: {}",
         saying(&judged),
     );
     assert!(
@@ -4122,7 +4136,7 @@ async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_pump
 /// September's own address unrevised — exactly the record the lock now
 /// reads.
 #[tokio::test]
-async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
+async fn a_second_claim_beside_septembers_does_not_satisfy_the_skate_tool_lock() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
@@ -4135,7 +4149,7 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
     assert!(
         !judged[OCTOBER[0]].held,
         "October filed Nelson's account as a fresh claim instead of correcting September's, and \
-         the pump lock held anyway: {}",
+         the skate tool lock held anyway: {}",
         saying(&judged),
     );
     assert!(
@@ -4147,7 +4161,7 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
     // **The positive that says the guilty sitting is otherwise a good one.**
     // The location note is filed exactly as the honest October files it, so
     // the walk-to-place lock still holds and this case measures only the
-    // pump lock.
+    // skate tool lock.
     assert!(
         judged[OCTOBER[1]].held,
         "the guilty October failed the lock it was not meant to, so the case above is measuring \
@@ -4160,7 +4174,7 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[OCTOBER[0]].held,
-        "the year archived September's account and derived the correction from it, and the pump lock still failed: {}",
+        "the year archived September's account and derived the correction from it, and the skate tool lock still failed: {}",
         saying(&judged),
     );
 }
@@ -4169,12 +4183,12 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
 /// as corrected.**
 ///
 /// A paid run (run 20) wrote September this way: an `attendance` edge at the
-/// event, Ralph named inside the sentence. The pump lock's history check used
+/// event, Ralph named inside the sentence. The skate tool lock's history check used
 /// to look only at the edge, so it read the earlier wording as destroyed
 /// rather than superseded — the model behaved exactly as ruled and the lock
 /// convicted it anyway.
 #[tokio::test]
-async fn septembers_prose_account_of_ralph_still_satisfies_the_pump_lock() {
+async fn septembers_prose_account_of_ralph_still_satisfies_the_skate_tool_lock() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
@@ -4187,19 +4201,19 @@ async fn septembers_prose_account_of_ralph_still_satisfies_the_pump_lock() {
     assert!(
         judged[OCTOBER[0]].held,
         "September named Ralph in prose rather than by edge, and October corrected the record \
-         exactly as it does for the edge-shaped account, yet the pump lock still failed: {}",
+         exactly as it does for the edge-shaped account, yet the skate tool lock still failed: {}",
         saying(&judged),
     );
 }
 
-/// 🚨 **September naming nobody at all is the one shape the pump lock must
+/// 🚨 **September naming nobody at all is the one shape the skate tool lock must
 /// still redden on.**
 ///
 /// The fix for the prose-shaped account above must not become "accept
 /// anything": a correction whose earlier wording genuinely never named Ralph
 /// has nothing for history to carry, and the lock has to say so.
 #[tokio::test]
-async fn septembers_account_that_names_nobody_still_fails_the_pump_lock() {
+async fn septembers_account_that_names_nobody_still_fails_the_skate_tool_lock() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
@@ -4212,7 +4226,7 @@ async fn septembers_account_that_names_nobody_still_fails_the_pump_lock() {
     assert!(
         !judged[OCTOBER[0]].held,
         "September named nobody at all, so nothing behind October's correction ever said Ralph, \
-         and the pump lock held anyway: {}",
+         and the skate tool lock held anyway: {}",
         saying(&judged),
     );
 }
@@ -4220,12 +4234,12 @@ async fn septembers_account_that_names_nobody_still_fails_the_pump_lock() {
 /// 🚨 **September's own lock stops speaking as though it watched September,
 /// because it cannot: a Query lock reads the finished board.**
 ///
-/// Run 20 had October legitimately clear the pump's day — "over the summer"
-/// borrows no precision from "at the survey" — and September's own lock
+/// Run 20 had October legitimately clear the skate tool's day — "over the summer"
+/// borrows no precision from "at the inspection" — and September's own lock
 /// convicted September for it, saying the question was "still open" when it
 /// had been answered and then correctly revised. The lock's assertions are
 /// unchanged: a year where October clears the day still fails this lock,
-/// because nothing on the pump currently carries it. What changed is that the
+/// because nothing on the skate tool currently carries it. What changed is that the
 /// sentence no longer names a month or claims a question was never answered.
 #[tokio::test]
 async fn septembers_lock_does_not_blame_september_for_octobers_legitimate_edit() {
@@ -4240,7 +4254,7 @@ async fn septembers_lock_does_not_blame_september_for_octobers_legitimate_edit()
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[SEPTEMBER[0]].held,
-        "October cleared the pump's day, so nothing on the pump currently carries it — the lock \
+        "October cleared the skate tool's day, so nothing on the skate tool currently carries it — the lock \
          should still fail: {}",
         saying(&judged),
     );
@@ -4253,13 +4267,13 @@ async fn septembers_lock_does_not_blame_september_for_octobers_legitimate_edit()
     );
 
     // **The positive this rests on.** Without it the case above could be
-    // passing on an October that never touched the pump at all.
+    // passing on an October that never touched the skate tool at all.
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[SEPTEMBER[0]].held,
-        "the year worked properly, with nothing clearing the pump's day, and September's own \
+        "the year worked properly, with nothing clearing the skate tool's day, and September's own \
          lock still failed: {}",
         saying(&judged),
     );
@@ -4318,17 +4332,17 @@ async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
     );
 }
 
-/// **A later December that captures the bike lock's mistake and never
+/// **A later December that captures the board lock's mistake and never
 /// corrects it.** One write, and nothing behind it — the shape
-/// [`the_bike_locks_mistake_is_rewritten_in_place`]'s neighbour lock in the
+/// [`the_board_locks_mistake_is_rewritten_in_place`]'s neighbour lock in the
 /// checks module exists to catch, told apart from a genuine same-breath
 /// correction.
-async fn later_december_never_corrects_the_bike_lock(room: &Surface, sid: &str) {
+async fn later_december_never_corrects_the_board_lock(room: &Surface, sid: &str) {
     did(
         room,
         sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -4336,23 +4350,23 @@ async fn later_december_never_corrects_the_bike_lock(room: &Surface, sid: &str) 
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "bought a U-lock for the bike",
+        json!({"subject": "thing:board-lock", "content": "bought a U-lock for the skateboard",
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
     )
     .await;
 }
 
-/// **A later December that corrects the bike lock by retracting and
+/// **A later December that corrects the board lock by retracting and
 /// recapturing instead of rewriting it in place.** The retraction takes the
 /// old record out of the active count, so what this trips is the OTHER
 /// guard: the fresh record's own trace carries one write, not two, because
 /// it is a different address from the one the mistake was first written to.
-async fn later_december_retracts_and_recaptures_the_bike_lock(room: &Surface, sid: &str) {
+async fn later_december_retracts_and_recaptures_the_board_lock(room: &Surface, sid: &str) {
     did(
         room,
         sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -4360,7 +4374,7 @@ async fn later_december_retracts_and_recaptures_the_bike_lock(room: &Surface, si
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "bought a U-lock for the bike",
+        json!({"subject": "thing:board-lock", "content": "bought a U-lock for the skateboard",
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
     )
     .await;
@@ -4368,7 +4382,7 @@ async fn later_december_retracts_and_recaptures_the_bike_lock(room: &Surface, si
         .ok()
         .and_then(|v| v["address"].as_str().map(str::to_string))
         .unwrap_or_else(|| {
-            panic!("the bike lock's own capture answers with its address: {captured}")
+            panic!("the board lock's own capture answers with its address: {captured}")
         });
     did(
         room,
@@ -4381,13 +4395,13 @@ async fn later_december_retracts_and_recaptures_the_bike_lock(room: &Surface, si
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "bought a cable lock for the bike",
+        json!({"subject": "thing:board-lock", "content": "bought a cable lock for the skateboard",
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
     )
     .await;
 }
 
-/// **A later December that captures a second, separate claim about the bike
+/// **A later December that captures a second, separate claim about the skateboard
 /// lock instead of rewriting or retracting the first.** Both records stand,
 /// active, side by side — the shape that actually trips the "one active
 /// record" guard rather than the trace-length one: a rewrite's shape from a
@@ -4397,7 +4411,7 @@ async fn later_december_captures_a_second_claim_beside_the_first(room: &Surface,
         room,
         sid,
         "add_entity",
-        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
                "source": "the operator"}),
     )
     .await;
@@ -4405,7 +4419,7 @@ async fn later_december_captures_a_second_claim_beside_the_first(room: &Surface,
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "bought a U-lock for the bike",
+        json!({"subject": "thing:board-lock", "content": "bought a U-lock for the skateboard",
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
     )
     .await;
@@ -4413,13 +4427,13 @@ async fn later_december_captures_a_second_claim_beside_the_first(room: &Surface,
         room,
         sid,
         "capture",
-        json!({"subject": "thing:bike-lock", "content": "bought a cable lock for the bike",
+        json!({"subject": "thing:board-lock", "content": "bought a cable lock for the skateboard",
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
     )
     .await;
 }
 
-/// 🚨 **The bike lock's rewrite lock, asked three wrong ways and the right
+/// 🚨 **The board lock's rewrite lock, asked three wrong ways and the right
 /// one.**
 ///
 /// None of the three wrong shapes is a hatch that only reads the "was"
@@ -4433,15 +4447,15 @@ async fn later_december_captures_a_second_claim_beside_the_first(room: &Surface,
 /// records with neither retracted, which trips the one-active-record guard
 /// instead.
 #[tokio::test]
-async fn the_bike_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
+async fn the_board_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
     let (_room, surface) = furnished().await;
     let one_write = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    later_december_never_corrects_the_bike_lock(&surface, &sid).await;
+    later_december_never_corrects_the_board_lock(&surface, &sid).await;
     let judged = judge_all(&surface, &one_write).await;
     assert!(
         !judged[LATE_DECEMBER[5]].held,
-        "a bike lock claim that was never corrected held the rewrite lock, so the check can no \
+        "a board lock claim that was never corrected held the rewrite lock, so the check can no \
          longer fail for the reason it exists: {}",
         saying(&judged),
     );
@@ -4449,11 +4463,11 @@ async fn the_bike_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
     let (_room, surface) = furnished().await;
     let two_records = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    later_december_retracts_and_recaptures_the_bike_lock(&surface, &sid).await;
+    later_december_retracts_and_recaptures_the_board_lock(&surface, &sid).await;
     let judged = judge_all(&surface, &two_records).await;
     assert!(
         !judged[LATE_DECEMBER[5]].held,
-        "a bike lock correction filed as a retraction beside a fresh claim held the rewrite \
+        "a board lock correction filed as a retraction beside a fresh claim held the rewrite \
          lock, so it cannot tell a rewrite from a retract-and-recapture: {}",
         saying(&judged),
     );
@@ -4465,7 +4479,7 @@ async fn the_bike_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
     let judged = judge_all(&surface, &two_active).await;
     assert!(
         !judged[LATE_DECEMBER[5]].held,
-        "a second, separate claim about the bike lock held the rewrite lock beside the first, \
+        "a second, separate claim about the board lock held the rewrite lock beside the first, \
          unretracted, so the check can no longer tell one rewritten record from two standing \
          side by side: {}",
         saying(&judged),
@@ -4478,7 +4492,7 @@ async fn the_bike_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[5]].held,
-        "the year worked properly failed the bike lock's own rewrite lock: {}",
+        "the year worked properly failed the board lock's own rewrite lock: {}",
         saying(&judged),
     );
 }
@@ -4490,31 +4504,31 @@ async fn the_bike_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
 /// the true count beside them — the same distinction
 /// [`a_records_trace_matches_the_writes_the_run_made`]'s own doc names for
 /// its neighbour lock: a long history comes back elided, and measuring the
-/// shipped list reads an elision as a missing write. **The bike lock's own
+/// shipped list reads an elision as a missing write. **The board lock's own
 /// correction genuinely carries two writes**, proven here by an independent,
 /// uncut read before the lock is ever asked — so a failure below is about
 /// the lock's own read rather than about whether the correction happened.
 #[tokio::test]
-async fn the_bike_locks_rewrite_lock_holds_on_a_record_whose_trace_read_is_cut() {
+async fn the_board_locks_rewrite_lock_holds_on_a_record_whose_trace_read_is_cut() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    let address = bike_lock_corrected_in_the_same_breath(&surface, &sid).await;
+    let address = board_lock_corrected_in_the_same_breath(&surface, &sid).await;
     let full = surface
         .call(
             "recall",
-            json!({"subject": "thing:bike-lock", "history_record": address}),
+            json!({"subject": "thing:board-lock", "history_record": address}),
         )
         .await;
     let parsed_full: Value = serde_json::from_str(&full).expect("the trace is json");
     assert_eq!(
         parsed_full["objects"][0]["record_history"]["count"], 2,
-        "the bike lock's own same-breath correction should carry two writes: {full}",
+        "the board lock's own same-breath correction should carry two writes: {full}",
     );
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[5]].held,
-        "the bike lock's correction genuinely carries two writes and the rewrite lock still \
+        "the board lock's correction genuinely carries two writes and the rewrite lock still \
          failed, so it is not reading the trace's own reported total: {}",
         saying(&judged),
     );
@@ -4523,18 +4537,18 @@ async fn the_bike_locks_rewrite_lock_holds_on_a_record_whose_trace_read_is_cut()
 /// 🚨 **February's lock is satisfiable only by what February recorded.**
 ///
 /// The needle it used to carry was ambiguous rather than wrong: September draws
-/// a second link at the same person on the same subject when the pump comes
+/// a second link at the same person on the same subject when the skate tool comes
 /// back. **A February that recorded nothing held the lock on September's work**,
 /// and two read-based sweeps of that class missed it because the needle matches
 /// — it just also matches something else.
 #[tokio::test]
-async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump() {
+async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_skate_tool() {
     let (_room, surface) = furnished().await;
     let silent = work_the_year(&surface, &room_document(), &WORKED, &[1]).await;
     let judged = judge_all(&surface, &silent).await;
     assert!(
         !judged[FEBRUARY[1]].held,
-        "a February that recorded nothing about who had the pump held its lock, so the sitting \
+        "a February that recorded nothing about who had the skate tool held its lock, so the sitting \
          that returns it seven months later is still answering for this one: {}",
         saying(&judged),
     );
@@ -4544,7 +4558,7 @@ async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[FEBRUARY[1]].held,
-        "the February that recorded who had the pump failed its own lock: {}",
+        "the February that recorded who had the skate tool failed its own lock: {}",
         saying(&judged),
     );
 }
@@ -4573,7 +4587,7 @@ async fn junes_attendee_lock_fails_when_junes_own_window_drew_nothing() {
 
 /// 🚨 **A later, legitimate retraction does not sour June's own lock.**
 ///
-/// Late October retracts Nelson's own attendance at the survey on purpose —
+/// Late October retracts Nelson's own attendance at the inspection on purpose —
 /// the room's honest storyline does this every full run. The old lock held
 /// on the retracted record's own dead text, for the wrong reason: `recall`
 /// serves a retracted record's edge back and `carries person:nelson` cannot
@@ -4593,23 +4607,23 @@ async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
     );
 }
 
-/// 🚨 **June's lock holds however the survey happens to be spelled.**
+/// 🚨 **June's lock holds however the inspection happens to be spelled.**
 ///
-/// The old lock pinned `event:gorge-survey` as the object, hardcoded — safe
+/// The old lock pinned `event:gorge-safety-inspection` as the object, hardcoded — safe
 /// only because the reference transcript here happens to spell it that way.
 /// Nothing tells a model what to call the event it just invented, so a June
 /// that draws its attendee edges at a differently spelled handle has done
-/// the same work. `event:gorge-survey` itself still exists, from January,
+/// the same work. `event:gorge-safety-inspection` itself still exists, from January,
 /// untouched and unused — proving the lock is not merely failing open on a
 /// missing object.
 #[tokio::test]
-async fn junes_attendee_lock_holds_whatever_the_survey_is_spelled() {
+async fn junes_attendee_lock_holds_whatever_the_inspection_is_spelled() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
         &room_document(),
         &WORKED,
-        &[JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY],
+        &[JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_INSPECTION],
     )
     .await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -4622,20 +4636,20 @@ async fn junes_attendee_lock_holds_whatever_the_survey_is_spelled() {
     );
 }
 
-/// 🚨 **February's club-membership lock fails when February's own window
+/// 🚨 **February's council-membership lock fails when February's own window
 /// drew nothing.**
 ///
 /// The positive half of the pair the pattern needs: a year where February
 /// never ran drew no membership edges at all, and the lock must say so
 /// rather than holding over an empty record.
 #[tokio::test]
-async fn februarys_club_lock_fails_when_februarys_own_window_drew_nothing() {
+async fn februarys_council_lock_fails_when_februarys_own_window_drew_nothing() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(&surface, &room_document(), &[0], &[]).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[FEBRUARY[2]].held,
-        "a year where February never ran held its club-membership lock, so it is satisfied by \
+        "a year where February never ran held its council-membership lock, so it is satisfied by \
          something other than that sitting: {}",
         saying(&judged),
     );
@@ -4660,7 +4674,7 @@ async fn aprils_shelbyville_lock_fails_when_aprils_own_window_drew_nothing() {
     );
 }
 
-/// 🚨 **October's north-gorge lock fails when October's own window drew
+/// 🚨 **October's daredevil-gorge lock fails when October's own window drew
 /// nothing.**
 ///
 /// The positive half of the pair the pattern needs: a year that never ran
@@ -4673,7 +4687,7 @@ async fn octobers_north_gorge_lock_fails_when_octobers_own_window_drew_nothing()
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[OCTOBER[1]].held,
-        "a year where October never ran held its north-gorge lock, so it is satisfied by \
+        "a year where October never ran held its daredevil-gorge lock, so it is satisfied by \
          something other than that sitting: {}",
         saying(&judged),
     );
@@ -4692,7 +4706,7 @@ async fn late_octobers_bart_lock_fails_when_late_octobers_own_window_drew_nothin
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[LATE_OCTOBER[1]].held,
-        "a year where late October never ran held its Bart club lock, so it is satisfied by \
+        "a year where late October never ran held its Bart council lock, so it is satisfied by \
          something other than that sitting: {}",
         saying(&judged),
     );
@@ -4952,17 +4966,17 @@ async fn september_is_graded_and_a_sitting_in_the_wrong_day_still_fails() {
 /// **The whole year, worked without its last sitting**, so a case can play
 /// its own version of December and take a boundary right after it — the same
 /// technique `a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not`
-/// uses for the club's own trace lock.
+/// uses for the council's own trace lock.
 const WITHOUT_LATER_DECEMBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
 
-/// **The happy path: all three of the canoe's year locks hold together.**
+/// **The happy path: all three of the longboard's year locks hold together.**
 ///
 /// Five small repairs, each planted beside that sitting's other business
 /// across ten months, folded by a sixth record late in the year that names
 /// every one of them and invents nothing. This is the shape the feature
 /// promises, worked the ordinary way the whole year is worked.
 #[tokio::test]
-async fn the_canoes_year_is_folded_late_and_holds_all_three_locks() {
+async fn the_longboards_year_is_folded_late_and_holds_all_three_locks() {
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -4986,27 +5000,27 @@ async fn the_canoes_year_is_folded_late_and_holds_all_three_locks() {
 /// 🚨 **The fold measured the way an agent actually meets it: a plain read,
 /// no `stood_for`.**
 ///
-/// Every other canoe lock in this room asks with `stood_for: true`, because
+/// Every other longboard lock in this room asks with `stood_for: true`, because
 /// each is verification code that wants the whole record. Nothing until now
-/// has asked for the canoe's records the way a session with no reason to
+/// has asked for the longboard's records the way a session with no reason to
 /// know the flag exists actually would — so nothing has ever proven the
 /// fold is served SHORT rather than merely stored. Both halves: the plain
 /// read excludes the pile, and the same read with the opt-in still reaches
 /// it, which is what rules out a subject nothing here can read at all.
 #[tokio::test]
-async fn the_canoes_fold_is_served_short_on_a_plain_read_and_whole_with_stood_for() {
+async fn the_longboards_fold_is_served_short_on_a_plain_read_and_whole_with_stood_for() {
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[6]].held,
-        "a plain read of the canoe — no stood_for — held one of the sources the fold is \
+        "a plain read of the longboard — no stood_for — held one of the sources the fold is \
          supposed to elide: {}",
         saying(&judged),
     );
     assert!(
         judged[LATE_DECEMBER[7]].held,
-        "the canoe's own sources are not reachable even with stood_for: true, so the plain-read \
+        "the longboard's own sources are not reachable even with stood_for: true, so the plain-read \
          negative above proves nothing about elision: {}",
         saying(&judged),
     );
@@ -5014,16 +5028,16 @@ async fn the_canoes_fold_is_served_short_on_a_plain_read_and_whole_with_stood_fo
 
 /// 🚨 **The fold-timing lock, asked both ways.**
 ///
-/// A December that answers the club's question and never marks anything on
-/// the canoe must fail the lock that exists to catch exactly that — and the
+/// A December that answers the council's question and never marks anything on
+/// the longboard must fail the lock that exists to catch exactly that — and the
 /// happy-path case above already proves a real fold passes it.
 #[tokio::test]
-async fn the_canoe_fold_lock_reddens_when_december_never_folds_anything() {
+async fn the_longboard_fold_lock_reddens_when_december_never_folds_anything() {
     let (_room, surface) = furnished().await;
     let mut boundaries =
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    later_december_never_folds_the_canoe(&surface, &sid).await;
+    later_december_never_folds_the_longboard(&surface, &sid).await;
     *boundaries.last_mut().expect("the year has a last boundary") =
         boundary(&surface, "the end").await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -5043,7 +5057,7 @@ async fn the_canoe_fold_lock_reddens_when_december_never_folds_anything() {
 /// questions, still hold: a real mark was made, in the window, inventing
 /// nothing.
 #[tokio::test]
-async fn the_canoes_sources_lock_reddens_when_a_fold_destroys_one_of_them() {
+async fn the_longboards_sources_lock_reddens_when_a_fold_destroys_one_of_them() {
     let (_room, surface) = furnished().await;
     let mut boundaries =
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
@@ -5078,7 +5092,7 @@ async fn the_canoes_sources_lock_reddens_when_a_fold_destroys_one_of_them() {
 /// sources lock, about different questions, still hold: a real mark was
 /// made, in the window, over five untouched sources.
 #[tokio::test]
-async fn the_canoes_fabrication_lock_reddens_when_the_fold_invents_a_date() {
+async fn the_longboards_fabrication_lock_reddens_when_the_fold_invents_a_date() {
     let (_room, surface) = furnished().await;
     let mut boundaries =
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
@@ -5148,7 +5162,7 @@ async fn the_fabrication_lock_reddens_on_an_invented_date_in_the_folds_own_prose
 
 /// 🚨 **The fabrication lock must not convict a fold for naming the day it
 /// was itself written on.** A review found the check once built its known
-/// dates from every OTHER canoe record, excluding the fold — so a fold
+/// dates from every OTHER longboard record, excluding the fold — so a fold
 /// stating its own honest write day in its own prose read as inventing a
 /// date nobody gave.
 #[tokio::test]
@@ -5157,8 +5171,8 @@ async fn the_fabrication_lock_does_not_convict_a_fold_for_naming_its_own_write_d
     let mut boundaries =
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    later_december_never_folds_the_canoe(&surface, &sid).await;
-    fold_the_canoes_pile_naming_its_own_day(&surface, &sid).await;
+    later_december_never_folds_the_longboard(&surface, &sid).await;
+    fold_the_longboards_pile_naming_its_own_day(&surface, &sid).await;
     *boundaries.last_mut().expect("the year has a last boundary") =
         boundary(&surface, "the end").await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -5171,7 +5185,7 @@ async fn the_fabrication_lock_does_not_convict_a_fold_for_naming_its_own_write_d
 
 /// 🚨 **The sources lock must check EVERY record on a day, not the first one
 /// `recorded_at` happens to report.** A review found that February plausibly
-/// writes two canoe facts on the same date — an acquisition and a defect —
+/// writes two longboard facts on the same date — an acquisition and a defect —
 /// and a fold missing one of a same-day pair used to read as complete.
 #[tokio::test]
 async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs() {
@@ -5179,8 +5193,8 @@ async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs
     let mut boundaries =
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    later_december_never_folds_the_canoe(&surface, &sid).await;
-    fold_the_canoes_pile_missing_a_same_day_sibling(&surface, &sid).await;
+    later_december_never_folds_the_longboard(&surface, &sid).await;
+    fold_the_longboards_pile_missing_a_same_day_sibling(&surface, &sid).await;
     *boundaries.last_mut().expect("the year has a last boundary") =
         boundary(&surface, "the end").await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -5284,7 +5298,7 @@ async fn a_refused_scripted_call_ends_the_run_naming_the_phase_and_the_refusal()
 async fn an_in_place_correction_of_an_earlier_sittings_testimony_ends_the_year_at_the_edit() {
     let (_room, surface) = furnished().await;
     let _ = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
-    let wrong_word = address_of(&surface, "thing:gravel-bike", "serviced the drivetrain").await;
+    let wrong_word = address_of(&surface, "thing:skateboard", "serviced the wheels").await;
     let phase = room_document().phases[LATE_DECEMBER_AT].clone();
     let sid = sitting(&surface, phase.day.as_deref().expect("a day")).await;
     let surface = std::sync::Arc::new(surface);

@@ -29,7 +29,7 @@ async fn you_write_to_a_colleague_and_never_to_their_container() {
             "post_message",
             json!({
                 "to": "epsilon",
-                "subject": "the gorge survey",
+                "subject": "the gorge safety inspection",
                 "body": "the survey is done, numbers in the wiki",
             }),
         )

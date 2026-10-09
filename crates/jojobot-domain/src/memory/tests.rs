@@ -1830,7 +1830,7 @@ fn validate_subject_enforces_the_kind_slug_grammar() {
     for good in [
         "person:alpha",
         "topic:widgets",
-        "org:north-gorge-club",
+        "org:springfield-town-council",
         "thing:red-bike",
     ] {
         assert!(
@@ -1974,7 +1974,7 @@ fn the_untyped_shape_is_its_own_shape_and_never_about() {
     // and refusing a kind here would be jojobot deciding what the link
     // means, which is the thing it does not know.
     assert_eq!(EdgeShape::Connection.object_kind(), None);
-    for object in ["person:alpha", "place:north-gorge", "event:krusty-fest"] {
+    for object in ["person:alpha", "place:daredevil-gorge", "event:krusty-fest"] {
         assert!(
             validate_edge(&Edge::new(EdgeShape::Connection, EntityId(object.into()))).is_ok(),
             "an untyped edge takes {object}"
@@ -1996,8 +1996,8 @@ fn an_edge_object_must_be_the_kind_its_shape_requires() {
     // object is what this refuses on, read from the set.
     crate::memory::kinds::load_shipped();
     let ok = [
-        (EdgeShape::Location, "place:north-gorge"),
-        (EdgeShape::Membership, "org:north-gorge-club"),
+        (EdgeShape::Location, "place:daredevil-gorge"),
+        (EdgeShape::Membership, "org:springfield-town-council"),
         (EdgeShape::Attendance, "event:krusty-fest"),
         (EdgeShape::About, "topic:widgets"),
         (EdgeShape::About, "person:alpha"),
@@ -2010,7 +2010,7 @@ fn an_edge_object_must_be_the_kind_its_shape_requires() {
     }
     let bad = [
         (EdgeShape::Location, "person:alpha"),
-        (EdgeShape::Membership, "place:north-gorge"),
+        (EdgeShape::Membership, "place:daredevil-gorge"),
         (EdgeShape::Attendance, "project:atlas"),
     ];
     for (shape, object) in bad {

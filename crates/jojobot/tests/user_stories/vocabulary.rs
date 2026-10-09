@@ -29,10 +29,14 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     // ── the things ──────────────────────────────────────────────────────────
     s.add("thing:gravel-bike", "The Gravel Bike").await;
     s.add("thing:torque-wrench", "The Torque Wrench").await;
-    s.add("event:gorge-survey", "The Gorge Survey").await;
+    s.add(
+        "event:gorge-safety-inspection",
+        "The Gorge Safety Inspection",
+    )
+    .await;
     s.add("event:krusty-fest", "The Krusty Fest").await;
     s.add("place:springfield", "Springfield").await;
-    s.add("place:north-gorge", "The North Gorge").await;
+    s.add("place:daredevil-gorge", "The Daredevil Gorge").await;
 
     // ── a session writes the shipped keys, having declared nothing ───────────
     //
@@ -65,11 +69,11 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 
     // A trip, in the shipped words: where from, where to, and the two dates.
     s.event_with(
-        "event:gorge-survey",
+        "event:gorge-safety-inspection",
         "four days up the gorge",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "place:north-gorge",
+            "arrives_at": "place:daredevil-gorge",
             "leaves_on": "2026-09-03",
             "returns_on": "2026-09-07",
         }),
@@ -83,7 +87,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         "we are going, at some point",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "place:north-gorge",
+            "arrives_at": "place:daredevil-gorge",
         }),
         &[],
     )
@@ -95,7 +99,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         .await;
     // The positive the strict answer below rests on: nobody declared `trip` on
     // this instance and the question still works.
-    described.says("event:gorge-survey");
+    described.says("event:gorge-safety-inspection");
     described.says("\"complete\":true");
     // ⭐ The half-planned one comes back, saying what it lacks BY NAME — which
     // is what a reader acts on. A count would leave them nothing to fill in.
@@ -115,7 +119,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     let are_trips = s
         .call("search", json!({ "fits_type": "trip", "limit": 50 }))
         .await;
-    are_trips.says("event:gorge-survey");
+    are_trips.says("event:gorge-safety-inspection");
     are_trips.never_says("event:krusty-fest");
     are_trips.never_says("thing:gravel-bike");
 
@@ -129,7 +133,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         )
         .await;
     planned.says("\"leaves_on\":\"2026-09-03\"");
-    planned.says("\"arrives_at\":\"place:north-gorge\"");
+    planned.says("\"arrives_at\":\"place:daredevil-gorge\"");
 
     // ── a type of the session's own, beside the ones it was given ───────────
     let declared = s
@@ -200,9 +204,13 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
     // of a single key.
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
-    s.add("event:gorge-survey", "The Gorge Survey").await;
+    s.add(
+        "event:gorge-safety-inspection",
+        "The Gorge Safety Inspection",
+    )
+    .await;
     s.add("place:springfield", "Springfield").await;
-    s.add("place:north-gorge", "The North Gorge").await;
+    s.add("place:daredevil-gorge", "The Daredevil Gorge").await;
 
     // ── nothing is a trip yet, and the answer says what one is ──────────────
     let asked = s
@@ -239,7 +247,7 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
         fields.insert(name.to_string(), json!(value));
     }
     s.event_with(
-        "event:gorge-survey",
+        "event:gorge-safety-inspection",
         "four days up the gorge",
         serde_json::Value::Object(fields),
         &[],
@@ -255,7 +263,7 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
         .await
         .json();
     assert_eq!(
-        found["objects"][0]["id"], "event:gorge-survey",
+        found["objects"][0]["id"], "event:gorge-safety-inspection",
         "a thing written under the keys the answer named is found by them: {found}"
     );
     story.finish().await;

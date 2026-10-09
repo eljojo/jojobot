@@ -1488,10 +1488,10 @@ async fn a_fact_can_be_about_any_kind() {
     let jojobot = handler();
     let captured = capture_ok(
         &jojobot,
-        capture_args("place:north-gorge", "swimmable in August"),
+        capture_args("place:daredevil-gorge", "swimmable in August"),
     )
     .await;
-    assert_eq!(captured["subject"], "place:north-gorge");
+    assert_eq!(captured["subject"], "place:daredevil-gorge");
 }
 
 /// Capture's subject must exist, near miss or complete stranger, and the
@@ -1579,13 +1579,13 @@ async fn capture_draws_an_edge_and_renders_its_schema_org_name() {
         &jojobot,
         CaptureArgs {
             shape: Some("membership".into()),
-            object: Some("org:north-gorge-club".into()),
+            object: Some("org:springfield-town-council".into()),
             ..capture_args("alpha", "rides with the club")
         },
     )
     .await;
     assert_eq!(captured["edge"]["type"], "memberOf");
-    assert_eq!(captured["edge"]["object"], "org:north-gorge-club");
+    assert_eq!(captured["edge"]["object"], "org:springfield-town-council");
 
     let recalled = json_of(
         &jojobot
@@ -1608,7 +1608,7 @@ async fn an_unknown_shape_is_a_client_error() {
         let err = jojobot
             .capture(Parameters(CaptureArgs {
                 shape: Some(shape.into()),
-                object: Some("place:north-gorge".into()),
+                object: Some("place:daredevil-gorge".into()),
                 ..capture_args("alpha", "an unknown shape")
             }))
             .await

@@ -26,13 +26,13 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
     let first = story.session().await;
     first.add("person:milhouse", "Milhouse").await;
     first
-        .fact("person:milhouse", "keeps the club's spare wheels")
+        .fact("person:milhouse", "keeps the council's spare barriers")
         .await;
     let sid = first.sid().to_string();
     first
         .wrap(
-            "the spare wheels are Milhouse's, not the club's. Whoever picks this up should ask \
-             him before the next survey rather than assuming the club has any.",
+            "the spare barriers are Milhouse's, not the council's. Whoever picks this up should ask \
+             him before the next inspection rather than assuming the council has any.",
         )
         .await;
 
@@ -51,7 +51,7 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
         .as_str()
         .unwrap_or_else(|| panic!("the door handed over no story: {answered}"));
     assert!(
-        told.contains("spare wheels"),
+        told.contains("spare barriers"),
         "the closing story never reached the next sitting: {told}",
     );
 
@@ -85,14 +85,14 @@ async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
     first
         .call(
             "journal",
-            json!({"entry": "surveyed the east gorge", "focus": "the east gorge survey"}),
+            json!({"entry": "inspected the east gorge", "focus": "the east gorge inspection"}),
         )
         .await;
     let second = story.as_bot("bot:otto").await;
     second
         .call(
             "journal",
-            json!({"entry": "priced the wheels", "focus": "pricing the replacement wheels"}),
+            json!({"entry": "priced the barriers", "focus": "pricing the replacement barriers"}),
         )
         .await;
     let (first_sid, second_sid) = (first.sid().to_string(), second.sid().to_string());
@@ -118,10 +118,14 @@ async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
             .unwrap_or_else(|| panic!("{sid} is not named in the offer: {offer}"))["working_on"]
             .clone()
     };
-    assert_eq!(working_on(&first_sid), "the east gorge survey", "{offer}");
+    assert_eq!(
+        working_on(&first_sid),
+        "the east gorge inspection",
+        "{offer}"
+    );
     assert_eq!(
         working_on(&second_sid),
-        "pricing the replacement wheels",
+        "pricing the replacement barriers",
         "{offer}"
     );
 

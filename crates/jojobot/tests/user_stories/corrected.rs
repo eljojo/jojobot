@@ -1,4 +1,4 @@
-//! "The record says the club does not meet on Tuesdays. Has it always said
+//! "The record says the council does not meet on Tuesdays. Has it always said
 //! that, or did we have it wrong and fix it?"
 //!
 //! **A question a person actually asks, and it is not about the claim.** It is
@@ -33,24 +33,29 @@ use super::dsl::Story;
 async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
     let story = Story::begin("bot:otto").await;
 
-    // ── April · the club, as the operator describes it ──────────────────────
+    // ── April · the council, as the operator describes it ──────────────────────
     let spring = story.session_on("2026-04-14", None).await;
 
-    spring.add("org:north-gorge-club", "North Gorge Club").await;
+    spring
+        .add("org:springfield-town-council", "Springfield Town Council")
+        .await;
     let meets = spring
-        .fact("org:north-gorge-club", "meets on Tuesdays")
+        .fact("org:springfield-town-council", "meets on Tuesdays")
         .await;
     // A second claim, written the same day and never touched again. It is the
     // control this whole story rests on.
-    let rides = spring
-        .fact("org:north-gorge-club", "rides out from the gorge car park")
+    let visits = spring
+        .fact(
+            "org:springfield-town-council",
+            "holds its site visits at the gorge car park",
+        )
         .await;
 
-    spring.wrap("wrote down what the club does").await;
+    spring.wrap("wrote down what the council does").await;
 
     // ── September · the operator says we had it wrong ───────────────────────
     //
-    // Not a change in the world: the club never met on Tuesdays and the record
+    // Not a change in the world: the council never met on Tuesdays and the record
     // was wrong from the day it was written. The operator's words from April
     // belong to the April run, so the September run archives them and writes
     // what is true now beside them, derived from them: the old claim stays
@@ -65,7 +70,7 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         )
         .await;
     autumn
-        .recall("org:north-gorge-club")
+        .recall("org:springfield-town-council")
         .await
         .claim(&corrected)
         .says("does not meet on Tuesdays");
@@ -78,7 +83,7 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
     // The ordinary read first: what the record says now, and no chain with it.
     // ⛔️ A read that carried the trace unasked would cost every session that
     // never wanted it.
-    let now = winter.recall("org:north-gorge-club").await;
+    let now = winter.recall("org:springfield-town-council").await;
     now.claim(&corrected).says("does not meet on Tuesdays");
     assert!(
         now.json()["objects"][0].get("record_history").is_none(),
@@ -92,7 +97,7 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         .shape(
             "has the record always said that?",
             json!({
-                "subject": "org:north-gorge-club",
+                "subject": "org:springfield-town-council",
                 "history_record": meets,
             }),
         )
@@ -158,8 +163,8 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         .shape(
             "and has this one ever changed?",
             json!({
-                "subject": "org:north-gorge-club",
-                "history_record": rides,
+                "subject": "org:springfield-town-council",
+                "history_record": visits,
             }),
         )
         .await;
@@ -168,7 +173,7 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         .number("/objects/0/record_history/writes/0/nth", 1);
     assert_eq!(
         untouched.json()["objects"][0]["record_history"]["writes"][0]["content"],
-        "rides out from the gorge car park",
+        "holds its site visits at the gorge car park",
     );
 
     // ── and the same trace, reached by search rather than by address ────────
@@ -179,7 +184,10 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
     // corrected away is invisible to the ordinary search below it, and
     // reachable only by the same history that answered the question above.
     let chinook = winter
-        .fact("org:north-gorge-club", "closes early for the chinook winds")
+        .fact(
+            "org:springfield-town-council",
+            "closes early for the chinook winds",
+        )
         .await;
     winter
         .correct(&chinook, "closes early in high wind, whatever the season")

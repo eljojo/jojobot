@@ -5,7 +5,7 @@ and every late question reaching across things nobody ever filed together.**
 
 `year.md` asks whether a year of ordinary use accumulates. Its questions are
 excellent and almost all single-subject: what did the record say, who was at
-the survey, how far did the bike go. This room asks the other question a
+the inspection, how far did the skateboard go. This room asks the other question a
 year of real notes throws up, and it is the one a research pass over a real
 person's life notes found again and again: **the decision-relevant fact was
 almost never missing. It was written down already, inside something written
@@ -579,7 +579,7 @@ found the course at all.
 #
 # ⚠️ **The handle, not the name.** "Quahog Community College" in prose is a
 # word; `org:quahog-community-college` on the record is a link a later reader
-# can follow. The bar is the one year.md's October sets for the survey's
+# can follow. The bar is the one year.md's October sets for the inspection's
 # place.
 recall {"subject": "event:wagstaff-fair", "facts": true}
 carries "recorded_at":"2026-09-13"
