@@ -338,6 +338,10 @@ pub struct RecallArgs {
     /// about to act on a value, or when you need to know whether the user said
     /// it. A key whose writes are summed has no single winning claim and is not
     /// here.
+    ///
+    /// **It follows `keys`**, and names the ones it left out. A claim that
+    /// backs several keys is named by each of them, and its note is shipped
+    /// once, in `fields_backing_notes`, under that claim.
     #[serde(default)]
     pub(crate) backing: Option<bool>,
     /// **The claims worked out from one claim**, by its address
@@ -2544,32 +2548,62 @@ impl Jojobot {
                     rendered["held"] = held;
                     match backing {
                         Some(backing) => {
-                            rendered["fields_backing"] = backing
-                                .iter()
-                                .map(|(key, from)| {
-                                    let mut backing = serde_json::json!({
+                            // **Backing obeys the keys the call kept, exactly
+                            // as the fields do**, and names what it left out.
+                            let wanted = |key: &str| {
+                                only_keys
+                                    .as_deref()
+                                    .is_none_or(|keys| keys.iter().any(|k| k == key))
+                            };
+                            let mut kept = serde_json::Map::new();
+                            // **A claim's note is shipped once, found by the
+                            // claim that carries it.** A claim that backs
+                            // several keys is one record with one note, and
+                            // repeating it per key spends the answer on words
+                            // the reader already has.
+                            let mut notes = serde_json::Map::new();
+                            for (key, from) in backing.iter().filter(|(key, _)| wanted(key)) {
+                                kept.insert(
+                                    key.clone(),
+                                    serde_json::json!({
                                         "claim": from.fact.as_str(),
                                         "provenance": from.provenance.as_token(),
                                         "standing": from.standing.as_token(),
-                                    });
-                                    // **The caveat rides the value it is about.**
-                                    // A folded value reads as flat fact, and the
-                                    // sentence saying it was estimated sits on a
-                                    // record one hop away with nothing pointing at
-                                    // it — so the page a person reads is the one
-                                    // place it was missing.
-                                    //
-                                    // **Absent when the record carries none**,
-                                    // never an empty string: a key that was always
-                                    // there and always blank reads as a note
-                                    // somebody wrote saying nothing.
-                                    if let Some(note) = &from.note {
-                                        backing["note"] = serde_json::json!(note);
-                                    }
-                                    (key.clone(), backing)
-                                })
-                                .collect::<serde_json::Map<_, _>>()
+                                    }),
+                                );
+                                // **Absent when the record carries none**,
+                                // never an empty string: a key that was always
+                                // there and always blank reads as a note
+                                // somebody wrote saying nothing.
+                                if let Some(note) = &from.note {
+                                    notes
+                                        .entry(from.fact.as_str().to_string())
+                                        .or_insert_with(|| serde_json::json!(note));
+                                }
+                            }
+                            rendered["fields_backing"] = kept.into();
+                            if !notes.is_empty() {
+                                rendered["fields_backing_notes"] = notes.into();
+                            }
+                            let left_out: Vec<&str> = backing
+                                .keys()
+                                .map(String::as_str)
+                                .filter(|key| !wanted(key))
+                                .collect();
+                            if !left_out.is_empty() {
+                                let way_back = if keys_from_view {
+                                    "the view named the ones it shows; ask again without view, \
+                                     sending its kind yourself, or with keys naming these"
+                                } else {
+                                    "ask again without keys to read them all"
+                                };
+                                rendered["fields_backing_left_out"] = format!(
+                                    "{} of this object's keys are not backed here: {} — {way_back}",
+                                    left_out.len(),
+                                    left_out.join(", ")
+                                )
                                 .into();
+                            }
                         }
                         // **A value arriving bare must not read as one nobody
                         // stands behind.** The backing is a second read and is

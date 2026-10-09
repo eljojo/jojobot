@@ -419,18 +419,22 @@ async fn a_value_whose_record_says_why_carries_that_note_and_one_with_none_carri
         }))
         .await
         .expect("the read answers");
-    let backing = json_of(&read)["objects"][0]["fields_backing"].clone();
+    let object = json_of(&read)["objects"][0].clone();
+    let backing = object["fields_backing"].clone();
+    let notes = object["fields_backing_notes"].clone();
 
+    let moved_in = backing["moved_in"]["claim"].as_str().expect("a claim");
     assert!(
-        backing["moved_in"]["note"]
+        notes[moved_in]
             .as_str()
             .is_some_and(|note| note.contains("approximated")),
         "the value reads as flat fact and what its record says about it is not here: \
-             {backing}",
+             {object}",
     );
+    let rent = backing["rent"]["claim"].as_str().expect("a claim");
     assert!(
-        backing["rent"]["note"].is_null(),
-        "a value whose record says nothing carries a note key anyway: {backing}",
+        notes[rent].is_null() && backing["rent"]["note"].is_null(),
+        "a value whose record says nothing carries a note anyway: {object}",
     );
 }
 
