@@ -99,6 +99,7 @@ pub(crate) async fn send_titled(
             subject: subject.map(str::to_string),
             body: body.into(),
             in_reply_to: None,
+            supersedes: None,
         }))
         .await
         .expect("post_message call ok");

@@ -743,6 +743,7 @@ mod tests {
                     in_reply_to: None,
                     sender_mail_waiting_at_send: None,
                     posted_by_session: None,
+                    supersedes: None,
                 })
                 .await
                 .expect("post ok");

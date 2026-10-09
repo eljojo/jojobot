@@ -202,6 +202,8 @@ mod stale_edit;
 mod stale_handle;
 #[path = "user_stories/statusbar.rs"]
 mod statusbar;
+#[path = "user_stories/superseding.rs"]
+mod superseding;
 #[path = "user_stories/synthesis.rs"]
 mod synthesis;
 #[path = "user_stories/talkingpast.rs"]

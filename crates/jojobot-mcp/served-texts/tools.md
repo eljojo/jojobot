@@ -1826,6 +1826,7 @@ A name no colleague answers to, or a colleague whose mail is missing or doubled,
 No verb opens a bot's box.
 Give it a `subject`: one line saying what the message is about, which is what a reader sees on a listing before opening anything.
 A body too long to be handed to its reader whole is refused with nothing written: split it, or put the long text on a record and send its address.
+To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one is not handed over as fresh mail if nobody has read it.
 IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (it can already say `read` if a person picked it up, and that is success), body_bytes and body_elided: true.
 Your body is not echoed back; list_sent with include_bodies returns it and takes no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
@@ -1855,6 +1856,13 @@ Each argument's own description holds the rest.
         "type": "string"
       },
       "subject": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "supersedes": {
         "default": null,
         "type": [
           "string",
@@ -1938,6 +1946,20 @@ tool or a field in plain words, even though every other prose surface
 here takes markdown. A title over 120 characters is refused rather than
 cut, because shortening your own title is yours to do. Carries
 `@kind:slug` mentions exactly as `body` does.
+```
+
+#### `post_message` — argument `/inputSchema.supersedes`
+
+```text
+**The id of a message you sent that this one replaces.** Optional. Use it
+to correct or withdraw: the reader is handed this message, and the one
+it replaces is not handed over as fresh mail when nobody has read it.
+It must be a message YOU sent into the SAME box as this one, and one no
+other message has replaced; each refusal names its reason and writes
+nothing. If the reader already has the original, this message arrives
+saying it replaces one they have seen. The original is not deleted or
+edited: read_message returns it with `superseded_by`, and list_sent
+shows you the same. Not available on a post to the operator.
 ```
 
 #### `post_message` — argument `/inputSchema.to`
@@ -2197,6 +2219,7 @@ Either way it changes what is shipped, never what is owed.
 The answer stops at the ceiling and takes every message anyway: a body that does not fit is flagged body_elided, and a message that does not fit even so is named under not_shown.
 No box to open comes back status: blocked and delivers nothing.
 Reading your own box with your own sid, a poll included, renews a role claim your session holds, so a session that only polls does not go stale.
+Mail its sender replaced before anyone read it is not delivered: it stays in new, is listed under superseded with the id that replaced it, and read_message returns it.
 An empty delivery names what it looked through, as searched.
 Each argument's own description holds the rest.
 ```

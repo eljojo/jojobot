@@ -2699,6 +2699,10 @@ async fn assert_what_a_real_store_holds_reads_back(
         )
         .await;
     let counted = json_of("the mailbox counts", &read);
+    // No message in the recording was replaced, so the count is left out.
+    if counted["counts"].get("superseded").is_some() {
+        fail("no replaced message in the recorded box", &read);
+    }
     let quarantined = &counted["quarantined"];
     let id = match (
         quarantined["count"].as_u64(),
@@ -2977,6 +2981,12 @@ async fn assert_every_recorded_record_reads_back(
         // **The sender is the bot's handle**, not an id and not nothing.
         if !read.contains("\"sender\":\"bot:assistant\"") {
             fail(&format!("the sender of the {state} mail message"), &read);
+        }
+        // **Mail written before a message could replace another replaces
+        // nothing and is replaced by nothing**, and says neither. The keys are
+        // left out of a message they do not apply to.
+        if read.contains("\"supersedes\"") || read.contains("\"superseded_by\"") {
+            fail(&format!("the {state} mail message replaces nothing"), &read);
         }
     }
 

@@ -31,9 +31,9 @@ use jiff::Timestamp;
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, QUARANTINE_STATE_TOKEN,
-    Quarantined, StateCounts, TakenBy, guard, normalize_body, normalize_notes, normalize_subject,
-    validate_body, validate_mailbox_name, validate_message_id, validate_notes, validate_sender,
-    validate_subject,
+    Quarantined, StateCounts, SupersedeRefusal, Superseded, TakenBy, guard, normalize_body,
+    normalize_notes, normalize_subject, validate_body, validate_mailbox_name, validate_message_id,
+    validate_notes, validate_sender, validate_subject,
 };
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::push::{Outbox, Push, PushError};
@@ -212,7 +212,8 @@ impl DoltMailboxes {
     async fn tally(&self, tx: &mut Transaction<'_, MySql>) -> Result<Tally, MailboxError> {
         let countable = countable_predicate();
         let grouped = sqlx::query(&format!(
-            "SELECT m.mailbox AS mailbox, m.state AS state, COUNT(*) AS n
+            "SELECT m.mailbox AS mailbox, m.state AS state, COUNT(*) AS n,
+                    CAST(SUM(EXISTS (SELECT 1 FROM message s WHERE s.supersedes = m.id)) AS SIGNED) AS replaced
              FROM message m WHERE {countable}
              GROUP BY m.mailbox, m.state"
         ))
@@ -224,6 +225,10 @@ impl DoltMailboxes {
             let mailbox: String = row.try_get("mailbox").map_err(store)?;
             let token: String = row.try_get("state").map_err(store)?;
             let n: i64 = row.try_get("n").map_err(store)?;
+            let replaced: i64 = row
+                .try_get::<Option<i64>, _>("replaced")
+                .map_err(store)?
+                .unwrap_or(0);
             let state = MessageState::from_token(&token).ok_or_else(|| {
                 tracing::error!(%token, "the store counted a state this build does not know");
                 MailboxError::Store("the mailbox store could not be reached".into())
@@ -232,15 +237,27 @@ impl DoltMailboxes {
             for _ in 0..n {
                 tally.add(state);
             }
+            // Only a message nobody has taken is withheld, so only a `new`
+            // one is counted as replaced.
+            if state == MessageState::New {
+                for _ in 0..replaced {
+                    tally.add_superseded();
+                }
+            }
         }
         let rest = self.cards(tx, Scope::NotCountable).await?;
         let mut unreadable = Vec::new();
         for card in rest {
             match card.readable() {
-                Some(message) => counts
-                    .entry(message.mailbox.as_str().to_string())
-                    .or_default()
-                    .add(message.state),
+                Some(message) => {
+                    let tally = counts
+                        .entry(message.mailbox.as_str().to_string())
+                        .or_default();
+                    tally.add(message.state);
+                    if message.state == MessageState::New && message.superseded_by.is_some() {
+                        tally.add_superseded();
+                    }
+                }
                 None => unreadable.push(card),
             }
         }
@@ -262,10 +279,15 @@ impl DoltMailboxes {
         let mut unreadable = Vec::new();
         for card in cards {
             match card.readable() {
-                Some(message) => counts
-                    .entry(message.mailbox.as_str().to_string())
-                    .or_default()
-                    .add(message.state),
+                Some(message) => {
+                    let tally = counts
+                        .entry(message.mailbox.as_str().to_string())
+                        .or_default();
+                    tally.add(message.state);
+                    if message.state == MessageState::New && message.superseded_by.is_some() {
+                        tally.add_superseded();
+                    }
+                }
                 None => unreadable.push(card),
             }
         }
@@ -299,7 +321,9 @@ impl DoltMailboxes {
         // row over there** — and that absence is a fact about the message
         // rather than a reason to leave it out.
         const WHOLE: &str = "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender,
-                    m.sent_at, m.state, m.notes, m.in_reply_to,
+                    m.sent_at, m.state, m.notes, m.in_reply_to, m.supersedes,
+                    (SELECT s.id FROM message s WHERE s.supersedes = m.id
+                     ORDER BY s.ordinal DESC LIMIT 1) AS superseded_by,
                     m.sender_mail_waiting_at_send, m.posted_by_session,
                     m.quarantined_by, m.quarantine_reason,
                     d.taken_by
@@ -312,6 +336,9 @@ impl DoltMailboxes {
                     CAST(NULL AS CHAR) AS subject, '' AS sender,
                     m.sent_at, m.state, CAST(NULL AS CHAR) AS notes,
                     CAST(NULL AS CHAR) AS in_reply_to,
+                    CAST(NULL AS CHAR) AS supersedes,
+                    (SELECT s.id FROM message s WHERE s.supersedes = m.id
+                     ORDER BY s.ordinal DESC LIMIT 1) AS superseded_by,
                     CAST(NULL AS SIGNED) AS sender_mail_waiting_at_send,
                     CAST(NULL AS CHAR) AS posted_by_session,
                     m.quarantined_by, m.quarantine_reason,
@@ -722,6 +749,14 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
                 .try_get::<Option<String>, _>("in_reply_to")
                 .map_err(store)?
                 .map(MessageId),
+            supersedes: row
+                .try_get::<Option<String>, _>("supersedes")
+                .map_err(store)?
+                .map(MessageId),
+            superseded_by: row
+                .try_get::<Option<String>, _>("superseded_by")
+                .map_err(store)?
+                .map(MessageId),
             // A token this build cannot read says nothing rather than
             // claiming somebody looked — see `TakenBy::of_token`.
             taken_by: row
@@ -936,6 +971,42 @@ impl Mailboxes for DoltMailboxes {
             }
         }
 
+        // **A replacement names a message of the sender's own, in this box, that
+        // nothing has replaced yet.** Judged inside the transaction the write is
+        // in, on the row as it stands. A quarantined card is refused the way
+        // every verb that addresses one refuses it.
+        if let Some(target) = &message.supersedes {
+            validate_message_id(target)?;
+            let cards = self.cards(&mut tx, Scope::Message(target)).await?;
+            let card = cards.iter().find(|c| c.id() == target).ok_or_else(|| {
+                MailboxError::UnknownMessage {
+                    attempted: target.to_string(),
+                }
+            })?;
+            let old = refuse(card)?;
+            let attempted = target.to_string();
+            if old.sender != message.sender.trim() {
+                return Err(MailboxError::CannotSupersede(
+                    SupersedeRefusal::OtherSender { attempted },
+                ));
+            }
+            if old.mailbox != message.mailbox {
+                return Err(MailboxError::CannotSupersede(SupersedeRefusal::OtherBox {
+                    attempted,
+                    sits_in: old.mailbox.as_str().to_string(),
+                    posting_into: message.mailbox.as_str().to_string(),
+                }));
+            }
+            if let Some(by) = &old.superseded_by {
+                return Err(MailboxError::CannotSupersede(
+                    SupersedeRefusal::AlreadySuperseded {
+                        attempted,
+                        by: by.to_string(),
+                    },
+                ));
+            }
+        }
+
         let id = MessageId(mint(&mut tx, &self.draw).await?);
         let ordinal: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(ordinal), 0) + 1 FROM message")
             .fetch_one(&mut *tx)
@@ -951,6 +1022,8 @@ impl Mailboxes for DoltMailboxes {
             state: MessageState::New,
             notes: None,
             in_reply_to: message.in_reply_to,
+            supersedes: message.supersedes,
+            superseded_by: None,
             taken_by: None,
             sender_mail_waiting_at_send: message.sender_mail_waiting_at_send,
             posted_by_session: message.posted_by_session,
@@ -958,8 +1031,8 @@ impl Mailboxes for DoltMailboxes {
         sqlx::query(
             "INSERT INTO message
                (id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to,
-                sender_mail_waiting_at_send, posted_by_session)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                supersedes, sender_mail_waiting_at_send, posted_by_session)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
         )
         .bind(stored.id.as_str())
         .bind(stored.mailbox.as_str())
@@ -970,6 +1043,7 @@ impl Mailboxes for DoltMailboxes {
         .bind(stored.sent_at.to_string())
         .bind(stored.state.as_token())
         .bind(stored.in_reply_to.as_ref().map(MessageId::as_str))
+        .bind(stored.supersedes.as_ref().map(MessageId::as_str))
         .bind(stored.sender_mail_waiting_at_send.map(|n| n as i64))
         .bind(stored.posted_by_session.as_deref())
         .execute(&mut *tx)
@@ -1025,12 +1099,25 @@ impl Mailboxes for DoltMailboxes {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Unprocessed(name)).await?;
         let mut delivered = Vec::new();
+        let mut withheld = Vec::new();
         for message in cards
             .iter()
             .filter(|c| c.mailbox() == name)
             .filter_map(Card::readable)
             .filter(|m| m.state.is_unprocessed())
         {
+            // **A message nobody has taken, that a later one replaced, is not
+            // delivered.** It stays in `new` and is named apart. One taken
+            // before the replacement is owed like any other.
+            if message.state == MessageState::New
+                && let Some(by) = &message.superseded_by
+            {
+                withheld.push(Superseded {
+                    id: message.id.clone(),
+                    by: by.clone(),
+                });
+                continue;
+            }
             let seen_before = message.state == MessageState::Read;
             if !seen_before {
                 sqlx::query("UPDATE message SET state = ? WHERE id = ?")
@@ -1064,6 +1151,7 @@ impl Mailboxes for DoltMailboxes {
         Ok(Guarded::Written(Delivery {
             mailbox: name.clone(),
             messages: delivered,
+            superseded: withheld,
         }))
     }
 
@@ -1294,6 +1382,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -1330,6 +1419,7 @@ mod tests {
                     in_reply_to: None,
                     sender_mail_waiting_at_send: None,
                     posted_by_session: None,
+                    supersedes: None,
                 })
                 .await
                 .expect("post ok")
@@ -1536,6 +1626,7 @@ mod tests {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("post ok")
@@ -1734,6 +1825,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -1783,6 +1875,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: Some("s-real-dep".into()),
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -1829,6 +1922,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -2085,6 +2179,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -2201,6 +2296,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -2298,6 +2394,7 @@ mod tests {
                     in_reply_to: None,
                     sender_mail_waiting_at_send: None,
                     posted_by_session: None,
+                    supersedes: None,
                 })
                 .await
                 .expect("post ok")
@@ -2381,6 +2478,7 @@ mod tests {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("post ok");

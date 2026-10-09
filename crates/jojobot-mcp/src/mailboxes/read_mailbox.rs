@@ -241,7 +241,10 @@ impl Jojobot {
                        message that does not fit even so is named under not_shown. No box to \
                        open comes back status: blocked and delivers nothing. Reading your own \
                        box with your own sid, a poll included, renews a role claim your \
-                       session holds, so a session that only polls does not go stale. An \
+                       session holds, so a session that only polls does not go stale. Mail \
+                       its sender replaced before anyone read it is not delivered: it stays in \
+                       new, is listed under superseded with the id that replaced it, and \
+                       read_message returns it. An \
                        empty delivery names what it looked through, as searched. Each \
                        argument's own description holds the rest."
     )]
@@ -296,6 +299,12 @@ impl Jojobot {
                 // Added only to a delivery that came back empty.
                 if delivery.messages.is_empty() && leftovers.is_empty() {
                     let mut left_out = vec![format!("processed mail ({archived})")];
+                    if !delivery.superseded.is_empty() {
+                        left_out.push(format!(
+                            "{} replaced messages, named under superseded",
+                            delivery.superseded.len()
+                        ));
+                    }
                     if unreadable > 0 {
                         left_out.push(format!("{unreadable} unreadable messages"));
                     }
@@ -314,6 +323,7 @@ impl Jojobot {
                     .and_then(|caller| caller.card);
                 self.mark_other_runs(&mut rendered, &delivery, viewer.as_ref())
                     .await;
+                self.mark_replaces_seen(&mut rendered, &delivery).await;
                 // Last, so the sizes it fits against include everything the
                 // answer carries.
                 fit_delivery(&mut rendered, &delivery, 0);
@@ -808,6 +818,7 @@ mod tests {
                     body: held_body.clone(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),
@@ -910,6 +921,7 @@ mod tests {
                     body: held_body.clone(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),
@@ -1056,6 +1068,7 @@ mod tests {
                     subject: None,
                     body: "leaving myself a note".into(),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),
@@ -1182,6 +1195,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok");
@@ -1323,6 +1337,7 @@ mod tests {
                     subject: None,
                     body: "from the person's handle".into(),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("an answer"),

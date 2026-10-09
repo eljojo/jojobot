@@ -101,6 +101,7 @@ mod tests {
                     body: "the kiln reached temperature".into(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),

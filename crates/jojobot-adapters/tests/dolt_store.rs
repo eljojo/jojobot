@@ -1510,6 +1510,7 @@ async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
         in_reply_to: None,
         sender_mail_waiting_at_send: None,
         posted_by_session: None,
+        supersedes: None,
     };
     mailboxes_store
         .post_message(post())
@@ -3054,7 +3055,7 @@ async fn dolt_satisfies_the_mailbox_contract() {
         .await
         .expect("the store comes up");
 
-    const ROOM: usize = 48;
+    const ROOM: usize = 52;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
         let pool = migrated_database(&store, &format!("mail{n}"))
@@ -3132,6 +3133,7 @@ async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("post_message ok")

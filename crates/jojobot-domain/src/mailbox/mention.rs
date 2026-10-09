@@ -398,6 +398,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post_message should succeed")
@@ -488,6 +489,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post_message should succeed")
@@ -553,6 +555,7 @@ mod tests {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post_message should succeed")
@@ -600,6 +603,7 @@ mod tests {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         };
         let refused = |what: &str, outcome: Result<(), MailboxError>| {
             assert!(

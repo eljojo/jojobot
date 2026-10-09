@@ -74,6 +74,18 @@ pub struct PostMessageArgs {
     /// read_mailbox's own description says.
     #[serde(default)]
     pub(crate) in_reply_to: Option<String>,
+
+    /// **The id of a message you sent that this one replaces.** Optional. Use it
+    /// to correct or withdraw: the reader is handed this message, and the one
+    /// it replaces is not handed over as fresh mail when nobody has read it.
+    /// It must be a message YOU sent into the SAME box as this one, and one no
+    /// other message has replaced; each refusal names its reason and writes
+    /// nothing. If the reader already has the original, this message arrives
+    /// saying it replaces one they have seen. The original is not deleted or
+    /// edited: read_message returns it with `superseded_by`, and list_sent
+    /// shows you the same. Not available on a post to the operator.
+    #[serde(default)]
+    pub(crate) supersedes: Option<String>,
 }
 
 /// **A bare name is a bot.** `gamma` and `bot:gamma` address the same colleague, and
@@ -219,7 +231,8 @@ impl Jojobot {
     }
     /// **Your own waiting mail, taken as part of posting.**
     ///
-    /// A real delivery: everything unprocessed moves out of `new` and becomes
+    /// A real delivery: everything unprocessed, except mail its sender replaced
+    /// before anybody read it, moves out of `new` and becomes
     /// yours to finish, exactly as opening the box would. It is recorded as
     /// taken by POSTING rather than by reading, so the sender's own view stays
     /// honest — `new` is the only pickup signal a sender has, and this is the
@@ -273,6 +286,7 @@ impl Jojobot {
         // identically to mail somebody went and got.
         let mut rendered = delivery_json(&delivery, true);
         self.mark_other_runs(&mut rendered, &delivery, viewer).await;
+        self.mark_replaces_seen(&mut rendered, &delivery).await;
         note_leftovers(&mut rendered, &leftovers);
         Some((rendered, delivery))
     }
@@ -292,8 +306,11 @@ impl Jojobot {
                        a `subject`: one line saying what the message is about, which is what \
                        a reader sees on a listing before opening anything. A body too long to \
                        be handed to its reader whole is refused with nothing written: split \
-                       it, or put the long text on a record and send its address. IT ANSWERS \
-                       WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and \
+                       it, or put the long text on a record and send its address. To correct \
+                       or withdraw a message you sent, post again to the same box with \
+                       `supersedes` set to its id: the reader is handed the new one, and the \
+                       old one is not handed over as fresh mail if nobody has read it. IT \
+                       ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and \
                        mark_processed later target, the state as it stands (it can already \
                        say `read` if a person picked it up, and that is success), body_bytes \
                        and body_elided: true. Your body is not echoed back; list_sent with \
@@ -353,6 +370,24 @@ impl Jojobot {
         // **A person is addressed by their handle, and only the operator has a
         // box.** Posting to the operator is what opens it the first time.
         let to_the_operator = addressee.kind() == Some(EntityKind::PERSON);
+        // **Not into the operator's box.** A person reads that box and no bot
+        // reads it back, so there is no delivery to withhold from and nobody
+        // to tell what replaced what.
+        let supersedes = args
+            .supersedes
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(|id| MessageId(id.to_string()));
+        if supersedes.is_some() && to_the_operator {
+            return Ok(misused(
+                "Nothing was written: supersedes does not work on a post to the operator. A \
+                 person reads that box and jojobot does not withhold or mark mail in it. To \
+                 correct something you sent them, post a new message that says what it \
+                 corrects, and drop supersedes."
+                    .to_string(),
+            ));
+        }
         let destination = match addressee.kind() {
             Some(EntityKind::PERSON) => match self.operators_box(&addressee).await {
                 Ok(name) => name,
@@ -424,6 +459,7 @@ impl Jojobot {
                 .map(str::trim)
                 .filter(|id| !id.is_empty())
                 .map(|id| MessageId(id.to_string())),
+            supersedes,
             sender_mail_waiting_at_send,
             posted_by_session,
         };
@@ -568,6 +604,8 @@ fn body_room_beyond(new: &NewMessage) -> Option<usize> {
             taken_by: Some(mailbox::TakenBy::Reading),
             sender_mail_waiting_at_send: new.sender_mail_waiting_at_send,
             posted_by_session: new.posted_by_session.clone(),
+            supersedes: new.supersedes.clone(),
+            superseded_by: None,
         };
         // The leftovers a read names beside the message, at the widest id each.
         let leftovers: Vec<Delivered> = (0..LEFTOVER_IDS_ROOM)
@@ -585,8 +623,18 @@ fn body_room_beyond(new: &NewMessage) -> Option<usize> {
                 message,
                 seen_before: false,
             }],
+            superseded: Vec::new(),
         };
         let mut rendered = delivery_json(&delivery, true);
+        // The notice a replacement of a message already seen carries, at the
+        // widest id, so the room found here holds when it applies.
+        if new.supersedes.is_some() {
+            note_replaces_one_already_seen(
+                &mut rendered["messages"][0],
+                &MessageId("x".repeat(64)),
+                mailbox::MessageState::Read,
+            );
+        }
         if let Some(run) = new.posted_by_session.as_deref() {
             note_written_by_other_run(&mut rendered["messages"][0], run, Some(false));
         }
@@ -620,9 +668,16 @@ fn what_a_post_left_standing(message: &Message, collected: u64) -> String {
              finish with mark_processed."
         ),
     };
+    let replaces = match &message.supersedes {
+        Some(replaced) => format!(
+            " It replaces {replaced}: if that one is still unread, its reader is handed this \
+             one instead and is told that {replaced} was replaced."
+        ),
+        None => String::new(),
+    };
     format!(
         "The message is in {}'s box, waiting. Nothing else in that box moved, and nobody is \
-         obliged to read it before they next open the box.{took}",
+         obliged to read it before they next open the box.{replaces}{took}",
         message.mailbox.as_str(),
     )
 }
@@ -985,6 +1040,7 @@ mod tests {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         };
         let short = message("2026-10-08T15:30:12Z");
         let long = message("2026-10-08T15:30:12.123456789Z");
@@ -1010,6 +1066,7 @@ mod tests {
                 subject: None,
                 body: "x".repeat(body_len),
                 in_reply_to: None,
+                supersedes: None,
             }))
             .await
             .expect("post_message call ok");
@@ -1129,6 +1186,7 @@ mod tests {
                     subject: None,
                     body: "x".repeat(40_000),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post_message call ok"),
@@ -1248,6 +1306,7 @@ mod tests {
                     body: "the kiln reached temperature".into(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),
@@ -1309,6 +1368,7 @@ mod tests {
                 body: "the shipment landed".into(),
                 subject: None,
                 in_reply_to: None,
+                supersedes: None,
             }))
             .await
             .expect("a blocked post is a successful call");
@@ -1345,6 +1405,7 @@ mod tests {
                     body: "the shipment landed".into(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("a message with no sender is an answer, not a protocol failure"),
@@ -1381,6 +1442,7 @@ mod tests {
                     body: long.clone(),
                     subject: Some("the crate count".into()),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),
@@ -1442,6 +1504,7 @@ mod tests {
                     body: "the kiln slice is done".into(),
                     subject: None,
                     in_reply_to: Some(original_id.clone()),
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),
@@ -1472,6 +1535,7 @@ mod tests {
                     body: "answering something nobody said".into(),
                     subject: None,
                     in_reply_to: Some("9999".into()),
+                    supersedes: None,
                 }))
                 .await
                 .expect("a bad reference is an answer, not an error"),
@@ -1491,6 +1555,7 @@ mod tests {
                     body: "answering nothing in particular".into(),
                     subject: None,
                     in_reply_to: Some("   ".into()),
+                    supersedes: None,
                 }))
                 .await
                 .expect("a blank link is not a malformed call"),
@@ -1524,6 +1589,7 @@ mod tests {
                     body: "reporting in".into(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("a bad address is an answer, not an error"),
@@ -1560,6 +1626,7 @@ mod tests {
                     body: "reporting in".into(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("a bad address is an answer, not an error"),
@@ -1621,6 +1688,7 @@ mod tests {
                     subject: None,
                     body: "for somebody else".into(),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("a refusal is an answer"),
@@ -1659,6 +1727,7 @@ mod tests {
                     subject: None,
                     body: "for the operator".into(),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("a refusal is an answer"),
@@ -1716,6 +1785,7 @@ mod tests {
                     subject: None,
                     body: "to the old operator".into(),
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("a refusal is an answer"),
@@ -1768,6 +1838,7 @@ mod tests {
                 in_reply_to: None,
                 subject: None,
                 sid: sender.clone(),
+                supersedes: None,
             }))
         };
 
@@ -1810,6 +1881,7 @@ mod tests {
                 in_reply_to: None,
                 subject: None,
                 sid: sid.into(),
+                supersedes: None,
             }))
             .await
     }
@@ -1913,5 +1985,382 @@ mod tests {
                 .expect("post ok"),
         );
         assert_ne!(landed["status"], "blocked", "{landed}");
+    }
+
+    /// Post `body` to `to` as `from`, replacing message `target`, and return the
+    /// answer as it came: a refusal is an answer the cases below read.
+    async fn replacing(
+        jojobot: &Jojobot,
+        to: &str,
+        from: &str,
+        body: &str,
+        target: &str,
+    ) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: to.into(),
+                    sid: as_bot(jojobot, from),
+                    subject: None,
+                    body: body.into(),
+                    in_reply_to: None,
+                    supersedes: Some(target.into()),
+                }))
+                .await
+                .expect("post_message call ok"),
+        )
+    }
+
+    /// `bot` opens its box.
+    async fn reading(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(as_bot(jojobot, bot)),
+                }))
+                .await
+                .expect("read ok"),
+        )
+    }
+
+    /// The ids of the messages a delivery carries, in order.
+    fn ids_of(delivery: &serde_json::Value) -> Vec<String> {
+        delivery["messages"]
+            .as_array()
+            .expect("a list of messages")
+            .iter()
+            .map(|m| m["id"].as_str().expect("an id").to_string())
+            .collect()
+    }
+
+    /// **A replaced message nobody read is not delivered, and the delivery names
+    /// it apart.** gamma sends A, then B replacing A, to delta. delta's read
+    /// carries B, lists A as replaced by B, and the counts account for both.
+    ///
+    /// The control is a pair without `supersedes`: both arrive and nothing is
+    /// listed apart, so the case does not hold on a build that withholds every
+    /// second message. `superseded` and `superseded_by` are keys nothing outside
+    /// this process declares, so the literals are pinned here.
+    #[tokio::test]
+    async fn a_replaced_message_nobody_read_is_listed_apart_and_the_counts_account_for_it() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma").await;
+        make_box(&jojobot, "delta").await;
+        let a = send(&jojobot, "delta", "gamma", "the deploy is friday").await;
+        let a = a["id"].as_str().expect("an id").to_string();
+        let b = replacing(&jojobot, "delta", "gamma", "the deploy is monday", &a).await;
+        let b_id = b["id"].as_str().expect("an id").to_string();
+        assert_eq!(
+            b["supersedes"],
+            a.as_str(),
+            "the receipt of the replacement names what it replaces: {b}"
+        );
+        assert!(
+            b["postcondition"]
+                .as_str()
+                .is_some_and(|line| line.contains(a.as_str())),
+            "the line that says what now stands names what was replaced: {b}"
+        );
+
+        let polled = counts(&jojobot, "delta").await;
+        assert_eq!(polled["counts"]["new"], 2, "{polled}");
+        assert_eq!(polled["counts"]["total"], 2, "{polled}");
+        assert_eq!(
+            polled["counts"]["superseded"], 1,
+            "one of the two new messages was replaced: {polled}"
+        );
+
+        let delivery = reading(&jojobot, "delta").await;
+        assert_eq!(ids_of(&delivery), vec![b_id.clone()], "{delivery}");
+        assert_eq!(delivery["count"], 1, "{delivery}");
+        assert_eq!(delivery["superseded"]["count"], 1, "{delivery}");
+        assert_eq!(
+            delivery["superseded"]["messages"][0]["id"],
+            a.as_str(),
+            "{delivery}"
+        );
+        assert_eq!(
+            delivery["superseded"]["messages"][0]["superseded_by"],
+            b_id.as_str(),
+            "{delivery}"
+        );
+        assert!(
+            delivery["superseded"]["how_to_read"]
+                .as_str()
+                .is_some_and(|how| how.contains("read_message")),
+            "the listing names the call that returns it: {delivery}"
+        );
+        assert!(
+            delivery["messages"][0].get("already_seen").is_none(),
+            "nothing was read before, so there is no notice: {delivery}"
+        );
+
+        let after = counts(&jojobot, "delta").await;
+        assert_eq!(
+            after["counts"]["new"], 1,
+            "the withheld one stays new: {after}"
+        );
+        assert_eq!(after["counts"]["read"], 1, "{after}");
+        assert_eq!(after["counts"]["superseded"], 1, "{after}");
+
+        // The withheld message is readable on request and says what replaced it.
+        let asked = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: a.clone(),
+                    sid: Some(as_bot(&jojobot, "delta")),
+                }))
+                .await
+                .expect("read_message ok"),
+        );
+        assert_eq!(asked["body"], "the deploy is friday", "{asked}");
+        assert_eq!(asked["superseded_by"], b_id.as_str(), "{asked}");
+
+        // The control.
+        make_box(&jojobot, "epsilon").await;
+        send(&jojobot, "epsilon", "gamma", "first, no link").await;
+        send(&jojobot, "epsilon", "gamma", "second, no link").await;
+        let plain = reading(&jojobot, "epsilon").await;
+        assert_eq!(plain["count"], 2, "without supersedes both arrive: {plain}");
+        assert!(plain.get("superseded").is_none(), "{plain}");
+        let polled = counts(&jojobot, "epsilon").await;
+        assert!(polled["counts"].get("superseded").is_none(), "{polled}");
+    }
+
+    /// **A replacement of a message the reader already has says so before its
+    /// body.** delta reads A; gamma then sends B replacing it. delta's next read
+    /// carries B with `already_seen` naming A, ahead of `body` in the serialized
+    /// answer, and lists nothing apart.
+    #[tokio::test]
+    async fn a_replacement_of_a_message_already_read_says_so_before_its_body() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma").await;
+        make_box(&jojobot, "delta").await;
+        let a = send(&jojobot, "delta", "gamma", "the deploy is friday").await;
+        let a = a["id"].as_str().expect("an id").to_string();
+        reading(&jojobot, "delta").await;
+        let b = replacing(&jojobot, "delta", "gamma", "the deploy is monday", &a).await;
+        let b_id = b["id"].as_str().expect("an id").to_string();
+
+        let delivery = reading(&jojobot, "delta").await;
+        assert_eq!(ids_of(&delivery), vec![b_id], "{delivery}");
+        let notice = &delivery["messages"][0]["already_seen"];
+        assert_eq!(notice["id"], a.as_str(), "{delivery}");
+        assert_eq!(notice["state"], "read", "{delivery}");
+        assert!(delivery.get("superseded").is_none(), "{delivery}");
+        assert_eq!(
+            delivery["leftovers"]["ids"][0],
+            a.as_str(),
+            "the original is still owed: {delivery}"
+        );
+        let text = delivery.to_string();
+        let notice_at = text.find("\"already_seen\"").expect("the notice is served");
+        let body_at = text.find("\"body\"").expect("the body is served");
+        assert!(
+            notice_at < body_at,
+            "the notice comes before the body: {text}"
+        );
+    }
+
+    /// **The delivery that rides on a post carries the same two answers.** A
+    /// reader who posts is handed the replacement and told what was withheld,
+    /// exactly as a read tells them.
+    #[tokio::test]
+    async fn a_post_delivers_a_replacement_and_lists_the_replaced_original_apart() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma").await;
+        make_box(&jojobot, "delta").await;
+        let a = send(&jojobot, "delta", "gamma", "the deploy is friday").await;
+        let a = a["id"].as_str().expect("an id").to_string();
+        let b = replacing(&jojobot, "delta", "gamma", "the deploy is monday", &a).await;
+        let b_id = b["id"].as_str().expect("an id").to_string();
+
+        let posted = send(&jojobot, "gamma", "delta", "noted").await;
+        let mail = &posted["your_mail"];
+        assert_eq!(mail["messages"][0]["id"], b_id.as_str(), "{posted}");
+        assert_eq!(mail["count"], 1, "{posted}");
+        assert_eq!(
+            mail["superseded"]["messages"][0]["id"],
+            a.as_str(),
+            "{posted}"
+        );
+    }
+
+    /// **Each refusal names its reason, writes nothing, and the allowed call
+    /// beside them lands.** Another sender's message, another box, an id that
+    /// names nothing, the operator's box, and a message already replaced.
+    #[tokio::test]
+    async fn a_replacement_is_refused_with_its_reason_and_writes_nothing() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma").await;
+        make_box(&jojobot, "delta").await;
+        make_box(&jojobot, "epsilon").await;
+        let a = send(&jojobot, "delta", "gamma", "the deploy is friday").await;
+        let a = a["id"].as_str().expect("an id").to_string();
+        let board = |jojobot: &Jojobot| {
+            let jojobot = jojobot.clone();
+            async move {
+                let mut all = Vec::new();
+                for name in ["delta", "epsilon"] {
+                    all.push(store_counts(&jojobot, &MailboxName(name.into())).await);
+                }
+                all
+            }
+        };
+        let before = board(&jojobot).await;
+
+        // Another sender's message.
+        let theirs = replacing(&jojobot, "delta", "epsilon", "no", &a).await;
+        assert_eq!(theirs["status"], "blocked", "{theirs}");
+        assert_eq!(theirs["wrote"], false, "{theirs}");
+        assert_eq!(theirs["attempted"], a.as_str(), "{theirs}");
+        assert_eq!(theirs["fix_by"], "change", "{theirs}");
+        assert!(
+            theirs["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("in_reply_to")),
+            "it names the way forward: {theirs}"
+        );
+
+        // Another box.
+        let elsewhere = replacing(&jojobot, "epsilon", "gamma", "no", &a).await;
+        assert_eq!(elsewhere["status"], "blocked", "{elsewhere}");
+        let said = elsewhere["how_to_proceed"].as_str().expect("a way forward");
+        assert!(
+            said.contains("delta") && said.contains("epsilon"),
+            "it names both boxes: {said}"
+        );
+
+        // An id that names nothing.
+        let nothing = replacing(&jojobot, "delta", "gamma", "no", "zzzzzz").await;
+        assert_eq!(nothing["status"], "blocked", "{nothing}");
+        assert_eq!(nothing["attempted"], "zzzzzz", "{nothing}");
+
+        // The operator's box.
+        name_the_operator(&jojobot, "milhouse").await;
+        let operator = replacing(&jojobot, "person:milhouse", "gamma", "no", &a).await;
+        assert_eq!(operator["status"], "blocked", "{operator}");
+        assert!(
+            operator["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("operator")),
+            "{operator}"
+        );
+
+        assert_eq!(before, board(&jojobot).await, "no refusal wrote anything");
+
+        // The positive the refusals depend on, then the second replacement.
+        let b = replacing(&jojobot, "delta", "gamma", "the deploy is monday", &a).await;
+        assert_ne!(b["status"], "blocked", "the allowed call lands: {b}");
+        let b_id = b["id"].as_str().expect("an id").to_string();
+        let again = replacing(&jojobot, "delta", "gamma", "the deploy is tuesday", &a).await;
+        assert_eq!(again["status"], "blocked", "{again}");
+        assert!(
+            again["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains(&b_id)),
+            "it names the newest to replace instead: {again}"
+        );
+    }
+
+    /// **The sender sees what replaced a message in `list_sent`.**
+    #[tokio::test]
+    async fn the_senders_own_view_shows_what_replaced_a_message() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma").await;
+        make_box(&jojobot, "delta").await;
+        let a = send(&jojobot, "delta", "gamma", "the deploy is friday").await;
+        let a = a["id"].as_str().expect("an id").to_string();
+        let b = replacing(&jojobot, "delta", "gamma", "the deploy is monday", &a).await;
+        let b_id = b["id"].as_str().expect("an id").to_string();
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    offset: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(as_bot(&jojobot, "gamma")),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        let listed = sent["messages"].as_array().expect("a list");
+        let of = |id: &str| {
+            listed
+                .iter()
+                .find(|m| m["id"] == id)
+                .expect("listed")
+                .clone()
+        };
+        assert_eq!(of(&a)["superseded_by"], b_id.as_str(), "{sent}");
+        assert_eq!(of(&b_id)["supersedes"], a.as_str(), "{sent}");
+        assert!(of(&b_id).get("superseded_by").is_none(), "{sent}");
+    }
+
+    /// **`retract` given a message id refuses and names `supersedes`.** A sent
+    /// message is not taken back; the message stays exactly as it was. An id
+    /// that names no message keeps the refusal it always had.
+    #[tokio::test]
+    async fn retracting_a_message_id_names_supersedes_as_the_way_to_withdraw_it() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma").await;
+        make_box(&jojobot, "delta").await;
+        let a = send(&jojobot, "delta", "gamma", "the deploy is friday").await;
+        let a = a["id"].as_str().expect("an id").to_string();
+
+        let refused = json_of(
+            &jojobot
+                .retract(Parameters(crate::memory::retract::RetractArgs {
+                    address: a.clone(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(as_bot(&jojobot, "gamma")),
+                }))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let said = refused["how_to_proceed"].as_str().expect("a way forward");
+        assert!(
+            said.contains("post_message") && said.contains("supersedes"),
+            "it names the verb and the argument: {said}"
+        );
+        let polled = counts(&jojobot, "delta").await;
+        assert_eq!(
+            polled["counts"]["new"], 1,
+            "the message is untouched: {polled}"
+        );
+
+        let nonsense = jojobot
+            .retract(Parameters(crate::memory::retract::RetractArgs {
+                address: "zzzzzz".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(as_bot(&jojobot, "gamma")),
+            }))
+            .await;
+        assert!(
+            nonsense.is_err(),
+            "a string that is neither an address nor a message keeps its old refusal"
+        );
+    }
+
+    /// **The sentence that teaches `supersedes` is in the description a sender
+    /// reads before calling.** The word is an identifier, so it is pinned here.
+    #[test]
+    fn the_description_teaches_supersedes() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "post_message")
+            .expect("post_message is a tool");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("supersedes"), "{description}");
     }
 }

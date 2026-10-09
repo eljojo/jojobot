@@ -1234,6 +1234,7 @@ mod tests {
                     sid: booted(&jojobot, "gamma").await,
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok"),

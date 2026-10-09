@@ -1964,6 +1964,8 @@ mod tests {
                 taken_by: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                superseded_by: None,
+                supersedes: None,
             },
             snippet: "…the damper is still hand-cut…".into(),
         }]));
@@ -2091,6 +2093,8 @@ mod tests {
                     taken_by: None,
                     sender_mail_waiting_at_send: None,
                     posted_by_session: None,
+                    superseded_by: None,
+                    supersedes: None,
                 },
                 snippet: "…the damper…".into(),
             }]

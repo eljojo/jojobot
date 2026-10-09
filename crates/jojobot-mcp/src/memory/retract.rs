@@ -34,6 +34,30 @@ pub struct RetractArgs {
     pub(crate) sid: Option<String>,
 }
 
+impl Jojobot {
+    /// **`Some` refusal when `given` is the id of a message jojobot holds.**
+    /// A message is not a record at an address, so `retract` cannot take it
+    /// back. The refusal names `post_message` with `supersedes`, the one way to
+    /// replace or withdraw a message that was sent.
+    async fn refuses_a_message_id(&self, given: &str) -> Option<CallToolResult> {
+        let id = jojobot_domain::mailbox::MessageId(given.trim().to_string());
+        jojobot_domain::mailbox::validate_message_id(&id).ok()?;
+        let held = self.mailboxes.message_by_id(&id).await.ok().flatten()?;
+        Some(crate::mailboxes::mailbox_blocked_body(
+            held.id.as_str(),
+            None,
+            format!(
+                "Nothing was written. '{}' is the id of a message, and retract takes back a \
+                 record at an address like person:milhouse#3. A sent message is never deleted or \
+                 edited. To replace or withdraw one you sent, call post_message again to the same \
+                 box with supersedes set to this id: the new message replaces it, and a reader \
+                 who has not yet read the original is not handed it.",
+                held.id
+            ),
+        ))
+    }
+}
+
 /// Take back one addressed record, and record why.
 #[tool_router(router = retract_router, vis = "pub(crate)")]
 impl Jojobot {
@@ -74,7 +98,18 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        let address = match FactAddress::parse(&args.address) {
+            Ok(address) => address,
+            Err(e) => {
+                // **A message id is not an address, and a sent message is not
+                // taken back.** The way to replace or withdraw one is on the
+                // verb that sends.
+                if let Some(refused) = self.refuses_a_message_id(&args.address).await {
+                    return Ok(refused);
+                }
+                return Err(memory_error(e));
+            }
+        };
         let date = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
             .await?;

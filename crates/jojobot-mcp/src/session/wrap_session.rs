@@ -1255,6 +1255,7 @@ mod tests {
                         sid: sid.clone(),
                         subject: None,
                         in_reply_to: None,
+                        supersedes: None,
                     }))
                     .await
                     .expect("call ok"),

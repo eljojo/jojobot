@@ -583,6 +583,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0075_session_teaching_run_name.sql"),
         leaves: Leaves::ColumnType("session_teaching", "sid", "varchar(64)"),
     },
+    Migration {
+        version: "0076_message_supersedes",
+        sql: include_str!("../../migrations/0076_message_supersedes.sql"),
+        leaves: Leaves::Column("message", "supersedes"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

@@ -100,7 +100,7 @@ pub(crate) fn unknown_owner(attempted: &EntityId, candidates: &[EntityMatch]) ->
 /// that could not be read — a caller must see "N unreadable" rather than
 /// nothing, because a quarantined card is invisible to every other verb.
 pub(crate) fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "name": mailbox.name.as_str(),
         "counts": {
             "new": mailbox.counts.new,
@@ -109,7 +109,15 @@ pub(crate) fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
             "total": mailbox.counts.total(),
         },
         "quarantined": quarantined_json(mailbox),
-    })
+    });
+    // **Inside `new`, not beside it**, so it is left out when no message in the
+    // box was replaced and `total` does not add it twice.
+    if mailbox.counts.superseded > 0
+        && let Some(counts) = body["counts"].as_object_mut()
+    {
+        counts.insert("superseded".into(), mailbox.counts.superseded.into());
+    }
+    body
 }
 
 /// **A bot holding more than one box, where a box would otherwise go.** One
@@ -193,7 +201,7 @@ pub(crate) fn counted_json(mailbox: &Mailbox) -> serde_json::Value {
 /// `post_message`, `read_mailbox` and `mark_processed` cannot drift into three
 /// spellings of one record — the same rule the fact renderer follows.
 pub(crate) fn message_json(message: &Message) -> serde_json::Value {
-    serde_json::json!({
+    let mut rendered = serde_json::json!({
         "id": message.id.as_str(),
         "mailbox": message.mailbox.as_str(),
         "sender": message.sender,
@@ -226,7 +234,20 @@ pub(crate) fn message_json(message: &Message) -> serde_json::Value {
         // every message posted before this field existed, and for one jojobot
         // could not determine at send time — neither is "zero were waiting".
         "sender_mail_waiting_at_send": message.sender_mail_waiting_at_send,
-    })
+    });
+    // **Absent unless it applies, unlike the keys above**: these two arrived
+    // after the rest, and most messages replace nothing and are replaced by
+    // nothing. `supersedes` is the message this one replaces; `superseded_by` is
+    // the one that replaced this one, which a reader of the OLD message needs.
+    if let Some(fields) = rendered.as_object_mut() {
+        if let Some(replaced) = &message.supersedes {
+            fields.insert("supersedes".into(), replaced.as_str().into());
+        }
+        if let Some(by) = &message.superseded_by {
+            fields.insert("superseded_by".into(), by.as_str().into());
+        }
+    }
+    rendered
 }
 
 /// A message **without its body shipped back** — the whole record otherwise,
@@ -333,6 +354,38 @@ impl Jojobot {
         }
     }
 
+    /// **Mark every delivered message that replaces one its reader already
+    /// has.** A replacement whose original was never read is delivered with the
+    /// original named apart; one whose original was read or processed first
+    /// arrives with this notice instead, because the reader would otherwise
+    /// take it for a new message about a new thing.
+    ///
+    /// `rendered` must be [`delivery_json`]'s own output, paired with
+    /// `delivery.messages` by position, as for [`Jojobot::mark_other_runs`].
+    pub(crate) async fn mark_replaces_seen(
+        &self,
+        rendered: &mut serde_json::Value,
+        delivery: &Delivery,
+    ) {
+        let Some(messages) = rendered.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+            return;
+        };
+        for (json, delivered) in messages.iter_mut().zip(&delivery.messages) {
+            let Some(replaced) = &delivered.message.supersedes else {
+                continue;
+            };
+            // A read that fails or finds nothing says nothing: the notice is a
+            // courtesy about the reader's own history, and an unreadable
+            // original is no reason to withhold the message.
+            let Ok(Some(original)) = self.mailboxes.message_by_id(replaced).await else {
+                continue;
+            };
+            if original.state != mailbox::MessageState::New {
+                note_replaces_one_already_seen(json, replaced, original.state);
+            }
+        }
+    }
+
     /// The single-message form [`read_message`] and [`post_message`]'s own
     /// receipt need, over a rendered message JSON rather than a whole
     /// delivery.
@@ -380,7 +433,7 @@ pub(crate) fn note_written_by_other_run(
 /// re-shipping it in full. `new_only: false` ships them whole, flagged
 /// `seen_before`.
 pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::Value {
-    serde_json::json!({
+    let mut rendered = serde_json::json!({
         "mailbox": delivery.mailbox.as_str(),
         "count": delivery.messages.len(),
         "new_only": new_only,
@@ -389,7 +442,55 @@ pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::
             .iter()
             .map(delivered_json)
             .collect::<Vec<_>>(),
-    })
+    });
+    // **Withheld mail is named, never hidden.** A message its sender replaced
+    // before anybody read it is not in `messages`; it stays in `new`, and this
+    // says which and what replaced it, with the call that returns it.
+    if !delivery.superseded.is_empty() {
+        rendered["superseded"] = serde_json::json!({
+            "count": delivery.superseded.len(),
+            "messages": delivery
+                .superseded
+                .iter()
+                .map(|withheld| serde_json::json!({
+                    "id": withheld.id.as_str(),
+                    "superseded_by": withheld.by.as_str(),
+                }))
+                .collect::<Vec<_>>(),
+            "how_to_read": "unread messages their sender replaced with a later one, which is in \
+                            messages. They were not delivered and are still in new. \
+                            read_message returns one by id",
+        });
+    }
+    rendered
+}
+
+/// **Say, on a delivered message, that it replaces one the reader already
+/// has.** The key sorts before `body`, so a reader meets it first. `state` is
+/// the replaced message's state now (`read` or `processed`).
+pub(crate) fn note_replaces_one_already_seen(
+    rendered: &mut serde_json::Value,
+    replaced: &mailbox::MessageId,
+    state: mailbox::MessageState,
+) {
+    let Some(fields) = rendered.as_object_mut() else {
+        return;
+    };
+    fields.insert(
+        "already_seen".into(),
+        serde_json::json!({
+            "id": replaced.as_str(),
+            "state": state.as_token(),
+            "note": format!(
+                "this message replaces {replaced}, which you have already seen. Read this one \
+                 as the current version. {replaced} is {} and read_message returns it by id",
+                match state {
+                    mailbox::MessageState::Processed => "processed",
+                    _ => "still yours to finish with mark_processed",
+                }
+            ),
+        }),
+    );
 }
 
 /// **Set the leftovers aside when a read asks for the news only.** A message a
@@ -409,6 +510,7 @@ pub(crate) fn split_leftovers(delivery: Delivery, new_only: bool) -> (Delivery, 
         Delivery {
             mailbox: delivery.mailbox,
             messages: fresh,
+            superseded: delivery.superseded,
         },
         leftovers,
     )

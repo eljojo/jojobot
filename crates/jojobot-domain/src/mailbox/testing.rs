@@ -18,9 +18,9 @@ use crate::memory::{EntityId, guard as memory_guard};
 
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NOTES_BUDGET, NewMessage, Quarantined, StateCounts, TakenBy, guard,
-    normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
-    validate_message_id, validate_notes, validate_sender, validate_subject,
+    MessageId, MessageState, NOTES_BUDGET, NewMessage, Quarantined, StateCounts, SupersedeRefusal,
+    Superseded, TakenBy, guard, normalize_body, normalize_notes, normalize_subject, validate_body,
+    validate_mailbox_name, validate_message_id, validate_notes, validate_sender, validate_subject,
 };
 
 /// The in-memory [`Mailboxes`] fake — a real store that holds a write, with no
@@ -51,6 +51,24 @@ pub struct InMemoryMailboxes {
     /// **The outbox a post to a person's box writes into**, when this store was
     /// made to push. `None` is a store that pushes nothing.
     outbox: Option<std::sync::Arc<crate::push::testing::InMemoryOutbox>>,
+}
+
+/// The message that replaced `id`, when one did: the newest message whose
+/// `supersedes` names it.
+fn replacing(messages: &[Message], id: &MessageId) -> Option<MessageId> {
+    messages
+        .iter()
+        .rev()
+        .find(|m| m.supersedes.as_ref() == Some(id))
+        .map(|m| m.id.clone())
+}
+
+/// `message` as it reads: with the id of the message that replaced it filled in.
+fn read_as_stored(messages: &[Message], message: &Message) -> Message {
+    Message {
+        superseded_by: replacing(messages, &message.id),
+        ..message.clone()
+    }
 }
 
 impl InMemoryMailboxes {
@@ -379,6 +397,11 @@ impl Mailboxes for InMemoryMailboxes {
                     m.mailbox == name && !quarantined.iter().any(|(_, card, _)| card == &m.id)
                 }) {
                     counts.add(message.state);
+                    if message.state == MessageState::New
+                        && replacing(&messages, &message.id).is_some()
+                    {
+                        counts.add_superseded();
+                    }
                 }
                 Mailbox {
                     quarantined: quarantined
@@ -429,6 +452,40 @@ impl Mailboxes for InMemoryMailboxes {
             }
         }
 
+        // **A replacement names a message of the sender's own, in this box, that
+        // nothing has replaced yet.**
+        if let Some(target) = &message.supersedes {
+            validate_message_id(target)?;
+            self.refuse_if_quarantined(target)?;
+            let messages = self.messages.lock().expect("message lock");
+            let old = messages.iter().find(|m| &m.id == target).ok_or_else(|| {
+                MailboxError::UnknownMessage {
+                    attempted: target.to_string(),
+                }
+            })?;
+            let attempted = target.to_string();
+            if old.sender != message.sender.trim() {
+                return Err(MailboxError::CannotSupersede(
+                    SupersedeRefusal::OtherSender { attempted },
+                ));
+            }
+            if old.mailbox != message.mailbox {
+                return Err(MailboxError::CannotSupersede(SupersedeRefusal::OtherBox {
+                    attempted,
+                    sits_in: old.mailbox.as_str().to_string(),
+                    posting_into: message.mailbox.as_str().to_string(),
+                }));
+            }
+            if let Some(by) = replacing(&messages, target) {
+                return Err(MailboxError::CannotSupersede(
+                    SupersedeRefusal::AlreadySuperseded {
+                        attempted,
+                        by: by.to_string(),
+                    },
+                ));
+            }
+        }
+
         let stored = Message {
             id: self.mint_id(),
             mailbox: message.mailbox,
@@ -442,6 +499,8 @@ impl Mailboxes for InMemoryMailboxes {
             taken_by: None,
             sender_mail_waiting_at_send: message.sender_mail_waiting_at_send,
             posted_by_session: message.posted_by_session,
+            superseded_by: None,
+            supersedes: message.supersedes,
         };
         self.messages
             .lock()
@@ -487,10 +546,29 @@ impl Mailboxes for InMemoryMailboxes {
             .map(|(_, card, _)| card.clone())
             .collect();
         let mut messages = self.messages.lock().expect("message lock");
+        // **A message nobody has taken, that a later one replaced, is withheld**
+        // and named apart. Taken before the replacement, it is owed like any
+        // other.
+        let mut withheld: Vec<Superseded> = messages
+            .iter()
+            .filter(|m| &m.mailbox == name && m.state == MessageState::New)
+            .filter(|m| !quarantined.contains(&m.id))
+            .filter_map(|m| {
+                replacing(&messages, &m.id).map(|by| Superseded {
+                    id: m.id.clone(),
+                    by,
+                })
+            })
+            .collect();
+        withheld.sort_by_key(|w| Self::numeric(&w.id));
+        let snapshot = messages.clone();
         let mut delivered: Vec<Delivered> = messages
             .iter_mut()
             .filter(|m| {
-                &m.mailbox == name && m.state.is_unprocessed() && !quarantined.contains(&m.id)
+                &m.mailbox == name
+                    && m.state.is_unprocessed()
+                    && !quarantined.contains(&m.id)
+                    && !withheld.iter().any(|w| w.id == m.id)
             })
             .map(|m| {
                 let seen_before = m.state == MessageState::Read;
@@ -503,7 +581,7 @@ impl Mailboxes for InMemoryMailboxes {
                 }
                 m.state = MessageState::Read;
                 Delivered {
-                    message: m.clone(),
+                    message: read_as_stored(&snapshot, m),
                     seen_before,
                 }
             })
@@ -520,6 +598,7 @@ impl Mailboxes for InMemoryMailboxes {
         Ok(Guarded::Written(Delivery {
             mailbox: name.clone(),
             messages: delivered,
+            superseded: withheld,
         }))
     }
 
@@ -528,13 +607,11 @@ impl Mailboxes for InMemoryMailboxes {
             return Err(MailboxError::Store("the board cannot be read".into()));
         }
         let quarantined = self.quarantined.lock().expect("quarantine lock");
-        Ok(self
-            .messages
-            .lock()
-            .expect("message lock")
+        let messages = self.messages.lock().expect("message lock");
+        Ok(messages
             .iter()
             .filter(|m| !quarantined.iter().any(|(_, card, _)| card == &m.id))
-            .cloned()
+            .map(|m| read_as_stored(&messages, m))
             .collect())
     }
 
@@ -575,8 +652,9 @@ impl Mailboxes for InMemoryMailboxes {
             // nothing would read back as though nobody took it.
             message.taken_by = Some(TakenBy::Reading);
         }
+        let message = message.clone();
         Ok(Delivered {
-            message: message.clone(),
+            message: read_as_stored(&messages, &message),
             seen_before,
         })
     }
@@ -600,7 +678,8 @@ impl Mailboxes for InMemoryMailboxes {
         if let Some(notes) = normalize_notes(notes) {
             message.notes = Some(notes);
         }
-        Ok(message.clone())
+        let message = message.clone();
+        Ok(read_as_stored(&messages, &message))
     }
 
     async fn quarantine(
@@ -764,6 +843,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post_message should succeed")
@@ -1330,6 +1410,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: Some(3),
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post_message should succeed")
@@ -1347,6 +1428,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: Some(0),
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post_message should succeed")
@@ -1498,6 +1580,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await;
         assert!(broken.is_err(), "a subject is one plain line");
@@ -1772,6 +1855,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("a blocked post is a result, not a failure")
@@ -1856,6 +1940,7 @@ pub mod contract {
                     in_reply_to: None,
                     sender_mail_waiting_at_send: None,
                     posted_by_session: None,
+                    supersedes: None,
                 })
                 .await
                 .expect("post ok")
@@ -1982,6 +2067,7 @@ pub mod contract {
                 in_reply_to: Some(original.id.clone()),
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -2025,6 +2111,7 @@ pub mod contract {
                 in_reply_to: Some(handoff.id.clone()),
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("post ok")
@@ -2063,6 +2150,7 @@ pub mod contract {
                 in_reply_to: Some(MessageId("9999".into())),
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await;
         assert!(
@@ -2084,6 +2172,7 @@ pub mod contract {
                 in_reply_to: Some(MessageId("../42".into())),
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await;
         assert!(
@@ -2340,6 +2429,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await;
         assert!(bad_body.is_err(), "an empty body is not a message");
@@ -2354,6 +2444,7 @@ pub mod contract {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await;
         assert!(
@@ -2528,6 +2619,268 @@ pub mod contract {
         assert_eq!(box_counts.processed, 2, "the retired two stay retired");
     }
 
+    /// Post `body` to `mailbox` from `sender`, replacing the message `target`.
+    /// The store's answer is returned as it came, so a case can assert a refusal
+    /// as readily as a write.
+    async fn superseding(
+        store: &dyn Mailboxes,
+        mailbox: &str,
+        sender: &str,
+        body: &str,
+        at_offset: i64,
+        target: &MessageId,
+    ) -> Result<Guarded<Message>, MailboxError> {
+        store
+            .post_message(NewMessage {
+                mailbox: name(mailbox),
+                body: body.to_string(),
+                subject: None,
+                sender: sender.to_string(),
+                sent_at: at(at_offset),
+                in_reply_to: None,
+                supersedes: Some(target.clone()),
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+    }
+
+    /// **A replaced message nobody has read is not delivered, and the box says
+    /// so.** The sender posts A and then B replacing A. The reader's delivery
+    /// hands over B, names A apart with the id that replaced it, and leaves A in
+    /// `new`. The counts account for both: A is inside `new`, and `superseded`
+    /// says how many of the `new` were replaced.
+    ///
+    /// The control is the same two posts without `supersedes`: both are
+    /// delivered and nothing is named apart. Without it the case holds on a
+    /// store that withholds every second message.
+    pub async fn an_unread_message_that_was_replaced_is_listed_apart_not_delivered(
+        store: &dyn Mailboxes,
+    ) {
+        create(store, "inbox").await;
+        let a = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+        let b = superseding(store, "inbox", "alpha", "ship it on monday", 1, &a.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a replacement of the sender's own message in the same box is written");
+        assert_eq!(
+            b.supersedes.as_ref(),
+            Some(&a.id),
+            "the link rides on the new one"
+        );
+
+        let before = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            (before.new, before.read, before.processed, before.superseded),
+            (2, 0, 0, 1),
+            "both are in new and one of them is counted as replaced: {before:?}"
+        );
+        assert_eq!(before.total(), 2, "the replaced one is not counted twice");
+
+        let delivery = read(store, "inbox").await;
+        let handed: Vec<&MessageId> = delivery.messages.iter().map(|d| &d.message.id).collect();
+        assert_eq!(handed, vec![&b.id], "only the replacement is delivered");
+        assert_eq!(
+            delivery.superseded,
+            vec![Superseded {
+                id: a.id.clone(),
+                by: b.id.clone(),
+            }],
+            "the replaced one is named apart with the id that replaced it"
+        );
+
+        let after = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            (after.new, after.read, after.superseded),
+            (1, 1, 1),
+            "the withheld message is still in new, and the delivered one moved: {after:?}"
+        );
+        let withheld = store
+            .message_by_id(&a.id)
+            .await
+            .expect("read ok")
+            .expect("there");
+        assert_eq!(withheld.state, MessageState::New, "it was not taken");
+        assert_eq!(withheld.superseded_by.as_ref(), Some(&b.id));
+
+        // The control: the same two posts, no link, are both delivered.
+        create(store, "plain").await;
+        let c = post(store, "plain", "alpha", "ship it on friday", 0).await;
+        let d = post(store, "plain", "alpha", "ship it on monday", 1).await;
+        let plain = read(store, "plain").await;
+        let handed: Vec<&MessageId> = plain.messages.iter().map(|m| &m.message.id).collect();
+        assert_eq!(handed, vec![&c.id, &d.id], "without supersedes both arrive");
+        assert!(
+            plain.superseded.is_empty(),
+            "nothing is named apart: {plain:?}"
+        );
+    }
+
+    /// **A replaced message the reader already has is still owed, and the
+    /// replacement is delivered beside it.** A is read, then B replaces it. The
+    /// next read hands over A again as a leftover and B as fresh, and names
+    /// nothing apart: A is no longer withheld because it was taken before it was
+    /// replaced.
+    pub async fn a_replaced_message_the_reader_already_has_is_still_delivered(
+        store: &dyn Mailboxes,
+    ) {
+        create(store, "inbox").await;
+        let a = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+        read(store, "inbox").await;
+        let b = superseding(store, "inbox", "alpha", "ship it on monday", 1, &a.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a replacement is written");
+
+        let delivery = read(store, "inbox").await;
+        let handed: Vec<(&MessageId, bool)> = delivery
+            .messages
+            .iter()
+            .map(|d| (&d.message.id, d.seen_before))
+            .collect();
+        assert_eq!(handed, vec![(&a.id, true), (&b.id, false)]);
+        assert!(
+            delivery.superseded.is_empty(),
+            "nothing was withheld: {delivery:?}"
+        );
+        let counted = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            counted.superseded, 0,
+            "a taken message is not counted as withheld"
+        );
+        let a_now = store
+            .message_by_id(&a.id)
+            .await
+            .expect("read ok")
+            .expect("there");
+        assert_eq!(
+            a_now.superseded_by.as_ref(),
+            Some(&b.id),
+            "it still says it was replaced"
+        );
+    }
+
+    /// **Taking a replaced message by id works, and ends its being withheld.**
+    /// `read_message` hands it over with the id that replaced it. Once taken it
+    /// is owed like any other message, so the next delivery returns it as a
+    /// leftover.
+    pub async fn a_replaced_message_is_readable_by_id_on_request(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let a = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+        let b = superseding(store, "inbox", "alpha", "ship it on monday", 1, &a.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("written");
+
+        let taken = store.read_message(&a.id).await.expect("read_message ok");
+        assert_eq!(taken.message.body, "ship it on friday");
+        assert_eq!(taken.message.superseded_by.as_ref(), Some(&b.id));
+        assert_eq!(taken.message.state, MessageState::Read);
+
+        let delivery = read(store, "inbox").await;
+        assert!(delivery.superseded.is_empty(), "{delivery:?}");
+        assert_eq!(
+            delivery.messages.len(),
+            2,
+            "the one taken by id and the new one"
+        );
+
+        store.mark_processed(&a.id, None).await.expect("processed");
+        let archived = store
+            .message_by_id(&a.id)
+            .await
+            .expect("read ok")
+            .expect("there");
+        assert_eq!(
+            archived.superseded_by.as_ref(),
+            Some(&b.id),
+            "an archive keeps the link"
+        );
+    }
+
+    /// **A post may replace only the sender's own message, in the box it goes
+    /// to, once.** Each refusal names its reason and writes nothing; the id that
+    /// names nothing is the same miss a reply to nothing is.
+    pub async fn a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(
+        store: &dyn Mailboxes,
+    ) {
+        create(store, "inbox").await;
+        create(store, "elsewhere").await;
+        let mine = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+        let theirs = post(store, "inbox", "beta", "ship it on tuesday", 1).await;
+        let total = |c: StateCounts| c.total();
+        let before = total(counts(store, "inbox").await.expect("inbox"))
+            + total(counts(store, "elsewhere").await.expect("elsewhere"));
+
+        let other_sender = superseding(store, "inbox", "alpha", "no", 2, &theirs.id).await;
+        assert!(
+            matches!(
+                other_sender,
+                Err(MailboxError::CannotSupersede(
+                    SupersedeRefusal::OtherSender { .. }
+                ))
+            ),
+            "another sender's message is refused: {other_sender:?}"
+        );
+
+        let other_box = superseding(store, "elsewhere", "alpha", "no", 2, &mine.id).await;
+        match other_box {
+            Err(MailboxError::CannotSupersede(SupersedeRefusal::OtherBox {
+                sits_in,
+                posting_into,
+                ..
+            })) => {
+                assert_eq!(
+                    (sits_in.as_str(), posting_into.as_str()),
+                    ("inbox", "elsewhere")
+                );
+            }
+            other => panic!("a message in another box is refused: {other:?}"),
+        }
+
+        let nothing =
+            superseding(store, "inbox", "alpha", "no", 2, &MessageId("9999".into())).await;
+        assert!(
+            matches!(nothing, Err(MailboxError::UnknownMessage { .. })),
+            "an id that names nothing is a miss: {nothing:?}"
+        );
+        let malformed =
+            superseding(store, "inbox", "alpha", "no", 2, &MessageId("../42".into())).await;
+        assert!(
+            matches!(malformed, Err(MailboxError::InvalidMessageId(_))),
+            "an id outside the grammar is malformed: {malformed:?}"
+        );
+
+        let after = total(counts(store, "inbox").await.expect("inbox"))
+            + total(counts(store, "elsewhere").await.expect("elsewhere"));
+        assert_eq!(before, after, "no refusal wrote anything");
+
+        // The positive the refusals depend on: the same call, with the sender's
+        // own message in its own box, is written.
+        let replacement = superseding(store, "inbox", "alpha", "ship it on monday", 3, &mine.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("the allowed case is written");
+
+        let twice = superseding(store, "inbox", "alpha", "ship it on sunday", 4, &mine.id).await;
+        match twice {
+            Err(MailboxError::CannotSupersede(SupersedeRefusal::AlreadySuperseded {
+                by, ..
+            })) => {
+                assert_eq!(
+                    by,
+                    replacement.id.as_str(),
+                    "it names the newest to replace instead"
+                );
+            }
+            other => panic!("a second replacement of one message is refused: {other:?}"),
+        }
+    }
+
     pub async fn run_all<S, F, Fut>(fresh: F) -> ()
     where
         S: Mailboxes,
@@ -2579,5 +2932,9 @@ pub mod contract {
         malformed_input_is_refused(&fresh().await).await;
         a_delivery_records_how_it_was_taken(&fresh().await).await;
         a_delivery_skips_processed_mail_and_hands_over_what_is_owed(&fresh().await).await;
+        an_unread_message_that_was_replaced_is_listed_apart_not_delivered(&fresh().await).await;
+        a_replaced_message_the_reader_already_has_is_still_delivered(&fresh().await).await;
+        a_replaced_message_is_readable_by_id_on_request(&fresh().await).await;
+        a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(&fresh().await).await;
     }
 }

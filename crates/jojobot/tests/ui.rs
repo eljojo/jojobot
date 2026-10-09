@@ -281,6 +281,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("the message is posted");
@@ -295,6 +296,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("the long message is posted");
@@ -311,6 +313,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("the markup-bearing message is posted");
@@ -1695,6 +1698,7 @@ async fn otto_page_with_mail(n: usize) -> String {
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
                 posted_by_session: None,
+                supersedes: None,
             })
             .await
             .expect("the message is posted");
@@ -1999,6 +2003,7 @@ async fn with_an_operators_mail(board: &Board) -> OperatorMail {
         in_reply_to: None,
         sender_mail_waiting_at_send: None,
         posted_by_session: None,
+        supersedes: None,
     };
     let to_the_operator = board
         .mailboxes
@@ -2214,6 +2219,7 @@ async fn the_open_button_takes_delivery_of_one_message_only() {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("posted")

@@ -16,7 +16,9 @@
 //! * **delivery is not consumption.** `read_mailbox` hands over everything
 //!   unprocessed and moves `new → read`; a consumer marks a message processed
 //!   only *after* acting on it, so a crash leaves the message visible as
-//!   already-seen rather than silently dropped.
+//!   already-seen rather than silently dropped. **The one exception is a
+//!   message its sender replaced before anybody took it**: it stays in `new`,
+//!   is not delivered, and the delivery names it apart.
 //!
 //! **This is user-agnostic software: no user PII, fixtures included.** Mailbox
 //! names and senders in tests and examples are openly fictional or generic.
@@ -437,6 +439,11 @@ pub struct StateCounts {
     pub read: usize,
     /// Acted on — terminal.
     pub processed: usize,
+    /// **How many of the `new` messages have been replaced** by a later one
+    /// from the same sender. They are inside `new`, not beside it, so
+    /// [`StateCounts::total`] does not add them twice. A delivery withholds
+    /// them and lists them apart.
+    pub superseded: usize,
 }
 
 impl StateCounts {
@@ -447,6 +454,12 @@ impl StateCounts {
             MessageState::Read => self.read += 1,
             MessageState::Processed => self.processed += 1,
         }
+    }
+
+    /// Count one `new` message that a later one replaced. Call this beside
+    /// [`StateCounts::add`], never instead of it.
+    pub fn add_superseded(&mut self) {
+        self.superseded += 1;
     }
 
     /// Every message in the box, whatever its state.
@@ -480,6 +493,11 @@ pub struct NewMessage {
     /// anybody. It says these two messages are one exchange, which is the thing
     /// prose conventions ("report = message 935") could not survive.
     pub in_reply_to: Option<MessageId>,
+    /// **The message this one replaces**, when the sender is correcting or
+    /// withdrawing one. The store refuses it unless the named message exists,
+    /// was sent by this sender and sits in the box this one goes to. See
+    /// [`Message::supersedes`].
+    pub supersedes: Option<MessageId>,
     /// **What was genuinely waiting in the SENDER's own box at the moment they
     /// sent this** — the same number the status bar would have shown them, read
     /// before this post could touch it. `None` when jojobot could not tell (no
@@ -533,6 +551,21 @@ pub struct Message {
     /// nothing.
     #[serde(default)]
     pub in_reply_to: Option<MessageId>,
+    /// **The message this one replaces**, when its sender named one. `None` is
+    /// the ordinary case, and every message written before there was a field
+    /// for it has none.
+    ///
+    /// Stored on the NEW message only. What the old one reads is
+    /// [`Message::superseded_by`], worked out from this link when the old one
+    /// is read, so there is one fact and no second copy to keep in step.
+    #[serde(default)]
+    pub supersedes: Option<MessageId>,
+    /// **The message that replaced this one**, when one did. Never stored: the
+    /// store fills it in on read from the replacing message's `supersedes`.
+    /// A message replaced twice is refused at the second post, so there is at
+    /// most one.
+    #[serde(default)]
+    pub superseded_by: Option<MessageId>,
     /// **How this message left `new`**, once it has. `None` while it is still
     /// waiting, and `None` for every message delivered before there was a
     /// record of how — neither of those is broken, and neither may be read as
@@ -614,13 +647,29 @@ pub struct Delivered {
 }
 
 /// What `read_mailbox` hands back: every unprocessed message in the box, in the
-/// order it was posted, with the leftovers flagged.
+/// order it was posted, with the leftovers flagged. The exception is a message
+/// its sender replaced before anybody took it, which is named under `superseded`
+/// instead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
     /// The box that was read.
     pub mailbox: MailboxName,
-    /// Everything unprocessed, oldest first.
+    /// Everything unprocessed that is not withheld, oldest first.
     pub messages: Vec<Delivered>,
+    /// **Messages withheld because a later one from the same sender replaced
+    /// them before anybody read them.** They are not delivered, stay in `new`,
+    /// and are named here so nothing in the box is hidden. `read_message`
+    /// takes delivery of one on request.
+    pub superseded: Vec<Superseded>,
+}
+
+/// A message the delivery withheld, and the message that replaced it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Superseded {
+    /// The withheld message.
+    pub id: MessageId,
+    /// The message that replaced it.
+    pub by: MessageId,
 }
 
 impl Delivery {
@@ -756,6 +805,10 @@ pub enum MailboxError {
         /// The box that tried.
         by: String,
     },
+    /// **A message cannot be replaced by this post.** The reason names which
+    /// rule held and what to send instead.
+    #[error("{0}")]
+    CannotSupersede(SupersedeRefusal),
     /// The underlying store failed — it, or the layer that carries and parses
     /// its answers.
     #[error("store error: {0}")]
@@ -819,6 +872,75 @@ pub enum MailboxError {
     /// mentions on the same terms a claim's words do.
     #[error("{}", crate::memory::kinds::NotAKind::SetNeverLoaded)]
     KindsNeverLoaded,
+}
+
+/// **Why a post may not replace the message it names.** The id names a message
+/// that exists, so the other refusals are the rules about whose message it is
+/// and where it sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupersedeRefusal {
+    /// Another sender sent it. Only a sender replaces their own message.
+    OtherSender {
+        /// The message named.
+        attempted: String,
+    },
+    /// It sits in another box. A message is replaced in the box it was sent to.
+    OtherBox {
+        /// The message named.
+        attempted: String,
+        /// The box it sits in.
+        sits_in: String,
+        /// The box this post goes to.
+        posting_into: String,
+    },
+    /// A message already replaced it, so a second replacement would leave two.
+    AlreadySuperseded {
+        /// The message named.
+        attempted: String,
+        /// The message that replaced it.
+        by: String,
+    },
+}
+
+impl SupersedeRefusal {
+    /// The id of the message the post tried to replace.
+    pub fn attempted(&self) -> &str {
+        match self {
+            SupersedeRefusal::OtherSender { attempted }
+            | SupersedeRefusal::OtherBox { attempted, .. }
+            | SupersedeRefusal::AlreadySuperseded { attempted, .. } => attempted,
+        }
+    }
+}
+
+impl std::fmt::Display for SupersedeRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SupersedeRefusal::OtherSender { attempted } => write!(
+                f,
+                "message '{attempted}' was sent by somebody else, and only a sender replaces \
+                 their own message. Nothing was written. To answer it, post a new message with \
+                 in_reply_to naming it"
+            ),
+            SupersedeRefusal::OtherBox {
+                attempted,
+                sits_in,
+                posting_into,
+            } => write!(
+                f,
+                "message '{attempted}' sits in the '{sits_in}' box and this post goes to \
+                 '{posting_into}'. A message is replaced in the box it was sent to. Nothing was \
+                 written. To replace it, post the new message to the same bot; to send something \
+                 elsewhere, drop supersedes"
+            ),
+            SupersedeRefusal::AlreadySuperseded { attempted, by } => write!(
+                f,
+                "message '{attempted}' was already replaced by '{by}', and a second replacement \
+                 would leave two. Nothing was written. Replace '{by}' instead, which is the \
+                 newest"
+            ),
+        }
+    }
 }
 
 /// The Mailboxes port — five verbs over boxes and the messages in them. A
@@ -932,11 +1054,22 @@ pub trait Mailboxes: Send + Sync {
     /// verb succeeding — the message exists and someone has it — not a failure
     /// to file it. An adapter that serializes its own verbs narrows that
     /// somebody down to a person editing the record underneath by hand.
+    ///
+    /// **`supersedes` is judged here, in the store's own write**, on the message
+    /// as it stands: it must exist ([`MailboxError::UnknownMessage`]), have the
+    /// same sender and sit in the same box, and nothing may have replaced it
+    /// already ([`MailboxError::CannotSupersede`]). Nothing is written on a
+    /// refusal.
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError>;
 
     /// Deliver everything unprocessed in a box — messages in `new` and messages
     /// a previous read already handed over — and move `new → read`. There is no
     /// peek/take split: reading IS taking delivery, and the state moves with it.
+    ///
+    /// **A message in `new` that a later message of the same sender replaced
+    /// is withheld.** It is not delivered, does not move to `read`, and comes
+    /// back under [`Delivery::superseded`] with the id that replaced it. A
+    /// replaced message that was already taken is delivered as any leftover is.
     ///
     /// **A message that reaches `processed` while the delivery is in flight is
     /// dropped from it.** Somebody handled it; handing it over anyway would put

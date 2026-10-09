@@ -431,6 +431,7 @@ mod tests {
                 sid: writer.clone(),
                 subject: None,
                 in_reply_to: None,
+                supersedes: None,
             }))
             .await
             .expect("post ok");
@@ -666,6 +667,7 @@ mod tests {
                 sid: other,
                 subject: None,
                 in_reply_to: None,
+                supersedes: None,
             }))
             .await
             .expect("post ok");
@@ -1164,6 +1166,7 @@ mod tests {
                     sid: writer.clone(),
                     subject: None,
                     in_reply_to: None,
+                    supersedes: None,
                 }))
                 .await
                 .expect("post ok");

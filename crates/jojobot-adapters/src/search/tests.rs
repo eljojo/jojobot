@@ -6213,6 +6213,8 @@ fn message(
         taken_by: None,
         sender_mail_waiting_at_send: None,
         posted_by_session: None,
+        superseded_by: None,
+        supersedes: None,
     }
 }
 
@@ -8184,6 +8186,7 @@ async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
+            supersedes: None,
         })
         .await
         .expect("a blocked post is a result, not a failure");

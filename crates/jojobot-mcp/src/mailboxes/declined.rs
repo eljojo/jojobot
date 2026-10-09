@@ -224,6 +224,7 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
         | MailboxError::InvalidMessage { .. }
         | MailboxError::UnknownMessage { .. }
         | MailboxError::NotYourMessage { .. }
+        | MailboxError::CannotSupersede(_)
         | MailboxError::NameTaken { .. }
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
@@ -261,6 +262,13 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
             mailbox,
             by,
         } => Ok(mailbox_not_your_message(&attempted, &mailbox, &by)),
+        // The reason already says what was not written and what to send
+        // instead, so it is the way forward as it stands.
+        MailboxError::CannotSupersede(ref refusal) => Ok(mailbox_blocked_body(
+            refusal.attempted(),
+            None,
+            refusal.to_string(),
+        )),
         // **A malformed name or id is a caller mistake, so it is an answer**
         // (rule 68). The payload of these two IS the value that was refused,
         // so the caller sees what jojobot read.
@@ -330,6 +338,7 @@ fn mailbox_error_arms(e: MailboxError) -> McpError {
         | MailboxError::Quarantined { .. }
         | MailboxError::QuarantinedOnPurpose { .. }
         | MailboxError::NotYourMessage { .. }
+        | MailboxError::CannotSupersede(_)
         | MailboxError::OwnerHasMultipleBoxes { .. }
         | MailboxError::NameTaken { .. }
         | MailboxError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),
@@ -394,6 +403,7 @@ pub(crate) mod tests {
                 body: "   ".into(),
                 subject: None,
                 in_reply_to: None,
+                supersedes: None,
             }))
             .await
             .expect("a caller mistake is an answer, not a protocol failure");
@@ -407,6 +417,7 @@ pub(crate) mod tests {
                 body: "the shipment landed".into(),
                 subject: None,
                 in_reply_to: None,
+                supersedes: None,
             }))
             .await
             .expect("a caller mistake is an answer, not a protocol failure");

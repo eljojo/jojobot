@@ -4062,6 +4062,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
                 subject: Some("what `post_message` does with a title".into()),
                 in_reply_to: None,
                 sid: sid.clone(),
+                supersedes: None,
             }))
             .await
             .expect("a subject carrying markup is an answer, not a protocol failure"),
@@ -4085,6 +4086,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
                 subject: Some("w".repeat(200)),
                 in_reply_to: None,
                 sid: sid.clone(),
+                supersedes: None,
             }))
             .await
             .expect("an over-long subject is an answer too"),
@@ -4107,6 +4109,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
                 subject: Some("what post_message does with a title".into()),
                 in_reply_to: None,
                 sid,
+                supersedes: None,
             }))
             .await
             .expect("post ok"),
