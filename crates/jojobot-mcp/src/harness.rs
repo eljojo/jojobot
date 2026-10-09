@@ -568,18 +568,138 @@ mod tests {
     /// store reddens here by name.
     #[tokio::test]
     async fn every_plain_handler_refuses_a_status_outside_the_shipped_vocabulary() {
-        holds_the_status_vocabulary(&handler(), "handler").await;
-        holds_the_status_vocabulary(&handler_mentioning(), "handler_mentioning").await;
-        holds_the_status_vocabulary(
-            &handler_field_provisioned(EntityId("work:sigma".into()), "note", "x"),
-            "handler_field_provisioned",
+        for (label, jojobot) in plain_handlers() {
+            holds_the_status_vocabulary(&jojobot, label).await;
+        }
+    }
+
+    /// **Every constructor that builds its own store**, by name.
+    fn plain_handlers() -> Vec<(&'static str, Jojobot)> {
+        vec![
+            ("handler", handler()),
+            ("handler_mentioning", handler_mentioning()),
+            (
+                "handler_field_provisioned",
+                handler_field_provisioned(EntityId("work:sigma".into()), "note", "x"),
+            ),
+            ("handler_carrying", handler_carrying(Vec::new())),
+            ("handler_with", handler_with(Arc::new(SpySearch::default()))),
+        ]
+    }
+
+    /// One write on a project, carrying `fields`, as a caller sends it.
+    async fn project_write(
+        jojobot: &Jojobot,
+        subject: &str,
+        fields: &[(&str, &str)],
+    ) -> serde_json::Value {
+        let sent = CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                fields
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            ),
+            ..capture_args(subject, "where the project stands")
+        };
+        json_of(
+            &jojobot
+                .capture(Parameters(sent))
+                .await
+                .expect("capture call ok"),
+        )
+    }
+
+    /// **A project's own columns, asked of one handler.** A project filed under
+    /// no project is governed by its own list: a word outside the shipped five
+    /// is refused until the project lists it, and one write can carry the list
+    /// and a status that uses it. A project filed under it keeps that list, and
+    /// a list of its own does not widen it.
+    async fn holds_the_project_columns(jojobot: &Jojobot, label: &str) {
+        ensure(jojobot, "project:atlas").await;
+        let status_of = |subject: &'static str| async move {
+            fields_of(jojobot, subject)
+                .await
+                .get("status")
+                .and_then(|v| v.as_str().map(str::to_string))
+        };
+
+        // No list: the shipped five hold, and the refusal names the project
+        // whose list a word is written on.
+        let refused = project_write(jojobot, "project:atlas", &[("status", "inbox")]).await;
+        assert_eq!(
+            refused["status"], "blocked",
+            "{label}: a word no list names was accepted: {refused}"
+        );
+        assert!(
+            refused.to_string().contains("project:atlas"),
+            "{label}: the refusal does not name the project that governs: {refused}"
+        );
+        assert_eq!(status_of("project:atlas").await, None, "{label}");
+
+        // One write carries the list and a status that uses it.
+        let landed = project_write(
+            jojobot,
+            "project:atlas",
+            &[
+                ("columns", "inbox, someday, next, now, waiting, done"),
+                ("status", "inbox"),
+            ],
         )
         .await;
-        holds_the_status_vocabulary(&handler_carrying(Vec::new()), "handler_carrying").await;
-        holds_the_status_vocabulary(
-            &handler_with(Arc::new(SpySearch::default())),
-            "handler_with",
+        assert_ne!(landed["status"], "blocked", "{label}: {landed}");
+        assert_eq!(
+            status_of("project:atlas").await.as_deref(),
+            Some("inbox"),
+            "{label}"
+        );
+
+        // A word the list does not name is refused; one it does name lands.
+        let refused = project_write(jojobot, "project:atlas", &[("status", "backlog")]).await;
+        assert_eq!(
+            refused["status"], "blocked",
+            "{label}: a word outside the list was accepted: {refused}"
+        );
+        let kept = project_write(jojobot, "project:atlas", &[("status", "now")]).await;
+        assert_ne!(kept["status"], "blocked", "{label}: {kept}");
+
+        // A project filed under it is held to that list.
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("project:atlas".into()),
+                ..add_args("project", "the-shed", "The Shed")
+            }))
+            .await
+            .expect("add_entity call ok");
+        let inherited = project_write(jojobot, "project:the-shed", &[("status", "inbox")]).await;
+        assert_ne!(
+            inherited["status"], "blocked",
+            "{label}: a project under atlas did not take atlas's list: {inherited}"
+        );
+        let widened = project_write(
+            jojobot,
+            "project:the-shed",
+            &[
+                ("columns", "inbox, someday, next, now, waiting, done, shed"),
+                ("status", "shed"),
+            ],
         )
         .await;
+        assert_eq!(
+            widened["status"], "blocked",
+            "{label}: a list of its own widened the parent's: {widened}"
+        );
+    }
+
+    /// **Every plain handler holds a project to its own columns.** The shared
+    /// contract case covers the store and the double; this asks the handlers a
+    /// verb test defaults to, through the verbs a caller uses, so one that
+    /// falls back to a store which declares no keys reddens by name.
+    #[tokio::test]
+    async fn every_plain_handler_holds_a_project_to_its_own_columns() {
+        for (label, jojobot) in plain_handlers() {
+            holds_the_project_columns(&jojobot, label).await;
+        }
     }
 }
