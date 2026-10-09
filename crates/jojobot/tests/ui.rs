@@ -113,7 +113,7 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
         aliases: Vec::new(),
         source: "the fixture roster".to_string(),
         crm: None,
-        parent: Some(EntityId("person:ghost".into())),
+        parent: Some(EntityId("person:contract-ghost".into())),
         boot: Boot::default(),
         merged_into: None,
         badge: None,
@@ -1232,7 +1232,7 @@ async fn a_handle_nobody_has_is_not_found() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    for missing in ["/person:ghost/", "/not-a-handle/"] {
+    for missing in ["/person:contract-ghost/", "/not-a-handle/"] {
         let response = read(&client, addr, missing, &cookie).await;
         assert_eq!(
             response.status(),
@@ -1485,7 +1485,7 @@ async fn a_path_that_could_never_be_a_handle_is_not_found_rather_than_a_login() 
     // The pairing: a path that COULD name an entity still asks for a login,
     // because whether it does is not something an anonymous caller may learn.
     let gated = browser()
-        .get(format!("http://{addr}/person:ghost/"))
+        .get(format!("http://{addr}/person:contract-ghost/"))
         .send()
         .await
         .unwrap();

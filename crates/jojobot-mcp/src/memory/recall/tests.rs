@@ -2223,7 +2223,7 @@ async fn a_traced_record_is_selection_enough_and_a_contradicting_subject_is_refu
 async fn a_traced_record_the_call_never_selected_is_said_rather_than_missing() {
     let jojobot = handler();
     capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
-    ensure(&jojobot, "org:guild").await;
+    ensure(&jojobot, "org:contract-guild").await;
 
     // **A selection that does not contradict the address and does not
     // reach it either.** A subject naming something else is a refusal —
@@ -2392,14 +2392,14 @@ async fn recall_of_an_unknown_entity_is_a_miss_with_candidates() {
 async fn recall_returns_the_edge_a_fact_draws() {
     let jojobot = handler();
     jojobot
-        .add_entity(Parameters(add_args("org", "guild", "The Guild")))
+        .add_entity(Parameters(add_args("org", "contract-guild", "The Guild")))
         .await
         .expect("add_entity ok");
     capture_ok(
         &jojobot,
         CaptureArgs {
             shape: Some("membership".into()),
-            object: Some("org:guild".into()),
+            object: Some("org:contract-guild".into()),
             ..capture_args("alpha", "joined in the spring")
         },
     )
@@ -2418,7 +2418,7 @@ async fn recall_returns_the_edge_a_fact_draws() {
         .find(|f| f["content"] == "joined in the spring")
         .unwrap_or_else(|| panic!("the captured fact must come back: {body}"));
     assert_eq!(edged["edge"]["type"], "memberOf", "got {edged}");
-    assert_eq!(edged["edge"]["object"], "org:guild");
+    assert_eq!(edged["edge"]["object"], "org:contract-guild");
 }
 
 /// **Objects of a kind, with their pages** — through the wire, and with

@@ -283,7 +283,7 @@ fn reason_for(
         return by_name;
     }
 
-    // Typo range is only meaningful within a kind: `place:x` and `person:y`
+    // Typo range is only meaningful within a kind: `place:contract-x` and `person:contract-y`
     // being one letter apart says nothing.
     if !same_kind {
         return None;
@@ -823,7 +823,7 @@ mod tests {
         assert_eq!(reasons("person:alphaa", None), vec![MatchReason::NearSlug]);
         assert_eq!(reasons("person:bet", None), vec![MatchReason::NearSlug]);
         // Three edits is a different person, not a typo.
-        assert!(reasons("person:ghost", None).is_empty());
+        assert!(reasons("person:contract-ghost", None).is_empty());
     }
 
     /// **What the two channels catch, measured on realistic names.** A record
@@ -1096,7 +1096,7 @@ mod tests {
 
         // And a typo of an alias is a near miss, exactly as a typo of a name is.
         assert_eq!(
-            screen(&EntityId("person:zzz".into()), &["Max Powe"], &idx)[0].reason,
+            screen(&EntityId("person:contract-zzz".into()), &["Max Powe"], &idx)[0].reason,
             MatchReason::NearName
         );
     }

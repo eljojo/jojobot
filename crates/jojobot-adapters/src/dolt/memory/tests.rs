@@ -35,7 +35,7 @@ async fn the_projection_and_the_row_agree() {
         .await
         .expect("the kinds are seeded");
 
-    let subject = EntityId::person("person:projected");
+    let subject = EntityId::person("person:contract-projected");
     memory
         .add_entity(NewEntity::new(
             subject.clone(),
@@ -272,7 +272,7 @@ async fn a_drawn_badge_that_collides_retries_until_one_is_free() {
         .expect("the kinds are seeded");
 
     let memory = DoltMemory::open(pool.clone());
-    let first = EntityId::person("person:badge-collision-holder");
+    let first = EntityId::person("person:contract-badge-collision-holder");
     memory
         .add_entity(NewEntity::new(first.clone(), "First", "contract-fixture"))
         .await
@@ -304,7 +304,7 @@ async fn a_drawn_badge_that_collides_retries_until_one_is_free() {
     };
 
     let colliding = DoltMemory::open_drawing(pool.clone(), rigged);
-    let second = EntityId::person("person:badge-collision-retried");
+    let second = EntityId::person("person:contract-badge-collision-retried");
     colliding
         .add_entity(NewEntity::new(second.clone(), "Second", "contract-fixture"))
         .await
@@ -352,7 +352,7 @@ async fn a_badge_draw_that_never_frees_gives_up_rather_than_duplicating() {
         .expect("the kinds are seeded");
 
     let memory = DoltMemory::open(pool.clone());
-    let first = EntityId::person("person:badge-collision-blocker");
+    let first = EntityId::person("person:contract-badge-collision-blocker");
     memory
         .add_entity(NewEntity::new(first.clone(), "First", "contract-fixture"))
         .await
@@ -380,7 +380,7 @@ async fn a_badge_draw_that_never_frees_gives_up_rather_than_duplicating() {
     };
 
     let stuck = DoltMemory::open_drawing(pool.clone(), never_frees);
-    let second = EntityId::person("person:badge-collision-stuck");
+    let second = EntityId::person("person:contract-badge-collision-stuck");
     let result = stuck
         .add_entity(NewEntity::new(second.clone(), "Second", "contract-fixture"))
         .await;

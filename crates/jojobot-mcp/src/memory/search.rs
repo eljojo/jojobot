@@ -1593,7 +1593,7 @@ mod tests {
             SearchArgs {
                 edge: Some(EdgeFilterArgs {
                     shape: Some("knows".into()),
-                    object: "place:x".into(),
+                    object: "place:contract-x".into(),
                 }),
                 ..searching()
             },
@@ -1615,13 +1615,13 @@ mod tests {
             // A *bare* subject is read as a person, as everywhere else — so the
             // malformed case is one that can't be an id at all.
             SearchArgs {
-                subject: Some("person:a|b".into()),
+                subject: Some("person:contract-a|b".into()),
                 ..searching()
             },
             SearchArgs {
                 edge: Some(EdgeFilterArgs {
                     shape: None,
-                    object: "place:a|b".into(),
+                    object: "place:contract-a|b".into(),
                 }),
                 ..searching()
             },
@@ -2633,7 +2633,7 @@ mod tests {
             happened_through: None,
             edge: Some(Edge::new(
                 EdgeShape::Membership,
-                EntityId("org:guild".into()),
+                EntityId("org:contract-guild".into()),
             )),
             fields: Default::default(),
             refs: Vec::new(),
@@ -2655,7 +2655,7 @@ mod tests {
             badge: None,
             archived: None,
         };
-        let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
+        let guild = Edge::new(EdgeShape::Membership, EntityId("org:contract-guild".into()));
         let spy = Arc::new(SpySearch::answering(vec![
             Hit::Entity {
                 entity,
@@ -2704,7 +2704,7 @@ mod tests {
             results[0]["edges"][0]["type"], "memberOf",
             "where it sits in the graph"
         );
-        assert_eq!(results[0]["edges"][0]["object"], "org:guild");
+        assert_eq!(results[0]["edges"][0]["object"], "org:contract-guild");
 
         assert_eq!(results[1]["hit"], "fact");
         assert_eq!(
@@ -2721,7 +2721,7 @@ mod tests {
         assert_eq!(results[1]["status"], "active");
         assert_eq!(results[1]["recorded_at"], "2026-07-01");
         assert_eq!(results[1]["edge"]["type"], "memberOf");
-        assert_eq!(results[1]["edge"]["object"], "org:guild");
+        assert_eq!(results[1]["edge"]["object"], "org:contract-guild");
         // …and the surroundings, resolved: who this is about, and whose page it
         // sits on. A handle alone costs the reader a call to find out.
         assert_eq!(results[1]["about"]["id"], "person:alpha");
@@ -2748,7 +2748,7 @@ mod tests {
             results[2]["entity"]["alternateName"][0], "Al",
             "the names it answers to come with it"
         );
-        assert_eq!(results[2]["edges"][0]["object"], "org:guild");
+        assert_eq!(results[2]["edges"][0]["object"], "org:contract-guild");
         assert_eq!(results[2]["snippet"], "…allergic to penicillin…");
     }
 

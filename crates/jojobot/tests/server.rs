@@ -510,7 +510,7 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
             CallToolRequestParams::new("add_entity").with_arguments(
                 serde_json::json!({
                     "kind": "person",
-                    "handle": "frontdoor-probe",
+                    "handle": "contract-frontdoor-probe",
                     "name": "Frontdoor Probe",
                     "source": "user-named",
                     "sid": sid,
@@ -532,7 +532,7 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
         .call_tool(
             CallToolRequestParams::new("capture").with_arguments(
                 serde_json::json!({
-                    "subject": "person:frontdoor-probe",
+                    "subject": "person:contract-frontdoor-probe",
                     "content": "keeps a zamboni in the garage",
                     "provenance": "testimony",
                     "recorded_at": "2026-07-01",
@@ -570,7 +570,7 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
         .unwrap();
     let found = serde_json::to_string(&found).unwrap();
     assert!(
-        found.contains("person:frontdoor-probe#f1"),
+        found.contains("person:contract-frontdoor-probe#f1"),
         "the fact just captured must be findable, with its address: {found}"
     );
     assert!(found.contains("testimony"), "…and its provenance: {found}");

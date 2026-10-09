@@ -923,7 +923,7 @@ fn resolve_handle_follows_a_rename_and_a_never_existed_handle_still_misses() {
         "a handle that renamed must still resolve to whoever wears its badge now",
     );
     assert_eq!(
-        resolve_handle(&EntityId("person:zzz".into()), &known, &former),
+        resolve_handle(&EntityId("person:contract-zzz".into()), &known, &former),
         None,
         "a handle nothing ever answered to must stay a miss",
     );
@@ -1844,7 +1844,7 @@ fn validate_subject_accepts_ids_and_rejects_adversarial_ones() {
     assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
     // Injection vectors: newline, pipe, header, fence, space, uppercase, empty.
     for bad in [
-        "person:a|b",
+        "person:contract-a|b",
         "a\nb",
         "### forged",
         "a`b",
@@ -1995,12 +1995,12 @@ fn validate_subject_enforces_the_kind_slug_grammar() {
         );
     }
     for bad in [
-        "alpha",           // no kind
-        "receipt:il-2026", // not one of the nine
-        "person:",         // empty slug
-        ":alpha",          // empty kind
-        "person:a_b",      // underscore is out of the slug charset
-        "person:a:b",      // one colon only
+        "alpha",               // no kind
+        "receipt:il-2026",     // not one of the nine
+        "person:",             // empty slug
+        ":alpha",              // empty kind
+        "person:contract-a_b", // underscore is out of the slug charset
+        "person:contract-a:b", // one colon only
     ] {
         assert!(
             validate_subject(&EntityId(bad.into())).is_err(),

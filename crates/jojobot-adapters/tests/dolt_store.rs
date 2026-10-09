@@ -258,7 +258,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
     };
 
     // ── the path that creates ───────────────────────────────────────────────
-    let alpha = EntityId::person("person:badge-alpha");
+    let alpha = EntityId::person("person:contract-badge-alpha");
     memory
         .add_entity(NewEntity::new(
             alpha.clone(),
@@ -269,7 +269,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         .expect("add_entity ok")
         .written()
         .expect("the guard waves it through");
-    let minted = badge("person:badge-alpha")
+    let minted = badge("person:contract-badge-alpha")
         .await
         .expect("a created entity is given a badge");
 
@@ -279,7 +279,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
     // answer.
     let created = memory
         .add_entity(NewEntity::new(
-            EntityId::person("person:badge-gamma"),
+            EntityId::person("person:contract-badge-gamma"),
             "Badge Gamma",
             "contract-fixture",
         ))
@@ -289,7 +289,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         .expect("the guard waves it through");
     assert_eq!(
         created.badge,
-        badge("person:badge-gamma").await,
+        badge("person:contract-badge-gamma").await,
         "the answer to a creation and the row disagree about the badge",
     );
 
@@ -307,7 +307,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         .written()
         .expect("the guard waves it through");
     assert_eq!(
-        badge("person:badge-alpha").await.as_deref(),
+        badge("person:contract-badge-alpha").await.as_deref(),
         Some(minted.as_str()),
         "the row was rewritten and stopped being the thing anything else pointed at",
     );
@@ -323,20 +323,20 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         .await
         .expect("set_prose ok");
     assert_eq!(
-        badge("person:badge-alpha").await.as_deref(),
+        badge("person:contract-badge-alpha").await.as_deref(),
         Some(minted.as_str()),
         "writing a page took the row's badge with it",
     );
 
     // ── and no two share one ────────────────────────────────────────────────
-    let beta = EntityId::person("person:badge-beta");
+    let beta = EntityId::person("person:contract-badge-beta");
     memory
         .add_entity(NewEntity::new(beta, "Badge Beta", "contract-fixture"))
         .await
         .expect("add_entity ok")
         .written()
         .expect("the guard waves it through");
-    let other = badge("person:badge-beta")
+    let other = badge("person:contract-badge-beta")
         .await
         .expect("a created entity is given a badge");
     assert_ne!(
@@ -376,7 +376,7 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    for handle in ["person:fill-alpha", "person:fill-beta"] {
+    for handle in ["person:contract-fill-alpha", "person:contract-fill-beta"] {
         sqlx::query(
             "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
              VALUES (?, 'person', 'Fill', 'contract-fixture', NULL, NULL, 'on-demand', '', NULL)",
@@ -393,7 +393,7 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
         "the rows waiting for a badge were not given one",
     );
     let worn: Vec<Option<String>> = sqlx::query_scalar(
-        "SELECT badge FROM entity WHERE id IN ('person:fill-alpha', 'person:fill-beta')          ORDER BY id",
+        "SELECT badge FROM entity WHERE id IN ('person:contract-fill-alpha', 'person:contract-fill-beta')          ORDER BY id",
     )
     .fetch_all(&pool)
     .await
@@ -455,7 +455,7 @@ async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let handle = "person:rekey-alpha";
+    let handle = "person:contract-rekey-alpha";
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
          VALUES (?, 'person', 'Rekey Alpha', 'contract-fixture', NULL, NULL, 'on-demand', '', \
@@ -736,7 +736,7 @@ async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row()
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let subject = EntityId::person("person:pointer-migration-blocked-subject");
+    let subject = EntityId::person("person:contract-pointer-migration-blocked-subject");
     memory
         .add_entity(NewEntity::new(
             subject.clone(),
@@ -1307,7 +1307,7 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
     );
     let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
 
-    let was = EntityId::person("person:alias-rename-was");
+    let was = EntityId::person("person:contract-alias-rename-was");
     indexed
         .add_entity(NewEntity {
             aliases: vec!["Nicky".into()],
@@ -1776,7 +1776,7 @@ async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let was = EntityId::person("person:rename-no-badge-was");
+    let was = EntityId::person("person:contract-rename-no-badge-was");
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
          VALUES (?, 'person', 'No Badge Yet', 'contract-fixture', NULL, NULL, 'on-demand', '', \
@@ -1892,7 +1892,7 @@ async fn the_backfill_rekeys_an_alias_row_a_badge_reached_after_it_was_written()
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let handle = "person:alias-rekey-alpha";
+    let handle = "person:contract-alias-rekey-alpha";
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
          VALUES (?, 'person', 'Alias Rekey Alpha', 'contract-fixture', NULL, NULL, \
@@ -1986,8 +1986,8 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let subject = EntityId::person("person:kept-alpha");
-    let untouched = EntityId::person("person:kept-beta");
+    let subject = EntityId::person("person:contract-kept-alpha");
+    let untouched = EntityId::person("person:contract-kept-beta");
     for (who, called) in [(&subject, "Kept Alpha"), (&untouched, "Untouched Beta")] {
         memory
             .add_entity(NewEntity::new(who.clone(), called, "contract-fixture"))
@@ -3272,7 +3272,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let subject = EntityId::person("person:kept-alpha");
+    let subject = EntityId::person("person:contract-kept-alpha");
     memory
         .add_entity(NewEntity::new(subject.clone(), "Kept Alpha", "fixture"))
         .await
@@ -3290,7 +3290,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
         .written()
         .expect("the guard waves it through");
 
-    let badge = badge_of(&pool, "person:kept-alpha").await;
+    let badge = badge_of(&pool, "person:contract-kept-alpha").await;
     let stamped_at = |pool: sqlx::MySqlPool, badge: String, id: String| async move {
         sqlx::query_scalar::<_, Option<String>>(
             "SELECT inserted_at FROM fact WHERE entity = ? AND id = ?",
@@ -3357,7 +3357,7 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let subject = EntityId::person("person:noted-alpha");
+    let subject = EntityId::person("person:contract-noted-alpha");
     memory
         .add_entity(NewEntity::new(subject.clone(), "Noted Alpha", "fixture"))
         .await
@@ -3444,7 +3444,7 @@ async fn a_store_acting_out_a_day_stamps_that_day() {
         JUNE.parse().expect("a day"),
     ));
 
-    let subject = EntityId::person("person:acting-beta");
+    let subject = EntityId::person("person:contract-acting-beta");
     memory
         .add_entity(NewEntity::new(subject.clone(), "Acting Beta", "fixture"))
         .await
@@ -3529,7 +3529,7 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let subject = EntityId::person("person:backfill-alpha");
+    let subject = EntityId::person("person:contract-backfill-alpha");
     memory
         .add_entity(NewEntity::new(subject.clone(), "Backfill Alpha", "fixture"))
         .await
@@ -3690,7 +3690,7 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
-    let subject = EntityId::person("person:status-archived-alpha");
+    let subject = EntityId::person("person:contract-status-archived-alpha");
     memory
         .add_entity(NewEntity::new(
             subject.clone(),

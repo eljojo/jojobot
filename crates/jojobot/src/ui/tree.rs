@@ -131,14 +131,17 @@ mod tests {
 
     #[test]
     fn a_parent_chain_that_loops_stops_rather_than_hangs() {
-        let one = entity("person:x", Some("person:y"));
-        let two = entity("person:y", Some("person:x"));
+        let one = entity("person:contract-x", Some("person:contract-y"));
+        let two = entity("person:contract-y", Some("person:contract-x"));
         let by_id: HashMap<&EntityId, &Entity> =
             [&one, &two].map(|e| (&e.id, e)).into_iter().collect();
 
         // A record no write path can produce, and a page that hung on it would
         // be a worse answer than a short path.
-        assert_eq!(canonical_path(&one, &by_id), "/person:y/person:x/");
+        assert_eq!(
+            canonical_path(&one, &by_id),
+            "/person:contract-y/person:contract-x/"
+        );
     }
 
     /// A rung of a chain too long to spell out — built through the constructor
@@ -209,7 +212,7 @@ mod tests {
     fn a_parent_that_is_not_there_ends_the_path() {
         // A handle pointing at nothing cannot be walked through, so the path
         // stops at the entity that has it rather than inventing a segment.
-        let orphan = entity("topic:widgets", Some("person:ghost"));
+        let orphan = entity("topic:widgets", Some("person:contract-ghost"));
         let by_id: HashMap<&EntityId, &Entity> = [(&orphan.id, &orphan)].into_iter().collect();
         assert_eq!(canonical_path(&orphan, &by_id), "/topic:widgets/");
     }

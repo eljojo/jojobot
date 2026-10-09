@@ -688,7 +688,7 @@ mod tests {
             "search",
             serde_json::json!({
                 "query": "the guild",
-                "edge": {"shape": "membership", "object": "org:guild", "weight": 3},
+                "edge": {"shape": "membership", "object": "org:contract-guild", "weight": 3},
                 "sid": "any",
             }),
         )));
@@ -707,7 +707,7 @@ mod tests {
                     "search",
                     serde_json::json!({
                         "query": "the guild",
-                        "edge": {"shape": "membership", "object": "org:guild"},
+                        "edge": {"shape": "membership", "object": "org:contract-guild"},
                         "sid": "any",
                     }),
                 ))

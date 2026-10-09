@@ -152,7 +152,7 @@ fn the_seed_writes_before_it_reads() {
         .expect("the kinds are seeded");
 
     assert_eq!(
-        EntityId::person("person:kind-set-reader").kind(),
+        EntityId::person("person:contract-kind-set-reader").kind(),
         Some(EntityKind::PERSON),
         "after the seed this process reads a handle, which it can only do if the seed \
          loaded what it had just written",
@@ -200,7 +200,7 @@ fn a_store_stood_up_loads_nothing_and_a_booted_one_loads_what_it_holds() {
          booted store",
     );
     assert_eq!(
-        EntityId::person("person:kind-set-reader").kind(),
+        EntityId::person("person:contract-kind-set-reader").kind(),
         Some(EntityKind::PERSON),
         "and the set is filled well enough to parse a handle, which is what a case \
          needs it for",

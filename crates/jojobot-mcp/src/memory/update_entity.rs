@@ -632,7 +632,7 @@ mod tests {
             &jojobot
                 .add_entity(Parameters(AddEntityArgs {
                     aliases: Some(vec!["one, two".into()]),
-                    ..add_args("person", "comma-carrier", "Comma Carrier")
+                    ..add_args("person", "contract-comma-carrier", "Comma Carrier")
                 }))
                 .await
                 .expect("a caller mistake is an answer, not a protocol failure"),

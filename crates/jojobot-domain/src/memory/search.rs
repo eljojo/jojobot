@@ -836,7 +836,7 @@ mod tests {
             SearchQuery {
                 edge: Some(EdgeFilter {
                     shape: None,
-                    object: EntityId("place:x".into()),
+                    object: EntityId("place:contract-x".into()),
                 }),
                 ..Default::default()
             },
@@ -863,7 +863,7 @@ mod tests {
         let bad_object = SearchQuery {
             edge: Some(EdgeFilter {
                 shape: None,
-                object: EntityId("place:a|b".into()),
+                object: EntityId("place:contract-a|b".into()),
             }),
             ..Default::default()
         };
@@ -874,7 +874,7 @@ mod tests {
     }
 
     /// The shape→kind rule binds the **read** path as hard as the write path.
-    /// `{shape: location, object: person:x}` is a combination no write can
+    /// `{shape: location, object: person:contract-x}` is a combination no write can
     /// produce, so serving it returns zero hits — and zero hits reads as "nobody
     /// is there", not "you asked something impossible". The caller's mis-drawn
     /// filter has to come back as their mistake.

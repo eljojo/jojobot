@@ -110,8 +110,12 @@ PLAYBOOK=<path>`, which costs money and which `make check` never invokes.
 Every name, place and organisation in this repository comes from a fixed fictional
 roster: characters from the Simpsons, South Park, Family Guy or Bob's Burgers,
 plus greek letters. `crates/jojobot-domain/tests/fixture_roster.rs` lists the
-handles, and the bar checks every handle-shaped piece of text against it. A name
-written in ordinary words is not caught by that check, so it is held by
-attention. This holds for tests, fixtures, comments, documentation and commit
+handles in two lists, and the bar checks every handle-shaped piece of text
+against them. `ROSTER` is the cast. `ORDINARY` is the handles that name nobody: a
+view, a work item, a label for a test. A person, pet, place or organisation on
+`ORDINARY` has to say it names nobody by starting its slug with `contract-`, or
+be listed in `EXEMPT` with the reason a rename cannot work. A character a test
+needs is a roster name. A name written in ordinary words is not caught by that
+check, so it is held by attention. This holds for tests, fixtures, comments, documentation and commit
 messages alike — a commit message is part of the repository the moment it is
 written.

@@ -3321,7 +3321,7 @@ const LATER_REFERENCE_KEY: &str = "waiting_on";
 const LINK_TABLE_REBUILT: &str = "LINK TABLE DISAGREED";
 const NAMED_THING: &str = "person:upgrade-fixture-person";
 /// A roster handle no store in the gate holds, so it names nothing.
-const NAMELESS_THING: &str = "person:noted-alpha";
+const NAMELESS_THING: &str = "person:contract-noted-alpha";
 
 /// **Plain handle text written into the stopped store as an older build wrote
 /// it**: one field write per `(key, value)`, on the thing every injection uses.

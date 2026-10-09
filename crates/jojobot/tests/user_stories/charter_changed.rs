@@ -70,7 +70,7 @@ async fn a_charter_rewritten_by_another_identity_is_told_to_the_running_session_
 
     // ── a refusal carries it too ────────────────────────────────────────────
     let turned_down = gamma
-        .refused("recall", json!({ "subject": "person:zzz-nobody" }))
+        .refused("recall", json!({ "subject": "person:contract-zzz-nobody" }))
         .await;
     assert_eq!(
         entrant(&turned_down)["by"],

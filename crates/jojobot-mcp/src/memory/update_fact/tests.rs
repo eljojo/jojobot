@@ -2906,13 +2906,13 @@ async fn update_fact_archiving_an_unknown_home_gets_the_unknown_entity_answer() 
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 status: Some("archived".into()),
-                ..update_args("person:ghost#f1")
+                ..update_args("person:contract-ghost#f1")
             }))
             .await
             .expect("a refusal is an answer, not a protocol failure"),
     );
     assert_eq!(refused["status"], "blocked", "{refused}");
-    assert_eq!(refused["attempted"], "person:ghost", "{refused}");
+    assert_eq!(refused["attempted"], "person:contract-ghost", "{refused}");
 }
 
 /// **A role's own record cannot be archived through the handle its bot wore

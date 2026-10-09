@@ -161,7 +161,7 @@ async fn the_badge_column_lands_on_an_entity_table_that_already_has_rows() {
         .expect("the schema before the badge");
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, boot, prose) \
-             VALUES ('person:already-here', 'person', 'Already Here', 'contract-fixture', \
+             VALUES ('person:contract-already-here', 'person', 'Already Here', 'contract-fixture', \
              'on-demand', '')",
     )
     .execute(&pool)
@@ -184,7 +184,7 @@ async fn the_badge_column_lands_on_an_entity_table_that_already_has_rows() {
         "the badge migration did not apply to a populated table: {applied:?}",
     );
     let worn: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
-        .bind("person:already-here")
+        .bind("person:contract-already-here")
         .fetch_one(&pool)
         .await
         .expect("the row is still there");
@@ -1573,7 +1573,7 @@ async fn every_migrations_declared_shape_is_reached_once_it_has_run() {
 /// the second one, for free, which is the answer this seed exists to
 /// rule out.
 ///
-/// Every row here is filed under `person:already-here`, the roster
+/// Every row here is filed under `person:contract-already-here`, the roster
 /// handle the badge migration's own test already uses for exactly this
 /// "a row from before the change" shape — a fresh handle per migration
 /// would need its own roster entry for no reason a reader could see. The
@@ -1597,7 +1597,7 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
         "0035_fact_write_backfill" => {
             sqlx::query(
                 "INSERT INTO fact (entity, id, content, provenance, status, date) \
-                     VALUES ('person:already-here', 's35', 'a claim with no write of its own', \
+                     VALUES ('person:contract-already-here', 's35', 'a claim with no write of its own', \
                      'testimony', 'active', '2026-01-01')",
             )
             .execute(pool)
@@ -1607,7 +1607,7 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
         "0046_fact_status_archived" => {
             sqlx::query(
                 "INSERT INTO fact (entity, id, content, provenance, status, recorded_at) \
-                     VALUES ('person:already-here', 's46', 'a claim overtaken by a later one', \
+                     VALUES ('person:contract-already-here', 's46', 'a claim overtaken by a later one', \
                      'testimony', 'retracted', '2026-01-01')",
             )
             .execute(pool)
@@ -1618,7 +1618,7 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
             sqlx::query(
                 "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, \
                      status, recorded_at) \
-                     VALUES ('person:already-here', 's47', 1, 'a claim overtaken by a later one', \
+                     VALUES ('person:contract-already-here', 's47', 1, 'a claim overtaken by a later one', \
                      'testimony', 'negated', '2026-01-01')",
             )
             .execute(pool)
@@ -1890,7 +1890,7 @@ async fn an_interrupted_fact_write_backfill_is_recognized_by_a_claim_with_no_wri
     // away, the marker committed.
     sqlx::query(
         "INSERT INTO fact (entity, id, content, provenance, status, date)
-             VALUES ('person:already-here', 'f1', 'not yet given a write of its own', \
+             VALUES ('person:contract-already-here', 'f1', 'not yet given a write of its own', \
              'testimony', 'active', '2026-01-01')",
     )
     .execute(&pool)
@@ -1916,7 +1916,7 @@ async fn an_interrupted_fact_write_backfill_is_recognized_by_a_claim_with_no_wri
     // **Read by a route that is not the probe**: the claim's first write
     // now carries its content, which is what the backfill is FOR.
     let content: String = sqlx::query_scalar(
-        "SELECT content FROM fact_write WHERE entity = 'person:already-here' \
+        "SELECT content FROM fact_write WHERE entity = 'person:contract-already-here' \
              AND fact_id = 'f1'",
     )
     .fetch_one(&pool)
@@ -1952,7 +1952,7 @@ async fn an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_
     // ledger row taken away, the marker committed.
     sqlx::query(
         "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
-             VALUES ('person:already-here', 'f1', 'a claim overtaken by a later one', \
+             VALUES ('person:contract-already-here', 'f1', 'a claim overtaken by a later one', \
              'testimony', 'retracted', '2026-01-01')",
     )
     .execute(&pool)
@@ -1976,7 +1976,7 @@ async fn an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_
     // **Read by a route that is not the probe**: the claim's own status
     // column now reads `archived`.
     let status: String = sqlx::query_scalar(
-        "SELECT status FROM fact WHERE entity = 'person:already-here' AND id = 'f1'",
+        "SELECT status FROM fact WHERE entity = 'person:contract-already-here' AND id = 'f1'",
     )
     .fetch_one(&pool)
     .await
@@ -2010,7 +2010,7 @@ async fn an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_re
     sqlx::query(
         "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, \
              recorded_at)
-             VALUES ('person:already-here', 'f1', 1, 'a claim overtaken by a later one', \
+             VALUES ('person:contract-already-here', 'f1', 1, 'a claim overtaken by a later one', \
              'testimony', 'negated', '2026-01-01')",
     )
     .execute(&pool)
@@ -2034,7 +2034,7 @@ async fn an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_re
     // **Read by a route that is not the probe**: the write's own status
     // column now reads `archived`.
     let status: String = sqlx::query_scalar(
-        "SELECT status FROM fact_write WHERE entity = 'person:already-here' \
+        "SELECT status FROM fact_write WHERE entity = 'person:contract-already-here' \
              AND fact_id = 'f1' AND ordinal = 1",
     )
     .fetch_one(&pool)
@@ -2089,7 +2089,7 @@ async fn an_interrupted_entity_source_widening_is_recognized_by_the_columns_type
     // old hundred-and-ninety-one-byte width is what the widening is FOR.
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, boot, prose)
-             VALUES ('person:already-here', 'person', 'Already Here', ?, 'on-demand', '')",
+             VALUES ('person:contract-already-here', 'person', 'Already Here', ?, 'on-demand', '')",
     )
     .bind("s".repeat(200))
     .execute(&pool)
@@ -2141,7 +2141,7 @@ async fn an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type() 
     // old hundred-and-ninety-one-byte width is what the widening is FOR.
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, boot, prose)
-             VALUES ('person:already-here', 'person', 'Already Here', 'contract-fixture', ?, \
+             VALUES ('person:contract-already-here', 'person', 'Already Here', 'contract-fixture', ?, \
              'on-demand', '')",
     )
     .bind("c".repeat(200))

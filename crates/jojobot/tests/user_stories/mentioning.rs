@@ -181,7 +181,7 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     // never a bare miss that reads the same as a handle that never existed.
     s.refused(
         "rename_entity",
-        json!({"handle": "place:shelbyvile", "to": "place:x"}),
+        json!({"handle": "place:shelbyvile", "to": "place:contract-x"}),
     )
     .await
     .says("place:shelbyville");
@@ -216,7 +216,7 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     milhouse.says("thing:handcart");
 
     // **The negative control the two `recall`s above need.** Nothing here
-    // resembles `person:zzz-nobody` — not the renamed place, not Milhouse,
+    // resembles `person:contract-zzz-nobody` — not the renamed place, not Milhouse,
     // not the handcart — so a `recall` that had started resolving anything
     // at all, rather than genuinely walking the old-handle pointer, would
     // have left both positives above green while this one goes green for
@@ -225,9 +225,9 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     // body regardless of what fired it, so only the empty list says nothing
     // was found to resemble.
     let miss = s
-        .refused("recall", json!({"subject": "person:zzz-nobody"}))
+        .refused("recall", json!({"subject": "person:contract-zzz-nobody"}))
         .await;
-    assert_eq!(miss.json()["attempted"], "person:zzz-nobody");
+    assert_eq!(miss.json()["attempted"], "person:contract-zzz-nobody");
     assert_eq!(
         miss.json()["candidates"].as_array().expect("a list").len(),
         0,

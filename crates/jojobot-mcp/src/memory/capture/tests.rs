@@ -1456,14 +1456,14 @@ async fn a_ref_to_an_entity_nobody_created_is_blocked_and_writes_nothing() {
     let body = json_of(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                refs: Some(vec!["person:ghost".into()]),
+                refs: Some(vec!["person:contract-ghost".into()]),
                 ..capture_args("person:alpha", "it happened")
             }))
             .await
             .expect("an answer"),
     );
     assert_eq!(body["status"], "blocked", "{body}");
-    assert_eq!(body["attempted"], "person:ghost");
+    assert_eq!(body["attempted"], "person:contract-ghost");
     assert_eq!(body["wrote"], false);
 
     // …and the fact did not land either: a record is one write, so a ref it

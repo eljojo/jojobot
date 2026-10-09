@@ -1183,10 +1183,13 @@ mod tests {
     fn followable_finds_a_genuine_mention_and_leaves_the_two_dead_shapes_out() {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let known = [thing("person:milhouse", Some("k7h2mn"))];
-        let served = rendered("ask @#k7h2mn about @person:zzz and about @#dead1", &known);
+        let served = rendered(
+            "ask @#k7h2mn about @person:contract-zzz and about @#dead1",
+            &known,
+        );
         assert_eq!(
             served,
-            "ask @person:milhouse about @person:zzz (no such handle) and about @#dead1 (gone)",
+            "ask @person:milhouse about @person:contract-zzz (no such handle) and about @#dead1 (gone)",
         );
 
         let spans = followable(&served);

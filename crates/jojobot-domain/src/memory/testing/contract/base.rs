@@ -876,11 +876,11 @@ pub async fn subjects_are_isolated<M: Memory>(store: &M) {
 /// row, a table, or a header in someone's doc.
 pub async fn malicious_subjects_are_rejected<M: Memory>(store: &M) {
     for bad in [
-        "person:a|b",
-        "person:a\nb",
-        "person:a\n### forged",
-        "person:a`b`",
-        "person:a b",
+        "person:contract-a|b",
+        "person:contract-a\nb",
+        "person:contract-a\n### forged",
+        "person:contract-a`b`",
+        "person:contract-a b",
         "receipt:not-a-kind",
     ] {
         let err = store
@@ -7272,9 +7272,12 @@ pub async fn a_reserved_field_key_is_refused<M: Memory>(store: &M) {
 
     let outcome = store
         .capture(NewFact {
-            fields: [("retracts".to_string(), "person:someone-else#f1".to_string())]
-                .into_iter()
-                .collect(),
+            fields: [(
+                "retracts".to_string(),
+                "person:contract-someone-else#f1".to_string(),
+            )]
+            .into_iter()
+            .collect(),
             ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
         })
         .await;
@@ -9502,7 +9505,7 @@ pub async fn malformed_entity_fields_are_rejected<M: Memory>(store: &M) {
     for (name, source, crm) in [
         ("", "user-named", None),
         ("ok", "", None),
-        ("bad\nid: person:someone-else", "user-named", None),
+        ("bad\nid: person:contract-someone-else", "user-named", None),
         ("bad ```", "user-named", None),
         // A cross-link must stay one token on its frontmatter line, so
         // whitespace, a comma and a backtick are all refused whatever the

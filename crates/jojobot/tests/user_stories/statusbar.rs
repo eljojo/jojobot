@@ -53,7 +53,7 @@ async fn an_answer_says_there_is_mail_waiting_even_when_nothing_asked() {
     // got turned down is one about to work out what to do next, and what is
     // waiting for it is part of that.
     let turned_down = s
-        .refused("recall", json!({ "subject": "person:zzz-nobody" }))
+        .refused("recall", json!({ "subject": "person:contract-zzz-nobody" }))
         .await;
     turned_down.says("\"mail_waiting\":1");
 

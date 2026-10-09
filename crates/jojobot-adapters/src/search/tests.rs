@@ -444,7 +444,7 @@ async fn matching_every_term_outranks_matching_some_of_them() {
 }
 
 /// **Naming an entity outranks matching its text.** A fact that repeats the
-/// query's words scores higher on relevance alone; asking for `org:guild` is
+/// query's words scores higher on relevance alone; asking for `org:contract-guild` is
 /// asking about the guild, so the guild leads. The pin is decided by the write
 /// guard's matcher, so "close enough to be the same thing" has one definition
 /// in this system rather than two.
@@ -453,7 +453,7 @@ async fn naming_an_entity_pins_it_above_a_more_relevant_fact() {
     // A long name spreads the entity's relevance thin; a terse fact about it
     // concentrates the same words — so BM25 alone ranks the fact first.
     let guild = entity(
-        "org:guild",
+        "org:contract-guild",
         "Guild of the Northern Riverside Makers and Menders",
     );
     let index = index_of(vec![scan(
@@ -461,13 +461,13 @@ async fn naming_an_entity_pins_it_above_a_more_relevant_fact() {
         Some(guild.clone()),
         "",
         vec![
-            fact("org:guild", "f1", "guild", date(2026, 1, 1)),
-            fact("org:guild", "f2", "guild night", date(2026, 1, 2)),
+            fact("org:contract-guild", "f1", "guild", date(2026, 1, 1)),
+            fact("org:contract-guild", "f2", "guild night", date(2026, 1, 2)),
         ],
     )]);
 
     let hits = index
-        .search(&SearchQuery::text("org:guild"))
+        .search(&SearchQuery::text("org:contract-guild"))
         .expect("search ok");
     assert!(
         matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == guild.id),
@@ -610,7 +610,7 @@ async fn a_fact_hit_resolves_a_home_and_a_subject_that_differ() {
         )
     };
     let orphan = Fact {
-        subject: EntityId("person:ghost".into()),
+        subject: EntityId("person:contract-ghost".into()),
         ..fact(
             "person:alpha",
             "f2",
@@ -644,7 +644,7 @@ async fn a_fact_hit_resolves_a_home_and_a_subject_that_differ() {
 
     let ghost = refs
         .iter()
-        .find(|(s, _)| s.id.as_str() == "person:ghost")
+        .find(|(s, _)| s.id.as_str() == "person:contract-ghost")
         .expect("the orphaned row is indexed, not dropped");
     assert_eq!(
         ghost.0.kind,
@@ -675,7 +675,7 @@ async fn entity_hits_carry_the_edges_of_their_own_facts_only() {
     let alpha = entity("person:alpha", "Alpha");
     let beta = entity("person:beta", "Beta");
     let shelbyville = Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()));
-    let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
+    let guild = Edge::new(EdgeShape::Membership, EntityId("org:contract-guild".into()));
     let index = index_of(vec![
         scan(
             "doc-1",
@@ -5246,7 +5246,7 @@ async fn a_write_re_reads_its_doc_and_counts_the_orphans_it_finds() {
     const DOC: &str = "outline-uuid-re1nd3x";
 
     let hand_edited = Fact {
-        subject: EntityId::person("person:ghostly"),
+        subject: EntityId::person("person:contract-ghostly"),
         ..fact(
             "person:alpha",
             "f1",
@@ -5278,7 +5278,7 @@ async fn a_write_re_reads_its_doc_and_counts_the_orphans_it_finds() {
     let text = logged.text();
     assert!(text.contains(DOC), "the reindex must say which doc: {text}");
     assert!(
-        text.contains("person:ghostly"),
+        text.contains("person:contract-ghostly"),
         "…and which subject: {text}"
     );
 
@@ -7447,7 +7447,7 @@ async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
 /// handle is walkable, and every value that is not is not.
 ///
 /// **Whatever its key.** `ref` is the unnamed member of a family, and
-/// `mechanic=person:x` is the same link with the key doing the annotating.
+/// `mechanic=person:contract-x` is the same link with the key doing the annotating.
 /// A projection keyed on the literal word `ref` passes every test written
 /// against unnamed references and silently drops every named one.
 #[tokio::test]

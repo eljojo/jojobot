@@ -405,27 +405,27 @@ const ORDINARY: &[&str] = &[
     "event:wagstaff-fair",
     // Capital City is the state capital in The Simpsons; a trip there is a plain noun.
     "event:capital-city-trip",
-    "org:guild",
-    "person:a",
-    "person:acting-beta",
-    "person:alias-rename-was",
-    "person:alias-rekey-alpha",
-    "person:noted-alpha",
-    "person:already-here",
+    "org:contract-guild",
+    "person:contract-a",
+    "person:contract-acting-beta",
+    "person:contract-alias-rename-was",
+    "person:contract-alias-rekey-alpha",
+    "person:contract-noted-alpha",
+    "person:contract-already-here",
     "person:alpha-2",
     "person:alpha-a",
     "person:alpha-b",
     "person:alpha-one",
     "person:alpha-two",
     "person:alphaa",
-    "person:backfill-alpha",
-    "person:badge-alpha",
-    "person:badge-beta",
-    "person:badge-collision-blocker",
-    "person:badge-collision-holder",
-    "person:badge-collision-retried",
-    "person:badge-collision-stuck",
-    "person:badge-gamma",
+    "person:contract-backfill-alpha",
+    "person:contract-badge-alpha",
+    "person:contract-badge-beta",
+    "person:contract-badge-collision-blocker",
+    "person:contract-badge-collision-holder",
+    "person:contract-badge-collision-retried",
+    "person:contract-badge-collision-stuck",
+    "person:contract-badge-gamma",
     "person:barn",
     "person:barney-gumbel",
     "person:bet",
@@ -467,32 +467,32 @@ const ORDINARY: &[&str] = &[
     "person:contract-stands-for-self",
     "person:contract-stands-for-stack",
     "person:contract-stands-for-untouched",
-    "person:fill-alpha",
-    "person:fill-beta",
-    "person:frontdoor-probe",
+    "person:contract-fill-alpha",
+    "person:contract-fill-beta",
+    "person:contract-frontdoor-probe",
     "person:gama",
-    "person:ghost",
-    "person:ghostly",
-    "person:kept-alpha",
-    "person:kept-beta",
+    "person:contract-ghost",
+    "person:contract-ghostly",
+    "person:contract-kept-alpha",
+    "person:contract-kept-beta",
     "person:plus-one",
     "person:milhouse-2",
-    "person:projected",
-    "person:rekey-alpha",
+    "person:contract-projected",
+    "person:contract-rekey-alpha",
     "person:flanders-original",
     "person:ned-flander",
     "person:nelson-2",
-    "person:nobody-such-handle",
-    "person:someone-else",
+    "person:contract-nobody-such-handle",
+    "person:contract-someone-else",
     "person:upgrade-fixture-person",
-    "person:x",
-    "person:y",
+    "person:contract-x",
+    "person:contract-y",
     "person:zenit",
     // A plain noun. `zenit` beside it is its one-letter sibling, kept for the near-name cases.
     "person:zenith",
-    "person:zzz",
-    "person:zzz-nobody",
-    "place:a",
+    "person:contract-zzz",
+    "person:contract-zzz-nobody",
+    "place:contract-a",
     "place:atlas",
     "place:bet",
     "place:capital-citty",
@@ -510,7 +510,7 @@ const ORDINARY: &[&str] = &[
     "place:shelbyvile",
     "place:shelbyvlle",
     "place:springfeild",
-    "place:x",
+    "place:contract-x",
     "project:atlas",
     "project:atlas-two",
     "project:jojobot-server",
@@ -684,7 +684,7 @@ const ORDINARY: &[&str] = &[
     "org:contract-self-labelled",
     "org:contract-unscreened",
     "org:contract-unscreened-twin",
-    "person:comma-carrier",
+    "person:contract-comma-carrier",
     "person:contract-archived-link-moved-on",
     "person:contract-archived-link-still-going",
     "person:contract-addressable",
@@ -806,10 +806,10 @@ const ORDINARY: &[&str] = &[
     "person:contract-pallet-messy",
     "person:contract-nelson",
     "person:contract-pipe",
-    "person:pointer-migration-blocked-subject",
+    "person:contract-pointer-migration-blocked-subject",
     "person:pointer-migration-subject",
-    "person:rename-no-badge-was",
-    "person:status-archived-alpha",
+    "person:contract-rename-no-badge-was",
+    "person:contract-status-archived-alpha",
     "person:contract-promotable",
     "person:contract-provenance",
     "person:contract-quagmire",
@@ -871,7 +871,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-marked-supplied-stored",
     "person:contract-marked-twice",
     "person:contract-merge-session-gap-ordinary",
-    "person:kind-set-reader",
+    "person:contract-kind-set-reader",
     "pet:contract-field-migration-blocked-pet",
     "pet:contract-field-migration-pet",
     "pet:contract-listed-pointer-pet",
@@ -1118,6 +1118,96 @@ const ORDINARY: &[&str] = &[
     "work:contract-blocks-nobody",
     "thing:contract-blocks-ledger",
 ];
+
+/// **The kinds whose handle names somebody**: a person, a pet, a place or an
+/// organisation. A handle of one of these kinds is a name, so its being fictional
+/// rests on the show it comes from, and the cast list is where that is checked.
+const SOMEBODY_KINDS: [&str; 4] = ["person", "pet", "place", "org"];
+
+/// **The slug prefixes that say a handle names nobody.** A person, pet, place or
+/// organisation on [`ORDINARY`] has to carry one. `contract-` is the label every
+/// shared-contract fixture wears, and a reader seeing it knows the handle is a
+/// label for a test and not a name.
+const SYNTHETIC_PREFIXES: [&str; 1] = ["contract-"];
+
+/// **Why a handle is allowed on ORDINARY without a synthetic prefix.** There are
+/// three reasons, and each is a fact about the test or the fixture that cannot
+/// be changed by renaming the handle.
+const NEAR_MISS: &str = "a test measures how close this handle is to another, and a prefix would change \
+                         the distance";
+const ROOM_PLACEHOLDER: &str = "a room's furniture and its document name this handle, and a model \
+                                creates it under that name";
+const RECORDED: &str = "a recorded store holds this handle, and the store is frozen";
+
+/// **The person, pet, place and organisation handles on ORDINARY that carry no
+/// synthetic prefix, each with its reason.** An entry earns its place by being
+/// a fact about a test and not a convenience; the list only shrinks. A handle
+/// whose reason stops being true is renamed and leaves this list, and
+/// [`every_exemption_is_on_ordinary_without_a_prefix_and_says_why`] holds the
+/// list to what it claims.
+const EXEMPT: &[(&str, &str)] = &[
+    ("person:alpha-2", NEAR_MISS),
+    ("person:alpha-a", NEAR_MISS),
+    ("person:alpha-b", NEAR_MISS),
+    ("person:alpha-one", NEAR_MISS),
+    ("person:alpha-two", NEAR_MISS),
+    ("person:alphaa", NEAR_MISS),
+    ("person:bet", NEAR_MISS),
+    ("person:gama", NEAR_MISS),
+    ("person:zenit", NEAR_MISS),
+    ("person:zenith", NEAR_MISS),
+    ("person:milhouse-2", NEAR_MISS),
+    ("person:nelson-2", NEAR_MISS),
+    ("person:ned-flander", NEAR_MISS),
+    ("person:flanders-original", NEAR_MISS),
+    ("person:barn", NEAR_MISS),
+    ("person:barney-gumbel", NEAR_MISS),
+    ("place:capital-citty", NEAR_MISS),
+    ("place:north-haverbook", NEAR_MISS),
+    ("place:shelbyvile", NEAR_MISS),
+    ("place:shelbyvlle", NEAR_MISS),
+    ("place:springfeild", NEAR_MISS),
+    ("place:far-country", NEAR_MISS),
+    ("place:gorge-spot", NEAR_MISS),
+    ("place:golden-daredevil-gorge", NEAR_MISS),
+    ("place:daredevil-gorge-2", NEAR_MISS),
+    ("person:plus-one", ROOM_PLACEHOLDER),
+    ("place:atlas", ROOM_PLACEHOLDER),
+    ("place:bet", ROOM_PLACEHOLDER),
+    ("person:upgrade-fixture-person", RECORDED),
+    ("place:upgrade-fixture-place", RECORDED),
+    ("person:pointer-migration-subject", RECORDED),
+];
+
+/// **The handles on `ordinary` that name somebody and say nothing that shows
+/// they name nobody.** A handle of a somebody kind passes when its slug starts
+/// with a synthetic prefix, when `roster` already lists it, or when `exempt`
+/// lists it. Any other kind passes untouched: a thing, a work item or an event
+/// is never a name.
+///
+/// All three lists are parameters so a case can hand it a made-up list and see
+/// the check act, without the real lists having to be wrong first.
+fn somebodies_without_a_synthetic_prefix<'a>(
+    roster: &[&str],
+    ordinary: &[&'a str],
+    exempt: &[&str],
+) -> Vec<&'a str> {
+    ordinary
+        .iter()
+        .copied()
+        .filter(|handle| {
+            let Some((kind, slug)) = handle.split_once(':') else {
+                return false;
+            };
+            SOMEBODY_KINDS.contains(&kind)
+                && !SYNTHETIC_PREFIXES
+                    .iter()
+                    .any(|prefix| slug.starts_with(prefix))
+                && !roster.contains(handle)
+                && !exempt.contains(handle)
+        })
+        .collect()
+}
 
 /// **Every handle the gate accepts**: the cast and the ordinary names together.
 fn listed() -> impl Iterator<Item = &'static str> {
@@ -1733,6 +1823,100 @@ fn the_gate_still_reads_sources_under_crates() {
     assert!(
         !violations.iter().any(|v| v.contains("person:milhouse")),
         "…and a roster handle there must still pass: {violations:?}"
+    );
+}
+
+/// **ORDINARY names nobody who could be somebody.** A handle of kind person, pet,
+/// place or org on it has to carry a synthetic prefix, or be on the cast list.
+/// Without the check, a real person's name could be filed on ORDINARY as "a
+/// handle that names nobody", which is the one list a reviewer does not read.
+#[test]
+fn ordinary_holds_no_person_pet_place_or_org_without_a_synthetic_prefix() {
+    let exempt: Vec<&str> = EXEMPT.iter().map(|(handle, _)| *handle).collect();
+    let found = somebodies_without_a_synthetic_prefix(ROSTER, ORDINARY, &exempt);
+    assert!(
+        found.is_empty(),
+        "these handles name a person, pet, place or organisation and are on ORDINARY without a \
+         synthetic slug prefix ({SYNTHETIC_PREFIXES:?}). A character from the shows is a roster \
+         name; a label for a test wears a prefix: {found:?}"
+    );
+}
+
+/// **The check acts on all three shapes it has to tell apart.** A made-up person
+/// handle on ORDINARY is refused; the same slug behind the synthetic prefix
+/// passes; a roster person passes; and a made-up handle of a kind that names
+/// nobody passes too, so the check is a check on the four kinds and not on every
+/// handle.
+#[test]
+fn the_check_on_ordinary_refuses_a_made_up_person_and_passes_the_rest() {
+    let roster_person = ROSTER
+        .iter()
+        .copied()
+        .find(|handle| handle.starts_with("person:"))
+        .expect("the cast has a person");
+    // **Assembled rather than written**, because the gate reads this file too: a
+    // literal made-up handle here would be a violation of the rule the case is
+    // about, caught by the very scan it is testing.
+    let made_up = format!("person:{}", "made-up-for-this-case");
+    let labelled = format!(
+        "person:{}{}",
+        SYNTHETIC_PREFIXES[0], "made-up-for-this-case"
+    );
+    assert_eq!(
+        somebodies_without_a_synthetic_prefix(&[], &[made_up.as_str()], &[]),
+        [made_up.as_str()],
+        "a made-up person handle on ORDINARY is refused"
+    );
+    assert!(
+        somebodies_without_a_synthetic_prefix(&[], &[labelled.as_str()], &[]).is_empty(),
+        "a person behind the synthetic prefix passes"
+    );
+    assert!(
+        somebodies_without_a_synthetic_prefix(&[roster_person], &[roster_person], &[]).is_empty(),
+        "a roster person passes"
+    );
+    let thing = format!("thing:{}", "made-up-for-this-case");
+    assert!(
+        somebodies_without_a_synthetic_prefix(&[], &[thing.as_str()], &[]).is_empty(),
+        "a handle of a kind that names nobody passes without a prefix"
+    );
+    for kind in SOMEBODY_KINDS {
+        assert_eq!(
+            somebodies_without_a_synthetic_prefix(&[], &[&format!("{kind}:made-up")], &[]).len(),
+            1,
+            "{kind} is one of the kinds the check acts on"
+        );
+    }
+}
+
+/// **Every exemption is on ORDINARY, names a somebody, wears no prefix and says
+/// why.** An entry that is not on ORDINARY exempts nothing; one that carries the
+/// prefix needs no exemption; one that is not a somebody kind was never subject
+/// to the check. Each of the three is a stale entry, and the list only shrinks.
+#[test]
+fn every_exemption_is_on_ordinary_without_a_prefix_and_says_why() {
+    assert!(
+        !EXEMPT.is_empty(),
+        "an empty list would pass this for the wrong reason"
+    );
+    let mut stale = Vec::new();
+    for (handle, reason) in EXEMPT {
+        let (kind, slug) = handle.split_once(':').expect("a handle is kind:slug");
+        let ok = ORDINARY.contains(handle)
+            && SOMEBODY_KINDS.contains(&kind)
+            && !SYNTHETIC_PREFIXES
+                .iter()
+                .any(|prefix| slug.starts_with(prefix))
+            && !ROSTER.contains(handle)
+            && !reason.trim().is_empty();
+        if !ok {
+            stale.push(*handle);
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "these exemptions are not needed or not allowed any more; rename the handle or take \
+         it off the list: {stale:?}"
     );
 }
 

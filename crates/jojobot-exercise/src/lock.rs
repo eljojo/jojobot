@@ -1124,7 +1124,7 @@ mod tests {
 
         let locks = read(
             "```locks\n\
-             recall  {\"subject\": \"person:nobody-such-handle\"}\n\
+             recall  {\"subject\": \"person:contract-nobody-such-handle\"}\n\
              carries \"anything\"\n\
              say     this cannot be measured because the subject does not exist\n\
              \n\
@@ -1182,10 +1182,10 @@ mod tests {
         let locks = read(
             "```locks\n\
              recall  {\"kind\": \"person\"}\n\
-             carries person:nobody-such-handle\n\
+             carries person:contract-nobody-such-handle\n\
              say     nobody such is on the roster\n\
              \n\
-             recall  {\"subject\": \"person:nobody-such-handle\"}\n\
+             recall  {\"subject\": \"person:contract-nobody-such-handle\"}\n\
              carries \"anything\"\n\
              say     this cannot be measured because the subject does not exist\n\
              ```\n",
