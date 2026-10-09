@@ -456,7 +456,7 @@ async fn january(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Bearings check", "cadence_days": "90",
+               "sets": {"name": "Bearings check", "cadence_days": "90",
                           "advances_from": "due_date"}}),
     )
     .await;
@@ -648,7 +648,7 @@ async fn march(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "thing:longboard", "content": LONGBOARD_DAYS[1].1,
                "provenance": "testimony", "recorded_at": LONGBOARD_DAYS[1].0,
-               "fields": {"cost": "30", "settled": "paid"}}),
+               "sets": {"cost": "30", "settled": "paid"}}),
     )
     .await;
 }
@@ -866,7 +866,7 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
         sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": "around 800 kilometres since the spring",
-               "provenance": "testimony", "fields": {"km": "800"}}),
+               "provenance": "testimony", "sets": {"km": "800"}}),
     )
     .await;
 }
@@ -895,7 +895,7 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:bearings-check", "content": "did the skateboard bearings this morning",
-               "fields": {"last_check_in": "2026-06-14"}}),
+               "sets": {"last_check_in": "2026-06-14"}}),
     )
     .await;
 }
@@ -908,7 +908,7 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:bearings-check", "content": "did the bearings again today",
-               "fields": {"last_check_in": "2026-11-22"}}),
+               "sets": {"last_check_in": "2026-11-22"}}),
     )
     .await;
 }
@@ -938,7 +938,7 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:orphan", "content": "did the wheels again today",
-               "fields": {"last_check_in": "2026-11-22"}}),
+               "sets": {"last_check_in": "2026-11-22"}}),
     )
     .await;
 }
@@ -1543,7 +1543,7 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
         sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": "around 600 kilometres since June",
-               "provenance": "testimony", "fields": {"km": "600"}}),
+               "provenance": "testimony", "sets": {"km": "600"}}),
     )
     .await;
     // **The job off the vocabulary January declared — on its own subject,
@@ -1555,7 +1555,7 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
         sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": said[0],
-               "provenance": "testimony", "fields": {"cost": "45", "settled": words[0]}}),
+               "provenance": "testimony", "sets": {"cost": "45", "settled": words[0]}}),
     )
     .await;
     // **The second job off the vocabulary — its own subject, its own wrong
@@ -1567,7 +1567,7 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
         sid,
         "capture",
         json!({"subject": "thing:skate-tool", "content": said[1],
-               "provenance": "testimony", "fields": {"cost": "20", "settled": words[1]}}),
+               "provenance": "testimony", "sets": {"cost": "20", "settled": words[1]}}),
     )
     .await;
 }
@@ -1692,7 +1692,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         "capture",
         json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
-               "fields": {"was": was}}),
+               "sets": {"was": was}}),
     )
     .await;
     // **The control this rests on, filed under the operator's own word in
@@ -1706,7 +1706,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         sid,
         "capture",
         json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
-               "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
+               "provenance": "testimony", "sets": {"cost": "15", "settled": "waived"}}),
     )
     .await;
     // **The one job off the vocabulary January declared, put right — if
@@ -1726,7 +1726,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
             names_the_source,
             json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
                    "provenance": "testimony",
-                   "fields": {"cost": "45", "settled": "invoiced"}}),
+                   "sets": {"cost": "45", "settled": "invoiced"}}),
         )
         .await;
     }
@@ -1743,7 +1743,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
             names_the_source,
             json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
                    "provenance": "testimony",
-                   "fields": {"cost": "20", "settled": "invoiced"}}),
+                   "sets": {"cost": "20", "settled": "invoiced"}}),
         )
         .await;
     }
@@ -1757,7 +1757,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": "what is actually invoiced across this year's jobs",
-               "provenance": "inference", "fields": {"owed": owed.to_string()}}),
+               "provenance": "inference", "sets": {"owed": owed.to_string()}}),
     )
     .await;
     fold_the_longboards_pile(room, sid).await;
@@ -1859,7 +1859,7 @@ async fn later_december_never_folds_the_longboard(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
-               "fields": {"was": was}}),
+               "sets": {"was": was}}),
     )
     .await;
 }
@@ -2071,7 +2071,7 @@ async fn later_december_answers_from_the_claim_as_it_stands(room: &Surface, sid:
         "capture",
         json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
-               "fields": {"was": now}}),
+               "sets": {"was": now}}),
     )
     .await;
 }
@@ -2103,7 +2103,7 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "thing:board-lock", "content": "the record was corrected during the year",
                "provenance": "inference",
-               "fields": {"was": "bought a U-lock for the skateboard (recorded 2026-12-13, corrected the same sitting)"}}),
+               "sets": {"was": "bought a U-lock for the skateboard (recorded 2026-12-13, corrected the same sitting)"}}),
     )
     .await;
 }
@@ -2960,7 +2960,7 @@ async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
         "capture",
         json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
+               "sets": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
     )
     .await;
     let dec = sitting(&surface, "2026-12-13").await;
@@ -3018,7 +3018,7 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
         "capture",
         json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
+               "sets": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
     )
     .await;
     // A second, unrelated record on the same subject — the wrong address the
@@ -3106,7 +3106,7 @@ async fn the_wheelss_job_lock_fails_when_nothing_corrects_the_word() {
         &sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
-               "provenance": "testimony", "fields": {"cost": "45", "settled": "sent"}}),
+               "provenance": "testimony", "sets": {"cost": "45", "settled": "sent"}}),
     )
     .await;
     let now = boundary(&surface, "after").await;
@@ -3141,7 +3141,7 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
         &sid,
         "capture",
         json!({"subject": "thing:longboard", "content": "the soft spot was patched",
-               "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
+               "provenance": "testimony", "sets": {"cost": "30", "settled": "paid"}}),
     )
     .await;
     // **A sitting that cannot tell right from wrong**, played: it paints
@@ -3151,7 +3151,7 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
         &sid,
         "capture",
         json!({"subject": "thing:longboard", "content": "the soft spot was patched",
-               "provenance": "inference", "fields": {"settled": "invoiced"}}),
+               "provenance": "inference", "sets": {"settled": "invoiced"}}),
     )
     .await;
     let now = boundary(&surface, "after").await;
@@ -3183,7 +3183,7 @@ async fn the_skate_tools_job_lock_fails_when_nothing_corrects_the_word() {
         &sid,
         "capture",
         json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
-               "provenance": "testimony", "fields": {"cost": "20", "settled": "billed"}}),
+               "provenance": "testimony", "sets": {"cost": "20", "settled": "billed"}}),
     )
     .await;
     let now = boundary(&surface, "after").await;
@@ -3215,7 +3215,7 @@ async fn the_board_locks_job_control_fails_when_it_gets_repainted_too() {
         &sid,
         "capture",
         json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
-               "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
+               "provenance": "testimony", "sets": {"cost": "15", "settled": "waived"}}),
     )
     .await;
     // **A sitting that cannot tell right from wrong**, played: it paints
@@ -3225,7 +3225,7 @@ async fn the_board_locks_job_control_fails_when_it_gets_repainted_too() {
         &sid,
         "capture",
         json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
-               "provenance": "inference", "fields": {"settled": "invoiced"}}),
+               "provenance": "inference", "sets": {"settled": "invoiced"}}),
     )
     .await;
     let now = boundary(&surface, "after").await;
@@ -3261,7 +3261,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &sid,
         "capture",
         json!({"subject": "thing:longboard", "content": "the soft spot was patched",
-               "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
+               "provenance": "testimony", "sets": {"cost": "30", "settled": "paid"}}),
     )
     .await;
     did(
@@ -3269,7 +3269,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
-               "provenance": "testimony", "fields": {"cost": "45", "settled": "invoiced"}}),
+               "provenance": "testimony", "sets": {"cost": "45", "settled": "invoiced"}}),
     )
     .await;
     did(
@@ -3285,7 +3285,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &sid,
         "capture",
         json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
-               "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
+               "provenance": "testimony", "sets": {"cost": "15", "settled": "waived"}}),
     )
     .await;
     did(
@@ -3293,7 +3293,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &sid,
         "capture",
         json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
-               "provenance": "testimony", "fields": {"cost": "20", "settled": "invoiced"}}),
+               "provenance": "testimony", "sets": {"cost": "20", "settled": "invoiced"}}),
     )
     .await;
     // **The wrong route, played**: every job added regardless of its word —
@@ -3303,7 +3303,7 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
         &sid,
         "capture",
         json!({"subject": "thing:skateboard", "content": "what is actually invoiced across this year's jobs",
-               "provenance": "inference", "fields": {"owed": "110"}}),
+               "provenance": "inference", "sets": {"owed": "110"}}),
     )
     .await;
     let now = boundary(&surface, "after").await;
@@ -5275,7 +5275,7 @@ async fn a_refused_scripted_call_ends_the_run_naming_the_phase_and_the_refusal()
                 &sid,
                 "capture",
                 json!({"subject": "bot:assistant", "content": "a ceiling of its own",
-                       "fields": {"thought_capacity": "9"}}),
+                       "sets": {"thought_capacity": "9"}}),
             )
             .await;
         }
@@ -5309,7 +5309,7 @@ async fn an_in_place_correction_of_an_earlier_sittings_testimony_ends_the_year_a
                 &surface,
                 &sid,
                 "update_fact",
-                json!({"address": address, "fields": {"settled": "invoiced"}}),
+                json!({"address": address, "sets": {"settled": "invoiced"}}),
             )
             .await;
         }
@@ -5358,7 +5358,7 @@ async fn a_run_that_leaves_sittings_out_goes_on_past_an_absent_thing_and_no_furt
                 &sid,
                 "capture",
                 json!({"subject": "bot:assistant", "content": "a ceiling of its own",
-                       "fields": {"thought_capacity": "9"}}),
+                       "sets": {"thought_capacity": "9"}}),
             )
             .await;
         }
