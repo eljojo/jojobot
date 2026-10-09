@@ -98,6 +98,10 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let handle = EntityId::person(&args.handle);
+        // **A voucher is issued, never edited.** Judged on the handle's kind.
+        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&handle) {
+            return memory_declined("update_entity", refused);
+        }
         // Taken before `args`' fields are moved into `patch` below — this
         // owns its own copy, so it survives the moves that follow.
         let token_slot = TokenSlot::from(&args);

@@ -760,6 +760,11 @@ impl Jojobot {
         let declared = Declared::of(&args);
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
+        // **A voucher is issued, never written.** Judged on the subject's kind,
+        // ahead of everything the call carries.
+        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&subject) {
+            return memory_declined("capture", refused);
+        }
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let recorded_at = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())

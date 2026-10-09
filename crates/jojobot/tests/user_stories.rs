@@ -37,6 +37,8 @@ mod boot;
 mod carried_role;
 #[path = "user_stories/catching_up.rs"]
 mod catching_up;
+#[path = "user_stories/chain_of_trust.rs"]
+mod chain_of_trust;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
 #[path = "user_stories/chart.rs"]

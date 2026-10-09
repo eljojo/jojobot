@@ -19,6 +19,7 @@ pub mod list_runs;
 pub mod role_write;
 #[cfg(test)]
 pub mod testing;
+pub mod voucher_write;
 pub mod wire;
 pub mod wrap_session;
 

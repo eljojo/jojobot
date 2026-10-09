@@ -1732,6 +1732,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::THREAD, "thread"),
         (EntityKind::DECISION, "decision"),
         (EntityKind::ROLE, "role"),
+        (EntityKind::VOUCHER, "voucher"),
     ];
     for (kind, token) in all {
         assert_eq!(kind.as_token(), token);

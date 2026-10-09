@@ -191,10 +191,20 @@ impl EntityKind {
     /// Only the claim itself writes its holder and its claim moment.
     pub const ROLE: EntityKind = EntityKind("role");
 
+    /// **A grant to do one gated act**, held by one session: the right, the
+    /// target it is for, who holds it, who issued it, the voucher it descends
+    /// from and where it stands. Only the engine writes one — see
+    /// [`crate::voucher`].
+    ///
+    /// **Not a role.** A role answers *is this seat occupied*; a voucher answers
+    /// *may this session do this act on this target*, and three of the four acts
+    /// are not about a seat at all.
+    pub const VOUCHER: EntityKind = EntityKind("voucher");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 18] = [
+    pub const ALL: [EntityKind; 19] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -213,6 +223,7 @@ impl EntityKind {
         EntityKind::THREAD,
         EntityKind::DECISION,
         EntityKind::ROLE,
+        EntityKind::VOUCHER,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -5453,6 +5464,25 @@ pub enum MemoryError {
         role: String,
         /// The exact key that was named.
         key: String,
+    },
+    /// **A voucher named on the ordinary caller-facing surface.** Never a
+    /// question of who is asking: the engine is the only writer of a voucher, and
+    /// it writes through the `Memory` trait rather than through a verb this guard
+    /// sits in front of — see [`crate::voucher::refuses_voucher_write`].
+    #[error("'{subject}' is a voucher: vouchers are issued, not written")]
+    VoucherIssued {
+        /// The voucher that was named.
+        subject: String,
+    },
+    /// **A voucher names a right no code knows.** Refused rather than accepted
+    /// and ignored: the behaviour of a right lives in the build — see
+    /// [`crate::voucher::refuses_unknown_right`].
+    #[error("no code knows the right '{right}'")]
+    UnknownRight {
+        /// The word that was named.
+        right: String,
+        /// The words that are known: the shipped rights, then the instance's.
+        known: Vec<String>,
     },
     /// **A role is already held, freshly, by somebody else.** The claim
     /// path's own refusal, decided and enforced in the same act as the

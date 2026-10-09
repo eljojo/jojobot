@@ -13,7 +13,7 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a hand tool — and a companion animal is not one.
@@ -60,6 +60,9 @@ pub struct AddEntityArgs {
     /// that holds it: `holder`, `claimed_at` and `agent` say who has it, since
     /// when and in which runtime agent. jojobot makes one the first time a role is
     /// claimed, and only a claim writes its `holder` and `claimed_at`.
+    ///
+    /// **A `voucher` is a grant to do one gated act, and it is issued, never
+    /// created here**: a call that names one is refused with nothing written.
     pub(crate) kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is the name this entity is
@@ -261,6 +264,11 @@ impl Jojobot {
         // Kept for the refusal below: which handle the guard turned back is
         // what says whether it was this entity or the one it named as parent.
         let creating = id.clone();
+        // **A voucher is issued, never made by hand.** Judged on the handle's
+        // kind, ahead of everything the call carries.
+        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&creating) {
+            return memory_declined("add_entity", refused);
+        }
         // **A new bot grows every other bot's snapshot**, which is a write that
         // is never refused: a colleague is not a mistake. What it can do is
         // take a bot's boot over the ceiling, so each bot's floor is read now

@@ -453,6 +453,32 @@ answer: {
 }
 ```
 
+### Memory refusal `VoucherIssued`
+
+```text
+reads: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written
+answer: {
+  "attempted": "voucher:boot-as-patty",
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written. A voucher is a grant the engine issues to a session down the org chart; no record a caller writes is a grant. 'voucher:boot-as-patty' stays as it is, and nothing here creates, edits or takes one back.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
+### Memory refusal `UnknownRight`
+
+```text
+reads: no code knows the right 'fly'
+answer: {
+  "attempted": "fly",
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: no code knows the right 'fly'. A right grants only what code gives it, so a voucher for a word nothing implements is refused. The rights known here are: boot-as.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `RoomFull`
 
 ```text

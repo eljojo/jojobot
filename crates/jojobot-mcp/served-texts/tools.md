@@ -148,7 +148,7 @@ care.
 
 ```text
 One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`.
+`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`.
 
 **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
 a bike, a hand tool — and a companion animal is not one.
@@ -195,6 +195,9 @@ decision that changes is a new `decision` whose record names the old one in
 that holds it: `holder`, `claimed_at` and `agent` say who has it, since
 when and in which runtime agent. jojobot makes one the first time a role is
 claimed, and only a claim writes its `holder` and `claimed_at`.
+
+**A `voucher` is a grant to do one gated act, and it is issued, never
+created here**: a call that names one is refused with nothing written.
 ```
 
 #### `add_entity` — argument `/inputSchema.name`

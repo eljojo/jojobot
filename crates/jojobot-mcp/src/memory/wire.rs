@@ -385,6 +385,9 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         // A seat held by one session at a time has no schema.org word, and the
         // plain one is the same choice as for `thread` and `rhythm`.
         "role" => "Role",
+        // A grant to do one gated act has no schema.org word either; the plain
+        // one, as for `role`.
+        "voucher" => "Voucher",
         // **A kind the software never heard of has no word waiting for it.**
         // The set of kinds is data, so a store may hold one this build has no
         // opinion about, and the honest answer is the caller's own token
@@ -443,6 +446,7 @@ mod tests {
             (EntityKind::THREAD, "thread", "Thread"),
             (EntityKind::DECISION, "decision", "Decision"),
             (EntityKind::ROLE, "role", "Role"),
+            (EntityKind::VOUCHER, "voucher", "Voucher"),
         ];
         assert_eq!(
             table.len(),

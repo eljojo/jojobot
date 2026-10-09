@@ -382,6 +382,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_holder).await;
     assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
         .await;
+    assert_the_voucher_kind_arrives_and_no_voucher_exists(&surface, &git_ref).await;
     surface.finish().await;
     third.stop().await;
 
@@ -2320,6 +2321,22 @@ async fn a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot()
     surface.finish().await;
     second.stop().await;
     drop(scratch);
+}
+
+/// **A store upgraded into the voucher kind holds the kind and no voucher.**
+/// The kind arrives with the boot's own seed, and nothing writes a voucher on
+/// the way: the gate is open until a later release issues the first one.
+async fn assert_the_voucher_kind_arrives_and_no_voucher_exists(surface: &Surface, git_ref: &str) {
+    let read = surface
+        .call("list_entities", json!({"kind": "voucher"}))
+        .await;
+    let parsed: serde_json::Value = serde_json::from_str(&read).unwrap_or_else(|_| {
+        panic!("recorded at {git_ref}: the voucher listing did not read back: {read}")
+    });
+    assert_eq!(
+        parsed["count"], 0,
+        "recorded at {git_ref}: a store upgraded into the voucher kind holds a voucher: {read}"
+    );
 }
 
 /// **A pair written before a write had a moment of its own merges after the

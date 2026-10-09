@@ -97,6 +97,10 @@ impl Jojobot {
         // of the record it names, and the store resolves the typed handle
         // itself, with one targeted read. Listing every entity to do it here
         // would cost the size of the store on every retraction.
+        // **A voucher is voided by the engine, never taken back by a caller.**
+        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&address.home) {
+            return memory_declined("retract", refused);
+        }
         let carried = match self.memory.recall(&address.home).await {
             Ok(carried) => carried,
             Err(MemoryError::UnknownEntity { .. }) => Vec::new(),

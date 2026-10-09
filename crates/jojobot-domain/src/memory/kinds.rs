@@ -28,9 +28,9 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 18] = [
+pub const SHIPPED: [&str; 19] = [
     "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
-    "promise", "machine", "view", "session", "thread", "decision", "role",
+    "promise", "machine", "view", "session", "thread", "decision", "role", "voucher",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -306,6 +306,23 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new(crate::session::ROLE_HOLDER, ValueType::Text),
             Field::new(crate::session::ROLE_CLAIMED_AT, ValueType::Text),
             Field::new("agent", ValueType::Text),
+        ],
+        // **A grant to do one gated act**, and every key is optional: only the
+        // engine writes one, whole, through `crate::voucher::Voucher`, so a
+        // required key would guard nothing a caller can reach. `holder` and
+        // `issuer` are sids and stay text, because the handle of a run is not
+        // its sid. `target` names a bot or a role, so it is text too. `parent`
+        // is the link back towards the root and names a voucher.
+        "voucher" => vec![
+            Field::new(crate::voucher::RIGHT, ValueType::Text),
+            Field::new(crate::voucher::TARGET, ValueType::Text),
+            Field::new(crate::voucher::HOLDER, ValueType::Text),
+            Field::new(crate::voucher::ISSUER, ValueType::Text),
+            Field::pointing_at(crate::voucher::PARENT, super::EntityKind::VOUCHER),
+            Field::one_of(
+                crate::voucher::STATE,
+                crate::voucher::VoucherState::ALL.map(crate::voucher::VoucherState::as_token),
+            ),
         ],
         _ => Vec::new(),
     }

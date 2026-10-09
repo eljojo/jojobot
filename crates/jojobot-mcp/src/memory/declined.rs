@@ -262,6 +262,8 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::MergeOverfillsRoom { .. }
         | MemoryError::MergeThoughtTooLong { .. }
         | MemoryError::RoleFieldGuarded { .. }
+        | MemoryError::VoucherIssued { .. }
+        | MemoryError::UnknownRight { .. }
         | MemoryError::RoleNotHeld { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NothingToMerge { .. }
@@ -1251,6 +1253,46 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 body.to_string(),
             )]))
         }
+        // **A voucher is issued, never written.** The subject is a voucher's
+        // handle, which may not exist as an entity, so this is its own small
+        // body for the reason the role refusal above gives.
+        MemoryError::VoucherIssued { ref subject } => {
+            let how_to_proceed = WayForward::from(format!(
+                "Nothing was written: {e}. A voucher is a grant the engine issues to a session \
+                 down the org chart; no record a caller writes is a grant. '{subject}' stays as \
+                 it is, and nothing here creates, edits or takes one back."
+            ));
+            let mut body = serde_json::json!({
+                "status": "blocked",
+                "attempted": subject,
+                "wrote": false,
+            });
+            how_to_proceed.write_into(&mut body);
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
+        // **A right no code knows.** Names the words that are known, so the way
+        // forward is in the refusal.
+        MemoryError::UnknownRight {
+            ref right,
+            ref known,
+        } => {
+            let how_to_proceed = WayForward::from(format!(
+                "Nothing was written: {e}. A right grants only what code gives it, so a \
+                 voucher for a word nothing implements is refused. The rights known here are: {}.",
+                known.join(", ")
+            ));
+            let mut body = serde_json::json!({
+                "status": "blocked",
+                "attempted": right,
+                "wrote": false,
+            });
+            how_to_proceed.write_into(&mut body);
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         // **The claim path's own refusal, not a caller mistake about shape.**
         // A second claimant told no while the lease is fresh — the same
         // information `start_here`'s own `claim` answer carries when this is
@@ -1371,6 +1413,8 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::MergeOverfillsRoom { .. }
         | MemoryError::MergeThoughtTooLong { .. }
         | MemoryError::RoleFieldGuarded { .. }
+        | MemoryError::VoucherIssued { .. }
+        | MemoryError::UnknownRight { .. }
         | MemoryError::RoleTaken { .. }
         | MemoryError::TestimonyRewritten { .. }
         | MemoryError::KeyInOtherBag { .. }
@@ -1966,6 +2010,21 @@ pub(crate) mod tests {
                 MemoryError::RoleFieldGuarded {
                     role: s("dev"),
                     key: s("role/dev/holder"),
+                },
+                Some("change"),
+            ),
+            (
+                "VoucherIssued",
+                MemoryError::VoucherIssued {
+                    subject: s("voucher:boot-as-patty"),
+                },
+                Some("change"),
+            ),
+            (
+                "UnknownRight",
+                MemoryError::UnknownRight {
+                    right: s("fly"),
+                    known: vec![s("boot-as")],
                 },
                 Some("change"),
             ),
