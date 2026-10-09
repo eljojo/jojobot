@@ -434,15 +434,19 @@ async fn an_empty_search_for_a_shipped_type_names_its_keys_and_shares_the_teachi
 
     // ── a search that holds something carries neither, and spends nothing ───
     let c = story.session().await;
-    c.add("event:gorge-survey", "The Gorge Survey").await;
+    c.add(
+        "event:gorge-safety-inspection",
+        "The Gorge Safety Inspection",
+    )
+    .await;
     c.add("place:springfield", "Springfield").await;
-    c.add("place:north-gorge", "The North Gorge").await;
+    c.add("place:daredevil-gorge", "The Daredevil Gorge").await;
     c.event_with(
-        "event:gorge-survey",
+        "event:gorge-safety-inspection",
         "four days up the gorge",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "place:north-gorge",
+            "arrives_at": "place:daredevil-gorge",
             "leaves_on": "2026-09-03",
             "returns_on": "2026-09-07",
         }),
