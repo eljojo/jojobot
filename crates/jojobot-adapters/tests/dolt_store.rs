@@ -482,14 +482,14 @@ async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
         .written()
         .expect("the guard waves it through");
     let claim = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             details: Some("a nuance worth keeping".into()),
             derived_from: Some(source.address()),
             fields: [("note".to_string(), "kept".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the second claim", date(2026, 3, 2))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -850,12 +850,12 @@ async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text()
         .written()
         .expect("nothing collides with it");
     let written = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("friends".to_string(), format!("{alpha}, {beta}"))]
                 .into_iter()
                 .collect(),
             ..NewFact::about(pet.clone(), "made two friends", date(2026, 5, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -1639,12 +1639,12 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
         }
         for (bot, manager) in reports {
             memory
-                .capture(NewFact {
+                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                     fields: [("reports_to".to_string(), (*manager).to_string())]
                         .into_iter()
                         .collect(),
                     ..NewFact::about(EntityId((*bot).into()), "reports up", date(2026, 8, 1))
-                })
+                }))
                 .await
                 .expect("capture ok")
                 .written()
@@ -2158,7 +2158,7 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
             .expect("an entity wears a badge")
     };
     let held = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [
                 ("blocks".to_string(), target.to_string()),
                 ("waits_on".to_string(), format!("{target}, {other}")),
@@ -2166,7 +2166,7 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
             .into_iter()
             .collect(),
             ..NewFact::about(holder.clone(), "waits on two things", date(2026, 8, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -2229,12 +2229,12 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
     memory
         .update_fact(
             &held.address(),
-            FactPatch {
+            jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                 fields: [("blocks".to_string(), other.to_string())]
                     .into_iter()
                     .collect(),
                 ..Default::default()
-            },
+            }),
             &EntityId("bot:assistant".into()),
         )
         .await
@@ -3365,13 +3365,13 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
         .written()
         .expect("the guard waves it through");
 
-    let with_a_note = NewFact {
+    let with_a_note = jojobot_domain::memory::testing::contract::state(NewFact {
         details: Some("exact day not given, approximated as mid-summer".into()),
         fields: [("moved_in".to_string(), "2026-08-15".to_string())]
             .into_iter()
             .collect(),
         ..NewFact::about(subject.clone(), "when they moved in", date(2026, 8, 15))
-    };
+    });
     memory
         .capture(with_a_note)
         .await
@@ -3379,12 +3379,12 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
         .written()
         .expect("the guard waves it through");
 
-    let plain = NewFact {
+    let plain = jojobot_domain::memory::testing::contract::state(NewFact {
         fields: [("rent".to_string(), "950".to_string())]
             .into_iter()
             .collect(),
         ..NewFact::about(subject.clone(), "what the rent is", date(2026, 8, 15))
-    };
+    });
     memory
         .capture(plain)
         .await
@@ -3805,13 +3805,13 @@ async fn a_fields_hit_answers_with_no_full_listing() {
         .written()
         .expect("not blocked");
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
             )]),
             ..NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -3933,10 +3933,10 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         ])
     };
     let claim = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: fields_at(t0),
             ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -3953,7 +3953,7 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
     let renewed = memory
         .update_fact(
             &claim.address(),
-            FactPatch {
+            jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                 fields: fields_at(renewed_at),
                 role_move: Some(RoleMove {
                     kind: RoleMoveKind::Renew,
@@ -3961,7 +3961,7 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
                     claimant: "delta".into(),
                 }),
                 ..FactPatch::default()
-            },
+            }),
             &bot,
         )
         .await
@@ -4049,10 +4049,10 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
         ])
     };
     let claim = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: fields_at(t0),
             ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -4061,7 +4061,7 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
         let renewed = memory
             .update_fact(
                 &claim.address(),
-                FactPatch {
+                jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                     fields: fields_at(t0 + jiff::SignedDuration::from_mins(minutes)),
                     role_move: Some(RoleMove {
                         kind: RoleMoveKind::Renew,
@@ -4069,7 +4069,7 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
                         claimant: "delta".into(),
                     }),
                     ..FactPatch::default()
-                },
+                }),
                 &bot,
             )
             .await
@@ -4412,13 +4412,13 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
         .written()
         .expect("not blocked");
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
             )]),
             ..NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -4547,13 +4547,13 @@ async fn a_history_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
         .written()
         .expect("not blocked");
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
             )]),
             ..NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -4612,13 +4612,13 @@ async fn a_backing_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
         .written()
         .expect("not blocked");
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
             )]),
             ..NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -6098,7 +6098,7 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
             .expect("nothing collides with it");
     }
     let held = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [
                 ("blocks".to_string(), alpha.to_string()),
                 ("waits_on".to_string(), format!("{alpha}, {beta}")),
@@ -6108,7 +6108,7 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
             .into_iter()
             .collect(),
             ..NewFact::about(holder.clone(), "waits on two things", date(2026, 8, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -6219,12 +6219,12 @@ async fn a_merge_moves_the_link_rows_with_the_writes() {
             .expect("nothing collides with it");
     }
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("blocks".to_string(), alpha.to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(duplicate.clone(), "waits on alpha", date(2026, 8, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
@@ -6291,12 +6291,12 @@ async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
         (&duplicate, "done", 3),
     ] {
         memory
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [("status".to_string(), value.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(id.clone(), "where it stands", date(2026, 8, day))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -6371,12 +6371,12 @@ async fn latest_write_wins(survivor_day: i8, duplicate_day: i8, holds: &str) {
         (&duplicates, &duplicate, "done"),
     ] {
         memory
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [("status".to_string(), value.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(id.clone(), "where it stands", date(2026, 8, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -6495,12 +6495,12 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
             (&duplicate, "done", duplicates),
         ] {
             memory
-                .capture(NewFact {
+                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                     fields: [("status".to_string(), value.to_string())]
                         .into_iter()
                         .collect(),
                     ..NewFact::about(id.clone(), "where it stands", date(2026, 8, 1))
-                })
+                }))
                 .await
                 .expect("capture ok")
                 .written()
@@ -6580,12 +6580,12 @@ async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_
     }
     for (id, day) in [(&survivor, 1), (&duplicate, 2)] {
         memory
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [("blocks".to_string(), alpha.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(id.clone(), "waits on alpha", date(2026, 8, day))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -6660,7 +6660,7 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
             .expect("nothing collides with it");
     }
     let held = memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [
                 ("blocks".to_string(), alpha.to_string()),
                 ("waits_on".to_string(), format!("{alpha}, {beta}")),
@@ -6670,7 +6670,7 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
             .into_iter()
             .collect(),
             ..NewFact::about(holder.clone(), "waits on things", date(2026, 8, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()

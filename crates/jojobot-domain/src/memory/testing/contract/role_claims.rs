@@ -13,7 +13,7 @@
 //! lives in the bot's own `role/<role>/holder` and `role/<role>/claimed_at`,
 //! and it stays held until the role object carries a moment of its own.
 
-use super::support::{add, capture, ensure};
+use super::support::{add, capture, computed, computed_patch, ensure};
 use super::*;
 
 /// A role object for one case, and the bot it is the child of. Each case has
@@ -119,22 +119,22 @@ pub async fn a_second_capture_racing_the_first_is_refused<M: Memory>(store: &M) 
 
     capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", now),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
     let refused = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("epsilon", now),
             ..NewFact::about(
                 seat.role.clone(),
                 "epsilon claims the role too",
                 date(2026, 7, 1),
             )
-        })
+        }))
         .await;
     assert!(
         matches!(
@@ -170,20 +170,20 @@ pub async fn a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh<M: Me
 
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", now),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
     let refused = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: role_fields("epsilon", now),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -223,22 +223,22 @@ pub async fn two_concurrent_captures_race_and_exactly_one_wins<M: Memory>(store:
     let now = crate::session::testing::contract::epoch();
 
     let (a, b) = tokio::join!(
-        store.capture(NewFact {
+        store.capture(computed(NewFact {
             fields: role_fields("delta", now),
             ..NewFact::about(
                 seat.role.clone(),
                 "delta races for the role",
                 date(2026, 7, 1)
             )
-        }),
-        store.capture(NewFact {
+        })),
+        store.capture(computed(NewFact {
             fields: role_fields("epsilon", now),
             ..NewFact::about(
                 seat.role.clone(),
                 "epsilon races for the role",
                 date(2026, 7, 1)
             )
-        }),
+        })),
     );
     let a_won = matches!(a, Ok(Guarded::Written(_)));
     let b_won = matches!(b, Ok(Guarded::Written(_)));
@@ -285,10 +285,10 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
 
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", claimed_at),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -298,10 +298,10 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
     let taken_over = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: role_fields("epsilon", stale),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -321,10 +321,10 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
         let delta_write = store
             .update_fact(
                 &claimed.address(),
-                FactPatch {
+                computed_patch(FactPatch {
                     fields: role_fields("delta", delta_writes),
                     ..FactPatch::default()
-                },
+                }),
                 &seat.bot,
             )
             .await;
@@ -369,18 +369,20 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
             claimant: "delta".to_string(),
         })
     };
-    let renew = |at| FactPatch {
-        fields: role_fields("delta", at),
-        role_move: move_of(crate::session::RoleMoveKind::Renew),
-        ..FactPatch::default()
+    let renew = |at| {
+        computed_patch(FactPatch {
+            fields: role_fields("delta", at),
+            role_move: move_of(crate::session::RoleMoveKind::Renew),
+            ..FactPatch::default()
+        })
     };
 
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -397,7 +399,7 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
     let released = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: [(
                     crate::session::ROLE_CLAIMED_AT.to_string(),
                     jiff::Timestamp::UNIX_EPOCH.to_string(),
@@ -407,7 +409,7 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
                 clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
                 role_move: move_of(crate::session::RoleMoveKind::Release),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -445,10 +447,10 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
     let fresh = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: role_fields("epsilon", later + jiff::SignedDuration::from_secs(2)),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -481,22 +483,22 @@ pub async fn a_role_claimed_in_the_old_shape_is_still_held<M: Memory>(store: &M)
     // The claim the previous build wrote, on the bot.
     capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: old_role_fields(&seat.name, "delta", t0),
             ..NewFact::about(seat.bot.clone(), "delta claimed the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
     let rival = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("epsilon", soon),
             ..NewFact::about(
                 seat.role.clone(),
                 "epsilon claims the role",
                 date(2026, 7, 1),
             )
-        })
+        }))
         .await;
     assert!(
         matches!(
@@ -509,10 +511,10 @@ pub async fn a_role_claimed_in_the_old_shape_is_still_held<M: Memory>(store: &M)
 
     // The old holder's first write on the role object: its own renewal.
     let renewed = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("delta", soon),
             ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
-        })
+        }))
         .await;
     assert!(
         matches!(renewed, Ok(Guarded::Written(_))),
@@ -526,10 +528,10 @@ pub async fn a_role_claimed_in_the_old_shape_is_still_held<M: Memory>(store: &M)
     );
 
     let after = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("epsilon", soon + jiff::SignedDuration::from_secs(1)),
             ..NewFact::about(seat.role.clone(), "epsilon tries again", date(2026, 7, 1))
-        })
+        }))
         .await;
     assert!(
         matches!(&after, Err(MemoryError::RoleTaken { holder, .. }) if holder == "delta"),
@@ -790,25 +792,25 @@ pub async fn a_released_role_object_is_not_read_past_to_the_old_keys<M: Memory>(
 
     capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: old_role_fields(&seat.name, "delta", t0),
             ..NewFact::about(seat.bot.clone(), "delta claimed the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     // Delta moves its claim onto the role object, then gives the role up.
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     let released = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: [(
                     crate::session::ROLE_CLAIMED_AT.to_string(),
                     jiff::Timestamp::UNIX_EPOCH.to_string(),
@@ -822,7 +824,7 @@ pub async fn a_released_role_object_is_not_read_past_to_the_old_keys<M: Memory>(
                     claimant: "delta".to_string(),
                 }),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -832,14 +834,14 @@ pub async fn a_released_role_object_is_not_read_past_to_the_old_keys<M: Memory>(
     );
 
     let taken = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("epsilon", soon),
             ..NewFact::about(
                 seat.role.clone(),
                 "epsilon claims the role",
                 date(2026, 7, 1),
             )
-        })
+        }))
         .await;
     assert!(
         matches!(taken, Ok(Guarded::Written(_))),
@@ -861,15 +863,15 @@ pub async fn a_role_objects_other_keys_land_without_moving_the_lease<M: Memory>(
     let now = crate::session::testing::contract::epoch();
     capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", now),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
     let wrote = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: [("agent".to_string(), "an-agent-id".to_string())]
                 .into_iter()
                 .collect(),
@@ -878,7 +880,7 @@ pub async fn a_role_objects_other_keys_land_without_moving_the_lease<M: Memory>(
                 "the line records its agent",
                 date(2026, 7, 1),
             )
-        })
+        }))
         .await;
     assert!(
         matches!(wrote, Ok(Guarded::Written(_))),
@@ -917,10 +919,10 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -930,7 +932,7 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
         let renewed = store
             .update_fact(
                 &claimed.address(),
-                FactPatch {
+                computed_patch(FactPatch {
                     fields: role_fields("delta", last),
                     role_move: Some(crate::session::RoleMove {
                         kind: crate::session::RoleMoveKind::Renew,
@@ -938,7 +940,7 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
                         claimant: "delta".to_string(),
                     }),
                     ..FactPatch::default()
-                },
+                }),
                 &seat.bot,
             )
             .await;
@@ -986,9 +988,11 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
 
     // The renewed moment is the lease: a rival one second past the ORIGINAL
     // lease is refused, and one second past the renewed lease is granted.
-    let rival = |at| FactPatch {
-        fields: role_fields("epsilon", at),
-        ..FactPatch::default()
+    let rival = |at| {
+        computed_patch(FactPatch {
+            fields: role_fields("epsilon", at),
+            ..FactPatch::default()
+        })
     };
     let inside = t0 + crate::session::LEASE_FRESHNESS + jiff::SignedDuration::from_secs(1);
     let refused = store
@@ -1020,10 +1024,10 @@ pub async fn a_renewal_restamps_the_lease_moment_it_overwrites<M: Memory>(store:
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     let before = store
@@ -1045,7 +1049,7 @@ pub async fn a_renewal_restamps_the_lease_moment_it_overwrites<M: Memory>(store:
     let renewed = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: role_fields("delta", t0 + jiff::SignedDuration::from_mins(5)),
                 role_move: Some(crate::session::RoleMove {
                     kind: crate::session::RoleMoveKind::Renew,
@@ -1053,7 +1057,7 @@ pub async fn a_renewal_restamps_the_lease_moment_it_overwrites<M: Memory>(store:
                     claimant: "delta".to_string(),
                 }),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -1091,16 +1095,16 @@ pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
     for agent in ["first-agent", "second-agent"] {
         let wrote = store
-            .capture(NewFact {
+            .capture(computed(NewFact {
                 fields: [("agent".to_string(), agent.to_string())]
                     .into_iter()
                     .collect(),
@@ -1109,7 +1113,7 @@ pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
                     "the line records its agent",
                     date(2026, 7, 1),
                 )
-            })
+            }))
             .await;
         assert!(matches!(wrote, Ok(Guarded::Written(_))), "{wrote:?}");
     }
@@ -1130,7 +1134,7 @@ pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
     let released = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: [(
                     crate::session::ROLE_CLAIMED_AT.to_string(),
                     jiff::Timestamp::UNIX_EPOCH.to_string(),
@@ -1140,7 +1144,7 @@ pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
                 clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
                 role_move: move_of(crate::session::RoleMoveKind::Release),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -1148,10 +1152,10 @@ pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
     let taken = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: role_fields("epsilon", t0 + jiff::SignedDuration::from_mins(1)),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;
@@ -1188,23 +1192,25 @@ pub async fn a_renewal_that_carries_more_than_the_lease_is_applied_whole<M: Memo
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
-    let renewing = |at, extra: FactPatch| FactPatch {
-        fields: role_fields("delta", at)
-            .into_iter()
-            .chain(extra.fields.clone())
-            .collect(),
-        role_move: Some(crate::session::RoleMove {
-            kind: crate::session::RoleMoveKind::Renew,
-            role: seat.name.clone(),
-            claimant: "delta".to_string(),
-        }),
-        ..extra
+    let renewing = |at, extra: FactPatch| {
+        computed_patch(FactPatch {
+            fields: role_fields("delta", at)
+                .into_iter()
+                .chain(extra.fields.clone())
+                .collect(),
+            role_move: Some(crate::session::RoleMove {
+                kind: crate::session::RoleMoveKind::Renew,
+                role: seat.name.clone(),
+                claimant: "delta".to_string(),
+            }),
+            ..extra
+        })
     };
     let plain = FactPatch::default();
 
@@ -1245,12 +1251,12 @@ pub async fn a_renewal_that_carries_more_than_the_lease_is_applied_whole<M: Memo
             &claimed.address(),
             renewing(
                 at,
-                FactPatch {
+                computed_patch(FactPatch {
                     fields: [("agent".to_string(), "an-agent-id".to_string())]
                         .into_iter()
                         .collect(),
                     ..plain.clone()
-                },
+                }),
             ),
             &seat.bot,
         )
@@ -1311,10 +1317,10 @@ pub async fn a_renewal_is_a_write_on_the_thing<M: Memory>(store: &M) {
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let claimed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: role_fields("delta", t0),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     // The stores stamp from their own clocks, so let one tick pass between the
@@ -1323,7 +1329,7 @@ pub async fn a_renewal_is_a_write_on_the_thing<M: Memory>(store: &M) {
     let renewed = store
         .update_fact(
             &claimed.address(),
-            FactPatch {
+            computed_patch(FactPatch {
                 fields: role_fields("delta", t0 + jiff::SignedDuration::from_mins(5)),
                 role_move: Some(crate::session::RoleMove {
                     kind: crate::session::RoleMoveKind::Renew,
@@ -1331,7 +1337,7 @@ pub async fn a_renewal_is_a_write_on_the_thing<M: Memory>(store: &M) {
                     claimant: "delta".to_string(),
                 }),
                 ..FactPatch::default()
-            },
+            }),
             &seat.bot,
         )
         .await;

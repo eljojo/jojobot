@@ -7,6 +7,7 @@ use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance,
 use jiff::civil::{Date, date};
 
 mod support;
+pub use support::{state, state_patch};
 
 pub mod base;
 pub mod chart_head;

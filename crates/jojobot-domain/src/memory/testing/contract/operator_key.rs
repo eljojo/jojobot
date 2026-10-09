@@ -9,7 +9,7 @@
 //! write made where it is allowed, so a store that refused every write of the key
 //! would not pass.
 
-use super::support::{add, capture, ensure};
+use super::support::{add, capture, ensure, state, state_patch};
 use super::*;
 use crate::memory::MayWrite;
 
@@ -48,9 +48,11 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
             .into_iter()
             .collect()
     };
-    let edit = |who: &EntityId| FactPatch {
-        fields: naming(who),
-        ..Default::default()
+    let edit = |who: &EntityId| {
+        state_patch(FactPatch {
+            fields: naming(who),
+            ..Default::default()
+        })
     };
     let off = FactPatch {
         clear_fields: vec![crate::memory::OPERATOR.to_string()],
@@ -87,10 +89,10 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
     for (carrier, who) in [(&spare, &one), (&second, &two)] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: naming(who),
                 ..NewFact::about(carrier.clone(), "who the operator is", date(2026, 10, 1))
-            },
+            }),
         )
         .await;
     }
@@ -112,12 +114,12 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
     ] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [(crate::memory::REPORTS_TO.to_string(), to.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(who.clone(), said, date(2026, 10, 3))
-            },
+            }),
         )
         .await;
     }
@@ -240,10 +242,10 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
     // key would not pass.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: naming(&one),
             ..NewFact::about(record.clone(), "who the operator is", date(2026, 10, 7))
-        },
+        }),
     )
     .await;
     assert!(

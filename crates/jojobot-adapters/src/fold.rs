@@ -566,14 +566,14 @@ mod tests {
             .written()
             .expect("not blocked");
         inner
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
                 ..NewFact::about(
                     alpha(),
                     "was here before the fold wrapped it",
                     date(2026, 9, 1),
                 )
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -612,10 +612,10 @@ mod tests {
         seeded(&folded, &alpha(), "Alpha").await;
 
         let first = folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
                 ..NewFact::about(alpha(), "first due date", date(2026, 9, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -631,10 +631,10 @@ mod tests {
         );
 
         let second = folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "2026-09-21".to_string())]),
                 ..NewFact::about(alpha(), "moved to next week", date(2026, 9, 8))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -703,10 +703,10 @@ mod tests {
         seeded(&folded, &beta(), "Beta").await;
 
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
                 ..NewFact::about(alpha(), "alpha's own due date", date(2026, 9, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -766,10 +766,10 @@ mod tests {
         let folded = Folded::new(inner);
         seeded(&folded, &alpha(), "Alpha").await;
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
                 ..NewFact::about(alpha(), "cached", date(2026, 9, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -779,10 +779,10 @@ mod tests {
         // the cache is never told this happened.
         folded
             .inner
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "2026-09-21".to_string())]),
                 ..NewFact::about(alpha(), "written around the fold", date(2026, 9, 8))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -1298,9 +1298,11 @@ mod tests {
         });
         let folded = Arc::new(Folded::new(gated.clone()));
         seeded(&folded, &alpha(), "Alpha").await;
-        let write = |colour: &str, content: &str| NewFact {
-            fields: BTreeMap::from([("colour".to_string(), colour.to_string())]),
-            ..NewFact::about(alpha(), content.to_string(), date(2026, 9, 1))
+        let write = |colour: &str, content: &str| {
+            jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: BTreeMap::from([("colour".to_string(), colour.to_string())]),
+                ..NewFact::about(alpha(), content.to_string(), date(2026, 9, 1))
+            })
         };
         folded
             .capture(write("green", "first colour"))
@@ -1630,10 +1632,10 @@ mod tests {
         let a_folded = folded.clone();
         let a_task = tokio::spawn(async move {
             a_folded
-                .capture(NewFact {
+                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                     fields: BTreeMap::from([("due_on".to_string(), "A".to_string())]),
                     ..NewFact::about(alpha(), "A writes first", date(2026, 9, 1))
-                })
+                }))
                 .await
         });
 
@@ -1642,14 +1644,14 @@ mod tests {
         stalled.notified().await;
 
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "B".to_string())]),
                 ..NewFact::about(
                     alpha(),
                     "B writes second, while A is stalled",
                     date(2026, 9, 2),
                 )
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -1702,19 +1704,19 @@ mod tests {
         seeded(&folded, &alpha(), "Alpha").await;
 
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
                 ..NewFact::about(alpha(), "lap one", date(2026, 9, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
             .expect("not blocked");
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
                 ..NewFact::about(alpha(), "lap two", date(2026, 9, 2))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -1763,10 +1765,10 @@ mod tests {
         seeded(&folded, &alpha(), "Alpha").await;
 
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "before".to_string())]),
                 ..NewFact::about(alpha(), "before the rename", date(2026, 9, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -1794,10 +1796,10 @@ mod tests {
 
         // A write under the CURRENT handle, after the rename.
         folded
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: BTreeMap::from([("due_on".to_string(), "after".to_string())]),
                 ..NewFact::about(gamma.clone(), "after the rename", date(2026, 9, 3))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()

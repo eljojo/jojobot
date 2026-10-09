@@ -245,12 +245,12 @@ async fn a_hand_built_doc_holds_what_the_store_would_hold() {
         .written()
         .expect("nothing to disambiguate");
     let claim = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("crates".to_string(), "4".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(who.clone(), "four crates arrived", date(2026, 4, 18))
-        })
+        }))
         .await
         .expect("the claim lands")
         .written()
@@ -7843,19 +7843,19 @@ async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged
         .written()
         .expect("not blocked");
     inner
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
             ..NewFact::about(alpha.clone(), "lap one", date(2026, 9, 1))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()
         .expect("not blocked");
     inner
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
             ..NewFact::about(alpha.clone(), "lap two", date(2026, 9, 2))
-        })
+        }))
         .await
         .expect("capture ok")
         .written()

@@ -5,7 +5,7 @@
 //! judged against the chart read inside its own transaction, so the head has to
 //! be recognised there, by the fake and by the real store alike.
 
-use super::support::{add, capture};
+use super::support::{add, capture, state, state_patch};
 use super::*;
 
 /// **The head of a chart places itself, and no other bot places it.** A bot with
@@ -38,9 +38,11 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
             .into_iter()
             .collect()
     };
-    let to = |manager: &EntityId| FactPatch {
-        fields: reporting(manager),
-        ..Default::default()
+    let to = |manager: &EntityId| {
+        state_patch(FactPatch {
+            fields: reporting(manager),
+            ..Default::default()
+        })
     };
     // The manager a fold holds, as the handle it names.
     let manager_in = |fold: &std::collections::BTreeMap<String, String>| -> Option<String> {
@@ -61,10 +63,10 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     // Beta reports to alpha, and alpha reports to none: alpha heads the chart.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&alpha),
             ..NewFact::about(beta.clone(), "beta reports to alpha", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
     let head = capture(
@@ -129,22 +131,22 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     // manager. A stranger merging it in is refused, naming the head alone.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&second),
             ..NewFact::about(
                 follower.clone(),
                 "follower reports to second",
                 date(2026, 10, 3),
             )
-        },
+        }),
     )
     .await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&omega),
             ..NewFact::about(twin.clone(), "twin reports to omega", date(2026, 10, 3))
-        },
+        }),
     )
     .await;
     let err = store

@@ -12,6 +12,34 @@ pub(super) fn other_caller() -> EntityId {
     EntityId("bot:sigma".into())
 }
 
+/// **A fact whose fields are the state it sets on its thing**: every key is also
+/// named in the setting bag, which reaches the thing whether or not own fields
+/// do. For a case that is about what a thing holds, not about which bag a key
+/// went in.
+pub fn state(mut fact: NewFact) -> NewFact {
+    fact.sets = fact.fields.keys().cloned().collect();
+    fact
+}
+
+/// **A fact whose fields are keys jojobot computed**: the check-in schedule, a
+/// due day, a role's lease. They reach the thing whichever bag own fields go in.
+pub(super) fn computed(mut fact: NewFact) -> NewFact {
+    fact.derived = fact.fields.keys().cloned().collect();
+    fact
+}
+
+/// [`computed`], for an edit.
+pub(super) fn computed_patch(mut patch: FactPatch) -> FactPatch {
+    patch.derived = patch.fields.keys().cloned().collect();
+    patch
+}
+
+/// [`state`], for an edit.
+pub fn state_patch(mut patch: FactPatch) -> FactPatch {
+    patch.sets = patch.fields.keys().cloned().collect();
+    patch
+}
+
 /// Make sure `id` exists, so the write guard's **existence gate** is not
 /// what a spec about something else trips over. Idempotent: the suite runs
 /// against a shared, pre-populated collection as much as an empty fake.

@@ -11,7 +11,7 @@
 //! Every refusal here sits beside the same write made where it is allowed, so a
 //! store that refused every write of the key would not pass.
 
-use super::support::{capture, ensure};
+use super::support::{capture, ensure, state, state_patch};
 use super::*;
 use crate::memory::{Edge, EdgeShape, THOUGHT_AGES_AFTER_RUNS, THOUGHT_CAPACITY};
 
@@ -69,20 +69,22 @@ async fn the_key_is_set_only_above_the_bots_that_write_into_the_thread<M: Memory
     for (who, to) in [(&writer, &boss), (&boss, &head), (&outsider, &rival)] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [(crate::memory::REPORTS_TO.to_string(), to.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(who.clone(), "reports up", date(2026, 10, 1))
-            },
+            }),
         )
         .await;
     }
-    let ceiling = |value: &str| FactPatch {
-        fields: [(ceiling_key.to_string(), value.to_string())]
-            .into_iter()
-            .collect(),
-        ..Default::default()
+    let ceiling = |value: &str| {
+        state_patch(FactPatch {
+            fields: [(ceiling_key.to_string(), value.to_string())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        })
     };
     let clear = FactPatch {
         clear_fields: vec![ceiling_key.to_string()],

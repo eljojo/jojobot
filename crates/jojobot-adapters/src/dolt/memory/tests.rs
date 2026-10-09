@@ -572,11 +572,13 @@ async fn a_key_held_by_an_unstamped_write_has_no_age() {
         .expect("add_entity ok")
         .written()
         .expect("the guard waves it through");
-    let write = |value: &str| NewFact {
-        fields: [("colour".to_string(), value.to_string())]
-            .into_iter()
-            .collect(),
-        ..NewFact::about(subject.clone(), "painted", date(2026, 10, 7))
+    let write = |value: &str| {
+        jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: [("colour".to_string(), value.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(subject.clone(), "painted", date(2026, 10, 7))
+        })
     };
     memory
         .capture(write("red"))

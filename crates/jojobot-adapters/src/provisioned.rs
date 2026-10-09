@@ -910,7 +910,7 @@ mod tests {
         );
 
         over.inner
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [(
                     "one_liner".to_string(),
                     "Files the weekly note.".to_string(),
@@ -922,7 +922,7 @@ mod tests {
                     "gamma's own one-liner",
                     Date::constant(2026, 4, 18),
                 )
-            })
+            }))
             .await
             .expect("capture ok")
             .written()
@@ -986,14 +986,14 @@ mod tests {
              {echoed:?}",
         );
 
-        over.capture(NewFact {
+        over.capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: sent,
             ..NewFact::about(
                 bot.clone(),
                 "gamma's own fields, one of them a deliberate match on today's default",
                 Date::constant(2026, 4, 18),
             )
-        })
+        }))
         .await
         .expect("capture ok")
         .written()

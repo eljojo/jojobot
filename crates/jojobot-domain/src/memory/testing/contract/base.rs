@@ -1,4 +1,4 @@
-use super::support::{add, capture, edit, ensure, other_caller};
+use super::support::{add, capture, edit, ensure, other_caller, state, state_patch};
 use super::*;
 use crate::memory::{
     CLAIMS_ROLE, DEFAULT_THOUGHT_BODY_CAP, READ_FROM, READ_REF, RULE_SEATS, THOUGHT_BODY_CAP,
@@ -1392,7 +1392,7 @@ pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
     // it is the one whose certainty the answer must carry.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             provenance: Provenance::Inference,
             fields: [("rent".to_string(), "900".to_string())]
                 .into_iter()
@@ -1402,12 +1402,12 @@ pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
                 "worked it out from the listing",
                 date(2026, 5, 1),
             )
-        },
+        }),
     )
     .await;
     let stated = capture(
         store,
-        NewFact {
+        state(NewFact {
             provenance: Provenance::Testimony,
             standing: Some(Standing::Settled),
             fields: [("rent".to_string(), "950".to_string())]
@@ -1418,7 +1418,7 @@ pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
                 "he said what the rent is",
                 date(2026, 6, 1),
             )
-        },
+        }),
     )
     .await;
 
@@ -1444,7 +1444,7 @@ pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
     // would go on reporting testimony for a value nobody stated.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             provenance: Provenance::Inference,
             fields: [("rent".to_string(), "975".to_string())]
                 .into_iter()
@@ -1454,7 +1454,7 @@ pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
                 "the listing went up again",
                 date(2026, 7, 1),
             )
-        },
+        }),
     )
     .await;
     let held = backing(subject.clone()).await;
@@ -1537,6 +1537,11 @@ pub async fn a_summed_key_has_no_backing_to_report<M: Memory>(store: &M) {
             NewFact {
                 provenance,
                 standing: Some(standing),
+                sets: fields
+                    .keys()
+                    .filter(|key| key.as_str() != "read_from")
+                    .cloned()
+                    .collect(),
                 fields,
                 ..NewFact::about(
                     subject.clone(),
@@ -2064,37 +2069,37 @@ pub async fn undoing_the_newest_manager_cannot_close_a_loop<M: Memory>(store: &M
         // mid reports to top, and low to mid. A fresh capture guards nothing.
         let mid_claim = capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: reporting(&top),
                 ..NewFact::about(mid.clone(), "mid reports to top", date(2026, 10, 1))
-            },
+            }),
         )
         .await;
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: reporting(&mid),
                 ..NewFact::about(low.clone(), "low reports to mid", date(2026, 10, 1))
-            },
+            }),
         )
         .await;
         // low's newest claim moves it up to top.
         let newest = capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: reporting(&top),
                 ..NewFact::about(low.clone(), "low moves up to top", date(2026, 10, 2))
-            },
+            }),
         )
         .await;
         // Now mid can be placed under low: low is under top, so nothing loops.
         store
             .update_fact(
                 &mid_claim.address(),
-                FactPatch {
+                state_patch(FactPatch {
                     fields: reporting(&low),
                     ..Default::default()
-                },
+                }),
                 &top,
             )
             .await
@@ -2171,22 +2176,22 @@ pub async fn a_manager_folded_into_another_keeps_its_reports_in_the_chain<M: Mem
     };
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&top),
             ..NewFact::about(
                 survivor.clone(),
                 "ridge reports to summit",
                 date(2026, 10, 1),
             )
-        },
+        }),
     )
     .await;
     let placed = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&duplicate),
             ..NewFact::about(low.clone(), "gully reports to spur", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
 
@@ -2199,10 +2204,10 @@ pub async fn a_manager_folded_into_another_keeps_its_reports_in_the_chain<M: Mem
     let moved = store
         .update_fact(
             &placed.address(),
-            FactPatch {
+            state_patch(FactPatch {
                 fields: reporting(&top),
                 ..Default::default()
-            },
+            }),
             &top,
         )
         .await;
@@ -2242,28 +2247,28 @@ pub async fn restating_the_same_manager_is_not_a_change<M: Memory>(store: &M) {
     };
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&top),
             ..NewFact::about(mid.clone(), "mid reports to top", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
     let placed = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&mid),
             ..NewFact::about(low.clone(), "low reports to mid", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
     for (who, caller) in [("its manager", &mid), ("the bot above its manager", &top)] {
         let restated = store
             .update_fact(
                 &placed.address(),
-                FactPatch {
+                state_patch(FactPatch {
                     fields: reporting(&mid),
                     ..Default::default()
-                },
+                }),
                 caller,
             )
             .await;
@@ -2316,10 +2321,10 @@ pub async fn a_merge_cannot_fold_a_bot_into_one_that_sits_below_it<M: Memory>(st
     ] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: reporting(manager),
                 ..NewFact::about(bot.clone(), what, date(2026, 10, 1))
-            },
+            }),
         )
         .await;
     }
@@ -2396,23 +2401,25 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     // fresh capture: mid reports to top, low reports to mid.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&top),
             ..NewFact::about(mid.clone(), "mid reports to top", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
     let placed = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&mid),
             ..NewFact::about(low.clone(), "low reports to mid", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
-    let to = |manager: &EntityId| FactPatch {
-        fields: reporting(manager),
-        ..Default::default()
+    let to = |manager: &EntityId| {
+        state_patch(FactPatch {
+            fields: reporting(manager),
+            ..Default::default()
+        })
     };
     let refused_for = |who: &str, err: &MemoryError| {
         assert!(
@@ -2501,10 +2508,10 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     // ── a merge: a manager arrives folded in from another thing ─────────────
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&mid),
             ..NewFact::about(donor.clone(), "donor reports to mid", date(2026, 10, 4))
-        },
+        }),
     )
     .await;
     let err = store
@@ -2528,18 +2535,18 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     }
     let looped = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&two),
             ..NewFact::about(one.clone(), "one reports to two", date(2026, 10, 5))
-        },
+        }),
     )
     .await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: reporting(&one),
             ..NewFact::about(two.clone(), "two reports to one", date(2026, 10, 5))
-        },
+        }),
     )
     .await;
     let err = store
@@ -2569,12 +2576,12 @@ pub async fn a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it<M: 
     }
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "5".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(carrier.clone(), "capacity is five", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
 
@@ -2754,23 +2761,29 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
         )
         .await;
     }
-    let status_on = |thing: &EntityId, status: &str| NewFact {
-        fields: [("status".to_string(), status.to_string())]
-            .into_iter()
-            .collect(),
-        ..NewFact::about(thing.clone(), "where it stands", date(2026, 10, 1))
+    let status_on = |thing: &EntityId, status: &str| {
+        state(NewFact {
+            fields: [("status".to_string(), status.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(thing.clone(), "where it stands", date(2026, 10, 1))
+        })
     };
-    let columns_on = |holder: &EntityId, columns: &str| NewFact {
-        fields: [("columns".to_string(), columns.to_string())]
-            .into_iter()
-            .collect(),
-        ..NewFact::about(holder.clone(), "the columns", date(2026, 10, 1))
+    let columns_on = |holder: &EntityId, columns: &str| {
+        state(NewFact {
+            fields: [("columns".to_string(), columns.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "the columns", date(2026, 10, 1))
+        })
     };
-    let word_on = |holder: &EntityId, word: &str, meaning: &str| NewFact {
-        fields: [(format!("status_word/{word}"), meaning.to_string())]
-            .into_iter()
-            .collect(),
-        ..NewFact::about(holder.clone(), "what a word means", date(2026, 10, 1))
+    let word_on = |holder: &EntityId, word: &str, meaning: &str| {
+        state(NewFact {
+            fields: [(format!("status_word/{word}"), meaning.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "what a word means", date(2026, 10, 1))
+        })
     };
 
     // ① A project's list that drops a shipped status is refused, and the refusal
@@ -4639,12 +4652,12 @@ pub async fn a_non_bots_room_enforces_its_capacity_too<M: Memory>(store: &M) {
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(pet.clone(), "capacity is one", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -4697,12 +4710,12 @@ pub async fn a_room_fulls_subject_is_never_a_bare_badge<M: Memory>(store: &M) {
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     capture(
@@ -4755,24 +4768,24 @@ pub async fn a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room<M: 
     }
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     // The only thought in the room names the bot's manager.
     let holding = capture(
         store,
-        NewFact {
+        state(NewFact {
             edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
             fields: [(crate::memory::REPORTS_TO.to_string(), warden.to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "the warden has the jukebox", date(2026, 7, 2))
-        },
+        }),
     )
     .await;
 
@@ -4822,12 +4835,12 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is two", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -4985,12 +4998,12 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
         ),
     )
     .await;
-    let whitespace_patch = FactPatch {
+    let whitespace_patch = state_patch(FactPatch {
         fields: [(format!(" {THOUGHT_CAPACITY}"), "5".to_string())]
             .into_iter()
             .collect(),
         ..Default::default()
-    };
+    });
     let refused = store
         .update_fact(&whitespace_target.address(), whitespace_patch.clone(), &bot)
         .await
@@ -5014,12 +5027,12 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
     // new value — the raw-write guard this replaces only ever read `fields`.
     let cleared = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is two", date(2026, 8, 2))
-        },
+        }),
     )
     .await;
     let clear_patch = FactPatch {
@@ -5045,12 +5058,12 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
     // fold drops the key exactly as a clear would.
     let archived_subject = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "3".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is three", date(2026, 8, 3))
-        },
+        }),
     )
     .await;
     let archive_patch = FactPatch {
@@ -5076,12 +5089,12 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
     // one-way twin of archiving, through its own verb.
     let retracted_subject = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "4".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is four", date(2026, 8, 4))
-        },
+        }),
     )
     .await;
     let refused = store
@@ -5123,12 +5136,12 @@ pub async fn update_fact_drawing_a_connection_edge_into_a_full_room_is_refused<M
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 8, 6))
-        },
+        }),
     )
     .await;
     capture(
@@ -5173,12 +5186,12 @@ pub async fn update_fact_drawing_a_connection_edge_into_a_full_room_is_refused<M
     ensure(store, &roomy).await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(roomy.clone(), "capacity is two", date(2026, 8, 6))
-        },
+        }),
     )
     .await;
     capture(
@@ -5236,12 +5249,12 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
     ensure(store, &b).await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "10".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is ten", date(2026, 8, 9))
-        },
+        }),
     )
     .await;
 
@@ -5284,12 +5297,12 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
     ensure(store, &d).await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(narrow.clone(), "cap is five", date(2026, 8, 12))
-        },
+        }),
     )
     .await;
     capture(
@@ -5347,12 +5360,12 @@ pub async fn the_default_body_cap_binds_only_a_thing_that_carries_a_capacity<M: 
     }
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "10".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bound.clone(), "capacity is ten", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
     let long = "x".repeat(DEFAULT_THOUGHT_BODY_CAP + 1);
@@ -5423,12 +5436,12 @@ pub async fn the_default_body_cap_binds_only_a_thing_that_carries_a_capacity<M: 
     // and a cap of its own is refused over that cap.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(free.clone(), "cap is five", date(2026, 10, 6))
-        },
+        }),
     )
     .await;
     let refused = store
@@ -5462,12 +5475,12 @@ pub async fn update_fact_over_the_body_cap_is_refused_on_content_and_on_the_edge
     ensure(store, &b).await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_BODY_CAP.to_string(), "10".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "cap is ten", date(2026, 8, 16))
-        },
+        }),
     )
     .await;
 
@@ -5557,12 +5570,12 @@ pub async fn a_thing_cannot_set_its_own_thought_body_cap_either<M: Memory>(store
     // for another identity — the same fold-based path proven for capacity.
     let setter = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_BODY_CAP.to_string(), "60".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "cap is sixty", date(2026, 8, 20))
-        },
+        }),
     )
     .await;
     let clear_patch = FactPatch {
@@ -5622,12 +5635,12 @@ pub async fn an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_la
     // holds — the container's own field, set after the fact.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_BODY_CAP.to_string(), "10".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "cap is ten now", date(2026, 8, 22))
-        },
+        }),
     )
     .await;
 
@@ -5687,12 +5700,12 @@ pub async fn an_edit_to_a_thought_already_in_an_over_capacity_room_still_lands<M
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 8, 23))
-        },
+        }),
     )
     .await;
     capture(
@@ -5795,12 +5808,12 @@ pub async fn a_borrow_crosses_the_ceiling_exactly_once<M: Memory>(store: &M) {
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     capture(
@@ -5871,12 +5884,12 @@ pub async fn an_aged_thought_frees_the_room<M: Memory>(store: &M) {
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -5962,12 +5975,12 @@ pub async fn an_edit_into_a_room_counts_it_the_way_a_capture_does<M: Memory>(sto
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     let old = capture(
@@ -6061,12 +6074,12 @@ pub async fn an_archived_thought_frees_its_slot<M: Memory>(store: &M) {
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 8, 1))
-        },
+        }),
     )
     .await;
     let only = capture(
@@ -6133,12 +6146,12 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 9, 1))
-        },
+        }),
     )
     .await;
     let dropped = capture(
@@ -6434,7 +6447,7 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
     let subject = EntityId::person("person:contract-ages");
     let first = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [
                 ("colour".to_string(), "red".to_string()),
                 ("size".to_string(), "big".to_string()),
@@ -6442,7 +6455,7 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
             .into_iter()
             .collect(),
             ..NewFact::about(subject.clone(), "the first look", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
     let before = store
@@ -6455,12 +6468,12 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
     // A key rewritten later: the later moment. The other keeps the first.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("colour".to_string(), "blue".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "repainted", date(2026, 7, 2))
-        },
+        }),
     )
     .await;
     let after = store.field_ages(&subject).await.expect("ages read");
@@ -6523,12 +6536,12 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
         .update_entity_with_claim(
             &subject,
             EntityPatch::default(),
-            NewFact {
+            state(NewFact {
                 fields: [("colour".to_string(), "green".to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(subject.clone(), "repainted again", date(2026, 7, 4))
-            },
+            }),
         )
         .await
         .expect("the call answers")
@@ -6579,12 +6592,12 @@ pub async fn a_key_written_many_times_holds_one_value_and_counts<M: Memory>(stor
     for nth in 1..=written {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [(key.to_string(), nth.to_string())].into_iter().collect(),
                 ..NewFact::about(subject.clone(), format!("ate one, number {nth}"), {
                     date(2026, 7, 1)
                 })
-            },
+            }),
         )
         .await;
     }
@@ -6681,7 +6694,7 @@ pub async fn a_counter_totals_its_writes_and_keeps_them<M: Memory>(store: &M) {
     for (nth, mood) in [(1, "hopeful"), (2, "content"), (3, "queasy")] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [
                     ("donuts".to_string(), "1".to_string()),
                     ("mood".to_string(), mood.to_string()),
@@ -6693,7 +6706,7 @@ pub async fn a_counter_totals_its_writes_and_keeps_them<M: Memory>(store: &M) {
                     format!("a donut, number {nth}"),
                     date(2026, 7, 1),
                 )
-            },
+            }),
         )
         .await;
     }
@@ -6738,23 +6751,23 @@ pub async fn an_edit_appends_and_the_value_it_replaced_stays_in_the_history<M: M
     let subject = EntityId::person("person:contract-appended");
     let captured = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("cost".to_string(), "40".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the annual service", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     edit(
         store,
         &captured.address(),
-        FactPatch {
+        state_patch(FactPatch {
             fields: [("cost".to_string(), "45".to_string())]
                 .into_iter()
                 .collect(),
             ..Default::default()
-        },
+        }),
     )
     .await;
 
@@ -6793,12 +6806,12 @@ pub async fn clearing_a_key_leaves_its_writes_behind<M: Memory>(store: &M) {
     let subject = EntityId::person("person:contract-cleared");
     let captured = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("done_on".to_string(), "2026-04-18".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the annual service", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     edit(
@@ -7055,12 +7068,12 @@ pub async fn history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss<M: 
     let subject = EntityId::person("person:contract-unwritten");
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("weight".to_string(), "11".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "weighed at the yard", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
 
@@ -7521,12 +7534,12 @@ pub async fn the_retraction_marker_is_not_one_of_the_things_fields<M: Memory>(st
     let subject = EntityId("thing:contract-marker-not-a-field".into());
     let claim = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("cost".to_string(), "40".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "bought at the counter", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     assert_eq!(
@@ -8646,7 +8659,7 @@ pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>
 pub async fn a_claim_on_a_supplied_record_reads_back<M: Memory>(store: &M) {
     let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
     let written = store
-        .capture(NewFact {
+        .capture(state(NewFact {
             fields: [("asks".to_string(), "overdue".to_string())]
                 .into_iter()
                 .collect(),
@@ -8655,7 +8668,7 @@ pub async fn a_claim_on_a_supplied_record_reads_back<M: Memory>(store: &M) {
                 "the operator narrowed this one",
                 date(2026, 4, 18),
             )
-        })
+        }))
         .await
         .expect("a claim on a supplied record is a write the gate allows")
         .written()
@@ -8751,7 +8764,7 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
     let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
     let nobodys = EntityId("view:contract-no-such-view".into());
     let written = store
-        .capture(NewFact {
+        .capture(state(NewFact {
             fields: [("holds".to_string(), "the operator's own".to_string())]
                 .into_iter()
                 .collect(),
@@ -8760,7 +8773,7 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
                 "the operator wrote on the record the build ships",
                 date(2026, 5, 11),
             )
-        })
+        }))
         .await
         .expect("a claim on a supplied record is a write the gate allows")
         .written()
@@ -8842,12 +8855,12 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
     .await;
     let points_at_it = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("asks".to_string(), shipped.to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(pointer.clone(), "runs the shipped one", date(2026, 5, 12))
-        },
+        }),
     )
     .await;
     let stands_on_it = capture(
@@ -8948,7 +8961,7 @@ async fn a_captured_claim_reads_through_every_gated_read<M: Memory, B: support::
     // the build supplies, so the plain capture is what a caller really
     // sends against either backing.
     let written = store
-        .capture(NewFact {
+        .capture(state(NewFact {
             fields: [("contract-gate-probe".to_string(), "held".to_string())]
                 .into_iter()
                 .collect(),
@@ -8957,7 +8970,7 @@ async fn a_captured_claim_reads_through_every_gated_read<M: Memory, B: support::
                 "the operator wrote on it",
                 date(2026, 5, 21),
             )
-        })
+        }))
         .await
         .expect("a claim on either backing is a write the gate allows")
         .written()
@@ -10115,13 +10128,15 @@ pub async fn a_graph_query_filters_on_a_stored_value_and_walks_an_edge<M: Memory
     ensure(store, &gathering).await;
 
     let yes = "yes = certain, ~confirmed~ 100% ünïcode";
-    let reply = |who: &EntityId, answer: &str, said: &str| NewFact {
-        edge: Some(Edge::new(EdgeShape::Attendance, gathering.clone())),
-        fields: [("answer".to_string(), answer.to_string())]
-            .into_iter()
-            .collect(),
-        refs: Vec::new(),
-        ..NewFact::about(who.clone(), said, date(2026, 8, 10))
+    let reply = |who: &EntityId, answer: &str, said: &str| {
+        state(NewFact {
+            edge: Some(Edge::new(EdgeShape::Attendance, gathering.clone())),
+            fields: [("answer".to_string(), answer.to_string())]
+                .into_iter()
+                .collect(),
+            refs: Vec::new(),
+            ..NewFact::about(who.clone(), said, date(2026, 8, 10))
+        })
     };
     capture(store, reply(&coming, yes, "will be there")).await;
     capture(store, reply(&staying, "no", "cannot make it")).await;
@@ -10299,12 +10314,12 @@ pub async fn a_value_is_found_without_naming_the_key_it_is_under<M: Memory>(stor
     let day = "2026-08-11";
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("serviced_on".to_string(), day.to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(filed.clone(), "the service happened", date(2026, 8, 11))
-        },
+        }),
     )
     .await;
     // The same string, written into the sentence and held under no key.
@@ -10923,7 +10938,7 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
 
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [
                 ("keeper".to_string(), owner.to_string()),
                 ("since".to_string(), "2019-04-15".to_string()),
@@ -10932,7 +10947,7 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
             .collect(),
             refs: Vec::new(),
             ..NewFact::about(held.clone(), "the one that is held", date(2026, 8, 10))
-        },
+        }),
     )
     .await;
 
@@ -11789,7 +11804,7 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
     }
     let held = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [
                 ("blocks".to_string(), was.to_string()),
                 ("waits_on".to_string(), format!("{was}, {other}")),
@@ -11802,7 +11817,7 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
                 "waits on the work before it moves",
                 date(2026, 8, 1),
             )
-        },
+        }),
     )
     .await;
 
@@ -12017,22 +12032,22 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
     let whole = EntityId("org:contract-fitting-thing".into());
     let costed = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("cost".to_string(), "40".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(whole.clone(), "the annual service", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("done_on".to_string(), "2026-04-18".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(whole.clone(), "and it was done that day", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
 
@@ -12072,7 +12087,7 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
     let partial = EntityId("org:contract-loose-record".into());
     let half = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("cost".to_string(), "40".to_string())]
                 .into_iter()
                 .collect(),
@@ -12081,7 +12096,7 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
                 "somebody wrote down a price",
                 date(2026, 4, 18),
             )
-        },
+        }),
     )
     .await;
     edit(
@@ -12106,7 +12121,7 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
     let added = edit(
         store,
         &costed.address(),
-        FactPatch {
+        state_patch(FactPatch {
             fields: [
                 ("cost".to_string(), "45".to_string()),
                 ("mechanic".to_string(), "somebody at the yard".to_string()),
@@ -12114,7 +12129,7 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
             .into_iter()
             .collect(),
             ..Default::default()
-        },
+        }),
     )
     .await;
     assert_eq!(
@@ -12162,22 +12177,22 @@ pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M:
     let held = EntityId("topic:contract-run-of-stalls".into());
     let seasonal = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("season".to_string(), "summer".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(held.clone(), "the season it runs in", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("pitch_fee".to_string(), "14".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(held.clone(), "and what a pitch costs", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
 
@@ -12406,13 +12421,13 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
     for fields in sittings {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: fields
                     .iter()
                     .map(|(key, value)| (key.to_string(), value.to_string()))
                     .collect(),
                 ..NewFact::about(subject.clone(), "a sitting at the bench", date(2026, 4, 18))
-            },
+            }),
         )
         .await;
     }
@@ -12511,33 +12526,33 @@ pub async fn the_newest_write_wins_however_old_the_record_it_landed_in<M: Memory
     let subject = EntityId("thing:contract-edited-older-record".into());
     let older = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("ridden_km".to_string(), "10".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the first sitting", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("ridden_km".to_string(), "20".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the second sitting", date(2026, 4, 19))
-        },
+        }),
     )
     .await;
     let edited = edit(
         store,
         &older.address(),
-        FactPatch {
+        state_patch(FactPatch {
             fields: [("ridden_km".to_string(), "30".to_string())]
                 .into_iter()
                 .collect(),
             ..Default::default()
-        },
+        }),
     )
     .await;
     // The three surfaces that must agree, and the reason the third one
@@ -12631,12 +12646,12 @@ pub async fn clearing_a_key_the_record_never_carried_changes_nothing<M: Memory>(
     let subject = EntityId("thing:contract-clear-off-address".into());
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("shipping_weight".to_string(), "10".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "weighed at the bench", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     let bare = capture(
@@ -12696,12 +12711,12 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
     for nth in 1..=written {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [("weight".to_string(), nth.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(subject.clone(), "weighed at the bench", date(2026, 4, 18))
-            },
+            }),
         )
         .await;
     }
@@ -12768,12 +12783,12 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
     for nth in 1..=3 {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [("cost".to_string(), nth.to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(short.clone(), "paid at the counter", date(2026, 4, 18))
-            },
+            }),
         )
         .await;
     }
@@ -13079,12 +13094,12 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
     let polish = EntityId("rhythm:polish".into());
     ensure(store, &polish).await;
     let refused = store
-        .capture(NewFact {
+        .capture(state(NewFact {
             fields: [("cadence_days".to_string(), "30".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
-        })
+        }))
         .await;
     let Err(MemoryError::BreaksSchedule { accepts, .. }) = &refused else {
         panic!("a cadence with no advances_from must be refused, got {refused:?}");
@@ -13105,12 +13120,12 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
 
     // The mirror half is the same refusal, naming the other key.
     let mirror = store
-        .capture(NewFact {
+        .capture(state(NewFact {
             fields: [("advances_from".to_string(), "due_date".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(polish.clone(), "count from the due date", date(2026, 8, 1))
-        })
+        }))
         .await;
     let Err(MemoryError::BreaksSchedule { missing, .. }) = &mirror else {
         panic!("an advances_from with no cadence must be refused, got {mirror:?}");
@@ -13129,7 +13144,7 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
     // says which date it counts from, lands.
     let whole = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [
                 ("cadence_days".to_string(), "30".to_string()),
                 ("advances_from".to_string(), "due_date".to_string()),
@@ -13137,14 +13152,14 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
             .into_iter()
             .collect(),
             ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
-        },
+        }),
     )
     .await;
 
     // A loop that carries no cadence has no schedule to be incomplete.
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("last_check_in".to_string(), "2026-08-01".to_string())]
                 .into_iter()
                 .collect(),
@@ -13153,7 +13168,7 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
                 "go when the weather turns",
                 date(2026, 8, 1),
             )
-        },
+        }),
     )
     .await;
 
@@ -13206,13 +13221,13 @@ pub async fn a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_
     let write = |fields: &[(&str, &str)], when: Date| {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: fields
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect(),
                 ..NewFact::about(swim.clone(), "swim at the pool", when)
-            },
+            }),
         )
     };
     write(
@@ -13351,7 +13366,7 @@ pub async fn a_promise_is_refused_without_a_parent_and_keeps_its_day<M: Memory>(
 
     let dated = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [
                 ("promised_by".to_string(), "2026-07-01".to_string()),
                 ("note".to_string(), "borrowed it".to_string()),
@@ -13359,7 +13374,7 @@ pub async fn a_promise_is_refused_without_a_parent_and_keeps_its_day<M: Memory>(
             .into_iter()
             .collect(),
             ..NewFact::about(promise.clone(), "has to go back", date(2026, 6, 1))
-        },
+        }),
     )
     .await;
     let day_taken_off = store
@@ -14205,12 +14220,12 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     };
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(bot.clone(), "capacity is one", date(2026, 10, 1))
-        },
+        }),
     )
     .await;
     let held = capture(store, thought(&bot, "the gutter wants clearing", &gutter)).await;
@@ -14279,12 +14294,12 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     ensure(store, &narrow).await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(narrow.clone(), "cap is five", date(2026, 10, 4))
-        },
+        }),
     )
     .await;
     let long = capture(store, thought(&kettle, "abcdef", &needle)).await;
@@ -14898,6 +14913,7 @@ pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M:
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
+        fact.sets = fact.fields.keys().cloned().collect();
         fact
     };
     let listed = |handle: EntityId| async move {

@@ -1,4 +1,4 @@
-use super::support::{add, capture, edit, ensure, other_caller};
+use super::support::{add, capture, edit, ensure, other_caller, state, state_patch};
 use super::*;
 
 /// **A store this suite can rename a handle in.**
@@ -692,12 +692,12 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
 
     capture(
         mentioning,
-        NewFact {
+        state(NewFact {
             fields: [("owner".to_string(), was.to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(pet.clone(), "belongs to its owner", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
@@ -804,12 +804,12 @@ pub async fn a_reference_listing_field_is_lowered_and_a_served_write_back_does_n
     // arise.
     let written = capture(
         mentioning,
-        NewFact {
+        state(NewFact {
             fields: [("friends".to_string(), format!("{alpha},{beta}"))]
                 .into_iter()
                 .collect(),
             ..NewFact::about(pet.clone(), "made two friends", date(2026, 8, 1))
-        },
+        }),
     )
     .await;
 
@@ -847,10 +847,10 @@ pub async fn a_reference_listing_field_is_lowered_and_a_served_write_back_does_n
     edit(
         mentioning,
         &address,
-        FactPatch {
+        state_patch(FactPatch {
             fields: [("friends".to_string(), served)].into_iter().collect(),
             ..FactPatch::default()
-        },
+        }),
     )
     .await;
 
@@ -2098,7 +2098,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
         .expect("the page is written");
     let written = capture(
         store,
-        NewFact {
+        state(NewFact {
             details: Some("first heard at @place:contract-mention-inn".into()),
             fields: [("tabs".to_string(), "3".to_string())]
                 .into_iter()
@@ -2108,7 +2108,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
                 "was owed money by @place:contract-mention-inn",
                 date(2026, 4, 18),
             )
-        },
+        }),
     )
     .await;
     store
@@ -2178,7 +2178,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
     // answers who points here through a field rather than through an edge.
     let pointing = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("owed_by".to_string(), author.to_string())]
                 .into_iter()
                 .collect(),
@@ -2187,7 +2187,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
                 "keeps a tab for @person:contract-mention-bookkeeper",
                 date(2026, 4, 18),
             )
-        },
+        }),
     )
     .await;
     let pointed: Vec<_> = store

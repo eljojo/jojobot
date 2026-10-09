@@ -54,14 +54,14 @@ async fn a_kinds_keys_are_a_schema_and_the_two_questions_differ() {
             .written()
             .expect("nothing resembles it");
         store
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 provenance: Provenance::Testimony,
                 fields: [("pitch".to_string(), "somewhere".to_string())]
                     .into_iter()
                     .collect(),
                 session: Some("kind-schema-session".to_string()),
                 ..NewFact::about(id.clone(), what, jiff::civil::date(2026, 5, 2))
-            })
+            }))
             .await
             .expect("the record is written")
             .written()
@@ -198,7 +198,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
     let fitting = EntityId::new(kiosk, "holds-them-all");
     added(&store, &fitting, "the complete one").await;
     let whole = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields: [
                 ("pitch".to_string(), "the corner".to_string()),
@@ -212,7 +212,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
                 "a complete record",
                 jiff::civil::date(2026, 5, 4),
             )
-        })
+        }))
         .await
         .expect("the record is written")
         .written()
@@ -376,7 +376,7 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
     store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields: invented.clone(),
             session: Some("kind-schema-session".to_string()),
@@ -385,7 +385,7 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
                 "a first pass",
                 jiff::civil::date(2026, 10, 1),
             )
-        })
+        }))
         .await
         .expect("the older build took the invented keys")
         .written()
@@ -419,7 +419,7 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
     // declares nothing. The key is `owner`, which holds a handle; a work item's
     // `status` refuses nothing, so a word outside the five lands.
     let refused = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("owner".to_string(), "mostly done".to_string())]
                 .into_iter()
                 .collect(),
@@ -428,7 +428,7 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
                 "still free text",
                 jiff::civil::date(2026, 10, 2),
             )
-        })
+        }))
         .await
         .expect_err("text that is no handle is not an owner once the kind ships the key");
     let said = refused.to_string();
@@ -517,14 +517,14 @@ async fn captured(
 ) -> jojobot_domain::memory::FactAddress {
     let key = other_key.unwrap_or("pitch");
     let fact = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             // The session a later edit in the same case is made by: testimony is
             // rewritten in place only by the session that wrote it.
             session: Some("kind-schema-session".to_string()),
             fields: [(key.to_string(), value.to_string())].into_iter().collect(),
             ..NewFact::about(id.clone(), "a record", jiff::civil::date(2026, 5, 2))
-        })
+        }))
         .await
         .expect("the record is written")
         .written()
@@ -824,7 +824,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
     let corner = EntityId::new(stall, "corner-pitch");
     added(&store, &corner, "the pitch on the corner").await;
     let record = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields: [
                 ("pitch".to_string(), "the corner".to_string()),
@@ -834,7 +834,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
             .collect(),
             session: Some("kind-schema-session".to_string()),
             ..NewFact::about(corner.clone(), "a record", jiff::civil::date(2026, 5, 2))
-        })
+        }))
         .await
         .expect("the record is written")
         .written()
@@ -883,13 +883,13 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
     let wrong = store
         .update_fact(
             &record.address(),
-            FactPatch {
+            jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                 fields: [("awning".to_string(), "sometime in may".to_string())]
                     .into_iter()
                     .collect(),
                 session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
-            },
+            }),
             &EntityId("bot:sigma".into()),
         )
         .await
@@ -949,7 +949,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
     // **The span is one value.** Two dates, one key, and the pair cannot come
     // apart the way two keys can.
     let record = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields: [
                 ("away".to_string(), "2026-04-18/2026-04-25".to_string()),
@@ -959,7 +959,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
             .collect(),
             session: Some("kind-schema-session".to_string()),
             ..NewFact::about(day.clone(), "a record", jiff::civil::date(2026, 4, 18))
-        })
+        }))
         .await
         .expect("the record is written")
         .written()
@@ -981,13 +981,13 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
         let edited = store
             .update_fact(
                 &record.address(),
-                FactPatch {
+                jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                     fields: [("came_with".to_string(), wrote.to_string())]
                         .into_iter()
                         .collect(),
                     session: Some("kind-schema-session".to_string()),
                     ..FactPatch::default()
-                },
+                }),
                 &EntityId("bot:sigma".into()),
             )
             .await
@@ -1006,7 +1006,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
     let refused = store
         .update_fact(
             &record.address(),
-            FactPatch {
+            jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                 fields: [(
                     "came_with".to_string(),
                     format!("{bart}, {}", EntityId("thing:red-bike".into())),
@@ -1015,7 +1015,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                 .collect(),
                 session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
-            },
+            }),
             &EntityId("bot:sigma".into()),
         )
         .await
@@ -1029,13 +1029,13 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
     let backwards = store
         .update_fact(
             &record.address(),
-            FactPatch {
+            jojobot_domain::memory::testing::contract::state_patch(FactPatch {
                 fields: [("away".to_string(), "2026-04-25/2026-04-18".to_string())]
                     .into_iter()
                     .collect(),
                 session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
-            },
+            }),
             &EntityId("bot:sigma".into()),
         )
         .await
@@ -1108,7 +1108,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
         .expect("nothing resembles it");
 
     let record = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields: [
                 ("name".to_string(), "the loop that has run".to_string()),
@@ -1118,7 +1118,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             .collect(),
             session: Some("kind-schema-session".to_string()),
             ..NewFact::about(ran.clone(), "a record", jiff::civil::date(2026, 5, 2))
-        })
+        }))
         .await
         .expect("the record is written")
         .written()
@@ -1155,14 +1155,14 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
         .written()
         .expect("nothing resembles it");
     store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields: [("name".to_string(), "water the plant".to_string())]
                 .into_iter()
                 .collect(),
             session: Some("kind-schema-session".to_string()),
             ..NewFact::about(bare.clone(), "a record", jiff::civil::date(2026, 5, 2))
-        })
+        }))
         .await
         .expect("a loop with only a name is a loop")
         .written()
@@ -1268,7 +1268,7 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
             .written()
             .expect("nothing resembles it");
         store
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 provenance: Provenance::Testimony,
                 fields: [
                     ("name".to_string(), slug.to_string()),
@@ -1281,7 +1281,7 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
                 .collect(),
                 session: Some("kind-schema-session".to_string()),
                 ..NewFact::about(loop_id, "a record", jiff::civil::date(2026, 6, 20))
-            })
+            }))
             .await
             .expect("the record is written")
             .written()
@@ -1376,12 +1376,12 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
         .expect("a whole schedule takes a check-in"),
     );
     store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             provenance: Provenance::Testimony,
             fields,
             session: Some("kind-schema-session".to_string()),
             ..NewFact::about(descale.clone(), "a record", jiff::civil::date(2026, 6, 1))
-        })
+        }))
         .await
         .expect("the record is written")
         .written()
@@ -1463,7 +1463,7 @@ async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
     // number is an ordinary claim: nothing a caller declared governs it, and
     // this write reached the store refused before the halves were kept apart.
     store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("postcode".to_string(), "SW1A".to_string())]
                 .into_iter()
                 .collect(),
@@ -1472,7 +1472,7 @@ async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
                 "the postcode is SW1A",
                 jiff::civil::date(2026, 8, 19),
             )
-        })
+        }))
         .await
         .expect("an ordinary write to a place is not governed by a caller's type")
         .written()
@@ -1494,12 +1494,12 @@ async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
     let one = EntityId::new(barrowful, "the-heavy-one");
     added(&store, &one, "The Heavy One").await;
     let refused = store
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("weight".to_string(), "quite a lot".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(one, "it weighs a fair bit", jiff::civil::date(2026, 8, 19))
-        })
+        }))
         .await
         .expect_err("a kind's own key still holds a write to what it says");
     assert!(
