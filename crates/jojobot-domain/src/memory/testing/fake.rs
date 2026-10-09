@@ -15,6 +15,11 @@ pub struct InMemoryMemory {
     /// that call, so a caller that lists to resolve one handle pays for all of
     /// them; this is how a case sees whether it did.
     listings: std::sync::atomic::AtomicUsize,
+    /// **Which kind each listing asked for**, in the order they were asked, with
+    /// `None` for the whole listing. [`listings`](Self::listings) counts calls; a
+    /// case about how much of the store a read pays for needs to see what each
+    /// call asked.
+    listed_kinds: Mutex<Vec<Option<EntityKind>>>,
     /// **How many times one thing's records have been read**, through
     /// [`Memory::recall`]. A walk reads the records of every thing it has to
     /// choose among, so a lookup that chooses among everything pays for all of
@@ -127,6 +132,16 @@ impl InMemoryMemory {
     /// delta across the call it is checking.
     pub fn listings(&self) -> usize {
         self.listings.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The kind each listing has asked for so far, in order. A caller measures a
+    /// delta across the call it is checking, as it does with
+    /// [`listings`](Self::listings).
+    pub fn listed_kinds(&self) -> Vec<Option<EntityKind>> {
+        self.listed_kinds
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone()
     }
 
     /// How many times one thing's records have been read. A caller measures a
@@ -1495,6 +1510,10 @@ impl Memory for InMemoryMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.listings
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.listed_kinds
+            .lock()
+            .expect("fake mutex poisoned")
+            .push(kind);
         Ok(self
             .index()
             .into_iter()

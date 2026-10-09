@@ -2426,7 +2426,20 @@ where
     query.validate()?;
     // The entity index: what exists, what a kind selects, and what a handle
     // that names nothing is screened against.
-    let mut entities = store.list_entities(None).await?;
+    //
+    // **A browse by one kind lists that kind alone.** With no subject and no walk
+    // nothing is resolved, screened or reached across kinds: every object the
+    // answer holds, and every count it gives (archived, folded, another
+    // identity's), is taken over entities of the kind selected. A subject is
+    // resolved and screened against everything that exists, and a walk reaches
+    // any kind, so those two ask for the whole listing. Sessions are joined
+    // below whatever was listed, and a kind filter drops the ones that are not
+    // wanted.
+    let listed = match (&query.select.subject, &query.follow) {
+        (None, None) => query.select.kind,
+        _ => None,
+    };
+    let mut entities = store.list_entities(listed).await?;
     // **Sessions join the same index they are selected and resolved from.**
     // A subject naming one has to find it here to resolve at all, and a kind
     // filter has to see it to select it — both read `entities`, below.

@@ -1,5 +1,5 @@
 use super::*;
-use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing};
+use crate::memory::{Boot, FactId, FactStatus, Memory, NewEntity, Provenance, Standing};
 
 /// 🚨 **A filter is a record on the view, its own fields carrying the
 /// key, the value, the comparison and the scope** — the same shape
@@ -1512,6 +1512,160 @@ fn a_kind_and_a_key_narrow_one_set() {
             .is_empty(),
         "the kind narrows the same set the key does, so a kind holding no such record is empty",
     );
+}
+
+/// **A browse by one kind asks the store for that kind, and answers as the whole
+/// listing would have.** The store builds every entity's row for a whole listing,
+/// and a walk that wants one kind and nothing else has no use for the rest. The
+/// cases that need the whole listing still ask for it: a named handle (it is
+/// resolved and screened against every entity), a walk (it reaches any kind) and
+/// a query naming no kind.
+///
+/// The answer is held against what the fixture holds, so a walk that listed less
+/// and answered less fails the second half: the objects, what archival and a
+/// fold left out, what another identity's runs were counted as, and the children
+/// of one parent all come back as they did.
+#[tokio::test]
+async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
+    let store = crate::memory::testing::InMemoryMemory::booted();
+    for (handle, name, parent) in [
+        ("place:springfield", "Springfield", None),
+        ("place:quahog", "Quahog", None),
+        ("place:atlas", "Atlas", None),
+        ("place:gorge-spot", "Gorge Spot", Some("place:springfield")),
+        ("place:far-country", "Far Country", None),
+        ("person:bart", "Bart", None),
+        ("person:kenny", "Kenny", None),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "user-named");
+        new.parent = parent.map(|p| EntityId(p.into()));
+        store.add_entity(new).await.expect("the fixture is written");
+    }
+    store
+        .archive_entity(&EntityId("place:far-country".into()), "a mistaken write")
+        .await
+        .expect("the place is archived");
+    // **A thing folded into another keeps its row**, which a merge leaves behind;
+    // staged here because the fixture has no merge to run.
+    store.past_the_guard(Entity {
+        merged_into: Some(EntityId("place:atlas".into())),
+        ..entity("place:wharf-road", "Wharf Road")
+    });
+    let strangers_run = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
+
+    let asked = |select: Selection, follow: Option<Follow>| GraphQuery {
+        select,
+        follow,
+        ..GraphQuery::default()
+    };
+    let places = || Selection {
+        kind: Some(EntityKind::PLACE),
+        asked_by: Some(EntityId("bot:gamma".into())),
+        ..Selection::default()
+    };
+
+    // The browse: that kind alone is asked for.
+    let before = store.listed_kinds().len();
+    let browsed = walk(
+        &store,
+        std::slice::from_ref(&strangers_run),
+        &asked(places(), None),
+    )
+    .await
+    .expect("a kind selects");
+    assert_eq!(
+        store.listed_kinds()[before..],
+        [Some(EntityKind::PLACE)],
+        "the store is asked for places and for nothing else"
+    );
+    assert_eq!(
+        handles(&browsed.objects),
+        vec![
+            "place:atlas",
+            "place:gorge-spot",
+            "place:quahog",
+            "place:springfield"
+        ],
+        "every browsable place and no person, no run"
+    );
+    assert_eq!(
+        browsed.archived_excluded, 1,
+        "the archived place is counted"
+    );
+    assert_eq!(browsed.merged_excluded, 1, "the folded place is counted");
+    assert_eq!(
+        browsed.withheld, 0,
+        "another bot's run is no place, so it is not counted against a place browse"
+    );
+
+    // The parent narrows the same set.
+    let before = store.listed_kinds().len();
+    let children = walk(
+        &store,
+        &[],
+        &asked(
+            Selection {
+                parent: Some(EntityId("place:springfield".into())),
+                ..places()
+            },
+            None,
+        ),
+    )
+    .await
+    .expect("a kind and a parent select");
+    assert_eq!(store.listed_kinds()[before..], [Some(EntityKind::PLACE)]);
+    assert_eq!(handles(&children.objects), vec!["place:gorge-spot"]);
+
+    // The sessions the caller hands in join the listing, and a run is found by
+    // its own kind: asked for runs, the store is asked for runs, and the run the
+    // caller owns is there while the other bot's is counted.
+    let own_run = a_run("bot:gamma", "contract-gamma-run", "gamma's own", "a beat");
+    let before = store.listed_kinds().len();
+    let runs = walk(
+        &store,
+        &[own_run, strangers_run.clone()],
+        &asked(
+            Selection {
+                kind: Some(EntityKind::SESSION),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..Selection::default()
+            },
+            None,
+        ),
+    )
+    .await
+    .expect("runs select");
+    assert_eq!(store.listed_kinds()[before..], [Some(EntityKind::SESSION)]);
+    assert_eq!(handles(&runs.objects), vec!["session:contract-gamma-run"]);
+    assert_eq!(
+        runs.withheld, 1,
+        "the other bot's run is counted, not shown"
+    );
+
+    // The whole listing, wherever the walk may reach past one kind.
+    let named = Selection {
+        subject: Some(EntityId("place:springfield".into())),
+        ..places()
+    };
+    let unkinded = Selection {
+        parent: Some(EntityId("place:springfield".into())),
+        asked_by: Some(EntityId("bot:gamma".into())),
+        ..Selection::default()
+    };
+    let following = Follow::hop();
+    for (what, query) in [
+        ("a named handle", asked(named, None)),
+        ("a walk", asked(places(), Some(following))),
+        ("a query naming a parent and no kind", asked(unkinded, None)),
+    ] {
+        let before = store.listed_kinds().len();
+        walk(&store, &[], &query).await.expect(what);
+        assert_eq!(
+            store.listed_kinds()[before..],
+            [None],
+            "{what} needs every entity, so the whole listing is asked for"
+        );
+    }
 }
 
 /// **A type selects structurally**, over the keys a record carries and
