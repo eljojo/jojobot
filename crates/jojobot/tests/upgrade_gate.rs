@@ -2543,10 +2543,12 @@ async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
     }
 
     // The boot takes them off, and a second boot has nothing left to do.
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    // **Only the first boot of a store reports a value left as text**, and this
+    // store has booted once already, so every boot from here on reports none.
+    let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     first.stop().await;
     let after_first = dump_store(&state_dir).await;
-    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     second.stop().await;
     if after_first != dump_store(&state_dir).await {
         fail(
@@ -2590,7 +2592,7 @@ async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
     }
 
     // And the lease is still the holder's: a rival is refused naming it.
-    let third = boot_current(&state_dir, store_port, &git_ref).await;
+    let third = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
         .await
         .expect("connecting to the current binary");
