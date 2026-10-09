@@ -1725,7 +1725,11 @@ mod tests {
     /// above grows the snapshot to find where the essay stops fitting.
     #[tokio::test]
     async fn an_anonymous_boot_that_fits_the_ceiling_ships_the_essay_whole() {
-        let jojobot = handler();
+        // **Bare on purpose, and not proof about a real instance.** A real fresh
+        // instance holds the shipped kinds with their keys declared, and its
+        // anonymous boot leaves `## Sessions` out because the whole essay does
+        // not fit. This store declares none, so the snapshot is smaller.
+        let jojobot = handler_bare();
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -1773,7 +1777,12 @@ mod tests {
     /// software ships, which is the case a first reader meets.
     #[tokio::test]
     async fn a_fresh_instances_anonymous_boot_ships_the_whole_essay_inside_the_ceiling() {
-        let jojobot = handler();
+        // **Bare on purpose, and not proof about a real instance.** A real fresh
+        // instance holds the shipped kinds with their keys declared, and its
+        // anonymous boot leaves `## Sessions` out because the whole essay does
+        // not fit. This store declares none, so the snapshot is smaller and the
+        // title above describes the store, not an instance.
+        let jojobot = handler_bare();
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -2888,7 +2897,11 @@ mod tests {
     /// missing.
     #[tokio::test]
     async fn a_named_boot_and_an_anonymous_one_share_the_core_and_differ_by_design() {
-        let jojobot = handler();
+        // **Bare on purpose, and not proof about a real instance.** It compares
+        // the anonymous essay whole; a real fresh instance holds the shipped
+        // kinds with their keys declared and its anonymous boot leaves
+        // `## Sessions` out because the whole essay does not fit.
+        let jojobot = handler_bare();
         make_bot(&jojobot, "gamma").await;
 
         let anonymous = json_of(

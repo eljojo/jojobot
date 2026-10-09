@@ -54,7 +54,32 @@ pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
     TEST_SID.to_string()
 }
 
+/// **The store every plain handler is built over**: the shipped kinds booted
+/// WITH the keys a startup declares for them. A store that holds the kinds as
+/// rows with no keys enforces none of what the kinds declare (a named set for
+/// `status`, `advances_from`, `outcome`, `ended`; the floor of required keys;
+/// the kind a reference points at), so a case written on it to exercise that
+/// vocabulary could not fail. One place, so a constructor cannot drift back.
+fn plain_store() -> InMemoryMemory {
+    InMemoryMemory::seeded()
+}
+
 pub(crate) fn handler() -> Jojobot {
+    Jojobot::new(
+        Arc::new(plain_store()),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
+/// **A handler over a store that declares no keys for the shipped kinds** — the
+/// plain handler as it was before it was seeded. It enforces no vocabulary, so
+/// it is for a case that is not about one and that a seeded store cannot hold
+/// for a stated reason. Name that reason where it is used.
+pub(crate) fn handler_bare() -> Jojobot {
     Jojobot::new(
         Arc::new(InMemoryMemory::booted()),
         Arc::new(SpySearch::default()),
@@ -81,9 +106,9 @@ pub(crate) fn handler_over(memory: Arc<InMemoryMemory>) -> Jojobot {
 /// **A handler wrapped in what this crate's OWN `provisions()` ships**, the
 /// same decorator `main.rs` wraps the real store in.
 ///
-/// [`handler`] never sees a shipped provision at all — its store is bare, so
-/// a shipped view or a shipped charter is a stand-in the test declares for
-/// itself. That proves the mechanism a shipped provision runs through, never
+/// [`handler`] never sees a shipped provision at all — its store declares the
+/// shipped kinds' keys but holds no supplied record, so a shipped view or a
+/// shipped charter is a stand-in the test declares for itself. That proves the mechanism a shipped provision runs through, never
 /// the shipped data itself: a typo in `views.rs`'s handle, or a shipped
 /// `shows` key nobody meant to ship, would still pass every case built on
 /// [`handler`]. This is the one seam that can go red on the data.
@@ -119,7 +144,7 @@ pub(crate) fn handler_shipped() -> Jojobot {
 /// one, or it is proving the mechanism against a store production never
 /// runs.
 pub(crate) fn handler_mentioning() -> Jojobot {
-    let bare = Arc::new(InMemoryMemory::booted());
+    let bare = Arc::new(plain_store());
     let mentioning: Arc<dyn jojobot_domain::memory::Memory> =
         Arc::new(jojobot_domain::memory::mention::Mentioning::new(bare));
     Jojobot::new(
@@ -141,7 +166,7 @@ pub(crate) fn handler_field_provisioned(at: EntityId, key: &str, value: &str) ->
     ]);
     Jojobot::new(
         Arc::new(jojobot_adapters::provisioned::Provisioned::new(
-            InMemoryMemory::booted().knowing(supplied.clone()),
+            plain_store().knowing(supplied.clone()),
             supplied,
         )),
         Arc::new(SpySearch::default()),
@@ -158,7 +183,7 @@ pub(crate) fn handler_carrying(
     carriers: Vec<Box<dyn jojobot_domain::attention::Carrier>>,
 ) -> Jojobot {
     Jojobot::carrying(
-        Arc::new(InMemoryMemory::booted()),
+        Arc::new(plain_store()),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -171,7 +196,7 @@ pub(crate) fn handler_carrying(
 /// A handler whose search port is a spy the test keeps a handle on.
 pub(crate) fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
     Jojobot::new(
-        Arc::new(InMemoryMemory::booted()),
+        Arc::new(plain_store()),
         spy,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -490,4 +515,71 @@ pub(crate) async fn booted_in(
             .expect("the boot call is ok"),
     );
     sid_of(&body).unwrap_or_else(|| panic!("{name} booted in {zone} without a handle: {body}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::capture::CaptureArgs;
+    use crate::memory::testing::*;
+
+    /// **The shipped vocabulary, asked of one handler**: a status outside the
+    /// shipped five is refused on a piece of work and nothing is written, and a
+    /// status inside it lands.
+    async fn holds_the_status_vocabulary(jojobot: &Jojobot, label: &str) {
+        ensure(jojobot, "work:phi").await;
+        let said = |status: &str| CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [("status".to_string(), status.to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:phi", "a status for the guard to judge")
+        };
+        let refused = jojobot
+            .capture(Parameters(said("nonsense")))
+            .await
+            .expect("capture call ok");
+        let refused = json_of(&refused);
+        assert_eq!(
+            refused["status"], "blocked",
+            "{label}: a status outside the vocabulary was accepted: {refused}"
+        );
+        assert!(
+            fields_of(jojobot, "work:phi").await.get("status").is_none(),
+            "{label}: a refused status left a trace"
+        );
+        // The positive the refusal rests on: the same write with a word the
+        // vocabulary holds lands, so the refusal above is about the word.
+        capture_ok(jojobot, said("now")).await;
+        assert_eq!(
+            fields_of(jojobot, "work:phi").await["status"],
+            "now",
+            "{label}"
+        );
+    }
+
+    /// **Every plain handler a verb test can reach enforces the shipped
+    /// vocabulary.** The plain handler used to hold the shipped kinds with no
+    /// keys, so a status outside the five was accepted with a write receipt and
+    /// a test whose point was the vocabulary could not fail. Each constructor
+    /// that builds its own store is asked, so one that falls back to a bare
+    /// store reddens here by name.
+    #[tokio::test]
+    async fn every_plain_handler_refuses_a_status_outside_the_shipped_vocabulary() {
+        holds_the_status_vocabulary(&handler(), "handler").await;
+        holds_the_status_vocabulary(&handler_mentioning(), "handler_mentioning").await;
+        holds_the_status_vocabulary(
+            &handler_field_provisioned(EntityId("work:sigma".into()), "note", "x"),
+            "handler_field_provisioned",
+        )
+        .await;
+        holds_the_status_vocabulary(&handler_carrying(Vec::new()), "handler_carrying").await;
+        holds_the_status_vocabulary(
+            &handler_with(Arc::new(SpySearch::default())),
+            "handler_with",
+        )
+        .await;
+    }
 }

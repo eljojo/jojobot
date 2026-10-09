@@ -432,7 +432,8 @@ mod tests {
     /// person, which the boot hands over as before.
     #[tokio::test]
     async fn a_record_naming_a_bot_as_operator_is_said_not_to_be_a_person() {
-        let jojobot = handler();
+        let memory = std::sync::Arc::new(InMemoryMemory::seeded());
+        let jojobot = handler_over(memory.clone());
         make_bot(&jojobot, "otto").await;
         make_bot(&jojobot, "gamma").await;
         let names = |handle: &str| {
@@ -442,7 +443,15 @@ mod tests {
             args
         };
 
-        capture_ok(&jojobot, names("bot:gamma")).await;
+        // The shipped topic kind declares the operator key a reference to a
+        // person, so a bot named there is refused. A record written before that
+        // was declared holds it, and the boot has to say what it finds: the
+        // state is staged past the guard, as the damage it is.
+        ensure(&jojobot, INSTANCE_RECORD).await;
+        memory.fields_past_the_guard(
+            &EntityId(INSTANCE_RECORD.into()),
+            &[(INSTANCE_OPERATOR_KEY, "bot:gamma")],
+        );
         let body = boot_answering_dated(&jojobot, "otto", "new", None, None).await;
         let said = body["operator"].as_str().expect("one operator line");
         assert!(

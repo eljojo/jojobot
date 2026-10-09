@@ -661,7 +661,11 @@ mod tests {
     /// moves, and says plainly that the essay is what it left out.
     #[tokio::test]
     async fn a_brief_orientation_keeps_the_snapshot_and_drops_only_the_essay() {
-        let jojobot = handler();
+        // **Bare on purpose, and not proof about a real instance.** It compares
+        // the brief answer with a full one; a real fresh instance holds the
+        // shipped kinds with their keys declared and its full anonymous boot
+        // leaves `## Sessions` out because the whole essay does not fit.
+        let jojobot = handler_bare();
         ensure(&jojobot, "alpha").await;
 
         let full = json_of(

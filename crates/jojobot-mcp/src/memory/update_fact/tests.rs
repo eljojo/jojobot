@@ -3043,6 +3043,9 @@ async fn a_status_write_that_is_not_finishing_leaves_a_leftover_due_moment() {
 async fn finishing_work_through_a_second_claim_takes_the_stored_due_moment_off() {
     let jojobot = handler();
     ensure(&jojobot, "project:atlas").await;
+    // `owner` is a reference the shipped work kind declares, so the person it
+    // names has to exist.
+    ensure(&jojobot, "person:gamma").await;
     jojobot
         .add_entity(Parameters(AddEntityArgs {
             parent: Some("project:atlas".into()),
@@ -3071,7 +3074,7 @@ async fn finishing_work_through_a_second_claim_takes_the_stored_due_moment_off()
         CaptureArgs {
             provenance: Some("testimony".into()),
             fields: Some(
-                [("owner".to_string(), "gamma".to_string())]
+                [("owner".to_string(), "person:gamma".to_string())]
                     .into_iter()
                     .collect(),
             ),
