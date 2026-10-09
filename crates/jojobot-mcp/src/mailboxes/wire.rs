@@ -460,7 +460,7 @@ pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery
     else {
         return;
     };
-    let size = |json: &serde_json::Value| json.to_string().chars().count() + 1;
+    let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
     let rest = rendered.to_string().chars().count() + beside + crate::answer::STATUS_BAR_ROOM;
     if rest + messages.iter().map(size).sum::<usize>() <= ANSWER_CEILING {
         rendered["messages"] = messages.into();

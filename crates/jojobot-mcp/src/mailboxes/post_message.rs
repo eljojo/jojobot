@@ -834,7 +834,7 @@ mod tests {
     async fn a_post_that_collects_a_hostile_box_fits_the_ceiling_and_takes_every_message() {
         let (jojobot, posted) = a_post_collecting_a_box(1_500).await;
 
-        let size = posted.to_string().chars().count();
+        let size = crate::answer::served_len(&posted);
         assert!(
             size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
             "the post's whole answer is {size} characters"
@@ -910,7 +910,7 @@ mod tests {
     async fn a_post_counts_its_own_receipt_against_the_ceiling_at_every_size_of_box() {
         for body_len in (800..=1_300).step_by(20) {
             let (jojobot, posted) = a_post_collecting_a_box(body_len).await;
-            let size = posted.to_string().chars().count();
+            let size = crate::answer::served_len(&posted);
             assert!(
                 size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
                 "bodies of {body_len}: the post's whole answer is {size} characters"

@@ -1589,7 +1589,7 @@ mod tests {
                     .await
                     .expect("read_mailbox ok"),
             );
-            let size = delivery.to_string().chars().count();
+            let size = crate::answer::served_len(&delivery);
             assert!(
                 size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
                 "bodies of {body_len}: the delivery is {size} characters"
@@ -1598,6 +1598,75 @@ mod tests {
             let named = delivery["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
             assert_eq!(carried + named, 25, "bodies of {body_len}: {delivery}");
         }
+    }
+
+    /// **The characters a delivery may differ from the sum of its parts by**:
+    /// the digits of `count` and the brackets of the list the fill did not
+    /// render.
+    const DELIVERY_EDGE_SLACK: usize = 4;
+
+    /// **A delivery carries as many whole bodies as fit under the ceiling as the
+    /// answer is served.** The surface drops null keys from what it ships, so a
+    /// delivery filled against each message with its nulls in stops carrying
+    /// whole bodies early, by the length of those keys on every message it
+    /// carries. The room left over when the cut falls is less than one whole
+    /// message, once the room the fill reserves for naming every message at its
+    /// widest is given back. The size of the body is swept, because the edge of
+    /// the cut has to land at several places.
+    #[tokio::test]
+    async fn a_delivery_carries_every_whole_body_that_fits_as_the_answer_is_served() {
+        let mut cut_at = 0;
+        for body_len in (800..=1_300).step_by(10) {
+            let jojobot = mailbox_handler();
+            let sid = owning(&jojobot, "dev").await;
+            for _ in 0..25 {
+                send(&jojobot, "dev", "epsilon", &"x".repeat(body_len)).await;
+            }
+            let mut delivery = json_of(
+                &jojobot
+                    .read_mailbox(Parameters(ReadMailboxArgs {
+                        counts_only: None,
+                        new_only: None,
+                        sid: Some(sid),
+                    }))
+                    .await
+                    .expect("read_mailbox ok"),
+            );
+            crate::answer::strip_nulls(&mut delivery);
+            let named = delivery["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+            if named == 0 {
+                continue;
+            }
+            cut_at += 1;
+            let served = delivery.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+            let carried = delivery["messages"].as_array().expect("messages");
+            let whole = carried[0].to_string().chars().count() + 1;
+            // The envelope the cut left in place of the first body that did not
+            // fit, which took some of the room the whole body could not use.
+            let Some(elided) = carried.iter().find(|m| m["body_elided"] == true) else {
+                continue;
+            };
+            let elided = elided.to_string().chars().count() + 1;
+            // What the fill reserved for naming every message, less the ids this
+            // delivery really names.
+            let per_id = delivery["not_shown"]["ids"][0]
+                .as_str()
+                .expect("a named id")
+                .len()
+                + 3;
+            let unnamed = (25 - named) * per_id;
+            let unused = jojobot_domain::text::ANSWER_CEILING as i64 - served as i64;
+            assert!(
+                unused >= 0,
+                "bodies of {body_len}: the delivery is {served} characters"
+            );
+            assert!(
+                unused < (whole + unnamed + DELIVERY_EDGE_SLACK) as i64 - elided as i64,
+                "bodies of {body_len}: another whole body of {whole} would have fit: {unused} \
+                 characters of the ceiling are unused"
+            );
+        }
+        assert!(cut_at > 5, "the sweep never made the fill cut: {cut_at}");
     }
 
     /// **A delivery counts its own envelope against the ceiling.** The messages
@@ -1637,7 +1706,7 @@ mod tests {
             send(&jojobot, "dev", "epsilon", &body).await;
         }
         let delivery = read(&jojobot, &sid).await;
-        let size = delivery.to_string().chars().count();
+        let size = crate::answer::served_len(&delivery);
         // The status bar joins the answer after the verb has returned, in the room
         // the verb left for it.
         assert!(
