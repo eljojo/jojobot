@@ -625,13 +625,14 @@ pub async fn boot_store_pushing(
     // **The one-time pass that gives a thing whose schedule cannot be read the
     // day it became late.** The owed read selects on the stored due day alone, so
     // a loop left unreadable before a write stored one for it never reached the
-    // read. Stamped with the day of this boot, once, and marked finished; a thing
-    // that becomes unreadable afterwards is stamped by the write that made it so.
+    // read. Stamped with the day of this boot in the instance's zone (UTC when it
+    // holds none), once, and marked finished; a thing that becomes unreadable
+    // afterwards is stamped by the write that made it so.
     // Not fatal: a pass that failed or was skipped is owed again at the next boot.
     match jojobot_adapters::dolt::backfill_unreadable_due_days(
         store.pool(),
         indexed.as_ref(),
-        clock.today_in(&jiff::tz::TimeZone::UTC),
+        the_day_of_this_boot(indexed.as_ref(), &clock).await,
     )
     .await
     {
@@ -827,12 +828,75 @@ pub async fn boot_store_pushing(
     })
 }
 
+/// **The day a boot-time pass stamps**, read the way a run that states no zone is
+/// answered: in the instance's zone, and in UTC when the instance holds none.
+async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil::Date {
+    clock.today_in(&jojobot_mcp::orientation::instance_zone::unzoned_frame(memory).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use jiff::civil::date;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
+
+    /// **The zone that is a different day from UTC right now**, chosen at run time:
+    /// one zone fourteen hours ahead and one eleven behind cannot both share
+    /// UTC's day at any moment.
+    fn a_zone_on_another_day_than_utc() -> (&'static str, jiff::civil::Date) {
+        let now = jiff::Timestamp::now();
+        let utc = now.to_zoned(jiff::tz::TimeZone::UTC).date();
+        ["Pacific/Kiritimati", "Pacific/Pago_Pago"]
+            .into_iter()
+            .map(|name| {
+                let zone = jiff::tz::TimeZone::get(name).expect("a zone this build resolves");
+                (name, now.to_zoned(zone).date())
+            })
+            .find(|(_, day)| *day != utc)
+            .expect("one of the two zones is on another day")
+    }
+
+    /// **A boot stamps the instance's day, not UTC's**, so an evening boot in a
+    /// zone behind UTC does not stamp tomorrow. With no zone on the instance the
+    /// day is UTC's.
+    #[tokio::test]
+    async fn the_day_a_boot_stamps_is_the_instances_and_utc_when_it_holds_none() {
+        let (zone, instances_day) = a_zone_on_another_day_than_utc();
+        let utc_day = Clock::Real.today_in(&jiff::tz::TimeZone::UTC);
+        let memory = InMemoryMemory::booted();
+        assert_eq!(
+            the_day_of_this_boot(&memory, &Clock::Real).await,
+            utc_day,
+            "no zone on the instance: UTC's day"
+        );
+
+        let instance = EntityId::person(jojobot_domain::memory::INSTANCE_RECORD);
+        memory
+            .add_entity(NewEntity::new(instance.clone(), "Instance", "test"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+        memory
+            .capture(NewFact {
+                fields: std::collections::BTreeMap::from([(
+                    "timezone".to_string(),
+                    zone.to_string(),
+                )]),
+                ..NewFact::about(instance, "the operator's zone", date(2026, 9, 1))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        assert_ne!(instances_day, utc_day, "the case needs two different days");
+        assert_eq!(
+            the_day_of_this_boot(&memory, &Clock::Real).await,
+            instances_day,
+            "the instance holds {zone}: its day"
+        );
+    }
 
     /// **`Folded` genuinely sits inside the whole assembled stack — it is not
     /// merely forwarding to a store that happens to hold the right answer
