@@ -446,6 +446,12 @@ async fn may(room: &Surface, sid: &str) {
 
 /// June: the party happened, and a plus-one has a name.
 async fn june(room: &Surface, sid: &str) {
+    june_naming_the_partner(room, sid, true).await;
+}
+
+/// June, with the partner's name given either to the person April made
+/// (`renamed`) or to a person made new, leaving April's placeholder standing.
+async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
     did(
         room,
         sid,
@@ -454,20 +460,41 @@ async fn june(room: &Surface, sid: &str) {
     )
     .await;
     attending(room, sid, "bebe", "came to the goodbye party with Wendy").await;
-    did(
-        room,
-        sid,
-        "rename_entity",
-        json!({"handle": "person:plus-one", "to": "person:marjorine"}),
-    )
-    .await;
-    did(
-        room,
-        sid,
-        "update_entity",
-        json!({"handle": "person:marjorine", "name": "Marjorine"}),
-    )
-    .await;
+    match renamed {
+        true => {
+            did(
+                room,
+                sid,
+                "rename_entity",
+                json!({"handle": "person:plus-one", "to": "person:marjorine"}),
+            )
+            .await;
+            did(
+                room,
+                sid,
+                "update_entity",
+                json!({"handle": "person:marjorine", "name": "Marjorine"}),
+            )
+            .await;
+        }
+        false => {
+            did(
+                room,
+                sid,
+                "add_entity",
+                json!({"kind": "person", "handle": "marjorine", "name": "Marjorine",
+                       "source": "the operator"}),
+            )
+            .await;
+            attending(
+                room,
+                sid,
+                "marjorine",
+                "came to the goodbye party with Butters",
+            )
+            .await;
+        }
+    }
     did(
         room,
         sid,
@@ -565,6 +592,12 @@ async fn september(room: &Surface, sid: &str) {
 
 /// October: the move.
 async fn october(room: &Surface, sid: &str) {
+    october_backing_up(room, sid, true).await;
+}
+
+/// October, with the laptop's backup either filed as a check-in (`filed`) or
+/// only said, as a sentence on the routine.
+async fn october_backing_up(room: &Surface, sid: &str, filed: bool) {
     part_of_the_move(
         room,
         sid,
@@ -574,14 +607,29 @@ async fn october(room: &Surface, sid: &str) {
     )
     .await;
     ride(room, sid, "gravel-bike", "105").await;
-    check_in(
-        room,
-        sid,
-        "back-up-the-laptop",
-        "2026-10-31",
-        "backed up the laptop before the move",
-    )
-    .await;
+    match filed {
+        true => {
+            check_in(
+                room,
+                sid,
+                "back-up-the-laptop",
+                "2026-10-31",
+                "backed up the laptop before the move",
+            )
+            .await;
+        }
+        false => {
+            did(
+                room,
+                sid,
+                "capture",
+                json!({"subject": "rhythm:back-up-the-laptop",
+                       "content": "backed up the laptop on 2026-10-31, before the move",
+                       "provenance": "testimony"}),
+            )
+            .await;
+        }
+    }
     journalled(
         room,
         sid,
@@ -742,6 +790,32 @@ async fn work_the_year(room: &Surface) {
     for (day, work) in &SITTINGS[..9] {
         let sid = sitting(room, day).await;
         work(room, &sid).await;
+    }
+}
+
+/// **One thing the year does wrong**, in the sitting that does it.
+#[derive(Clone, Copy)]
+enum Slip {
+    /// October says the backup in words and files no check-in for it.
+    TheBackupIsOnlySaid,
+    /// June gives Butters's partner her name on a person made new.
+    MarjorineIsMadeNew,
+}
+
+/// **The nine sittings of the year with one slip in one of them**, every other
+/// sitting as it is meant to be.
+async fn work_the_year_slipping(room: &Surface, slip: Slip) {
+    for (day, work) in &SITTINGS[..9] {
+        let sid = sitting(room, day).await;
+        match (slip, *day) {
+            (Slip::TheBackupIsOnlySaid, "2026-10-31") => {
+                october_backing_up(room, &sid, false).await
+            }
+            (Slip::MarjorineIsMadeNew, "2026-06-14") => {
+                june_naming_the_partner(room, &sid, false).await
+            }
+            _ => work(room, &sid).await,
+        }
     }
 }
 
@@ -1417,6 +1491,40 @@ async fn a_year_that_read_lisas_session_as_the_operators_fails_only_the_knee_loc
     );
 }
 
+/// A room worked as meant except for one slip, and the cold sitting's answers.
+async fn worked_slipping(slip: Slip) -> (Room, Surface) {
+    let (room, surface) = furnished().await;
+    work_the_year_slipping(&surface, slip).await;
+    let sid = sitting(&surface, "2026-12-01").await;
+    december(&surface, &sid).await;
+    (room, surface)
+}
+
+/// **The laptop's backup was said and never filed as a check-in.** The wrong
+/// act: October's sitting wrote a sentence on the routine, so jojobot still
+/// counts the laptop from June and finds it overdue, while the cold sitting's
+/// answer, worked out by hand, names only the chain and Randy.
+#[tokio::test]
+async fn a_year_that_only_said_the_backup_fails_only_the_routines_carrier_lock() {
+    let (_room, surface) = worked_slipping(Slip::TheBackupIsOnlySaid).await;
+    only_one_fails(
+        &judge_all(&surface, &[]).await,
+        "jojobot does not find the chain behind",
+    );
+}
+
+/// **Butters's partner was named on a person made new in June.** The wrong
+/// act: the April placeholder stays standing beside Marjorine, so the guests
+/// still total the eight and a host, and the answer still names her.
+#[tokio::test]
+async fn a_year_that_named_marjorine_afresh_fails_only_the_plus_one_carrier_lock() {
+    let (_room, surface) = worked_slipping(Slip::MarjorineIsMadeNew).await;
+    only_one_fails(
+        &judge_all(&surface, &[]).await,
+        "nobody named Marjorine holds a record from before June",
+    );
+}
+
 /// A sentence on a thing and nothing else: no field, no edge, no check-in.
 async fn said(room: &Surface, sid: &str, subject: &str, content: &str) {
     did(
@@ -1666,14 +1774,18 @@ async fn december_in_prose(room: &Surface, sid: &str) {
 /// answer is correct, said in words with the sums done by hand.
 ///
 /// **What fails** is what reads state the store keeps beyond the answer: the
-/// view that was never made (4), the work of the move that was never filed (12),
-/// the guests who were never recorded as attending (13) and the three visits
-/// that never held a mechanic as a key (14). **What holds** is what reads the
-/// answer's own words (2, 3, 7, 8, 9, 10, 11 and 15), because the sums were
-/// done correctly by hand; that is right for those cases, and the case says so
-/// rather than pretending a prose answer is a wrong one.
+/// view that was never made (4), the check-ins that were never filed, so that
+/// jojobot's own overdue arithmetic finds all three routines behind (the
+/// carrier beside 2), the person who was never named (the carrier beside 10),
+/// the work of the move that was never filed (12), the guests who were never
+/// recorded as attending (13) and the three visits that never held a mechanic
+/// as a key (14). That is eight locks. **What holds** is what reads the
+/// answer's own words (the answer locks of 2, 3, 7, 8, 9, 10, 11 and 15),
+/// because the sums were done correctly by hand; that is right for those
+/// locks, and the case says so rather than pretending a prose answer is a
+/// wrong one. By question, 2 and 10 now fail and 3, 7, 8, 9, 11 and 15 hold.
 #[tokio::test]
-async fn a_year_written_entirely_in_prose_fails_the_view_the_work_the_guests_and_the_visits() {
+async fn a_year_written_entirely_in_prose_fails_every_lock_that_reads_what_was_kept() {
     let (_room, surface) = furnished().await;
     prose_year(&surface).await;
     let sid = sitting(&surface, "2026-12-01").await;
@@ -1692,6 +1804,8 @@ async fn a_year_written_entirely_in_prose_fails_the_view_the_work_the_guests_and
         "of the February visit",
         "of the September visit",
         "of the May visit",
+        "jojobot does not find the chain behind",
+        "nobody named Marjorine holds a record from before June",
     ];
     assert_eq!(
         failed.len(),

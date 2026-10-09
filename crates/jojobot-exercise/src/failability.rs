@@ -1503,6 +1503,20 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: ASKING_ROOM,
+        lock: "Phase 10 — December: jojobot does not find the chain behind since 31 May and Randy since 27 September with the laptop up to date since 31 October, so the check-ins were said in words and never filed as check-ins",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
         lock: "Phase 10 — December: no view the year made returns exactly the gravel bike and the fat bike, so \"my bikes\" is a list typed out in January rather than a question asked today",
         file: "tests/asking_room.rs",
         function: "a_year_that_kept_no_view_fails_only_the_bikes_lock",
@@ -1527,6 +1541,20 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 10 — December: the knee does not come back from February, May and September alone, so either a sitting is missing or what is in Lisa's own session was read as the operator's",
         file: "tests/asking_room.rs",
         function: "a_year_that_read_lisas_session_as_the_operators_fails_only_the_knee_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: jojobot does not find the chain behind since 31 May and Randy since 27 September with the laptop up to date since 31 October, so the check-ins were said in words and never filed as check-ins",
+        file: "tests/asking_room.rs",
+        function: "a_year_that_only_said_the_backup_fails_only_the_routines_carrier_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one",
+        file: "tests/asking_room.rs",
+        function: "a_year_that_named_marjorine_afresh_fails_only_the_plus_one_carrier_lock",
         strength: Strength::Discriminating,
     },
 ];

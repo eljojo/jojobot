@@ -135,6 +135,17 @@
 //!   party's guests off the walk and leave out a link whose claim was taken
 //!   back. A substring cannot tell a guest who came from one whose
 //!   cancellation is marked on the walk beside the name.
+//! * **`the_routines_behind_are_the_chain_and_randy_by_their_check_ins`** — ask
+//!   jojobot which routines are overdue on the day of the question and
+//!   compare each one's own last check-in. The answer slot holds what the
+//!   cold sitting SAID; only the rhythms hold whether the check-ins were
+//!   filed, so the overdue arithmetic rests on them and not on a hand count.
+//! * **`marjorine_is_the_april_plus_one_under_her_new_name`** — find the
+//!   person named Marjorine and ask whether she holds a record older than the
+//!   day she was named. A rename carries the April claims to the new handle and
+//!   a merge moves them to the survivor, so the same record is the evidence
+//!   for either route; the placeholder's own handle is the occupant's and no
+//!   lock can spell it.
 //! * **`question_*_rule_answer`** — inspect only live answer records on the
 //!   named work item. The lock vocabulary matches substrings in timestamps
 //!   and cannot distinguish a whole rule number in content or details.
@@ -162,7 +173,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 48] = [
+pub const CHECKS: [Hatch; 50] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -382,6 +393,17 @@ pub const CHECKS: [Hatch; 48] = [
             })
         },
     ),
+    (
+        "the_routines_behind_are_the_chain_and_randy_by_their_check_ins",
+        || {
+            checked(|seen| {
+                Box::pin(the_routines_behind_are_the_chain_and_randy_by_their_check_ins(seen))
+            })
+        },
+    ),
+    ("marjorine_is_the_april_plus_one_under_her_new_name", || {
+        checked(|seen| Box::pin(marjorine_is_the_april_plus_one_under_her_new_name(seen)))
+    }),
 ];
 
 fn rule_answer_check(
@@ -3523,6 +3545,138 @@ async fn the_party_was_attended_by_those_who_came_and_nobody_else(
         true => Ok(()),
         false => Err(format!(
             "more than the host is recorded beyond the eight who came: {extras:?}"
+        )),
+    }
+}
+
+/// **The chain and Randy are behind on 1 December by jojobot's own arithmetic,
+/// and the laptop is not.**
+///
+/// The cold sitting's answer says which routines are behind; this reads the
+/// rhythms themselves. A routine is overdue by the cadence, the check-in it
+/// counts from and the day asked about, so the answer is right only when each
+/// sitting filed its check-in as a check-in: a sentence saying the chain was
+/// oiled leaves the rhythm where it was. **The positive is the laptop's own
+/// last check-in**, because a rhythm nobody can read is absent from the
+/// overdue answer for that reason and not because it is up to date.
+async fn the_routines_behind_are_the_chain_and_randy_by_their_check_ins(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    const AS_OF: &str = "2026-12-01";
+    const BEHIND: [(&str, &str); 2] = [
+        ("rhythm:call-randy", "2026-09-27"),
+        ("rhythm:oil-the-chain", "2026-05-31"),
+    ];
+    const UP_TO_DATE: (&str, &str) = ("rhythm:back-up-the-laptop", "2026-10-31");
+    let last_check_ins = |answer: &Value| -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = answer["objects"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|object| {
+                (
+                    object["id"].as_str().unwrap_or_default().to_string(),
+                    object["fields"]["last_check_in"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    };
+    let behind = last_check_ins(&read_json(
+        &seen
+            .room
+            .call(
+                "recall",
+                json!({"kind": "rhythm", "overdue": {"as_of": AS_OF}, "keys": ["last_check_in"]}),
+            )
+            .await,
+    )?);
+    let expected: Vec<(String, String)> = BEHIND
+        .iter()
+        .map(|(id, day)| (id.to_string(), day.to_string()))
+        .collect();
+    if behind != expected {
+        return Err(format!(
+            "on {AS_OF} jojobot finds {behind:?} overdue, not the chain since 31 May and Randy \
+             since 27 September alone"
+        ));
+    }
+    let every = last_check_ins(&read_json(
+        &seen
+            .room
+            .call(
+                "recall",
+                json!({"kind": "rhythm", "keys": ["last_check_in"]}),
+            )
+            .await,
+    )?);
+    let laptop = (UP_TO_DATE.0.to_string(), UP_TO_DATE.1.to_string());
+    match every.contains(&laptop) {
+        true => Ok(()),
+        false => Err(format!(
+            "the laptop is not overdue, but its last check-in is not 31 October either: {every:?}"
+        )),
+    }
+}
+
+/// **Marjorine is the person Butters's partner was in April.**
+///
+/// The partner had no name in April and one in June. They are one person when
+/// the record of April sits on the person who now has the name: a rename keeps
+/// the claims on the new handle and a merge moves them onto the survivor, so
+/// **a person named Marjorine who holds a record older than the sitting that
+/// named her** is the evidence for either route. A Marjorine created in June
+/// holds nothing older, and a year with no such person holds nothing at all.
+async fn marjorine_is_the_april_plus_one_under_her_new_name(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    const NAMED_ON: &str = "2026-06-14";
+    let people = read_json(
+        &seen
+            .room
+            .call(
+                "recall",
+                json!({"kind": "person", "facts": true, "status": "active"}),
+            )
+            .await,
+    )?;
+    let named: Vec<&Value> = people["objects"]
+        .as_array()
+        .map(|objects| {
+            objects
+                .iter()
+                .filter(|person| {
+                    ["id", "name"].iter().any(|key| {
+                        person[*key]
+                            .as_str()
+                            .is_some_and(|said| said.to_lowercase().contains("marjorine"))
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if named.is_empty() {
+        return Err("no person is named Marjorine".into());
+    }
+    let older = named.iter().any(|person| {
+        person["facts"].as_array().is_some_and(|facts| {
+            facts.iter().any(|fact| {
+                fact["recorded_at"]
+                    .as_str()
+                    .is_some_and(|day| day < NAMED_ON)
+            })
+        })
+    });
+    match older {
+        true => Ok(()),
+        false => Err(format!(
+            "Marjorine holds nothing recorded before {NAMED_ON}, so the April plus-one is not \
+             her: {named:?}"
         )),
     }
 }

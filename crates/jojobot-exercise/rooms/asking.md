@@ -41,7 +41,7 @@ as passed** (1, 5 and 6); a person reads those with the transcript beside them.
 | Slot | The question | What reads it |
 | --- | --- | --- |
 | 1 | who are the bots here, and what is each for | a person |
-| 2 | which routines am I behind on, and when did I last do each | the slot |
+| 2 | which routines am I behind on, and when did I last do each | the slot, and a named check: the rhythms' own check-ins |
 | 3 | my past sessions, and what I said about the movers in March | the slot, for the quote |
 | 4 | pull up my bikes | a named check: the view the year made |
 | 5 | what I decided this year, oldest first | a person |
@@ -49,7 +49,7 @@ as passed** (1, 5 and 6); a person reads those with the transcript beside them.
 | 7 | search my past sessions for my knee | the slot, paired |
 | 8 | which bike I rode more, and by how much | the slot |
 | 9 | enough chairs for the June party | the slot |
-| 10 | who Butters's plus-one was | the slot |
+| 10 | who Butters's plus-one was | the slot, and a named check: the person who held the April record |
 | 11 | km ridden in each month | the slot |
 | 12 | where the move stands, by part | a named check: the work of the move |
 | 13 | how the party went and who came | a named check: the guests |
@@ -290,6 +290,15 @@ carries 2026-09-27
 lacks   2026-10-31
 say     December: the routines behind are not the chain since 31 May and Randy since 27 September alone, so either a day is missing from the answer or the laptop, up to date since 31 October, was listed with them
 
+# 2, the carrier. The slot above holds what the cold sitting said, and a year
+# written as sentences can say it correctly: the days are in the sentences. What
+# only the rhythms hold is whether each sitting filed its check-in as one, and
+# jojobot's own arithmetic over them is the answer the operator can trust. As of
+# the day asked, the chain and Randy are overdue by their last check-ins, and the
+# laptop is not, with 31 October as its last.
+check   the_routines_behind_are_the_chain_and_randy_by_their_check_ins
+say     December: jojobot does not find the chain behind since 31 May and Randy since 27 September with the laptop up to date since 31 October, so the check-ins were said in words and never filed as check-ins
+
 # 3. The one number said once, in March and nowhere else the cold sitting could
 # have read it without looking at that sitting's own record. Written the way
 # the operator said it or without the comma.
@@ -328,12 +337,18 @@ recall {"fields": [{"key": "answer_9"}], "keys": ["answer_9"]}
 carries-either one short | 1 short | short by one | short by 1 | one chair short | 1 chair short | one too few | one more chair | 1 more chair
 say     December: the answer about the chairs does not say they were one short, so either the guests or the chairs were counted wrong
 
-# 10. The partner is Marjorine. The placeholder from April and the name from
-# June are one thing, which the guests lock below holds.
+# 10. The partner is Marjorine. The slot holds the name the cold sitting gave.
 recall {"fields": [{"key": "answer_10"}], "keys": ["answer_10"]}
 carries "answer_10"
 carries-any-case marjorine
 say     December: the plus-one is not named Marjorine, so the April placeholder and the June name were not put together
+
+# 10, the carrier. The placeholder from April and the name from June are ONE
+# thing when the person named Marjorine holds a record older than the June
+# sitting that named her. A rename or a merge leaves exactly that; a Marjorine
+# made new in June, with the placeholder left standing beside her, does not.
+check   marjorine_is_the_april_plus_one_under_her_new_name
+say     December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one
 
 # 11. The km of each month, from rides said in six different sittings. The
 # numbers are three digits so that none is a date or another answer's number.
@@ -417,3 +432,10 @@ three is in the transcript: a visit filed twice reads the same.
 
 **Whether the monthly totals pair each month with its number.** Question 11's
 lock holds the six numbers and cannot hold which is January's.
+
+**Whether Marjorine was ever the placeholder, when the placeholder held no
+record.** Question 10's carrier reads a record older than June on the person
+named Marjorine. A placeholder made in April and given no claim at all, then
+renamed, leaves nothing to read, and the lock fails a year that did the right
+thing. April's sitting says the partner is coming, which is a claim to file, so
+the room does not expect that year.
