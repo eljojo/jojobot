@@ -131,7 +131,7 @@ Every sentence in the answer to `start_here`, by the path it sits at. An id, a c
 #### Anonymous boot — `.operator`
 
 ```text
-no entity yet: add_entity a person, add_entity topic:instance if it is missing, then capture operator on topic:instance
+no entity yet: add_entity a person, then capture operator on topic:instance
 ```
 
 #### Anonymous boot — `.orientation`
@@ -301,7 +301,7 @@ A BLOCKED OR FAILED CALL IS A FAILED TASK, NOT A FOOTNOTE. It stays open until i
 #### Named boot of the shipped identity — `.operator`
 
 ```text
-no entity yet: add_entity a person, add_entity topic:instance if it is missing, then capture operator on topic:instance
+no entity yet: add_entity a person, then capture operator on topic:instance
 ```
 
 #### Named boot of the shipped identity — `.orientation`

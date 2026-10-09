@@ -542,7 +542,6 @@ async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("project:atlas", "The Campaign").await;
-    s.add("topic:instance", "This instance").await;
 
     // ── lands, and the receipt names what governs the word ──────────────────
     let landed = s
@@ -657,7 +656,6 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("project:atlas", "The Campaign").await;
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "the operator's words",

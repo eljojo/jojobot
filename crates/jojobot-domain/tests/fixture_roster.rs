@@ -603,6 +603,7 @@ const ORDINARY: &[&str] = &[
     "thing:upgrade-fixture-thing",
     "topic:all-rules",
     "topic:instance",
+    "topic:instance-2", // made up: a neighbour of the instance record, for a screen case
     "topic:stunt-rehearsals",
     "topic:stunt-schedule",
     "topic:the-five-words",

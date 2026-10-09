@@ -111,15 +111,33 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
     .await
     .unwrap_or(false);
 
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-
+    if !served {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+    }
     assert!(
         served,
         "the real server did not reach its own serving line, against a store holding a row it \
          did not itself write — this is the exact class of the crash-loop this suite exists to \
          catch. What it said instead:\n{}",
         seen.join("\n")
+    );
+
+    // **The binary made the instance's own record at boot**, over a store that
+    // held none: the path production takes, which no in-process seed call reaches.
+    let surface =
+        jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
+            .await
+            .expect("connecting to the real binary");
+    let read = surface
+        .call("recall", serde_json::json!({"subject": "topic:instance"}))
+        .await;
+    surface.finish().await;
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    assert!(
+        read.contains("\"id\":\"topic:instance\"") && read.contains("\"source\":\"jojobot\""),
+        "a store that held no instance record has one after the binary boots: {read}"
     );
 
     drop(scratch);

@@ -243,7 +243,6 @@ async fn an_instance_that_holds_its_operators_zone_answers_a_run_that_sends_none
     );
 
     // The operator writes their zone, once.
-    first.add("topic:instance", "This instance").await;
     first
         .event_with(
             "topic:instance",
@@ -291,7 +290,6 @@ async fn a_boot_that_sends_a_zone_other_than_the_instances_is_told_which_two() {
     let (operators, other) = ("Etc/GMT+12", "Pacific/Kiritimati");
     let story = Story::begin("bot:otto").await;
     let first = story.session().await;
-    first.add("topic:instance", "This instance").await;
     first
         .event_with(
             "topic:instance",

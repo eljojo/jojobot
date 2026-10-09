@@ -121,15 +121,6 @@ async fn write_status(surface: &Surface, sid: &str, subject: &str, status: &str)
 /// **A write to the instance's own record**, where `columns` and the
 /// `status_word/` mappings live.
 async fn write_instance(surface: &Surface, sid: &str, fields: serde_json::Value) {
-    // The furnished room holds no instance record yet. A record already there
-    // refuses the second add, which is the state wanted either way.
-    as_the_occupant(
-        surface,
-        sid,
-        "add_entity",
-        json!({"kind": "topic", "handle": "instance", "name": "Instance", "source": "the operator"}),
-    )
-    .await;
     let written = as_the_occupant(
         surface,
         sid,

@@ -36,7 +36,9 @@ use std::sync::Arc;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes};
 use jojobot_domain::memory::kinds;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError, NewEntity};
+use jojobot_domain::memory::{
+    EntityId, EntityKind, Guarded, INSTANCE_RECORD, Memory, MemoryError, NewEntity,
+};
 
 /// The identity every instance has, **named by its handle**.
 ///
@@ -265,6 +267,45 @@ pub async fn ensure_default_identity(
         return Seeded::Unreachable(e.to_string());
     }
     Seeded::Created
+}
+
+/// **Make sure the instance's own record exists**, so the first write onto it
+/// (the operator, the zone, a setting) needs no `add_entity` that only exists
+/// to make it.
+///
+/// **Idempotent, and it never touches an existing record.** An instance made
+/// before this ran holds one with keys on it, and a seed that overwrote would
+/// be a data-loss bug wearing a setup step's clothes. The check is existence,
+/// and existence alone. The record is created holding no key: every key on it
+/// is somebody's to write, and the guards on its keys apply to those writes
+/// exactly as they did when a caller made the record.
+///
+/// A stored row rather than a supplied one: a supplied record is refused at
+/// boot over a stored row at its address, and every instance that has one
+/// would stop booting.
+pub async fn ensure_instance_record(memory: &Arc<dyn Memory>) -> Seeded {
+    let id = EntityId(INSTANCE_RECORD.to_string());
+
+    match memory.list_entities(Some(EntityKind::TOPIC)).await {
+        Ok(topics) if topics.iter().any(|t| t.id == id) => return Seeded::AlreadyThere,
+        Ok(_) => {}
+        Err(e) => return Seeded::Unreachable(e.to_string()),
+    }
+    match memory
+        .add_entity(NewEntity::new(id, "This instance", "jojobot"))
+        .await
+    {
+        Ok(Guarded::Written(_)) => Seeded::Created,
+        Ok(Guarded::Blocked { candidates, .. }) => Seeded::Unreachable(format!(
+            "the near-miss screen refused the record and named {}",
+            candidates
+                .iter()
+                .map(|c| c.handle.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Err(e) => Seeded::Unreachable(e.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -550,6 +591,100 @@ mod tests {
                 .len(),
             1,
             "and no second assistant was created beside it"
+        );
+    }
+    /// **A fresh instance gets the record, holding no key.** Every key on it is
+    /// somebody's to write, so the seed writes none.
+    #[tokio::test]
+    async fn a_fresh_instance_gets_its_record_holding_no_key() {
+        let (memory, _) = ports();
+        assert_eq!(ensure_instance_record(&memory).await, Seeded::Created);
+
+        let id = EntityId(INSTANCE_RECORD.to_string());
+        let held = memory
+            .list_entities(Some(EntityKind::TOPIC))
+            .await
+            .expect("list ok");
+        assert_eq!(held.iter().filter(|t| t.id == id).count(), 1, "{held:?}");
+        assert!(
+            memory.fields(&id).await.expect("fields read").is_empty(),
+            "the record holds no key until somebody writes one"
+        );
+    }
+
+    /// **A record somebody made already is left exactly as it is.** The seed
+    /// recognises it by existence, so the operator and the zone written onto it
+    /// survive every boot; and a second seed writes nothing.
+    #[tokio::test]
+    async fn seeding_never_touches_an_instance_record_that_already_exists() {
+        let (memory, _) = ports();
+        let id = EntityId(INSTANCE_RECORD.to_string());
+        memory
+            .add_entity(NewEntity::new(id.clone(), "Our instance", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("an empty board blocks nothing");
+        let mut fact = jojobot_domain::memory::NewFact::about(
+            id.clone(),
+            "who the operator is and where they live",
+            jiff::civil::date(2026, 7, 1),
+        );
+        fact.fields.insert("timezone".into(), "Etc/GMT+12".into());
+        memory.capture(fact).await.expect("capture ok");
+        let before = memory.fields(&id).await.expect("fields read");
+        assert_eq!(
+            before.get("timezone").map(String::as_str),
+            Some("Etc/GMT+12")
+        );
+
+        assert_eq!(
+            ensure_instance_record(&memory).await,
+            Seeded::AlreadyThere,
+            "a seed recognises the record rather than remaking it"
+        );
+        assert_eq!(
+            memory.fields(&id).await.expect("fields read"),
+            before,
+            "what was written on the record survived the seed"
+        );
+        let topics = memory
+            .list_entities(Some(EntityKind::TOPIC))
+            .await
+            .expect("list ok");
+        assert_eq!(topics.len(), 1, "and no second record appeared: {topics:?}");
+        assert_eq!(topics[0].name, "Our instance", "nor was it renamed");
+    }
+
+    /// **A near-miss the screen finds is reported, not swallowed.** The seed
+    /// sends no override token, so a neighbouring record refuses the creation;
+    /// the answer names it and writes nothing.
+    #[tokio::test]
+    async fn a_neighbouring_topic_that_refuses_the_record_is_named() {
+        let (memory, _) = ports();
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("topic:instance-2".into()),
+                "Instance two",
+                "user-named",
+            ))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("an empty board blocks nothing");
+
+        let Seeded::Unreachable(why) = ensure_instance_record(&memory).await else {
+            panic!("the screen refuses a record one letter from another topic");
+        };
+        assert!(why.contains("topic:instance-2"), "{why}");
+        assert_eq!(
+            memory
+                .list_entities(Some(EntityKind::TOPIC))
+                .await
+                .expect("list ok")
+                .len(),
+            1,
+            "nothing was written"
         );
     }
 }

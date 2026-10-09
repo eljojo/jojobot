@@ -2237,6 +2237,91 @@ async fn assert_the_newer_shapes_read_back(surface: &Surface, git_ref: &str) {
     }
 }
 
+/// **An instance record somebody made by hand keeps what it holds across the
+/// boots that seed the record.** The build makes the record when none exists, so
+/// the case is the one an existing instance is in: the recording holds one with
+/// the zone on it, the operator is written onto it through the served surface,
+/// and the next boot reads both unchanged. A seed that remade, renamed or
+/// refused over the record would drop a key or log a warning, and the boot's own
+/// warning check fails the gate on the second.
+#[tokio::test]
+async fn a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("instance-record").await;
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let boot: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    )
+    .expect("the boot is json");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
+        .to_string();
+    for (what, tool, args) in [
+        (
+            "making the operator",
+            "add_entity",
+            json!({"kind": "person", "handle": "milhouse", "name": "Milhouse",
+                   "source": "user-named", "sid": sid}),
+        ),
+        (
+            "naming the operator on the record",
+            "capture",
+            json!({"subject": "topic:instance", "content": "who the operator is",
+                   "provenance": "testimony", "sid": sid,
+                   "fields": {"operator": "person:milhouse"}}),
+        ),
+    ] {
+        let answer = surface.call(tool, args).await;
+        if answer.contains("\"status\":\"blocked\"") {
+            fail(what, &answer);
+        }
+    }
+    surface.finish().await;
+    first.stop().await;
+
+    // The first boot reported the recording's ambiguous handle; this one is the
+    // second and reports none.
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read = surface
+        .call("recall", json!({"subject": "topic:instance"}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the instance record", &read));
+    let record = &parsed["objects"][0];
+    if record["fields"]["timezone"] != "America/New_York"
+        || record["fields"]["operator"] != "person:milhouse"
+    {
+        fail("the zone and the operator both being read", &read);
+    }
+    if record["source"] != "test" {
+        fail("the record being the one made by hand", &read);
+    }
+    surface.finish().await;
+    second.stop().await;
+    drop(scratch);
+}
+
 /// **A pair written before a write had a moment of its own merges after the
 /// upgrade, from each build the gate proves an upgrade from.**
 ///

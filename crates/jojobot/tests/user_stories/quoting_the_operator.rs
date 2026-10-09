@@ -22,7 +22,6 @@ async fn with_an_operator() -> (Story, Session, String) {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "who the operator is",

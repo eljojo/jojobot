@@ -769,6 +769,26 @@ pub async fn boot_store_pushing(
         ),
     }
 
+    // **The instance's own record, there from the first boot.** The operator,
+    // the zone and every setting the instance holds are keys on it, so a first
+    // write onto it must not need a step that only makes it. Created only when
+    // no row exists: an instance that already holds one is left as it is.
+    match jojobot_mcp::seed::ensure_instance_record(&seed_memory).await {
+        jojobot_mcp::seed::Seeded::Created => {
+            tracing::info!(
+                record = jojobot_domain::memory::INSTANCE_RECORD,
+                "seeded the instance record"
+            )
+        }
+        jojobot_mcp::seed::Seeded::AlreadyThere => {}
+        jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
+            error = %why,
+            "INSTANCE RECORD NOT SEEDED — nothing was written and nothing was lost; the operator \
+             and the zone cannot be written until the record exists. A restart once the store is \
+             reachable puts it right."
+        ),
+    }
+
     // **The vocabulary the software ships, declared on every boot.** Written
     // unconditionally: a shipped name is closed to callers, so the only
     // declaration this replaces is a previous build's, and that is how a key

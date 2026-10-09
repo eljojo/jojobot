@@ -26,8 +26,9 @@ fn operator_line(boot: &Value) -> &str {
 async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
     let story = Story::begin("bot:otto").await;
 
-    // No record at all: the boot says there is no entity yet, and names the two
-    // handles a session needs to make one.
+    // The record is there from the first boot and names nobody: the boot says
+    // there is no entity yet, and names the two handles a session needs to make
+    // one.
     let (boot, first) = story.boot_sending_no_zone(Some("new")).await;
     let said = operator_line(&boot);
     assert!(
@@ -35,14 +36,13 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
         "with no record, the line says how to make one: {boot}",
     );
     assert!(
-        said.contains("add_entity topic:instance"),
-        "and that the record itself is made first when it is missing: {boot}",
+        !said.contains("add_entity topic:instance"),
+        "and does not send a session to make the record, which exists: {boot}",
     );
     assert!(!said.starts_with("person:"), "no operator is named: {boot}");
 
     // The record is there, and holds only a zone: still no operator, and the
     // line says so rather than going quiet.
-    first.add("topic:instance", "This instance").await;
     first
         .event_with(
             "topic:instance",
@@ -123,5 +123,40 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
         .await
         .says("work:sigma")
         .never_says("work:phi");
+    story.finish().await;
+}
+
+/// **A fresh instance holds its own record before anybody writes to it.** The
+/// first session reads `topic:instance` and writes a key onto it with no
+/// `add_entity` first, so the operator, the zone and any setting the record
+/// holds need no step that only exists to make the record.
+#[tokio::test]
+async fn a_fresh_instance_holds_its_own_record_and_takes_a_key_with_no_add_entity_first() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.recall("topic:instance")
+        .await
+        .says("topic:instance")
+        .never_says("columns");
+
+    s.event_with(
+        "topic:instance",
+        "how this instance names its columns",
+        json!({ "columns": "someday, next, now, waiting, done, review" }),
+        &[],
+    )
+    .await;
+    s.recall("topic:instance")
+        .await
+        .says("topic:instance")
+        .says("someday, next, now, waiting, done, review");
+
+    // The boot's operator line no longer sends a caller to make the record.
+    let (boot, _) = story.boot_sending_no_zone(Some("new")).await;
+    assert!(
+        !operator_line(&boot).contains("add_entity topic:instance"),
+        "the record exists from the first boot, so the line does not say to make it: {boot}",
+    );
     story.finish().await;
 }

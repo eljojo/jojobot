@@ -52,7 +52,6 @@ async fn pushing_to(ntfy: &FakeNtfy, policy: Policy) -> (Story, Session) {
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:sigma", "Sigma").await;
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "who the operator is",
@@ -263,7 +262,6 @@ async fn an_instance_with_no_push_service_pushes_nothing_and_logs_nothing_about_
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "who the operator is",

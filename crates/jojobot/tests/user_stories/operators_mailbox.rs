@@ -180,7 +180,6 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
     assert_eq!(story.mail_held_by("person:lisa").await, (0, 0, 0));
 
     // ── the operator is named, and that alone opens nothing ─────────────────
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "who the operator is",
