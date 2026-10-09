@@ -2,8 +2,10 @@
 
 How work lands in jojobot.
 
-These are renderings of decisions that live in the decision log. Where this file
-and that log disagree, the log wins.
+These are renderings of decisions that live in the decision log: the record of
+every rule the operator has set, one claim each, which is kept in jojobot itself
+and not in this repository. Where this file and that log disagree, the log wins.
+A reader without the instance can take this file as the working form of it.
 
 ## Build and check
 
@@ -65,7 +67,9 @@ there isn't one — **a commit that cannot name its authority is the finding**, 
 a line of it is written.
 
 The body says only what stays true. Run results, what the author believed before,
-and who found what are reports, and reports go to the coordinator's mailbox.
+and who found what are reports, and reports go to the coordinator's mailbox: a
+message box on the jojobot instance that the coordinator session reads, written
+with the `post_message` verb.
 
 ## Maintenance rounds are planned capacity
 
@@ -104,6 +108,10 @@ PLAYBOOK=<path>`, which costs money and which `make check` never invokes.
 ## Fixtures and examples are fictional, always
 
 Every name, place and organisation in this repository comes from a fixed fictional
-roster. This holds for tests, fixtures, comments, documentation and commit
+roster: characters from the Simpsons, South Park, Family Guy or Bob's Burgers,
+plus greek letters. `crates/jojobot-domain/tests/fixture_roster.rs` lists the
+handles, and the bar checks every handle-shaped piece of text against it. A name
+written in ordinary words is not caught by that check, so it is held by
+attention. This holds for tests, fixtures, comments, documentation and commit
 messages alike — a commit message is part of the repository the moment it is
 written.

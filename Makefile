@@ -7,6 +7,11 @@
 # The recipes call `cargo` directly rather than shelling out to `nix develop`
 # themselves, so running `make` from inside the dev shell doesn't nest a second
 # one. That is also why `make` itself is in the shell's inputs.
+#
+# One recipe is the exception on purpose: `refresh-upgrade-fixture` builds an
+# OLDER ref in a worktree of its own, and that ref has to be built with its own
+# flake and toolchain, not with the shell of the checkout that ran `make`. Its
+# script runs `nix develop` inside that worktree for exactly that reason.
 
 CARGO ?= cargo
 
@@ -39,6 +44,10 @@ help: ## List the targets
 # sets the number; the verdict's `jobs:` line says what it was. Several bars run
 # on one machine at once, so raise it for a measurement, not by habit. `make
 # test` is still the plain serial workspace run.
+# **Every bar run keeps its full output in `target/bar/`**, and its summary prints
+# the path: `check.log` for this target, `report.log` for the next, `rooms.log`
+# for `make rooms`, and `narrow-<crate>.log` for `make narrow CRATE=<crate>`, for
+# example `narrow-jojobot-mcp.log`. A run overwrites the last log of its own name.
 check: ## The DONE bar: formatted, green, clippy-clean
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- check
 
@@ -291,8 +300,10 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 #
 #     make refresh-upgrade-fixture [REF=<ref>] [DIR=<fixture directory>]
 #
-# DIR defaults to the gate's first fixture. The gate's second one, for the build
-# deploy 3 shipped, is recorded with DIR=tests/fixtures/upgrade_deploy3.
+# DIR is relative to crates/jojobot and defaults to the gate's first fixture. The
+# gate's second one, for the build the operator's third deploy shipped (its
+# commit is in that fixture's ref.txt), is recorded with
+# DIR=tests/fixtures/upgrade_deploy3.
 REF ?= origin/main
 DIR ?=
 refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)

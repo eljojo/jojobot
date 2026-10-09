@@ -6,8 +6,9 @@
 #
 # REF defaults to origin/main. DIR is the fixture directory to record into,
 # relative to crates/jojobot, and defaults to the gate's first fixture; the gate
-# keeps a second one (tests/fixtures/upgrade_deploy3) for the build deploy 3
-# shipped. The ref is built in a DETACHED worktree, so
+# keeps a second one (tests/fixtures/upgrade_deploy3) for the build the
+# operator's third deploy shipped, whose commit is in that directory's ref.txt.
+# The ref is built in a DETACHED worktree, so
 # this script never moves this checkout's HEAD and never creates a branch.
 # The worktree is removed on exit, success or failure alike.
 set -euo pipefail
@@ -33,6 +34,11 @@ git -C "$REPO_ROOT" worktree add --detach "$WORKTREE_DIR" "$RESOLVED"
 # is served to the next build of this checkout in place of its own crates.
 # `env` runs inside the shell, so it wins over a value the caller inherited. The
 # directory goes with the worktree.
+#
+# **It runs `nix develop` itself, which no other recipe does.** The Makefile's
+# recipes call cargo directly and rely on the shell they were started in. Here
+# the ref being built may pin another toolchain than this checkout, so it is
+# built inside the shell of ITS OWN flake, in its own worktree.
 WORKTREE_TARGET="$WORKTREE_DIR/target"
 (cd "$WORKTREE_DIR" && nix develop -c env CARGO_TARGET_DIR="$WORKTREE_TARGET" cargo build -p jojobot)
 
