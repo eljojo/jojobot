@@ -7,9 +7,11 @@
 //! declaration describes, it does not admit.
 //!
 //! **Kind is identity; type is interface.** An entity has one permanent kind
-//! baked into its handle, and it may satisfy several types. Nothing here is a
-//! kind, nothing here changes what a thing IS, and a type that ended up as a
-//! kind would have collapsed the two.
+//! baked into its handle, and it may satisfy several types. A type answers the
+//! question *which things carry this shape*, and answering a shape never
+//! changes what a thing IS. **A declared type governs no write.** The one
+//! declaration a write is held to is the one named by the token in front of the
+//! thing's handle, which is its kind.
 //!
 //! **Nothing is hidden.** A record matching some of a type's keys comes back,
 //! saying which ones it lacks. A value that does not hold what its key was
@@ -17,13 +19,16 @@
 //! the truth; a read that dropped messy records would hide the ones most worth
 //! finding.
 //!
-//! **A THING that already carries every key of a type is held to it on the way
-//! in.** Matching stays structural and reading refuses nothing, but a write
-//! that would leave such a thing without a key — by taking it away, or by
-//! putting a value in it that the key does not hold — is refused, naming the
-//! key and what it wanted. What a type asks for is a FLOOR: a thing carrying
-//! only some of the keys has no fit to protect and stays free to be messy, and
-//! a key no type mentions is welcome anywhere.
+//! **A THING is held to its KIND's declaration on the way in, and to no
+//! other.** Matching stays structural and reading refuses nothing. A key a
+//! write sets has to hold what the kind declared it to hold. And once a thing
+//! carries every REQUIRED key of its kind, a write that would leave it without
+//! one — by taking it away, or by putting a value in it that the key does not
+//! hold — is refused, naming the key and what it wanted. What a kind asks for
+//! is a FLOOR: a thing carrying only some of the required keys has no fit to
+//! protect and stays free to be messy, an optional key goes freely, and a key
+//! no kind mentions is welcome anywhere. A type declared under any other name
+//! is vocabulary alone.
 //!
 //! **No key is registered anywhere.** Keys are scoped by the type that names
 //! them, so there is no global list of legal keys and nothing to maintain. Two

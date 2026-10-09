@@ -329,9 +329,9 @@ async fn moving_abroad() {
         .await;
 
     // **"What is happening in February" reads the EVENTS, not their claims.**
-    // The day is on a record and the thing's fields are its records folded, so
-    // the date is on the event itself; declaring the type is what makes the
-    // window comparable.
+    // The day is on a record and the thing's fields are every write on it
+    // folded, so the date is on the event itself; declaring the type is what
+    // makes the window comparable.
     s.call(
         "declare_type",
         json!({

@@ -1110,10 +1110,10 @@ pub struct Object {
     /// the keys it holds, the keys it lacks by name, and any whose value is not
     /// what the type said it holds.
     ///
-    /// Asked of the thing rather than of one record. A thing's fields are its
-    /// records' fields folded together, so a thing described over two sittings
-    /// answers a type that neither sitting answers alone — which is how most
-    /// things get written down.
+    /// Asked of the thing rather than of one record. A thing's fields are
+    /// every write on it, folded, the newest write of each key winning, so a
+    /// thing described over two sittings answers a type that neither sitting
+    /// answers alone — which is how most things get written down.
     ///
     /// `None` when the query named no type.
     pub answers: Option<types::Match>,

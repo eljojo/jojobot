@@ -12378,7 +12378,8 @@ pub async fn a_declared_type_governs_no_write<M: Memory>(store: &M) {
     );
 }
 
-/// **A thing reads back as one dense row: its records' fields, folded.**
+/// **A thing reads back as one dense row: every write on it, folded, the
+/// newest write of each key winning.**
 ///
 /// What a thing IS gets written down over several sittings, so the answer
 /// to "what is this" is the fold and not the list of sittings. A caller

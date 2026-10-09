@@ -203,8 +203,8 @@ async fn keeping_track_of_bikes() {
     .await;
     // **When the cover runs out is a question about the BIKE, so the read that
     // answers it asks for the bike and not for everything ever said about it.**
-    // A thing comes back as its records' fields folded into one row — one value
-    // per key — and that row is the answer here. The records are behind it and
+    // A thing comes back as every write on it folded into one row — one value
+    // per key, the newest write — and that row is the answer here. The records are behind it and
     // the answer says how many, so nothing is hidden and nothing is shipped
     // unasked.
     let bike = s

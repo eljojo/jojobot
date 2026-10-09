@@ -1565,10 +1565,10 @@ fn a_type_selects_the_records_that_answer_it() {
 /// **A THING answers a type, across everything recorded about it.**
 ///
 /// The question is not whether one record carries the type's keys. It is
-/// whether the thing does, and a thing's fields are its records' fields
-/// folded into one. Asking it of a record makes a thing that was described
-/// over two sittings answer nothing, which is how most things get written
-/// down.
+/// whether the thing does, and a thing's fields are every write on it,
+/// folded, the newest write of each key winning. Asking it of a record makes
+/// a thing that was described over two sittings answer nothing, which is how
+/// most things get written down.
 #[test]
 fn a_thing_answers_a_type_its_records_answer_only_together() {
     let declared = types::DeclaredType::new(

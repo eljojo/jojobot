@@ -668,11 +668,11 @@ mod tests {
     }
 
     /// **The gate is the aftermath, not the act.** A rhythm's schedule is
-    /// fields folded from whichever of its records last wrote them, so
-    /// archiving one claim about a rhythm leaves a schedule opened on a
-    /// DIFFERENT, still-active record exactly as it was — the paid-run
-    /// failure this teaching answers. The first such archive this session
-    /// makes teaches it; a second does not.
+    /// fields, each key the newest write of it from whichever record made
+    /// that write, so archiving one claim about a rhythm leaves a schedule
+    /// opened on a DIFFERENT, still-active record exactly as it was — the
+    /// paid-run failure this teaching answers. The first such archive this
+    /// session makes teaches it; a second does not.
     #[tokio::test]
     async fn archiving_a_rhythm_claim_that_leaves_the_schedule_running_teaches_once() {
         let jojobot = handler();

@@ -941,10 +941,10 @@ impl Jojobot {
     }
 
     /// **Reads the rhythm's own fields, after this write landed.** A
-    /// schedule is fields folded from whichever of a rhythm's records last
-    /// wrote them, so this asks the thing itself rather than the record
-    /// just archived — the same question `moved_due_moment` computes
-    /// forward, asked backward: is a due moment still standing now.
+    /// schedule is the rhythm's fields, each key the newest write of it from
+    /// whichever record made that write, so this asks the thing itself rather
+    /// than the record just archived — the same question `moved_due_moment`
+    /// computes forward, asked backward: is a due moment still standing now.
     ///
     /// A store failure reads as no due moment, for the same reason
     /// [`Jojobot::first_contact`] answers `false` on one: a teaching that
