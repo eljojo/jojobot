@@ -187,7 +187,11 @@ impl Config {
         // Field by field rather than by reference: `auth` above has already taken
         // ownership of the fields it needed, so the struct as a whole is no
         // longer borrowable.
-        let ui = build_ui(raw.ui_client_id, raw.ui_base_url, auth.is_some())?;
+        let ui = build_ui(
+            raw.ui_client_id,
+            raw.ui_base_url,
+            auth.as_ref().map(|auth| auth.audience.as_str()),
+        )?;
 
         let ntfy = build_ntfy(raw.ntfy_url, raw.ntfy_topic, raw.ntfy_token)?;
 
@@ -260,17 +264,31 @@ fn build_ntfy(
 fn build_ui(
     client_id: Option<String>,
     base_url: Option<String>,
-    auth_enabled: bool,
+    audience: Option<&str>,
 ) -> anyhow::Result<Option<UiConfig>> {
     let Some(client_id) = client_id.filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
 
-    if !auth_enabled {
+    let Some(audience) = audience else {
         anyhow::bail!(
             "JOJOBOT_UI_CLIENT_ID is set but JOJOBOT_ISSUER is not — the browser UI logs in \
              through the issuer, so without one it could only be served open. Set \
              JOJOBOT_ISSUER, or unset JOJOBOT_UI_CLIENT_ID."
+        );
+    };
+
+    // **The UI's client id may not be the agent surface's audience.** The login
+    // checks its ID token against the client id and `/mcp` checks a bearer token
+    // against the audience, so with one value for both the token the login
+    // obtains would open `/mcp`. A warning would be read once and ignored; the
+    // server does not start.
+    if client_id == audience {
+        anyhow::bail!(
+            "JOJOBOT_UI_CLIENT_ID ({client_id:?}) equals JOJOBOT_AUDIENCE, the audience /mcp \
+             requires (which is the resource id when JOJOBOT_AUDIENCE is unset). The UI's login \
+             token would then be a valid bearer token for /mcp. Register the UI at the issuer \
+             under a client id of its own, and set JOJOBOT_UI_CLIENT_ID to it."
         );
     }
 
@@ -577,6 +595,62 @@ mod tests {
         // serving it open, which is the bypass this design does not have.
         let raw = raw_ui(None, Some("jojobot-ui"), Some("https://jojobot.test"));
         assert!(Config::build(raw).is_err());
+    }
+
+    /// A configured UI whose client id is `client_id`, on a server whose agent
+    /// surface requires `audience` (`None` leaves it to default to the resource).
+    fn raw_ui_on_audience(audience: Option<&str>, client_id: Option<&str>) -> RawEnv {
+        RawEnv {
+            audience: audience.map(str::to_string),
+            ..raw_ui(
+                Some("https://issuer.example"),
+                client_id,
+                Some("https://jojobot.test"),
+            )
+        }
+    }
+
+    /// **The UI's client id may not be the audience of the agent surface.** The
+    /// login checks its ID token against the client id, and `/mcp` checks a
+    /// bearer token against the audience. With the two equal, the token the login
+    /// obtains would be a valid bearer for `/mcp`. The refusal names both
+    /// variables, so the operator knows which two to change.
+    #[test]
+    fn a_ui_client_id_equal_to_the_audience_refuses_to_start_naming_both() {
+        let refused = Config::build(raw_ui_on_audience(Some("shared-id"), Some("shared-id")))
+            .expect_err("one value for both would open the agent surface to the UI's token");
+        let said = format!("{refused:#}");
+        assert!(said.contains("JOJOBOT_UI_CLIENT_ID"), "{said}");
+        assert!(said.contains("JOJOBOT_AUDIENCE"), "{said}");
+    }
+
+    /// **The audience that defaults to the resource id counts too.** An operator
+    /// who sets no audience still has one, so a client id equal to the resource id
+    /// is the same opening.
+    #[test]
+    fn a_ui_client_id_equal_to_the_defaulted_audience_refuses_to_start() {
+        let raw = RawEnv {
+            resource: Some("shared-id".to_string()),
+            ..raw_ui_on_audience(None, Some("shared-id"))
+        };
+        let refused = Config::build(raw).expect_err("the default audience is an audience");
+        assert!(format!("{refused:#}").contains("JOJOBOT_UI_CLIENT_ID"));
+    }
+
+    /// The positives the refusals lean on: distinct values build, and a server
+    /// with no UI builds whatever its audience is.
+    #[test]
+    fn distinct_values_build_and_with_no_ui_any_audience_builds() {
+        let distinct = Config::build(raw_ui_on_audience(
+            Some("https://jojobot.test/mcp"),
+            Some("jojobot-ui"),
+        ))
+        .expect("a client id of its own builds");
+        assert!(distinct.ui.is_some());
+
+        let no_ui = Config::build(raw_ui_on_audience(Some("jojobot-ui"), None))
+            .expect("with the UI unset no client id is compared");
+        assert!(no_ui.ui.is_none());
     }
 
     #[test]
