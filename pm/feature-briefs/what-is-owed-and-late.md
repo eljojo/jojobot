@@ -1,6 +1,6 @@
 # What is owed and late — one read, whatever carries the due moment
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-11
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
 
 **One question: what has a due moment that has passed, as of the day I name.** Not *which loops are overdue* — **what.** A loop gone quiet and a promise nobody delivered are the same question with two carriers, and they come back in one answer.
 
@@ -44,7 +44,7 @@
 
 **The answer is bounded, and whatever did not fit is named with the call that returns it.** A count of what was held back is what separates a small answer from a lossy one.
 
-⁉️ **What decides the ORDER is not settled, and it is the feature rather than a finishing touch.** A budget filled greedily by a bad order is a dump with a limit. **Which has gone quiet longest** is the shape a person already asks by hand, and it is the strongest candidate rather than the answer.
+**The order is which has gone quiet longest: oldest due first**, and each item says how many days past due it is, so the order is one a reader can check rather than trust. **The order is the feature rather than a finishing touch:** a budget filled greedily by a bad order is a dump with a limit. A thing whose due moment cannot be read sorts first, because a number would have to be guessed for it.
 
 ## 🚨 Being shown discharges nothing
 

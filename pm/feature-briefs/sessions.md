@@ -1,6 +1,6 @@
 # Sessions — one mortal run of a bot
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
 
 **A session is one run of one bot**, and it is the key that bot works through. It groups what the bot did, and it is how jojobot knows who is asking.
 
@@ -12,7 +12,7 @@
 
 **It is persisted outside the process**, so a session outlives the run that made it. Bot to session to receipts to journal is a chain somebody can follow, and that traceability is the reason.
 
-**Two verbs take it optionally** — the ones a caller reaches before it has an identity. Optional means implemented: the handle is used and attributed exactly as any other read, because an argument accepted and dropped is a lie about work not done.
+**Four verbs require it** — journal, amend_journal, wrap_session and post_message, whose whole act is saying who did something. **Every other verb takes it optionally**, because a reader or a poster that never booted is legitimate. Optional means implemented: a handle that is carried is used and attributed exactly as on any other call, and a dead one is refused before the write rather than dropped, because an argument accepted and dropped is a lie about work not done.
 
 ## Bound for life
 
@@ -22,8 +22,8 @@
 
 ## The lifecycle, and its one asymmetry
 
-* **Wrapping happens from inside, by the bot, on the operator's instruction.** Starting a session never wraps another, and never closes a live one: two sessions of one bot may run at once and share its box (rules 174, 175), so a new run sweeps only the runs that have gone quiet. **Abandoning a quiet run is the safe half: it walks back, and wrapping does not.**
-* **A wrap folds the session's unfinished focus into its closing story, as ONE entry** — both things said, in one place, rather than a closing note and a dangling focus line that read as two events.
+* **Wrapping happens from inside, by the bot itself, whoever asked for it** — the operator, or a watcher asking a live session to wrap. Starting a session never wraps another, and never closes a live one: two sessions of one bot may run at once and share its box, so a new run sweeps only the runs that have gone quiet. **Abandoning a quiet run is the safe half: it walks back, and wrapping does not.**
+* **A wrap is ONE closing entry: the story verbatim, and the unfinished focus beside it as that entry's own field.** Both are said in one place, so they never read as two events, and neither is rewritten into the other.
 * **Terminal is asymmetric: a wrapped session never reopens.** Only an abandoned one walks back to active.
 * **A wrap hands back a one-time code for a last change.** Resuming with it lets the wrapped run write again while it stays wrapped, until it wraps a second time or a newer run of the bot starts. Its first story stands, and the second wrap adds a closing entry beside it.
 * **Abandoned means it was not wrapped up** — it is not a failure state, and resuming the most recent one always works unless it is stale.

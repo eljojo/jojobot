@@ -32,11 +32,11 @@ The metaphor does real work: it says which things about a colleague you may look
 
 **A charter has a half the build supplies and a half the instance writes, and neither is a copy of the other.** The build's comes first; what an instance writes sits under it and narrows it rather than repealing it. A bot nobody has written for still answers with what the build supplies.
 
-**No verb composes them.** The build supplies its text at an address and the store resolves it underneath every read, so the verbs above hold no word for it and a caller is never told a shipped half exists. **That is the point rather than an implementation detail:** shipping data with the software must not fork the feature that data belongs to, or every later capability pays the same bill again.
+**No verb composes them.** The build supplies its text at an address and the store resolves it underneath every read, so the verbs above hold no word for it. A read returns one charter, and the only time a caller hears of a shipped half is when a write sends the build's own words back and is refused. **That is the point rather than an implementation detail:** shipping data with the software must not fork the feature that data belongs to, or every later capability pays the same bill again.
 
 **The build's half is never stored.** That is what makes upgrading it a matter of shipping a new build — nothing to migrate, no record to reconcile, and no way for an instance to be frozen on the version that created it. A default written into the store once, at creation, would pass every other test and fail that one.
 
-**An instance's adjustment is an ordinary fact on the bot.** There is no second mechanism for customisation, and nothing is edited in place in the shipped text.
+**An instance's adjustment is the bot's own prose**, the human half of its page, which the charter write replaces. There is no second mechanism for customisation, and nothing is edited in place in the shipped text.
 
 **Writing back the composed text is refused rather than trimmed.** A caller that reads a charter and sends it back whole would store the build's own words as the instance's, where they stop moving when the software does — a shipped default quietly turned into a frozen customisation. Trimming it down to the half we wanted would be worse: it keeps something the caller did not write, and they never learn which half was kept.
 
