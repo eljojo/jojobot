@@ -1,6 +1,6 @@
 # Role claims — one holder per role, and how a role changes hands
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-07
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
 
 **A role is a seat that exactly one session holds at a time** — the PM, a line, a watcher — and jojobot is what enforces that, by a lease the holder keeps renewing.
 
@@ -12,7 +12,7 @@
 
 ## The lease
 
-**Claiming is part of booting.** A session names the role it claims when it boots. A bot that carries a role claims it by default, so a line that forgets to ask still takes its seat. Which role a bot carries is written about it by somebody else, never by the bot.
+**Claiming is part of booting.** A session names the role it claims when it boots. A bot that carries a role claims it by default, so a line that forgets to ask still takes its seat. Which role a bot carries is written about it by somebody else, never by the bot. **A claim needs a voucher for that role**; how one is issued and handed to a successor is the chain of trust's.
 
 **Every write the holder makes, and every read of its own box, renews the lease** — a journal beat, a capture, a message, a poll of its own box. The lease is 45 minutes. Past that with no write, the role is takeable, and the next claimant gets it.
 

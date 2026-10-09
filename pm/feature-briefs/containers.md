@@ -1,6 +1,6 @@
 # Containers — a bounded thing refuses what would overfill it
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-05
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
 
 **Any thing can carry a ceiling on how much is live under it. A write that would go over is refused, and the writer has to choose what gives. A thread is the container built for an ongoing line in a life.**
 
@@ -39,6 +39,8 @@
 **A thread is an ongoing line — a situation rather than a task.** Marge's kitchen renovation is a thread; ordering the tiles is a task. ⭐ **A task ends when it is done; a thread ends when it stops being true.**
 
 **A thought points at a thread rather than restating it** (see *Carried state — the few things a bot holds between runs, and why it is always full*). The thread holds the substance, bounded too — **a bounded room pointing into an unbounded pile is the same failure one level down**, harder to see because the room above still reads clean.
+
+**What was decided is held apart from what was gathered around it.** A decision is its own child of the thread, of the `decision` kind, and its words are an ordinary record on it. Reading a thread puts its standing decisions first, inside the thread's ceiling and the answer's, and names what it left out. A session that reads the research first comes away well informed and confidently wrong, because good research rarely says what was chosen. **A decision that changes is never reworded:** a new decision names the one it replaces, and the old one is archived with its reason, so what was decided when stays readable.
 
 ## Reading a container whole
 

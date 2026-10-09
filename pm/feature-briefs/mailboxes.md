@@ -1,6 +1,6 @@
 # Mailboxes — how one bot reaches another
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-08
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
 
 **A place to leave a message for somebody who is not in this conversation.** Bots are colleagues in an organisation: a public directory, private mailboxes, and no impersonation.
 
@@ -17,6 +17,8 @@
 ## The operator's box
 
 **The operator is a person, and theirs is the one box a person owns.** A bot writes to the operator by the person handle the instance names as its operator. The box opens inside the first such post, which makes it the one box that does not open with its owner. **No bot reads it, in any state:** no bot takes delivery of it, retires or quarantines its mail, or finds it by search, and a search over mail says it never reaches that box. A writer sees where its mail got to by id, time and subject only. **A post to any other person is refused**, saying that only the operator has a box. The operator reads and finishes their mail on a surface of their own.
+
+**A bot quotes the operator by address, never from memory.** Writing `@kind:slug#fN` in a post to the operator cites a record of their words. When the post is accepted, the address must exist, be readable to the writer and be testimony, or the post is refused, naming the address and the valid form. The words are expanded once and stored with the citation, so a later correction of the source never changes what an old message says was sent, and the body is measured against the ceiling after expansion. **Plain quotation marks are left alone**, because punctuation is not attribution: it wraps titles and other people's speech too. The convention is taught once, on a session's first post into the operator's box. **The guarantee is narrow:** an inference cannot be handed back as the operator's testimony. A record's content is a claim, not a transcript, so a quote by address does not prove verbatim speech.
 
 ## Three states, and the middle one is not the last one
 

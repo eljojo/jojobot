@@ -1,6 +1,6 @@
 # Bots and identity — colleagues in an organisation
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
 
 **A bot is an entity, and bots are colleagues in an organisation.** A public directory, private mailboxes, work status carried on a board, and no impersonation ever.
 
@@ -20,13 +20,13 @@ The metaphor does real work: it says which things about a colleague you may look
 
 **Private state stays private**: mail, sessions and journal are not what that opens.
 
-**Booting as another bot to read its data is forbidden outright.** A session that needs something it cannot reach says so and stops.
+**Booting as another bot is forbidden outright, and the engine enforces it:** booting as a bot needs a voucher for that bot, by the chain of trust. A session that needs something it cannot reach says so and stops.
 
-## One surface, aligned rather than policed
+## One surface, aligned rather than policed — except identity
 
 **The surface does not vary by bot.** A charter shapes what a bot considers *appropriate*; it never decides what a bot is *allowed* to call.
 
-**jojobot aligns, it does not police.** A per-bot surface would put the judgement in the wrong place and make the software responsible for something only a mind can weigh.
+**jojobot aligns, it does not police, everywhere but identity.** A per-bot surface would put the judgement in the wrong place and make the software responsible for something only a mind can weigh. **The acts that decide who a session is and what another bot becomes are the exception:** booting, claiming a role, changing a subordinate's charter and creating a bot need a voucher, because a rule against impersonation holds only as well as each session's attention.
 
 ## Two layers, and nothing above knows
 
@@ -42,6 +42,6 @@ The metaphor does real work: it says which things about a colleague you may look
 
 ## What it is not
 
-**Not an access-control system.** The directory is about what is somebody's to know, not about permissions to enforce.
+**Not where permissions are decided.** The directory is about what is somebody's to know. Who may do a gated act is the chain of trust's to decide.
 
 **Not a place identities can be switched.** A session belongs to one bot for its whole life, and the surface never suggests otherwise.
