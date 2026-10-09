@@ -98,6 +98,13 @@ fn text(fields: &BTreeMap<String, Json>, key: &str) -> Option<String> {
     }
 }
 
+fn boolean(fields: &BTreeMap<String, Json>, key: &str) -> Option<bool> {
+    match fields.get(key)? {
+        Json::Bool(b) => Some(*b),
+        _ => None,
+    }
+}
+
 fn number(fields: &BTreeMap<String, Json>, key: &str) -> Option<f64> {
     match fields.get(key)? {
         Json::Num(n) => Some(*n),
@@ -116,6 +123,9 @@ pub struct JobRun {
     /// How many CPUs that run had, when it said: a run recorded before the
     /// field existed has none.
     pub cpus: Option<u64>,
+    /// Whether that run's tree had uncommitted changes, when it said: a run
+    /// recorded before the field existed has none.
+    pub dirty: Option<bool>,
     /// Whether the job's `cargo test` exited zero.
     pub ok: bool,
     pub duration_ms: Option<u64>,
@@ -171,6 +181,7 @@ pub fn read_history(root: &Path, levels: &[&str]) -> History {
         let head = text(&header, "head");
         let load_average = number(&header, "load_average");
         let cpus = number(&header, "cpus").map(|n| n as u64);
+        let dirty = boolean(&header, "dirty");
         let Ok(files) = fs::read_dir(&dir) else {
             continue;
         };
@@ -200,6 +211,7 @@ pub fn read_history(root: &Path, levels: &[&str]) -> History {
                 head: head.clone(),
                 load_average,
                 cpus,
+                dirty,
                 ok: *ok,
                 duration_ms: number(&job, "duration_ms").map(|ms| ms as u64),
                 failed,
@@ -401,5 +413,31 @@ mod tests {
         ] {
             assert_eq!(parse_flat(bad), None, "{bad:?}");
         }
+    }
+
+    /// **A run's dirty flag is read back as it was recorded**: true, false, or
+    /// absent when the writer could not tell.
+    #[test]
+    fn a_runs_dirty_flag_is_read_back_as_recorded() {
+        let root = scratch("dirty");
+        let alpha = ["--test".to_string(), "alpha".to_string()];
+        for (n, dirty) in [(1, Some(true)), (2, Some(false)), (3, None)] {
+            let run = Run::begin(
+                &root,
+                RunHeader {
+                    dirty,
+                    ..header(&format!("2026100{n}000000-c-{n}"), "check", None)
+                },
+            )
+            .expect("begin");
+            run.record_job(&alpha, true, &record(&[], Some(1_000)))
+                .expect("job");
+        }
+
+        let history = read_history(&root, &["check"]);
+
+        let runs = &history.jobs["test-alpha"];
+        let read: Vec<Option<bool>> = runs.iter().map(|r| r.dirty).collect();
+        assert_eq!(read, vec![Some(true), Some(false), None]);
     }
 }

@@ -4,8 +4,8 @@
 //! lack of evidence keeps it. A job with too few recorded runs, or with a red in
 //! its recent runs that nobody has called a flake, stays in every level. A red
 //! counts only when `main` contains the head its run recorded; a head that is
-//! missing or cannot be told counts too. Nothing
-//! here switches a job off; the report level is a subset of the boundary level
+//! missing or cannot be told counts too. A red from a dirty tree does not
+//! count. Nothing here switches a job off; the report level is a subset of the boundary level
 //! and the boundary level runs everything.
 
 use crate::reading::{History, JobRun, RecordedCall};
@@ -45,25 +45,60 @@ fn call_for<'a>(run: &JobRun, test: &str, calls: &'a [RecordedCall]) -> Option<&
         .max_by(|a, b| a.at.cmp(&b.at))
 }
 
-/// **Whether a run's red counts against its job.** A red on a head `main` does
-/// not contain is work in progress on another line, and it says nothing about
-/// whether `main` is safe to pass. A run that recorded no head, or whose head
-/// cannot be told, counts: the bar errs toward running more.
-fn counts(run: &JobRun, ancestry: Ancestry) -> bool {
+/// **Why a run's red is ignored**, when it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ignore {
+    /// The run's tree had uncommitted changes, so the commit it recorded does
+    /// not say what was tested.
+    Dirty,
+    /// The run's head is not in `main`.
+    NotInMain,
+}
+
+/// **Whether a run's red counts against its job, and why not when it does
+/// not.** A red from a dirty tree is the work of whoever held the changes, and
+/// the head it recorded does not name them; git is not asked about it. A red on
+/// a head `main` does not contain is work in progress on another line, and it
+/// says nothing about whether `main` is safe to pass. A run that recorded no
+/// dirty flag, no head, or a head that cannot be told, counts: the bar errs
+/// toward running more.
+fn ignore_reason(run: &JobRun, ancestry: Ancestry) -> Option<Ignore> {
+    if run.dirty == Some(true) {
+        return Some(Ignore::Dirty);
+    }
     match run.head.as_deref() {
-        None => true,
-        Some(head) => ancestry(head) != Some(false),
+        None => None,
+        Some(head) => (ancestry(head) == Some(false)).then_some(Ignore::NotInMain),
     }
 }
 
-/// **How many red runs in a job's newest window were ignored** because their
-/// head is not in `main`.
-pub fn ignored_reds(runs: &[JobRun], ancestry: Ancestry) -> usize {
-    runs[runs.len().saturating_sub(DEFECT_WINDOW)..]
+fn counts(run: &JobRun, ancestry: Ancestry) -> bool {
+    ignore_reason(run, ancestry).is_none()
+}
+
+/// **How many red runs were ignored, by reason.**
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Ignored {
+    /// Reds on a head `main` does not contain.
+    pub not_in_main: usize,
+    /// Reds from a run whose tree had uncommitted changes.
+    pub dirty: usize,
+}
+
+/// **How many red runs in a job's newest window were ignored**, by reason.
+pub fn ignored_reds(runs: &[JobRun], ancestry: Ancestry) -> Ignored {
+    let mut ignored = Ignored::default();
+    for run in runs[runs.len().saturating_sub(DEFECT_WINDOW)..]
         .iter()
         .filter(|run| !run.ok || !run.failed.is_empty())
-        .filter(|run| !counts(run, ancestry))
-        .count()
+    {
+        match ignore_reason(run, ancestry) {
+            Some(Ignore::Dirty) => ignored.dirty += 1,
+            Some(Ignore::NotInMain) => ignored.not_in_main += 1,
+            None => {}
+        }
+    }
+    ignored
 }
 
 /// **Where a job stands**, given its recorded runs oldest first and every call.
@@ -153,9 +188,8 @@ pub struct LeftOut {
 pub struct Plan {
     pub run: Vec<Vec<String>>,
     pub left_out: Vec<LeftOut>,
-    /// The red job runs in the newest windows that were ignored because their
-    /// head is not in `main`.
-    pub ignored: usize,
+    /// The red job runs in the newest windows that were ignored, by reason.
+    pub ignored: Ignored,
 }
 
 /// **Whether a recorded head is contained in `main`**: `Some(true)` when it is,
@@ -186,14 +220,15 @@ pub fn report_line(plan: &Plan, total: usize) -> String {
     let left: Vec<&str> = plan.left_out.iter().map(|l| l.job.as_str()).collect();
     format!(
         "report, {} of {total} jobs, left to the boundary: {}; ignored {} reds on heads main \
-         does not contain",
+         does not contain, {} reds from dirty trees",
         plan.run.len(),
         if left.is_empty() {
             "none".to_string()
         } else {
             left.join(", ")
         },
-        plan.ignored,
+        plan.ignored.not_in_main,
+        plan.ignored.dirty,
     )
 }
 
@@ -211,12 +246,14 @@ pub fn report_plan(
     let mut plan = Plan {
         run: Vec::new(),
         left_out: Vec::new(),
-        ignored: 0,
+        ignored: Ignored::default(),
     };
     for job in jobs {
         let name = job_name(job);
         let runs = history.jobs.get(&name).map_or(&[][..], Vec::as_slice);
-        plan.ignored += ignored_reds(runs, ancestry);
+        let ignored = ignored_reds(runs, ancestry);
+        plan.ignored.not_in_main += ignored.not_in_main;
+        plan.ignored.dirty += ignored.dirty;
         let leaves = !ALWAYS_RUN.contains(&name.as_str())
             && standing(runs, &history.calls, ancestry) == Standing::Eligible
             && slow(runs);
@@ -256,6 +293,7 @@ mod tests {
             cpus: None,
             ok: failed.is_empty(),
             duration_ms: None,
+            dirty: Some(false),
             failed: failed.iter().map(|test| test.to_string()).collect(),
         }
     }
@@ -648,7 +686,7 @@ mod tests {
         let jobs = vec![job(&["--test", "alpha"])];
         let plan = report_plan(&jobs, &history, &|_| true, &ancestry_of(&known));
         assert_eq!(plan.left_out.len(), 1);
-        assert_eq!(plan.ignored, 1);
+        assert_eq!(plan.ignored.not_in_main, 1);
         assert!(plan.run.is_empty());
     }
 
@@ -733,8 +771,94 @@ mod tests {
 
         let plan = report_plan(&listed(), &history, &|_| true, &ancestry_of(&known));
 
-        assert_eq!(plan.ignored, 2, "alpha's two reds, not beta's");
+        assert_eq!(plan.ignored.not_in_main, 2, "alpha's two reds, not beta's");
         let line = report_line(&plan, listed().len());
         assert!(line.contains("ignored 2 reds"), "{line}");
+    }
+
+    fn dirty_red(n: usize) -> JobRun {
+        JobRun {
+            dirty: Some(true),
+            ..run(n, &["a::b"])
+        }
+    }
+
+    /// **A red from a dirty tree is ignored whatever its head says.** The head
+    /// is one `main` contains, so the commit alone would have held the job; the
+    /// tree held changes the commit does not. Git is never asked about it.
+    #[test]
+    fn a_red_from_a_dirty_tree_is_ignored_and_git_is_not_asked() {
+        let mut runs = clean(6);
+        runs[3] = dirty_red(3);
+        let never_asked = |_: &str| -> Option<bool> { panic!("a dirty run is not looked up") };
+        assert_eq!(standing(&runs, &[], &never_asked), Standing::Eligible);
+        let defect = [call(
+            "a::b",
+            "defect",
+            Some("r003"),
+            None,
+            "2026-10-08T00:00:00Z",
+        )];
+        assert_eq!(
+            standing(&runs, &defect, &never_asked),
+            Standing::Eligible,
+            "a defect called on a dirty run is ignored too"
+        );
+    }
+
+    /// **A run whose dirty flag was not recorded counts**, as a run with an
+    /// unknown head does. The clean tree beside it counts too.
+    #[test]
+    fn a_red_whose_dirty_flag_is_unrecorded_or_false_holds_the_job() {
+        let mut runs = clean(6);
+        runs[3] = JobRun {
+            dirty: None,
+            ..run(3, &["a::b"])
+        };
+        assert_eq!(
+            standing(&runs, &[], &everything_in_main),
+            Standing::RedNotCalledFlake
+        );
+        runs[3] = JobRun {
+            dirty: Some(false),
+            ..run(3, &["a::b"])
+        };
+        assert_eq!(
+            standing(&runs, &[], &everything_in_main),
+            Standing::RedNotCalledFlake
+        );
+    }
+
+    /// **The plan counts each ignored red once, under one reason.** A red that
+    /// is dirty and also on a head `main` lacks is counted as dirty, and a red
+    /// that counts is in neither number.
+    #[test]
+    fn the_plan_counts_dirty_reds_apart_from_unmerged_ones() {
+        let mut history = History::default();
+        let mut alpha = clean(8);
+        alpha[2] = dirty_red(2);
+        alpha[3] = JobRun {
+            dirty: Some(true),
+            ..run(3, &["a::b"])
+        };
+        alpha[4] = run(4, &["a::b"]);
+        history.jobs.insert("test-alpha".into(), alpha);
+        let mut beta = clean(8);
+        beta[5] = run(5, &["c::d"]);
+        history.jobs.insert("test-beta".into(), beta);
+        let known = [("h004", false), ("h005", true), ("h003", false)];
+
+        let plan = report_plan(&listed(), &history, &|_| true, &ancestry_of(&known));
+
+        assert_eq!(
+            plan.ignored,
+            Ignored {
+                not_in_main: 1,
+                dirty: 2
+            }
+        );
+        let line = report_line(&plan, listed().len());
+        assert!(line.contains("1 reds on heads"), "{line}");
+        assert!(line.contains("2 reds from dirty"), "{line}");
     }
 }
