@@ -336,11 +336,29 @@ written. The count of the writes is the answer.
 
 ## A decision
 
-Write the operator's own words as the operator's word: `provenance: "testimony"`.
-Do not rephrase them. Then write each option that was weighed as a claim of
-its own, say whose option it was by writing `@` and their handle in the words, and say
-which one was turned down. A decision without the rejected option cannot be
+A decision on a thread is its own child of the thread, of kind `decision`.
+Make it with `add_entity`, `parent` the thread, then write the operator's own
+words on it as the operator's word: `provenance: "testimony"`. Do not rephrase
+them. Reading the thread then puts its standing decisions first, apart from the
+research gathered around it, so a session that reads the thread cold learns what
+was chosen before what was found.
+
+    add_entity  kind: "decision"  handle: "oak-cabinets"  parent: "thread:kitchen"
+    capture     subject: "decision:oak-cabinets"  provenance: "testimony"
+
+Say in the words which option was turned down, and whose each option was by
+writing `@` and their handle. A decision without the rejected option cannot be
 told from one nobody weighed.
+
+A decision that changes is never reworded. Make a new decision child, write its
+words with `derived_from` set to the address of the old decision's record, and
+archive the old child with `archive_entity` and the reason. The thread then
+leads with the new one and names the archived one, which still answers by its
+own handle.
+
+A decision that sits on something other than a thread, such as a project, is
+a claim of its own on that thing: the operator's words as testimony, and one
+claim for each option that was weighed.
 
 ## What you worked out from what somebody said
 

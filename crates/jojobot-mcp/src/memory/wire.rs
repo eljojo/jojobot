@@ -379,6 +379,9 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         // here: the plain word over a nearest-fit that would state something
         // false.
         "thread" => "Thread",
+        // schema.org's `Decision` is no kind of thing, so the plain word stands
+        // here as it does for `thread`.
+        "decision" => "Decision",
         // A seat held by one session at a time has no schema.org word, and the
         // plain one is the same choice as for `thread` and `rhythm`.
         "role" => "Role",
@@ -438,6 +441,7 @@ mod tests {
             (EntityKind::VIEW, "view", "View"),
             (EntityKind::SESSION, "session", "Session"),
             (EntityKind::THREAD, "thread", "Thread"),
+            (EntityKind::DECISION, "decision", "Decision"),
             (EntityKind::ROLE, "role", "Role"),
         ];
         assert_eq!(

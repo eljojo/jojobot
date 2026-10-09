@@ -13,7 +13,7 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `role`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a hand tool — and a companion animal is not one.
@@ -49,6 +49,12 @@ pub struct AddEntityArgs {
     /// it is DONE; a thread ends when it stops being TRUE. A topic is the glue noun
     /// for a world-fact belonging to no person, place or project; a thread
     /// belongs to somebody's life and is never the anchor of last resort.
+    ///
+    /// **A `decision` is what was decided on a thread**, a child of it: `parent`
+    /// is the thread. Its words are an ordinary record on it, testimony when the
+    /// operator decided. Reading the thread puts its standing decisions first. A
+    /// decision that changes is a new `decision` whose record names the old one in
+    /// `derived_from`, and the old one is archived with the reason.
     ///
     /// **A `role` is a seat one session holds at a time**, the child of the bot
     /// that holds it: `holder`, `claimed_at` and `agent` say who has it, since

@@ -1730,6 +1730,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::VIEW, "view"),
         (EntityKind::SESSION, "session"),
         (EntityKind::THREAD, "thread"),
+        (EntityKind::DECISION, "decision"),
         (EntityKind::ROLE, "role"),
     ];
     for (kind, token) in all {

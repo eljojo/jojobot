@@ -1025,6 +1025,60 @@ pub(crate) fn record_room(rest: usize, skeleton: usize, widest_pointer: usize) -
     jojobot_domain::text::ANSWER_CEILING.saturating_sub(rest + skeleton + widest_pointer)
 }
 
+/// The key a standing decision carries in an answer, naming its thread.
+const STANDING_DECISION_OF: &str = "standing_decision_of";
+
+/// **Fit the records of one object under the ceiling**, from the `offset`th
+/// record on, whole records only. `ahead` is what the answer already carries in
+/// front of it, which the object's room is counted after.
+fn fit_facts_of_one(
+    body: &mut serde_json::Value,
+    mut object: serde_json::Value,
+    offset: usize,
+    ahead: usize,
+) {
+    use jojobot_domain::text::Capped;
+    let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
+    let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM + ahead;
+    let widest = crate::answer::widest_not_shown("objects");
+    let facts: Vec<serde_json::Value> = object["facts"]
+        .as_array_mut()
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let held = facts.len();
+    object["facts"] = serde_json::json!([]);
+    let skeleton = size(&object);
+    let window: Vec<(serde_json::Value, usize)> = facts
+        .into_iter()
+        .skip(offset)
+        .map(|fact| {
+            let cost = size(&fact);
+            (fact, cost)
+        })
+        .collect();
+    let room = Capped {
+        budget: record_room(rest, skeleton, widest),
+    };
+    let kept = room.head(&window, |(_, cost)| *cost);
+    object["facts"] = kept
+        .kept()
+        .iter()
+        .map(|(fact, _)| fact.clone())
+        .collect::<Vec<_>>()
+        .into();
+    body["objects"] = serde_json::json!([object]);
+    if kept.elided() {
+        body["not_shown"] =
+            crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "facts");
+    } else if offset > 0 && window.is_empty() {
+        body["past_the_end"] = format!(
+            "offset {offset} is past the last of this object's {held} facts, so nothing is \
+             left to read"
+        )
+        .into();
+    }
+}
+
 /// **Fit a recall under the answer ceiling, filling in the answer's own order.**
 ///
 /// Silent when everything fits and no `offset` was sent: the answer is untouched
@@ -1053,42 +1107,73 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
     let total = objects.len();
 
     if total == 1 && objects[0]["facts"].is_array() {
-        let mut object = objects.into_iter().next().expect("one object");
-        let facts: Vec<serde_json::Value> = object["facts"]
-            .as_array_mut()
-            .map(std::mem::take)
-            .unwrap_or_default();
-        let held = facts.len();
-        object["facts"] = serde_json::json!([]);
-        let skeleton = size(&object);
-        let window: Vec<(serde_json::Value, usize)> = facts
-            .into_iter()
-            .skip(offset)
-            .map(|fact| {
-                let cost = size(&fact);
-                (fact, cost)
-            })
-            .collect();
-        let room = Capped {
-            budget: record_room(rest, skeleton, widest),
-        };
-        let kept = room.head(&window, |(_, cost)| *cost);
-        object["facts"] = kept
-            .kept()
-            .iter()
-            .map(|(fact, _)| fact.clone())
-            .collect::<Vec<_>>()
-            .into();
-        body["objects"] = serde_json::json!([object]);
-        if kept.elided() {
-            body["not_shown"] =
-                crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "facts");
-        } else if offset > 0 && window.is_empty() {
-            body["past_the_end"] = format!(
-                "offset {offset} is past the last of this object's {held} facts, so nothing is \
-                 left to read"
-            )
-            .into();
+        let object = objects.into_iter().next().expect("one object");
+        fit_facts_of_one(body, object, offset, 0);
+        return;
+    }
+
+    // **A thread read with standing decisions in front of it.** The decisions
+    // lead the first part, and every part after it is the thread's own records,
+    // so `offset` counts records exactly as it does for a thread with no
+    // decisions and the pointer "recall it alone" keeps meaning what it says.
+    let lead = objects
+        .iter()
+        .take_while(|o| o.get(STANDING_DECISION_OF).is_some())
+        .count();
+    let thread_has_records = lead > 0 && objects.last().is_some_and(|o| o["facts"].is_array());
+    if lead > 0 && total == lead + 1 && (thread_has_records || offset == 0) {
+        let mut objects = objects;
+        let thread = objects.pop().expect("the thread follows its decisions");
+        if offset > 0 {
+            body["count"] = 1.into();
+            fit_facts_of_one(body, thread, offset, 0);
+            return;
+        }
+        // The decisions that fit while the thread keeps room for itself.
+        let mut skeleton = thread.clone();
+        if thread_has_records {
+            skeleton["facts"] = serde_json::json!([]);
+        }
+        skeleton["facts_not_shown"] = serde_json::json!({"count": 0, "how_to_proceed": ""});
+        let mut room = ANSWER_CEILING.saturating_sub(rest + widest + size(&skeleton));
+        let mut kept: Vec<serde_json::Value> = Vec::new();
+        let mut used = 0usize;
+        for decision in &objects {
+            let cost = size(decision);
+            if !kept.is_empty() && cost > room {
+                break;
+            }
+            room = room.saturating_sub(cost);
+            used += cost;
+            kept.push(decision.clone());
+        }
+        let left_out = objects.len() - kept.len();
+        let of = objects[0][STANDING_DECISION_OF]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        if thread_has_records {
+            fit_facts_of_one(body, thread, 0, used);
+        } else {
+            body["objects"] = serde_json::json!([thread]);
+        }
+        let mut served = kept;
+        served.extend(
+            body["objects"]
+                .as_array_mut()
+                .map(std::mem::take)
+                .unwrap_or_default(),
+        );
+        body["count"] = served.len().into();
+        body["objects"] = served.into();
+        if left_out > 0 {
+            body["decisions_not_shown"] = serde_json::json!({
+                "count": left_out,
+                "how_to_proceed": format!(
+                    "recall kind: decision with parent: {of} and facts: true reads every \
+                     standing decision, filling in parts"
+                ),
+            });
         }
         return;
     }
@@ -2177,6 +2262,7 @@ impl Jojobot {
             unplaced,
             archived_excluded,
             merged_excluded,
+            decisions_archived,
         } = match graph::walk(self.memory.as_ref(), &session_docs, &query).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
@@ -2535,6 +2621,16 @@ impl Jojobot {
                 .zip(held)
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|(((idx, o), held), backing)| {
+                    // **A standing decision serves its words whether or not the
+                    // caller asked for records**: the words are the decision.
+                    let include = if o.standing_for.is_some() {
+                        graph::Include {
+                            facts: true,
+                            ..include
+                        }
+                    } else {
+                        include
+                    };
                     let mut rendered = object_json(
                         o,
                         include,
@@ -2545,6 +2641,9 @@ impl Jojobot {
                         }),
                         day_frame,
                     );
+                    if let Some(thread) = &o.standing_for {
+                        rendered[STANDING_DECISION_OF] = thread.as_str().into();
+                    }
                     if let (Some(want), Some(removed)) =
                         (wanted_status, left_out_by_status.get(&o.entity.id))
                     {
@@ -2786,6 +2885,16 @@ impl Jojobot {
                 ));
             }
             body["excluded_note"] = routes.join("; ").into();
+        }
+        // **A thread's archived decisions are named, not shown.** The decisions in
+        // front are the standing ones; one that was replaced is archived with its
+        // reason and still answers by its own handle.
+        if !decisions_archived.is_empty() {
+            body["decisions_archived"] = serde_json::json!({
+                "handles": decisions_archived.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+                "how_to_proceed": "recall one of these handles to read it, with the reason it \
+                                   was archived",
+            });
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());

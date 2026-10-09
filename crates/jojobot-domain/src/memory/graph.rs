@@ -1148,6 +1148,11 @@ pub struct Object {
     /// object in the answer; `None` where the store could not say (a thing the
     /// memory store does not hold, such as a session). See [`FieldAges`].
     pub ages: Option<super::FieldAges>,
+    /// **The thread this object is a standing decision of**, when the read of
+    /// that thread put it ahead of the thread. `None` on every other object. It
+    /// is what tells a renderer to serve the decision's words whether or not the
+    /// caller asked for records: the words ARE the decision.
+    pub standing_for: Option<EntityId>,
 }
 
 /// Every write of one key on one object, capped, and how many there are.
@@ -1340,6 +1345,11 @@ pub struct Selected {
     /// reasons are different, and a reader who sees one number cannot tell
     /// which it is looking at. Zero for a selection naming a handle.
     pub merged_excluded: usize,
+    /// **The decisions of a thread this read left out because they were
+    /// archived**, named by handle. Empty unless the read named a thread. Each
+    /// still answers by its own handle, which is how the one that replaced it
+    /// is told apart from it.
+    pub decisions_archived: Vec<EntityId>,
 }
 
 pub fn resolve(
@@ -1351,22 +1361,96 @@ pub fn resolve(
     check_declared(query, declarations)?;
     let ctx = Ctx::of(scanned, declarations);
     let roots = ctx.roots(&query.select)?;
+    let mut objects: Vec<Object> = roots
+        .into_iter()
+        .map(|id| {
+            let mut seen = HashSet::from([id.clone()]);
+            ctx.expand(&id, None, query, query.follow.as_ref(), &mut seen)
+        })
+        .collect();
+    let decisions_archived = ctx.put_standing_decisions_first(&mut objects, query);
     Ok(Selected {
-        objects: roots
-            .into_iter()
-            .map(|id| {
-                let mut seen = HashSet::from([id.clone()]);
-                ctx.expand(&id, None, query, query.follow.as_ref(), &mut seen)
-            })
-            .collect(),
+        objects,
         withheld: ctx.withheld(&query.select),
         unplaced: ctx.unplaced(&query.select),
         archived_excluded: ctx.archived_excluded(&query.select),
         merged_excluded: ctx.merged_excluded(&query.select),
+        decisions_archived,
     })
 }
 
 impl Ctx<'_> {
+    /// **Put the standing decisions of a thread ahead of it.** A read that names
+    /// a thread gets its active `decision` children first, in handle order, each
+    /// with its records whatever the caller asked of the thread: what was decided
+    /// is held apart from what was gathered around it, and a reader that meets
+    /// the research first comes away well informed and confidently wrong.
+    ///
+    /// **Only a read that names the thread.** A browse, a candidate set and a
+    /// read of any other kind answer as they did. A decision that was archived is
+    /// not in front, and the handles of those are returned so the answer can name
+    /// what it left out.
+    fn put_standing_decisions_first(
+        &self,
+        objects: &mut Vec<Object>,
+        query: &GraphQuery,
+    ) -> Vec<EntityId> {
+        let Some(thread) = query.select.subject.as_ref() else {
+            return Vec::new();
+        };
+        if query.select.candidates.is_some()
+            || self.entities.get(thread).map(|e| e.kind) != Some(super::EntityKind::THREAD)
+            || !objects.iter().any(|o| &o.entity.id == thread)
+        {
+            return Vec::new();
+        }
+        let children: Vec<&Entity> = self
+            .entities
+            .values()
+            .copied()
+            .filter(|e| {
+                e.kind == super::EntityKind::DECISION
+                    && e.parent.as_ref() == Some(thread)
+                    && self.readable_by(&e.id, &query.select)
+            })
+            .collect();
+        // Only the caller's identity carries over: the decisions are asked for
+        // whole, and the thread's own filters say nothing about them.
+        let asked = GraphQuery {
+            select: Selection {
+                asked_by: query.select.asked_by.clone(),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                prose: false,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        };
+        let mut standing: Vec<Object> = children
+            .iter()
+            .filter(|e| e.browsable())
+            .map(|e| {
+                let mut seen = HashSet::from([e.id.clone()]);
+                let mut decision = self.expand(&e.id, None, &asked, None, &mut seen);
+                decision.standing_for = Some(thread.clone());
+                decision
+            })
+            .collect();
+        standing.sort_by(|a, b| a.entity.id.as_str().cmp(b.entity.id.as_str()));
+        standing.append(objects);
+        *objects = standing;
+        let mut archived: Vec<EntityId> = children
+            .iter()
+            .filter(|e| e.archived.is_some())
+            .map(|e| e.id.clone())
+            .collect();
+        archived.sort();
+        archived
+    }
+
     /// **Records the neighbourhood clock could not place**, across everything
     /// this selection could otherwise have reached.
     ///
@@ -1965,6 +2049,7 @@ impl<'a> Ctx<'a> {
             record_history: None,
             fact_revisions: std::collections::HashMap::new(),
             ages: None,
+            standing_for: None,
         }
     }
 
@@ -2416,6 +2501,9 @@ where
             None => {
                 everyones
                     || resolved_subject.as_ref() == Some(&e.id)
+                    || (e.kind == super::EntityKind::DECISION
+                        && resolved_subject.is_some()
+                        && e.parent == resolved_subject)
                     || (resolved_subject.is_none()
                         && select.kind.is_none_or(|k| e.kind == k)
                         && select

@@ -379,11 +379,29 @@ written. The count of the writes is the answer.
 
 ## A decision
 
-Write the operator's own words as the operator's word: `provenance: "testimony"`.
-Do not rephrase them. Then write each option that was weighed as a claim of
-its own, say whose option it was by writing `@` and their handle in the words, and say
-which one was turned down. A decision without the rejected option cannot be
+A decision on a thread is its own child of the thread, of kind `decision`.
+Make it with `add_entity`, `parent` the thread, then write the operator's own
+words on it as the operator's word: `provenance: "testimony"`. Do not rephrase
+them. Reading the thread then puts its standing decisions first, apart from the
+research gathered around it, so a session that reads the thread cold learns what
+was chosen before what was found.
+
+    add_entity  kind: "decision"  handle: "oak-cabinets"  parent: "thread:kitchen"
+    capture     subject: "decision:oak-cabinets"  provenance: "testimony"
+
+Say in the words which option was turned down, and whose each option was by
+writing `@` and their handle. A decision without the rejected option cannot be
 told from one nobody weighed.
+
+A decision that changes is never reworded. Make a new decision child, write its
+words with `derived_from` set to the address of the old decision's record, and
+archive the old child with `archive_entity` and the reason. The thread then
+leads with the new one and names the archived one, which still answers by its
+own handle.
+
+A decision that sits on something other than a thread, such as a project, is
+a claim of its own on that thing: the operator's words as testimony, and one
+claim for each option that was weighed.
 
 ## What you worked out from what somebody said
 
@@ -969,9 +987,11 @@ mod tests {
     const NOT_ARGUMENTS: &[&str] = &[
         "add_entity",
         "answered",
+        "archive_entity",
         "asked",
         "blocks",
         "columns",
+        "decision",
         "depends_on",
         "done",
         "drafted",
@@ -989,6 +1009,7 @@ mod tests {
         "someday",
         "starred",
         "state",
+        "thread",
         "waiting",
         "waiting_on",
         "work",
@@ -1125,6 +1146,29 @@ mod tests {
             .find(|section| section.starts_with(heading))
             .unwrap_or_else(|| panic!("the projects procedure has no section {heading:?}"))
             .to_string()
+    }
+
+    /// **The decision section teaches a decision as a child of its thread, and
+    /// a change as a new child that names the old one.** The kind, the parent it
+    /// is filed under, the pointer a replacement carries and the verb that
+    /// archives the old one are each a name a session has to spell exactly.
+    /// Pinned on those names, never on the sentences around them.
+    #[test]
+    fn the_projects_procedure_teaches_a_decision_as_a_child_of_its_thread() {
+        let section = projects_section("A decision");
+        for word in [
+            "decision",
+            "thread",
+            "parent",
+            "testimony",
+            "derived_from",
+            "archive_entity",
+        ] {
+            assert!(
+                names(&section, word),
+                "the decision section does not name {word:?}: {section}"
+            );
+        }
     }
 
     /// **The open-question section says why a question is work.** No kind for

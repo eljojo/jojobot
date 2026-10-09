@@ -165,6 +165,21 @@ impl EntityKind {
     /// the anchor of last resort, it is the thing the story is ABOUT.
     pub const THREAD: EntityKind = EntityKind("thread");
 
+    /// **What was decided on a thread, held apart from what was gathered around
+    /// it.** A decision is a child of the thread, and its words are an ordinary
+    /// record on it: testimony when the operator decided. It declares no key of
+    /// its own.
+    ///
+    /// **Reading the thread puts its standing decisions first.** A decision that
+    /// changes is never reworded: a new decision child names the one it replaces
+    /// in a record's `derived_from`, and the old child is archived with its
+    /// reason, so what was decided when stays readable.
+    ///
+    /// **Not a claim on the thread.** A claim is one of the thread's records and
+    /// is read in the order the records come; a decision is a thing of its own
+    /// that the read of its parent pulls ahead of them.
+    pub const DECISION: EntityKind = EntityKind("decision");
+
     /// **A seat one session holds at a time**, as its own object: the child of
     /// the bot that holds it. Its plain keys say who holds it, when it was last
     /// claimed and which runtime agent is running it, and a watcher's marks
@@ -179,7 +194,7 @@ impl EntityKind {
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 17] = [
+    pub const ALL: [EntityKind; 18] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -196,6 +211,7 @@ impl EntityKind {
         EntityKind::VIEW,
         EntityKind::SESSION,
         EntityKind::THREAD,
+        EntityKind::DECISION,
         EntityKind::ROLE,
     ];
 

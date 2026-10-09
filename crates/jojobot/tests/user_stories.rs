@@ -173,6 +173,9 @@ mod thought_room;
 /// Only a bot above the bots that write into a thread sets its ceiling.
 #[path = "user_stories/thread_ceiling.rs"]
 mod thread_ceiling;
+/// A thread puts its standing decisions before the research around them.
+#[path = "user_stories/thread_decisions.rs"]
+mod thread_decisions;
 /// One claim, two runs, two zones — and both answers are right.
 #[path = "user_stories/timezones.rs"]
 mod timezones;

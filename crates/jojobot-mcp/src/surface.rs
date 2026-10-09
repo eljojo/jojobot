@@ -639,7 +639,7 @@ fn add_entity_points_at_the_verb_that_reparents() {
 fn the_orientation_essay_lists_the_role_kind() {
     let essay = crate::orientation::essay::orientation();
     assert!(
-        essay.contains("thread · role"),
+        essay.contains("· role —"),
         "the orientation essay's list of kinds leaves out role"
     );
 }
