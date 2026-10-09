@@ -2884,24 +2884,30 @@ fn no_agent_facing_text_says_a_kind_holds_a_thing_to_nothing() {
   "),
     );
 
-    // …and the true claim in its place: the essay a fresh session reads names
-    // every key it can be refused for losing.
+    // …and the true claim in its place: the paragraph of the essay that teaches
+    // the floor rule names every key a thing can be refused for losing. The
+    // paragraph, not the essay: a key named in some other paragraph teaches
+    // nothing about the rule.
     let (_, essay) = served
         .iter()
         .find(|(what, _)| what == "the orientation essay")
         .expect("the essay a fresh session reads is in the corpus");
+    let floor_rule = essay
+        .split("\n\n")
+        .find(|paragraph| paragraph.contains("A record carries FIELDS"))
+        .expect("the essay has the paragraph that teaches fields and the floor rule");
     let unsaid: Vec<String> = holding
         .iter()
         .flat_map(|(token, required)| {
             required
                 .iter()
-                .filter(|key| !essay.contains(&format!("`{key}`")))
+                .filter(|key| !floor_rule.contains(&format!("`{key}`")))
                 .map(move |key| format!("{token}.{key}"))
         })
         .collect();
     assert!(
         unsaid.is_empty(),
-        "the essay teaches the floor rule and does not name the keys it holds a thing to, so a          session learns the rule and cannot learn what it applies to: {unsaid:?}"
+        "the paragraph that teaches the floor rule does not name the keys it holds a thing to, so a          session learns the rule and cannot learn what it applies to: {unsaid:?}"
     );
 }
 
