@@ -164,7 +164,7 @@ and the difference between them is whether the cycle is consumed.
 that it did not happen.
 
 `snoozed` — the cycle is not consumed, and the snooze names the day the loop
-comes back. Send that day in `fields` as `snoozed_until`, a date after the
+comes back. Send that day in `sets` as `snoozed_until`, a date after the
 check-in's own. A snooze with no day is refused, so ask the operator which day
 if they have not said. A snoozed loop falls due on the later of its own due day
 and the snooze day: it is not due before that day, and it is due on it.
@@ -343,7 +343,7 @@ sentence, which a later question cannot read.
 A slip is a new due day. Write the day under the same key every time it
 changes. Do not write "the copy moved again" and do not keep a count.
 
-    capture  subject: "project:atlas"  fields: {"copy_due": "2026-04-06"}
+    capture  subject: "project:atlas"  sets: {"copy_due": "2026-04-06"}
 
 "How many times did it move" is then a read of that key's history:
 
@@ -407,7 +407,7 @@ Each question folds its own `state`, so a later read for the questions that are
 drafted and never asked is a read of that key, and it finds every one:
 
     add_entity  kind: "work"  handle: "phi"  name: "Payment provider"  parent: "project:visa"  source: "drafted in conversation"
-    capture  subject: "work:phi"  content: "which payment provider do we use?"  fields: {"state": "drafted", "blocks": "work:handcart"}
+    capture  subject: "work:phi"  content: "which payment provider do we use?"  sets: {"state": "drafted", "blocks": "work:handcart"}
     recall  fields: [{"key": "state", "value": "drafted"}]  facts: true
 
 A question is a `work` thing because no kind for questions is built in: a
@@ -432,7 +432,7 @@ the handles of the work that must come first, separated by commas. A work item
 or a project at `done` is not owed, and its dates stay on it, so do not clear a
 date to quiet finished work.
 
-    capture  subject: "work:sigma"  fields: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
+    capture  subject: "work:sigma"  sets: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
 
 A project may add statuses of its own. Write the whole list on the project, in
 the order you want it, under `columns`. The list has to hold all five shipped
@@ -447,7 +447,7 @@ record lists `columns` for every project. That list adds words beside the shippe
 five and need not repeat them. A `status_word/<word>` key on it, set to a shipped
 word, says what one of your own words means.
 
-    capture  subject: "project:atlas"  fields: {"columns": "inbox, someday, next, now, waiting, done"}
+    capture  subject: "project:atlas"  sets: {"columns": "inbox, someday, next, now, waiting, done"}
 
 Each question is then a read of one key. The first read lists what is next. The
 second lists what waits on someone, and on whom. The third lists what stands on
