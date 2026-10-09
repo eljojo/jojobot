@@ -261,6 +261,10 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let from = EntityId::person(&args.handle);
+        // **A voucher is issued, never moved.** Judged on the handle's kind.
+        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&from) {
+            return memory_declined("rename_entity", refused);
+        }
         // **Any change to a role object hands its name to somebody else**: a new
         // parent moves the role to another bot, and a new slug or a new kind
         // frees the name for a claim. So it is judged as archiving it is
@@ -282,6 +286,11 @@ impl Jojobot {
         // guessing a kind would be guessing the caller's intent about the
         // one thing this call exists to let them state.
         let to = EntityId(args.to.trim().to_string());
+        // **Nor is one made by a rename**: a thing retyped to a voucher's kind
+        // would be a grant written by hand.
+        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&to) {
+            return memory_declined("rename_entity", refused);
+        }
         if let Some(refused) = self.rename_would_unseat_the_operator(&from, &to).await {
             return Ok(refused);
         }

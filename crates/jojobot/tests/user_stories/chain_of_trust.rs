@@ -16,6 +16,40 @@ use serde_json::json;
 
 use super::dsl::Story;
 
+/// **A voucher issued the way the engine issues one**: through the store, not
+/// through a verb. Returns the address of its claim.
+async fn issue_through_the_store(story: &Story, voucher: &EntityId) -> String {
+    let today: jiff::civil::Date = "2026-10-09".parse().expect("a day");
+    let issued = story
+        .memory_store()
+        .add_entity_with_first_claim(
+            NewEntity::new(
+                voucher.clone(),
+                format!("Grant {}", voucher.slug()),
+                "jojobot",
+            ),
+            jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: [
+                    ("right", "boot-as"),
+                    ("target", "bot:patty"),
+                    ("holder", "abcd"),
+                    ("issuer", "wxyz"),
+                    ("state", "issued"),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+                ..NewFact::about(voucher.clone(), "a voucher for boot-as on patty", today)
+            }),
+        )
+        .await
+        .expect("the engine path writes it");
+    let Guarded::Written((_, claim)) = issued else {
+        panic!("the engine path was blocked");
+    };
+    claim.address().to_string()
+}
+
 #[tokio::test]
 async fn a_bot_that_writes_a_voucher_is_refused_and_nothing_is_stored() {
     let story = Story::begin("bot:otto").await;
@@ -103,31 +137,7 @@ async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bo
 
     // ── the engine issues one, through the store ────────────────────────────
     let voucher = EntityId("voucher:boot-as-patty".into());
-    let today: jiff::civil::Date = "2026-10-09".parse().expect("a day");
-    let issued = story
-        .memory_store()
-        .add_entity_with_first_claim(
-            NewEntity::new(voucher.clone(), "Boot as Patty", "jojobot"),
-            jojobot_domain::memory::testing::contract::state(NewFact {
-                fields: [
-                    ("right", "boot-as"),
-                    ("target", "bot:patty"),
-                    ("holder", "abcd"),
-                    ("issuer", "wxyz"),
-                    ("state", "issued"),
-                ]
-                .into_iter()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect(),
-                ..NewFact::about(voucher.clone(), "a voucher for boot-as on patty", today)
-            }),
-        )
-        .await
-        .expect("the engine path writes it");
-    let Guarded::Written((_, claim)) = issued else {
-        panic!("the engine path was blocked");
-    };
-    let address = claim.address().to_string();
+    let address = issue_through_the_store(&story, &voucher).await;
     s.call("recall", json!({"subject": "voucher:boot-as-patty"}))
         .await
         .says("\"state\":\"issued\"")
@@ -177,6 +187,111 @@ async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bo
         .call(
             "update_entity",
             json!({"handle": "bot:patty", "name": "Patty the second"}),
+        )
+        .await;
+
+    story.finish().await;
+}
+
+/// "A voucher exists. Can a bot rename it, fold it into something, archive it,
+/// or make one by renaming?"
+///
+/// **Rename, merge and archive are turned back like every other write to a
+/// voucher**, on either side of a rename or a merge: a voucher moved onto
+/// another handle, or another thing renamed onto a voucher's kind, is a grant
+/// taken without being given. **Each refusal sits beside the positive it
+/// depends on**: the same verbs land on a bot.
+#[tokio::test]
+async fn a_bot_cannot_rename_merge_or_archive_a_voucher_nor_rename_into_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    s.add("bot:patty", "Patty").await;
+    s.add("bot:selma", "Selma").await;
+    let marge = story.as_bot("bot:marge").await;
+    let first = EntityId("voucher:boot-as-patty".into());
+    let second = EntityId("voucher:boot-as-selma".into());
+    issue_through_the_store(&story, &first).await;
+    issue_through_the_store(&story, &second).await;
+
+    // ── renaming a voucher is refused ───────────────────────────────────────
+    marge
+        .refused(
+            "rename_entity",
+            json!({"handle": "voucher:boot-as-patty", "to": "voucher:boot-as-anybody"}),
+        )
+        .await
+        .says("\"wrote\":false")
+        .says("issued");
+    marge
+        .refused(
+            "rename_entity",
+            json!({"handle": "voucher:boot-as-patty", "to": "topic:widgets"}),
+        )
+        .await
+        .says("issued");
+
+    // ── and so is renaming anything onto a voucher's kind ───────────────────
+    marge
+        .refused(
+            "rename_entity",
+            json!({"handle": "bot:selma", "to": "voucher:made-by-hand"}),
+        )
+        .await
+        .says("issued");
+
+    // ── a merge is refused with the voucher on either side ──────────────────
+    marge
+        .refused(
+            "merge_entities",
+            json!({"duplicate": "voucher:boot-as-patty", "survivor": "bot:patty"}),
+        )
+        .await
+        .says("issued");
+    marge
+        .refused(
+            "merge_entities",
+            json!({"duplicate": "bot:selma", "survivor": "voucher:boot-as-selma"}),
+        )
+        .await
+        .says("issued");
+
+    // ── archiving and restoring are refused ─────────────────────────────────
+    marge
+        .refused(
+            "archive_entity",
+            json!({"handle": "voucher:boot-as-patty", "reason": "tidying"}),
+        )
+        .await
+        .says("issued");
+    marge
+        .refused(
+            "archive_entity",
+            json!({"handle": "voucher:boot-as-patty", "reason": "back", "restore": true}),
+        )
+        .await
+        .says("issued");
+
+    // ── both vouchers are exactly where they were, live, and nothing new ────
+    let listed = s.list("voucher").await;
+    listed
+        .number("/count", 2)
+        .says("voucher:boot-as-patty")
+        .says("voucher:boot-as-selma")
+        .never_says("anybody")
+        .never_says("made-by-hand");
+
+    // ── the same verbs still land on a bot ──────────────────────────────────
+    marge
+        .call(
+            "rename_entity",
+            json!({"handle": "bot:selma", "to": "bot:selma-the-second"}),
+        )
+        .await;
+    marge
+        .call(
+            "archive_entity",
+            json!({"handle": "bot:patty", "reason": "tidying"}),
         )
         .await;
 
