@@ -3150,7 +3150,7 @@ mod tests {
             .expect("a rules-free bot still gets the essay's core: {resumed}");
         assert_eq!(
             orientation,
-            crate::orientation::essay::ORIENTATION_CORE,
+            crate::orientation::essay::ORIENTATION_CORE.as_str(),
             "the core must ride whole even when the remainder is declined entirely",
         );
     }

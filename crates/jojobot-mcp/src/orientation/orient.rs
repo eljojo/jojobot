@@ -331,7 +331,7 @@ pub(super) fn floor_len(
     clock: Option<serde_json::Value>,
     instance: InstanceLines<'_>,
 ) -> usize {
-    let core = (!brief).then_some(essay::ORIENTATION_CORE);
+    let core = (!brief).then_some(essay::ORIENTATION_CORE.as_str());
     serde_json::json!({
         "orientation": core,
         "orientation_elided": true,
@@ -1682,7 +1682,7 @@ mod tests {
             .expect("the core always ships when brief is false: {booted}");
         assert_eq!(
             orientation,
-            crate::orientation::essay::ORIENTATION_CORE,
+            crate::orientation::essay::ORIENTATION_CORE.as_str(),
             "a named boot must carry exactly the core and nothing of the remainder, \
              heavy charter or not: {orientation:?}",
         );
@@ -1914,7 +1914,7 @@ mod tests {
     {
         let jojobot = handler();
         let budget = jojobot_domain::text::BOOT_ANSWER.budget;
-        let core = crate::orientation::essay::ORIENTATION_CORE;
+        let core = crate::orientation::essay::ORIENTATION_CORE.as_str();
         let (mut shipped_some, mut dropped_some) = (false, false);
         for n in 0..24 {
             // **Three of one letter each**, so no slug contains another and the
@@ -2052,7 +2052,7 @@ mod tests {
             .expect("a named boot still gets the core: {booted}");
         assert_eq!(
             orientation,
-            essay::ORIENTATION_CORE,
+            essay::ORIENTATION_CORE.as_str(),
             "a named boot must never carry the remainder, light identity or not",
         );
         assert_eq!(booted["orientation_elided"], true, "{booted}");
@@ -3046,7 +3046,7 @@ mod tests {
         );
         assert_eq!(
             named_orientation,
-            essay::ORIENTATION_CORE,
+            essay::ORIENTATION_CORE.as_str(),
             "the named boot carries the core alone: {identified}",
         );
         assert!(
@@ -3500,7 +3500,10 @@ mod essay_for_boot_budget {
         let budget = cost(preamble) + lens[0] + lens[1];
         let served = essay_for_boot(false, &serde_json::Value::Null, budget);
         let text = served.text.expect("some text always ships");
-        assert!(text.starts_with(essay::ORIENTATION_CORE), "{text:?}");
+        assert!(
+            text.starts_with(essay::ORIENTATION_CORE.as_str()),
+            "{text:?}"
+        );
         assert!(text.contains(preamble), "{text:?}");
         let (_, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
         for heading in &headings[..2] {
@@ -3546,7 +3549,10 @@ mod essay_for_boot_budget {
         let budget = cost(preamble);
         let served = essay_for_boot(false, &serde_json::Value::Null, budget);
         let text = served.text.expect("some text always ships");
-        assert!(text.starts_with(essay::ORIENTATION_CORE), "{text:?}");
+        assert!(
+            text.starts_with(essay::ORIENTATION_CORE.as_str()),
+            "{text:?}"
+        );
         assert!(text.contains(preamble), "{text:?}");
         for heading in &headings {
             assert!(!text.contains(heading), "{text}");
@@ -3571,7 +3577,7 @@ mod essay_for_boot_budget {
         let budget = cost(preamble).saturating_sub(1);
         let served = essay_for_boot(false, &serde_json::Value::Null, budget);
         let text = served.text.expect("the core always ships");
-        assert_eq!(text, essay::ORIENTATION_CORE, "{text:?}");
+        assert_eq!(text, essay::ORIENTATION_CORE.as_str(), "{text:?}");
         assert!(served.elided);
         let note = served.note.expect("a cut answer names what it left out");
         assert!(

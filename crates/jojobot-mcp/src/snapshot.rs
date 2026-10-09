@@ -258,7 +258,7 @@ async fn orientation(doc: &mut Doc) {
         3,
         "Essay — core (always served whole)",
         "markdown",
-        crate::orientation::essay::ORIENTATION_CORE,
+        crate::orientation::essay::ORIENTATION_CORE.as_str(),
     );
     let (opening, sections) = crate::orientation::essay::remainder();
     doc.text(

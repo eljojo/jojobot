@@ -699,7 +699,7 @@ fn the_orientation_essay_lists_the_role_kind() {
 /// instruction.
 #[test]
 fn the_core_of_the_essay_teaches_the_status_bar() {
-    let core = crate::orientation::essay::ORIENTATION_CORE;
+    let core = crate::orientation::essay::ORIENTATION_CORE.as_str();
     assert!(
         core.contains("status_bar") && core.contains("mail_waiting"),
         "the core of the essay does not teach the status bar and its mail count"

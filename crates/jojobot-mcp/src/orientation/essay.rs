@@ -5,30 +5,14 @@
 //! 60 lines of text rather than code, and because the one-door test counts how
 //! many places reach for it: defined once, read once.
 
-/// **The core of what `start_here` hands a fresh agent** — always served
-/// whole, the same way a bot's charter is: the kinds, what a claim carries,
-/// that a question can be asked structurally, the verbs a cold session
-/// writes with, its own zone and day, and the call that reaches the rest.
-/// Engine prose: the method, in role language only — no operator specifics,
-/// fictional example identities.
-///
-/// **The boundary is drawn by what a cold session cannot act without, not
-/// by what teaches the model best.** A first pass drew it at the essay's own
-/// paragraph seam — kinds and fields, nothing past it — and three
-/// pre-existing user stories (`unprompted`, `backdated`, `timezones`, in
-/// `crates/jojobot/tests/user_stories/`) caught what that missed: a named
-/// boot that never learns `add_entity`/`capture`/`recall` exist cannot write
-/// anything, and one that never learns `timezone`/`today` cannot date a
-/// claim correctly. Those stories are the acceptance criteria for this
-/// boundary — they are pre-existing, realistic, already-approved assertions
-/// about first contact, not this file's own taste.
-pub(crate) const ORIENTATION_CORE: &str = r#"# jojobot — start here
+/// The core as written, with the kind line left as [`KINDS_MARK`].
+const CORE_TEMPLATE: &str = r#"# jojobot — start here
 
 jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant. The rules below exist for them.
 
 ## The two worlds
 
-**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic · bot · pet · rhythm · promise · machine · view · thread · decision · role · voucher · challenge — with a handle like `person:milhouse`, the name it is addressed by and the only name a caller ever sends. A **machine** is a computer — a server, a laptop, a router, a guest running on another machine. The kind names the OBJECT, not a role it plays, so a guest is a machine exactly as its host is, and which hosts which is a link between them. A **rhythm** is a recurring loop and it is one of the two kinds that REQUIRE a `parent` — the other is a **promise**, something somebody has to do by the day in `promised_by` — which says whose job it is: a maintenance loop under the thing maintained, a review loop under the bot that carries it. Two loops on one object are two rhythms, which is why they are entities, not a label. A **view** is a question asked by name: a query over this graph, held as a record, so asking for it is naming it. Some ship with the software and you can declare your own; both have the same shape. A **thread** is an ongoing line in somebody's life — a situation, not a task — and it ends when it stops being TRUE, never when it is done: a `project` moves toward completion and ends there, a `topic` is the glue noun for a world-fact belonging to no person, place or project, and a thread is not the anchor of last resort. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it), `observation` (an AI read it out of a system of record and says which one) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. **A claim also carries a `standing`, which answers a different question: `settled` or open.** Provenance says who backs it; standing says how sure anybody is. A claim nobody declared one on gets what its provenance implies, and it is not written down as anything. **An `observation` reads back as a finding rather than a hypothesis, and must name where it was read** — the field `read_from`, plus `read_ref` for what was read there if you have it — because who confirmed something and on what is one question, and a claim answering half of it is refused. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` · `connection` — and edges are what make cross-entity questions answerable. `connection` is the one to reach for when a link is there and how it relates was not recorded: filing that as `about` would state something nobody said. **`search` is the front door** to all of it — and to the messages in mailboxes too, when you ask for them with `include_mail: true`: one ranked list, one call.
+**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — {kinds} — with a handle like `person:milhouse`, the name it is addressed by and the only name a caller ever sends. A **machine** is a computer — a server, a laptop, a router, a guest running on another machine. The kind names the OBJECT, not a role it plays, so a guest is a machine exactly as its host is, and which hosts which is a link between them. A **rhythm** is a recurring loop and it is one of the two kinds that REQUIRE a `parent` — the other is a **promise**, something somebody has to do by the day in `promised_by` — which says whose job it is: a maintenance loop under the thing maintained, a review loop under the bot that carries it. Two loops on one object are two rhythms, which is why they are entities, not a label. A **view** is a question asked by name: a query over this graph, held as a record, so asking for it is naming it. Some ship with the software and you can declare your own; both have the same shape. A **thread** is an ongoing line in somebody's life — a situation, not a task — and it ends when it stops being TRUE, never when it is done: a `project` moves toward completion and ends there, a `topic` is the glue noun for a world-fact belonging to no person, place or project, and a thread is not the anchor of last resort. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it), `observation` (an AI read it out of a system of record and says which one) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. **A claim also carries a `standing`, which answers a different question: `settled` or open.** Provenance says who backs it; standing says how sure anybody is. A claim nobody declared one on gets what its provenance implies, and it is not written down as anything. **An `observation` reads back as a finding rather than a hypothesis, and must name where it was read** — the field `read_from`, plus `read_ref` for what was read there if you have it — because who confirmed something and on what is one question, and a claim answering half of it is refused. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` · `connection` — and edges are what make cross-entity questions answerable. `connection` is the one to reach for when a link is there and how it relates was not recorded: filing that as `about` would state something nobody said. **`search` is the front door** to all of it — and to the messages in mailboxes too, when you ask for them with `include_mail: true`: one ranked list, one call.
 
 **A record carries FIELDS**, always: a flat bag of key/value pairs beside the claim, which jojobot stores as written and keeps on the claim. Nothing has to be declared before you write one, and a key you invent is kept as you wrote it. A handle, or a comma list of them, is a link and must exist; six keys stay on their own claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`, `recorded_by`). **A thing's fields are every `sets` write on it, folded, the newest write of each key winning (a counter sums)** — a write that takes a key off takes it off the thing. **Carrying keys is what makes a thing ANSWER a type**, and answering one is not being held to one. Declare a type to say which keys it names; a thing holding all of them FITS it. Declaring admits nothing and refuses nothing — a thing is found by the keys it carries whether or not the type was declared. **What a write may take off a thing is its KIND's question**: a kind may name keys that the things of that kind have to keep, and a write that would drop one of those is blocked, naming the key it would lose. A `rhythm` has to keep its `name` and `last_check_in`, a `promise` its `promised_by`, a `view` its `selects`. A kind may also name a key that holds one of a named set: the `status` of a `project` or `work` holds someday, next, now, waiting or done and the words `columns` adds, and any other word lands, counts as not finished and comes back with the write that binds it. The sets on a loop, a promise and a view still refuse. **The floor is what a thing already holds**: a record written a piece at a time is never blocked on the way up. What declaring a type buys is write-time help, the vocabulary search asks with, plus ordering and traversal on the keys it names. `answers_type` selects things carrying SOME of a type's keys and says which each one lacks; `fits_type` keeps only the things with no gaps. Ask `answers_type` which of these are described like a pet, and `fits_type` which ARE pets.
 
@@ -55,6 +39,42 @@ Send it when your run is not happening now: a session catching up on last week, 
 
 **This is the short form.** The rest of this — mailboxes, more worked examples, the six refusal shapes, and the rest of what a bot and a session are — reads the same way, in full, from a boot with room for it: call `start_here` again, naming no bot, or this one with nothing else competing for its answer's ceiling.
 "#;
+
+/// The mark in the core's text that stands for the kind line.
+const KINDS_MARK: &str = "{kinds}";
+
+/// **The kinds the store accepts, as the one line the core carries.** Read off
+/// [`EntityKind::ALL`], so a new kind costs its token here and the line cannot
+/// say a set the store does not have.
+pub(crate) fn kind_line() -> String {
+    EntityKind::ALL
+        .iter()
+        .map(|kind| kind.as_token())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+use jojobot_domain::memory::EntityKind;
+
+/// **The core of what `start_here` hands a fresh agent** — always served
+/// whole, the same way a bot's charter is: the kinds, what a claim carries,
+/// that a question can be asked structurally, the verbs a cold session
+/// writes with, its own zone and day, and the call that reaches the rest.
+/// Engine prose: the method, in role language only — no operator specifics,
+/// fictional example identities.
+///
+/// **The boundary is drawn by what a cold session cannot act without, not
+/// by what teaches the model best.** A first pass drew it at the essay's own
+/// paragraph seam — kinds and fields, nothing past it — and three
+/// pre-existing user stories (`unprompted`, `backdated`, `timezones`, in
+/// `crates/jojobot/tests/user_stories/`) caught what that missed: a named
+/// boot that never learns `add_entity`/`capture`/`recall` exist cannot write
+/// anything, and one that never learns `timezone`/`today` cannot date a
+/// claim correctly. Those stories are the acceptance criteria for this
+/// boundary — they are pre-existing, realistic, already-approved assertions
+/// about first contact, not this file's own taste.
+pub(crate) static ORIENTATION_CORE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| CORE_TEMPLATE.replace(KINDS_MARK, &kind_line()));
 
 /// **The rest of the essay** — everything past the core: the small-answer
 /// discipline, mailboxes, worked examples, the refusal shapes, bots and
@@ -130,7 +150,7 @@ This door's snapshot names every identity on the server, each with its mail besi
 /// test that means to check the text a session reads when nothing cut it.
 #[cfg(test)]
 pub(crate) fn orientation() -> String {
-    format!("{ORIENTATION_CORE}{ORIENTATION_REMAINDER}")
+    format!("{}{ORIENTATION_REMAINDER}", ORIENTATION_CORE.as_str())
 }
 
 /// One `##`-section of a markdown text: its heading line itself (e.g.
@@ -193,42 +213,40 @@ pub(crate) fn remainder() -> (&'static str, Vec<MarkdownSection<'static>>) {
 mod tests {
     use jojobot_domain::memory::EntityKind;
 
-    /// **Every kind the store accepts is named in the prose that teaches the
-    /// store**, and there is more than one such place.
+    /// **The core carries the kinds the store accepts as one line generated from
+    /// them, and nothing else stands in for it.**
     ///
     /// This is the closed-set discipline the enum already has, applied to the
     /// text. The enum's own test makes a new kind impossible to add without
     /// deciding its token and its wire name; nothing made anybody tell a
-    /// SESSION about it. So the orientation essay taught eight kinds after
-    /// `bot` shipped and after `pet` shipped, and the front door a fresh agent
-    /// reads was the last place to learn what the store holds.
+    /// SESSION about it, so the essay taught eight kinds after `bot` shipped
+    /// and omitted `session` for as long as the word appeared anywhere else.
     ///
-    /// **What it proves and what it does not.** It catches the real failure —
-    /// a kind arriving in the enum and nowhere in the prose, which is how both
-    /// of these happened. It cannot tell a kind named in a LIST from one
-    /// mentioned in a passing sentence, so it is a floor rather than a
-    /// guarantee, and a reader adding the eleventh kind still has to put it in
-    /// the list a caller reads.
-    ///
-    /// **Checked against the orientation essay only.** The connection-time
-    /// instructions deliberately stop naming kinds (see the guard below that
-    /// checks the opposite: that they never enumerate a growing vocabulary),
-    /// so asserting they enumerate every kind would fight that design on
-    /// purpose.
+    /// **The check is the line itself.** The core holds [`kind_line`], read off
+    /// [`EntityKind::ALL`], and the mark that stands for it is gone from the
+    /// served text. A list typed into the prose and left behind when a kind
+    /// shipped is not that line, so it fails here; a passing mention of a
+    /// kind's word elsewhere does not satisfy it.
     #[test]
     fn every_kind_is_named_in_the_prose_a_session_reads() {
-        let taught: [(&str, String); 1] = [("the orientation essay", super::orientation())];
-        for (what, text) in &taught {
-            let text = text.as_str();
-            for kind in EntityKind::ALL {
-                let token = kind.as_token();
-                assert!(
-                    names(text, token),
-                    "{what} does not name the `{token}` kind, which the store accepts — \
-                     a session that reads it learns a kind set the store does not have"
-                );
-            }
+        let line = super::kind_line();
+        for kind in EntityKind::ALL {
+            let token = kind.as_token();
+            assert!(
+                line.split(" · ").any(|named| named == token),
+                "the generated kind line does not carry `{token}`: {line}"
+            );
         }
+        let core = super::ORIENTATION_CORE.as_str();
+        assert!(
+            core.contains(&line),
+            "the essay's core does not carry the generated kind line, so a session that reads \
+             it learns a kind set the store does not have: {line}"
+        );
+        assert!(
+            !super::orientation().contains(super::KINDS_MARK),
+            "the mark for the kind line is still in the served text"
+        );
     }
 
     /// **The core alone still names every kind.**
@@ -244,7 +262,7 @@ mod tests {
         for kind in EntityKind::ALL {
             let token = kind.as_token();
             assert!(
-                names(super::ORIENTATION_CORE, token),
+                names(super::ORIENTATION_CORE.as_str(), token),
                 "the essay's core does not name the `{token}` kind — a boot that cuts the \
                  remainder would leave a session with no kind vocabulary at all"
             );
@@ -258,7 +276,7 @@ mod tests {
     fn the_core_alone_teaches_the_structural_type_questions() {
         for filter in ["answers_type", "fits_type"] {
             assert!(
-                names(super::ORIENTATION_CORE, filter),
+                names(super::ORIENTATION_CORE.as_str(), filter),
                 "the essay's core does not name `{filter}` — a boot that cuts the remainder \
                  would leave a session unable to ask the question it answers",
             );
