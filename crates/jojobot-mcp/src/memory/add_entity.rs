@@ -398,11 +398,15 @@ impl Jojobot {
                     )
                     .await;
                 due_moved = due_on;
+                // **The due moment reaches the new thing**: it is jojobot's own
+                // arithmetic, not a setting the caller sent.
+                let mut derived: std::collections::BTreeSet<String> = Default::default();
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(
                         jojobot_domain::attention::DUE_ON.to_string(),
                         due_on.to_string(),
                     );
+                    derived.insert(jojobot_domain::attention::DUE_ON.to_string());
                 }
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
@@ -410,6 +414,7 @@ impl Jojobot {
                     // the claim says them as the thing's own, and a later edit
                     // keeps each in that bag.
                     sets: set_keys,
+                    derived,
                     fields,
                     // **The session that made it, as a capture records it**: a
                     // claim's first write names the run that wrote it, and a

@@ -178,16 +178,21 @@ impl Jojobot {
                     )
                     .await;
                 due_moved = due_on;
+                // **The due moment reaches the thing**: it is jojobot's own
+                // arithmetic, not a setting the caller sent.
+                let mut derived: std::collections::BTreeSet<String> = Default::default();
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(
                         jojobot_domain::attention::DUE_ON.to_string(),
                         due_on.to_string(),
                     );
+                    derived.insert(jojobot_domain::attention::DUE_ON.to_string());
                 }
                 let keys = set_keys.iter().cloned().collect::<Vec<_>>();
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
                     sets: set_keys,
+                    derived,
                     fields,
                     session: Some(caller.sid.as_str().to_string()),
                     ..jojobot_domain::memory::NewFact::about(

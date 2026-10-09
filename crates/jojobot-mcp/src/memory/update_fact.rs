@@ -338,9 +338,13 @@ impl Jojobot {
             .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         let mut clears_due_on = false;
+        // **The moved due moment reaches the thing**: it is jojobot's own
+        // arithmetic on the thing, not words a caller wrote on a record.
+        let mut derived: std::collections::BTreeSet<String> = Default::default();
         match due_on_computed {
             attention::DueMove::Set(due_on) => {
                 fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
+                derived.insert(attention::DUE_ON.to_string());
             }
             // **The clearing path calls the mover too, and acts on what it
             // says.** The stored moment sits on the record that carried the key
@@ -406,6 +410,7 @@ impl Jojobot {
             // patch carrying the session would never equal the empty one.
             session: None,
             sets: set_keys,
+            derived,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently

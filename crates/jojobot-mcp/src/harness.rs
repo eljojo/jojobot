@@ -64,6 +64,20 @@ fn plain_store() -> InMemoryMemory {
     InMemoryMemory::seeded()
 }
 
+/// **A handler over a store where a key sent as an own field stays on its
+/// record**, as the deployed store will once the switch is made. Every case
+/// about the switch builds this one; [`handler`] is the store as it is.
+pub(crate) fn handler_switched() -> Jojobot {
+    Jojobot::new(
+        Arc::new(plain_store().with_own_fields_staying()),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 pub(crate) fn handler() -> Jojobot {
     Jojobot::new(
         Arc::new(plain_store()),

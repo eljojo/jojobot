@@ -70,6 +70,8 @@ mod read_refusals;
 mod snapshot;
 #[cfg(test)]
 mod surface;
+#[cfg(test)]
+mod switch;
 
 use jojobot_domain::mailbox::{
     self, Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,

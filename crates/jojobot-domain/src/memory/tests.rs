@@ -1271,26 +1271,182 @@ async fn a_setting_bag_reaches_the_thing_against_the_fake() {
         .await;
 }
 
-/// 🚨 **The three class tokens, pinned as literals.** They are stored in a column
+/// Own fields staying and computed keys reaching, against the fake built so they do.
+#[tokio::test]
+async fn own_fields_stay_and_computed_keys_reach_against_the_fake() {
+    contract::own_fields_stay_while_settings_and_computed_keys_reach(
+        &InMemoryMemory::booted().with_own_fields_staying(),
+    )
+    .await;
+}
+
+/// 🚨 **The four class tokens, pinned as literals.** They are stored in a column
 /// and nothing outside this process declares them, so an assertion built from the
 /// constants would move with them and pin nothing.
 #[test]
-fn the_three_write_classes_are_stored_as_legacy_own_and_sets() {
+fn the_four_write_classes_are_stored_as_legacy_own_sets_and_stays() {
     use crate::memory::WriteClass;
     assert_eq!(WriteClass::Legacy.as_token(), "legacy");
     assert_eq!(WriteClass::Own.as_token(), "own");
     assert_eq!(WriteClass::Sets.as_token(), "sets");
-    for class in [WriteClass::Legacy, WriteClass::Own, WriteClass::Sets] {
+    assert_eq!(WriteClass::Stays.as_token(), "stays");
+    for class in [
+        WriteClass::Legacy,
+        WriteClass::Own,
+        WriteClass::Sets,
+        WriteClass::Stays,
+    ] {
         assert_eq!(WriteClass::from_token(class.as_token()), class);
-        assert!(
-            crate::memory::reaches_the_thing(class),
-            "every class reaches its thing today",
-        );
     }
+    // **Only `stays` stays.** A row written before the change, as an own field,
+    // reaches its thing as it always did.
+    for reaches in [WriteClass::Legacy, WriteClass::Own, WriteClass::Sets] {
+        assert!(crate::memory::reaches_the_thing(reaches), "{reaches:?}");
+    }
+    assert!(!crate::memory::reaches_the_thing(WriteClass::Stays));
     assert_eq!(
         WriteClass::from_token("something-newer"),
         WriteClass::Legacy,
         "a token this build does not know reads as the class every write once had",
+    );
+}
+
+/// **The class a key is written under, case by case.** A new own field is `own`
+/// before the switch and `stays` after; a setting is `sets`; a computed key is
+/// `sets`, except where the record already holds it as a key that reaches.
+#[test]
+fn the_class_of_a_key_follows_its_bag_and_whether_jojobot_computed_it() {
+    use crate::memory::{WriteClass, classes_for_write};
+    use std::collections::{BTreeMap, BTreeSet};
+    let value = |keys: &[&str]| -> BTreeMap<String, String> {
+        keys.iter()
+            .map(|key| (key.to_string(), "v".to_string()))
+            .collect()
+    };
+    let set = |keys: &[&str]| -> BTreeSet<String> { keys.iter().map(|k| k.to_string()).collect() };
+    let class_of = |held: &[(&str, WriteClass)],
+                    written: &[&str],
+                    sets: &[&str],
+                    derived: &[&str],
+                    stay: bool,
+                    key: &str|
+     -> Result<WriteClass, ()> {
+        let held: BTreeMap<String, WriteClass> =
+            held.iter().map(|(k, c)| (k.to_string(), *c)).collect();
+        classes_for_write(
+            &held,
+            &value(written),
+            &set(sets),
+            &set(derived),
+            &[],
+            &[],
+            stay,
+        )
+        .map(|classes| classes[key])
+        .map_err(|_| ())
+    };
+    // A new own field: before the switch and after.
+    assert_eq!(
+        class_of(&[], &["a"], &[], &[], false, "a"),
+        Ok(WriteClass::Own)
+    );
+    assert_eq!(
+        class_of(&[], &["a"], &[], &[], true, "a"),
+        Ok(WriteClass::Stays)
+    );
+    // A setting is `sets` either way; a computed key is `sets` either way.
+    assert_eq!(
+        class_of(&[], &["a"], &["a"], &[], true, "a"),
+        Ok(WriteClass::Sets)
+    );
+    assert_eq!(
+        class_of(&[], &["a"], &[], &["a"], true, "a"),
+        Ok(WriteClass::Sets)
+    );
+    assert_eq!(
+        class_of(&[], &["a"], &[], &["a"], false, "a"),
+        Ok(WriteClass::Sets)
+    );
+    // A key keeps the class it is held under when it is written as a field.
+    for held in [WriteClass::Legacy, WriteClass::Own, WriteClass::Stays] {
+        assert_eq!(
+            class_of(&[("a", held)], &["a"], &[], &[], true, "a"),
+            Ok(held)
+        );
+    }
+    // A computed key over a key that reaches keeps that class; over one that stays
+    // it becomes `sets`, because jojobot's own arithmetic reaches.
+    assert_eq!(
+        class_of(&[("a", WriteClass::Legacy)], &["a"], &[], &["a"], true, "a"),
+        Ok(WriteClass::Legacy)
+    );
+    assert_eq!(
+        class_of(&[("a", WriteClass::Own)], &["a"], &[], &["a"], true, "a"),
+        Ok(WriteClass::Own)
+    );
+    assert_eq!(
+        class_of(&[("a", WriteClass::Stays)], &["a"], &[], &["a"], true, "a"),
+        Ok(WriteClass::Sets)
+    );
+    // A key never changes bag: a setting over an own field, and the reverse, are refused.
+    for held in [WriteClass::Legacy, WriteClass::Own, WriteClass::Stays] {
+        assert_eq!(
+            class_of(&[("a", held)], &["a"], &["a"], &[], true, "a"),
+            Err(()),
+            "{held:?}"
+        );
+    }
+    assert_eq!(
+        class_of(&[("a", WriteClass::Sets)], &["a"], &[], &[], true, "a"),
+        Err(())
+    );
+    // Except a key jojobot computes: a caller's edit of it goes on reaching.
+    for computed in crate::attention::COMPUTED_KEYS {
+        assert_eq!(
+            class_of(
+                &[(computed, WriteClass::Sets)],
+                &[computed],
+                &[],
+                &[],
+                true,
+                computed
+            ),
+            Ok(WriteClass::Sets),
+            "{computed}"
+        );
+    }
+}
+
+/// **A renewal that names the keys as computed is still a plain renewal.** The
+/// store answers a plain renewal by overwriting the lease moment and appending
+/// nothing, and the keys the role writer marks as computed are no reason to
+/// answer it as an ordinary edit.
+#[test]
+fn a_renewal_marked_as_computed_is_still_a_plain_renewal() {
+    use crate::memory::{FactPatch, is_a_plain_renewal};
+    use crate::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+    let keys = [ROLE_HOLDER, ROLE_CLAIMED_AT];
+    let renewal = FactPatch {
+        fields: keys
+            .iter()
+            .map(|key| (key.to_string(), "v".to_string()))
+            .collect(),
+        derived: keys.iter().map(|key| key.to_string()).collect(),
+        role_move: Some(RoleMove {
+            kind: RoleMoveKind::Renew,
+            role: "gamma".into(),
+            claimant: "a1b2".into(),
+        }),
+        ..FactPatch::default()
+    };
+    assert!(is_a_plain_renewal(&renewal));
+    let edit = FactPatch {
+        content: Some("other words".into()),
+        ..renewal
+    };
+    assert!(
+        !is_a_plain_renewal(&edit),
+        "an edit with a renewal inside is not plain"
     );
 }
 

@@ -6881,6 +6881,45 @@ async fn dolt_keeps_the_session_that_wrote_a_claim_and_holds_a_rewrite_to_it() {
 /// same bags. A key that moved bags by being taken off first carries each class
 /// in turn.
 #[tokio::test]
+async fn dolt_keeps_own_fields_off_the_thing_when_they_stay() {
+    let scratch = Scratch::new("own-fields-stay");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("own_fields_stay")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::own_fields_stay_while_settings_and_computed_keys_reach(
+        &DoltMemory::open(pool.clone()).with_own_fields_staying(),
+    )
+    .await;
+
+    let badge = badge_of(&pool, "thing:contract-stays").await;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT `key`, write_class FROM field_write WHERE entity = ? ORDER BY `key`, ordinal",
+    )
+    .bind(&badge)
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    let classes = |key: &str| -> Vec<&str> {
+        rows.iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, class)| class.as_str())
+            .collect()
+    };
+    assert_eq!(classes("own_key"), ["stays", "stays"], "{rows:?}");
+    assert_eq!(classes("set_key"), ["sets"], "{rows:?}");
+    assert_eq!(classes("computed_key"), ["sets", "sets"], "{rows:?}");
+
+    store.stop().await;
+}
+
+#[tokio::test]
 async fn dolt_keeps_the_bag_each_write_was_made_under() {
     let scratch = Scratch::new("write-class");
     let mut store = Dolt::start(&scratch.0, free_port())

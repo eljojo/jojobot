@@ -87,6 +87,10 @@ const REFERENCE_LOWERING_PASS: &str = "reference field lowering";
 #[derive(Clone)]
 pub struct DoltMemory {
     pool: MySqlPool,
+    /// **Whether a key sent as an own field stays on its record** instead of
+    /// reaching its thing — see [`WriteClass::Stays`]. Off by default, as the
+    /// deployed store is.
+    own_fields_stay: bool,
     /// **How many times [`index`](Self::index) has built the full listing** —
     /// the one raw query every path to it, [`known`](Self::known) included,
     /// runs through. Test-only instrumentation for the one property nothing
@@ -134,12 +138,19 @@ impl DoltMemory {
     pub fn open(pool: MySqlPool) -> Self {
         DoltMemory {
             pool,
+            own_fields_stay: false,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw: ids::drawing(),
             supplied: Provisions::default(),
             clock: Clock::default(),
         }
+    }
+
+    /// **This store with own fields staying on their record.** See the field.
+    pub fn with_own_fields_staying(mut self) -> Self {
+        self.own_fields_stay = true;
+        self
     }
 
     /// **How many times the full listing has been built, this instance's
@@ -192,6 +203,7 @@ impl DoltMemory {
     pub fn open_drawing(pool: MySqlPool, draw: Draw) -> Self {
         DoltMemory {
             pool,
+            own_fields_stay: false,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw,
@@ -1868,8 +1880,10 @@ impl DoltMemory {
             &Default::default(),
             &stored.fields,
             &fact.sets,
+            &fact.derived,
             &[],
             &declared,
+            self.own_fields_stay,
         )?;
         let lowered_writes = self.lower_writes(tx, written_keys(&stored)).await?;
         Self::append_writes(
@@ -4401,8 +4415,10 @@ impl Memory for DoltMemory {
             &held_classes,
             &patch.fields,
             &patch.sets,
+            &patch.derived,
             &patch.clear_fields,
             &Self::types_in(&mut tx).await?,
+            self.own_fields_stay,
         )?;
         apply_fact_patch(&mut fact, &patch)?;
         // **Every pointer-bearing field, lowered in one pass, unconditionally**

@@ -105,6 +105,13 @@ pub const OUTCOME: &str = "outcome";
 /// own shape to act on it with, since it has no way to take a key off a record.
 pub const DUE_ON: &str = "due_on";
 
+/// **The keys jojobot writes on a thing by its own arithmetic**: what a
+/// check-in records and the stored due moment. They are the thing's state, so a
+/// caller's later edit of one on the record that holds it goes on reaching the
+/// thing and is never refused as a key in the other bag
+/// ([`crate::memory::classes_for_write`]).
+pub const COMPUTED_KEYS: [&str; 4] = [OUTCOME, LAST_CHECK_IN, COUNTS_FROM, DUE_ON];
+
 /// **What a check-in found, and whether the cycle is consumed.**
 ///
 /// Three rather than two, because *it happened* and *it did not happen and the

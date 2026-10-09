@@ -619,6 +619,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         aged_before: None,
         session: None,
         sets: Default::default(),
+        derived: Default::default(),
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -14965,6 +14966,75 @@ pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M:
         !listed(linked).await,
         "a blocked first claim left a thing behind",
     );
+}
+
+/// **Once own fields stay, a key sent as one stays on its record, and a setting
+/// and a key jojobot computed reach the thing.** Not part of the contract list,
+/// which runs on a store as it is: this is run on a store built so own fields
+/// stay, in the fake and in the real store, until the change is the default.
+pub async fn own_fields_stay_while_settings_and_computed_keys_reach<M: Memory>(store: &M) {
+    let thing = EntityId("thing:contract-stays".into());
+    add(
+        store,
+        NewEntity::new(thing.clone(), "Contract Stays", "contract-fixture"),
+    )
+    .await;
+    let pairs = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let named = |keys: &[&str]| -> std::collections::BTreeSet<String> {
+        keys.iter().map(|k| k.to_string()).collect()
+    };
+    let claim = capture(
+        store,
+        NewFact {
+            fields: pairs(&[("own_key", "o"), ("set_key", "s"), ("computed_key", "c")]),
+            sets: named(&["set_key"]),
+            derived: named(&["computed_key"]),
+            session: Some("session-stays".to_string()),
+            ..NewFact::about(thing.clone(), "three keys, three ways", date(2026, 9, 1))
+        },
+    )
+    .await;
+    let held = store.fields(&thing).await.expect("fields read");
+    assert!(
+        !held.contains_key("own_key"),
+        "an own field stays on its record: {held:?}"
+    );
+    assert_eq!(held["set_key"], "s", "a setting reaches the thing");
+    assert_eq!(
+        held["computed_key"], "c",
+        "a key jojobot computed reaches the thing"
+    );
+    assert_eq!(
+        read_back(store, &thing, &claim.id).await.fields,
+        pairs(&[("own_key", "o"), ("set_key", "s"), ("computed_key", "c")]),
+        "the claim carries all three",
+    );
+
+    // **A computed key written again, on the same record, goes on reaching**,
+    // and an own field written again goes on staying.
+    store
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: pairs(&[("own_key", "o2"), ("computed_key", "c2")]),
+                derived: named(&["computed_key"]),
+                session: Some("session-stays".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("the patch lands")
+        .written()
+        .expect("nothing blocks it");
+    let held = store.fields(&thing).await.expect("fields read");
+    assert_eq!(held["computed_key"], "c2", "the rewritten key reached");
+    assert!(!held.contains_key("own_key"), "{held:?}");
 }
 
 /// **A record sets keys on its thing from a bag of its own, and a key stays in

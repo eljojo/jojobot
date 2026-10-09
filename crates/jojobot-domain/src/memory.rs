@@ -834,6 +834,11 @@ pub struct FactPatch {
     /// written under one bag at a time, so a key a record already holds under the
     /// other is refused ([`classes_for_write`]).
     pub sets: std::collections::BTreeSet<String>,
+    /// **The keys of [`FactPatch::fields`] that jojobot computed** rather than
+    /// the caller wrote: a check-in's schedule, a moved due day, a role's lease.
+    /// They reach the thing whatever bag the caller's keys go in
+    /// ([`classes_for_write`]).
+    pub derived: std::collections::BTreeSet<String>,
 }
 
 /// **The role an entity IS, when it is a role object**: the slug of its handle.
@@ -863,6 +868,7 @@ pub fn is_a_plain_renewal(patch: &FactPatch) -> bool {
             .all(|key| key == ROLE_CLAIMED_AT || key == ROLE_HOLDER)
         && FactPatch {
             fields: BTreeMap::new(),
+            derived: Default::default(),
             role_move: None,
             ..patch.clone()
         } == FactPatch::default()
@@ -3260,6 +3266,10 @@ pub enum WriteClass {
     Own,
     /// Written as a setting on the record's thing.
     Sets,
+    /// **Written as one of the record's own fields after own fields stopped
+    /// reaching their thing.** `Own` is the same key written while they still
+    /// did, and keeps reaching: a thing holds what it held before the change.
+    Stays,
 }
 
 impl WriteClass {
@@ -3270,6 +3280,7 @@ impl WriteClass {
             WriteClass::Legacy => "legacy",
             WriteClass::Own => "own",
             WriteClass::Sets => "sets",
+            WriteClass::Stays => "stays",
         }
     }
 
@@ -3280,6 +3291,7 @@ impl WriteClass {
         match token {
             "own" => WriteClass::Own,
             "sets" => WriteClass::Sets,
+            "stays" => WriteClass::Stays,
             _ => WriteClass::Legacy,
         }
     }
@@ -3287,11 +3299,13 @@ impl WriteClass {
 
 /// **Whether a write of this class reaches its thing.** The one reading the fold,
 /// the history of a key and the backing of a value all go through, in every store
-/// and in the fake. Today every class reaches, so nothing a thing holds depends
-/// on the class; the class is what can change that without any stored row moving.
+/// and in the fake. A key written as an own field after own fields stopped
+/// reaching ([`WriteClass::Stays`]) stays on its record; every other class
+/// reaches, so a row written before that change reads as it always did.
 pub fn reaches_the_thing(class: WriteClass) -> bool {
     match class {
         WriteClass::Legacy | WriteClass::Own | WriteClass::Sets => true,
+        WriteClass::Stays => false,
     }
 }
 
@@ -3301,10 +3315,18 @@ pub fn reaches_the_thing(class: WriteClass) -> bool {
 /// `held` is the class of each key the record holds NOW: a key whose newest write
 /// took it off is not held. A key named under `fields` keeps the class it is held
 /// under (a legacy key stays legacy, so correcting an old claim still corrects the
-/// thing) and is `Own` when new. A key named in `sets` is `Sets` when new or
-/// already `Sets`. Anything else is [`MemoryError::KeyInOtherBag`], which names
-/// the route. A clear keeps the class of the key it clears, so `clear_fields`
-/// takes a key off whichever bag holds it.
+/// thing) and is a new own field when new: [`WriteClass::Stays`] once own fields
+/// have stopped reaching their thing (`own_fields_stay`), [`WriteClass::Own`]
+/// before. A key named in `sets` is `Sets` when new or already `Sets`. Anything
+/// else is [`MemoryError::KeyInOtherBag`], which names the route. A clear keeps
+/// the class of the key it clears, so `clear_fields` takes a key off whichever
+/// bag holds it.
+///
+/// **A key jojobot computed is in `derived`, and it reaches its thing.** The
+/// check-in schedule, a due day and a role's lease are jojobot's own arithmetic
+/// on the thing, not a caller's words on a record. Such a key is `Sets`, except
+/// where the record already holds it as a key that reaches (`Legacy` or `Own`),
+/// which it keeps, so a patch to an old record never meets the refusal.
 ///
 /// **A describing key cannot be set on a thing**: a label on one record is never a
 /// property of the thing, so naming one in `sets` is refused by name.
@@ -3312,8 +3334,10 @@ pub fn classes_for_write(
     held: &BTreeMap<String, WriteClass>,
     written: &BTreeMap<String, String>,
     sets: &std::collections::BTreeSet<String>,
+    derived: &std::collections::BTreeSet<String>,
     cleared: &[String],
     declared: &[types::DeclaredType],
+    own_fields_stay: bool,
 ) -> Result<BTreeMap<String, WriteClass>, MemoryError> {
     let mut classes = BTreeMap::new();
     for key in sets {
@@ -3332,14 +3356,30 @@ pub fn classes_for_write(
             )));
         }
     }
+    let new_own_field = if own_fields_stay {
+        WriteClass::Stays
+    } else {
+        WriteClass::Own
+    };
     for key in written.keys() {
         let key = key.trim();
         let names_as_setting = sets.iter().any(|s| s.trim() == key);
+        let computed = derived.iter().any(|d| d.trim() == key);
         let class = match (held.get(key), names_as_setting) {
+            _ if computed => match held.get(key) {
+                Some(kept @ (WriteClass::Legacy | WriteClass::Own)) => *kept,
+                _ => WriteClass::Sets,
+            },
             (None, true) | (Some(WriteClass::Sets), true) => WriteClass::Sets,
-            (None, false) => WriteClass::Own,
+            (None, false) => new_own_field,
             (Some(WriteClass::Legacy), false) => WriteClass::Legacy,
             (Some(WriteClass::Own), false) => WriteClass::Own,
+            (Some(WriteClass::Stays), false) => WriteClass::Stays,
+            // A key jojobot computes is the thing's own state, so a caller's edit of it
+            // on the record that holds it goes on reaching the thing.
+            (Some(WriteClass::Sets), false) if crate::attention::COMPUTED_KEYS.contains(&key) => {
+                WriteClass::Sets
+            }
             (Some(WriteClass::Sets), false) => {
                 return Err(MemoryError::KeyInOtherBag {
                     key: key.to_string(),
@@ -3347,7 +3387,7 @@ pub fn classes_for_write(
                     named: "one of the record's own fields",
                 });
             }
-            (Some(WriteClass::Legacy | WriteClass::Own), true) => {
+            (Some(WriteClass::Legacy | WriteClass::Own | WriteClass::Stays), true) => {
                 return Err(MemoryError::KeyInOtherBag {
                     key: key.to_string(),
                     held: "one of the record's own fields",
@@ -4121,6 +4161,9 @@ pub struct NewFact {
     /// **The keys of [`NewFact::fields`] that are this record's SETTING bag** —
     /// see [`FactPatch::sets`].
     pub sets: std::collections::BTreeSet<String>,
+    /// **The keys of [`NewFact::fields`] that jojobot computed** — see
+    /// [`FactPatch::derived`].
+    pub derived: std::collections::BTreeSet<String>,
 }
 
 impl NewFact {
@@ -4148,6 +4191,7 @@ impl NewFact {
             aged_before: None,
             session: None,
             sets: std::collections::BTreeSet::new(),
+            derived: std::collections::BTreeSet::new(),
         }
     }
 }

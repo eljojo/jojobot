@@ -64,7 +64,11 @@ impl Jojobot {
                 None
             }
         };
-        let (fields, role_move, clear) = match &write {
+        let (fields, role_move, clear): (
+            std::collections::BTreeMap<String, String>,
+            Option<RoleMove>,
+            Vec<String>,
+        ) = match &write {
             RoleWrite::Claim { claimant, now } => (
                 [
                     (ROLE_HOLDER.to_string(), claimant.to_string()),
@@ -112,6 +116,7 @@ impl Jojobot {
                 .update_fact(
                     &address,
                     FactPatch {
+                        derived: fields.keys().cloned().collect(),
                         fields,
                         clear_fields: clear,
                         role_move,
@@ -125,6 +130,8 @@ impl Jojobot {
             // with the claim's own fields, and the store decides it as a claim.
             (None, None) => {
                 let mut fact = NewFact::about(object.clone(), role_claim_content(role), today);
+                // A lease is jojobot's own arithmetic on the role, so every key of it reaches.
+                fact.derived = fields.keys().cloned().collect();
                 fact.fields = fields;
                 self.memory.capture(fact).await.map(|_| ())
             }
@@ -149,6 +156,7 @@ impl Jojobot {
                     .update_fact(
                         &fact.address(),
                         FactPatch {
+                            derived: fields.keys().cloned().collect(),
                             fields,
                             clear_fields: clear,
                             role_move: Some(role_move),

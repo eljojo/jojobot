@@ -9,6 +9,11 @@ use super::*;
 /// real store's per-doc numbering. A fresh instance starts empty.
 #[derive(Default)]
 pub struct InMemoryMemory {
+    /// **Whether a key sent as an own field stays on its record** instead of
+    /// reaching its thing ([`WriteClass::Stays`]). Off by default, as the
+    /// deployed store is; a case about the change builds the store with
+    /// [`InMemoryMemory::with_own_fields_staying`].
+    own_fields_stay: bool,
     entities: Mutex<Vec<Entity>>,
     /// **How many times the whole listing has been asked for**, through
     /// [`Memory::list_entities`]. The real store builds every entity's row on
@@ -203,6 +208,12 @@ impl InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .push((key, now));
+    }
+
+    /// **This store with own fields staying on their record.** See the field.
+    pub fn with_own_fields_staying(mut self) -> Self {
+        self.own_fields_stay = true;
+        self
     }
 
     pub fn knowing(self, supplied: crate::memory::owned::Provisions) -> Self {
@@ -1827,8 +1838,10 @@ impl Memory for InMemoryMemory {
             &Default::default(),
             &fact.fields,
             &fact.sets,
+            &fact.derived,
             &[],
             &self.declarations(),
+            self.own_fields_stay,
         )?;
 
         // Every entity this write names must already exist — the subject first,
@@ -2632,8 +2645,10 @@ impl Memory for InMemoryMemory {
             &held_classes,
             &patch.fields,
             &patch.sets,
+            &patch.derived,
             &patch.clear_fields,
             &self.declarations(),
+            self.own_fields_stay,
         )?;
         apply_fact_patch(&mut edited, &patch)?;
         // **Stored under its source's storage key, exactly as a capture's

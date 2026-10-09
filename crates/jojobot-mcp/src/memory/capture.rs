@@ -852,6 +852,9 @@ impl Jojobot {
         {
             return Ok(refused);
         }
+        // **The keys jojobot computes below reach the thing**: they are its own
+        // arithmetic on the thing, not words a caller wrote on a record.
+        let mut derived: std::collections::BTreeSet<String> = Default::default();
         let mut opened_the_loop = false;
         if let Some(outcome) = args.check_in.as_deref() {
             match self
@@ -860,6 +863,7 @@ impl Jojobot {
             {
                 Ok((computed, opened)) => {
                     opened_the_loop = opened;
+                    derived.extend(computed.keys().cloned());
                     fields.extend(computed);
                 }
                 Err(refused) => return Ok(refused),
@@ -880,6 +884,7 @@ impl Jojobot {
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         if let attention::DueMove::Set(due_on) = due_on_computed {
             fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
+            derived.insert(attention::DUE_ON.to_string());
         }
         // **A capture can only ADD fields to a record**: `NewFact` has no
         // clear_fields of its own. So when the write moves the thing out of owing
@@ -961,6 +966,7 @@ impl Jojobot {
             aged_before,
             session: Some(caller.sid.as_str().to_string()),
             sets: set_keys,
+            derived,
         };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see
