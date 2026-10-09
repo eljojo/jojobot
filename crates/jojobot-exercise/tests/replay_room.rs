@@ -97,15 +97,7 @@ async fn a_stream_replayed_on_a_second_room_changes_no_class() {
     let summary = replay::summarise(&results[0]);
     assert_eq!(summary.calls, 4);
     assert_eq!(summary.differing, 0, "{results:?}");
-    // The address goes as recorded, which the second room accepts because it
-    // numbers its records the same way. The report says so rather than reading
-    // as complete.
-    assert_eq!(
-        replay::gaps(&stream, &sittings, &results),
-        vec![replay::Gap::Unmapped(vec![
-            "capture.address (1 use)".to_string()
-        ])]
-    );
+    assert_eq!(replay::gaps(&stream, &sittings, &results), vec![]);
     assert!(
         results[0]
             .calls

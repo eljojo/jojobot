@@ -192,6 +192,7 @@ impl std::fmt::Display for Class {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdKind {
     Sid,
+    Address,
     Message,
 }
 
@@ -218,6 +219,11 @@ pub const MINTS: &[Mint] = &[
         verb: Some("start_here"),
         path: "session.choices[].sid",
         kind: IdKind::Sid,
+    },
+    Mint {
+        verb: None,
+        path: "address",
+        kind: IdKind::Address,
     },
     Mint {
         verb: Some("read_mailbox"),
@@ -1012,13 +1018,12 @@ mod tests {
         assert_eq!(orphans, 0);
     }
 
-    /// **A record address is not mapped.** The first version of the table left it
-    /// out because a replay of the build a stream was recorded on needs no
-    /// mapping for it: the same world and the same order give the same address.
-    /// It is sent as recorded, and the scan reports it, so a replay never reads
-    /// as complete over a value it did not map.
+    /// **A record address is mapped like a sid.** A candidate whose numbering
+    /// differs (a migration, a seeded record) mints another address for the same
+    /// write, and every later call that names the record would otherwise be a
+    /// false divergence.
     #[test]
-    fn a_record_address_is_sent_as_recorded() {
+    fn a_record_address_is_mapped_to_the_one_the_replay_minted() {
         let mut map = IdMap::default();
         map.learn(
             "capture",
@@ -1028,7 +1033,7 @@ mod tests {
 
         let (rewritten, orphans) = map.rewrite(&json!({"derived_from": "thing:handcart#f5"}));
 
-        assert_eq!(rewritten, json!({"derived_from": "thing:handcart#f5"}));
+        assert_eq!(rewritten, json!({"derived_from": "thing:handcart#f4"}));
         assert_eq!(orphans, 0);
     }
 
@@ -1128,10 +1133,7 @@ mod tests {
 
         let found = unmapped_ids(&read_stream(&stream));
 
-        assert_eq!(
-            found,
-            vec!["capture.address (2 uses)", "start_here.ticket (1 use)"]
-        );
+        assert_eq!(found, vec!["start_here.ticket (1 use)"]);
     }
 
     /// A value the table learns at its mint point is not reported when a read
@@ -1203,8 +1205,12 @@ mod tests {
             boundary("first"),
             "this line is not an event".to_string(),
             called("t1", "capture", json!({"subject": "thing:handcart"})),
-            answered("t1", r#"{"address":"thing:handcart#f1"}"#),
-            called("t2", "update_fact", json!({"address": "thing:handcart#f1"})),
+            answered("t1", r#"{"address":"thing:handcart#f1","ticket":"cd34"}"#),
+            called(
+                "t2",
+                "update_fact",
+                json!({"address": "thing:handcart#f1", "note": "cd34"}),
+            ),
             answered("t2", r#"{}"#),
             boundary("second"),
             called("t3", "search", json!({"query": "kite"})),
@@ -1227,7 +1233,7 @@ mod tests {
                     sittings: vec!["first".to_string()],
                     calls: 1
                 },
-                Gap::Unmapped(vec!["capture.address (1 use)".to_string()]),
+                Gap::Unmapped(vec!["capture.ticket (1 use)".to_string()]),
             ]
         );
     }
@@ -1309,8 +1315,8 @@ mod tests {
         );
         assert_eq!(
             sent[2].1,
-            json!({"sid": "zz99", "address": "thing:handcart#f5"}),
-            "the sid is the one the replay minted; the address goes as recorded"
+            json!({"sid": "zz99", "address": "thing:handcart#f4"}),
+            "the sid and the address are the ones the replay minted"
         );
     }
 
