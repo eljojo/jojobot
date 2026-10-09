@@ -29,7 +29,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         json!({
             "subject": "bot:gamma",
             "content": "capacity is one",
-            "fields": {"thought_capacity": "1"},
+            "sets": {"thought_capacity": "1"},
         }),
     )
     .await;
@@ -112,7 +112,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         json!({
             "subject": "bot:milhouse",
             "content": "capacity is two, for now",
-            "fields": {"thought_capacity": "2"},
+            "sets": {"thought_capacity": "2"},
         }),
     )
     .await;
@@ -262,7 +262,7 @@ async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
             json!({
                 "subject": "bot:delta",
                 "content": "a ceiling nobody can read",
-                "fields": {key: value},
+                "sets": {key: value},
             }),
         )
         .await
@@ -279,7 +279,7 @@ async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
         json!({
             "subject": "bot:delta",
             "content": "the room holds five",
-            "fields": {"thought_capacity": " 5 "},
+            "sets": {"thought_capacity": " 5 "},
         }),
     )
     .await;
@@ -288,7 +288,7 @@ async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
         json!({
             "subject": "bot:delta",
             "content": "a thought may be short",
-            "fields": {"thought_body_cap": "120"},
+            "sets": {"thought_body_cap": "120"},
         }),
     )
     .await;
@@ -316,7 +316,7 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
         json!({
             "subject": "bot:epsilon",
             "content": "the room holds nothing",
-            "fields": {"thought_capacity": "0"},
+            "sets": {"thought_capacity": "0"},
         }),
     )
     .await;
@@ -359,7 +359,7 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
         json!({
             "subject": "bot:sigma",
             "content": "the room holds one",
-            "fields": {"thought_capacity": "1"},
+            "sets": {"thought_capacity": "1"},
         }),
     )
     .await;
@@ -405,7 +405,7 @@ async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
         json!({
             "subject": "bot:milhouse",
             "content": "capacity is one",
-            "fields": {"thought_capacity": "1"},
+            "sets": {"thought_capacity": "1"},
         }),
     )
     .await;

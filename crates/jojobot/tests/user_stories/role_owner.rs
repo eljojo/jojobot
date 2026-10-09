@@ -111,7 +111,7 @@ async fn a_claim_at_the_door_is_refused_when_the_role_belongs_to_another_bot() {
 fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
     json!({
         "subject": subject, "content": format!("{subject} reports to {manager}"),
-        "provenance": "testimony", "fields": {"reports_to": manager},
+        "provenance": "testimony", "sets": {"reports_to": manager},
     })
 }
 

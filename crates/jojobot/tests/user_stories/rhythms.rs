@@ -153,7 +153,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         json!({
             "subject": "rhythm:worming", "content": "no tablets in the house",
             "provenance": "testimony", "recorded_at": "2026-07-05", "check_in": "snoozed",
-            "fields": { "snoozed_until": "2026-07-10" },
+            "sets": { "snoozed_until": "2026-07-10" },
         }),
     )
     .await
@@ -210,7 +210,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         json!({
             "subject": "rhythm:chain-check", "content": "checked it, chain still fine",
             "provenance": "testimony", "recorded_at": "2026-09-20", "check_in": "ran",
-            "fields": { "wear_mm": "0.4" },
+            "sets": { "wear_mm": "0.4" },
         }),
     )
     .await
@@ -351,7 +351,7 @@ async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadenc
         json!({
             "subject": "rhythm:descale", "content": "away until the twentieth",
             "provenance": "testimony", "recorded_at": "2026-08-10", "check_in": "snoozed",
-            "fields": { "snoozed_until": "2026-08-20" },
+            "sets": { "snoozed_until": "2026-08-20" },
         }),
     )
     .await;
@@ -446,7 +446,7 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
         json!({
             "subject": "rhythm:descale", "content": "descale the kettle monthly",
             "provenance": "testimony",
-            "fields": { "cadence_days": "30", "last_check_in": "2026-08-01" },
+            "sets": { "cadence_days": "30", "last_check_in": "2026-08-01" },
         }),
     )
     .await
@@ -535,7 +535,7 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
     // Giving the schedule-less loop a cadence alone is the same mistake.
     s.refused(
         "update_fact",
-        json!({ "address": filter, "fields": { "cadence_days": "90" } }),
+        json!({ "address": filter, "sets": { "cadence_days": "90" } }),
     )
     .await
     .says("advances_from")
@@ -562,7 +562,7 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
         json!({
             "subject": "rhythm:half-made", "content": "count from the due date",
             "provenance": "testimony",
-            "fields": { "advances_from": "due_date" },
+            "sets": { "advances_from": "due_date" },
         }),
     )
     .await
@@ -626,7 +626,7 @@ async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
         json!({
             "subject": "rhythm:descale", "content": "descaled the kettle",
             "provenance": "testimony", "recorded_at": "2026-08-01", "check_in": "ran",
-            "fields": {"advances_from": "due_date", "cadence_days": "60"},
+            "sets": {"advances_from": "due_date", "cadence_days": "60"},
         }),
     )
     .await;
@@ -677,7 +677,7 @@ async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
         json!({
             "subject": "rhythm:polish", "content": "polished it, and it can wait longer now",
             "provenance": "testimony", "recorded_at": "2026-08-15", "check_in": "ran",
-            "fields": {"cadence_days": "14"},
+            "sets": {"cadence_days": "14"},
         }),
     )
     .await;
@@ -697,7 +697,7 @@ async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
         json!({
             "subject": "rhythm:deep-clean", "content": "deep cleaned it",
             "provenance": "testimony", "recorded_at": "2026-08-01", "check_in": "ran",
-            "fields": {"advances_from": "due_date"},
+            "sets": {"advances_from": "due_date"},
         }),
     )
     .await

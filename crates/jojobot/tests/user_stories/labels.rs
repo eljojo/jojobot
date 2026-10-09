@@ -26,8 +26,8 @@ async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
                 "fields": {
                     "starred": "true", "subject": "the kettle", "purpose": "hard-line",
                     "recorded_by": "somebody at the bench",
-                    "one_liner": "keeps the kettle descaled",
                 },
+                "sets": {"one_liner": "keeps the kettle descaled"},
             }),
         )
         .await;
@@ -99,7 +99,7 @@ async fn asking_for_a_mark_by_keys_is_told_the_mark_is_on_the_claim() {
         json!({
             "subject": "bot:omega", "content": "keep the kettle descaled",
             "provenance": "testimony",
-            "fields": {"starred": "true", "one_liner": "keeps the kettle descaled"},
+            "fields": {"starred": "true"}, "sets": {"one_liner": "keeps the kettle descaled"},
         }),
     )
     .await;

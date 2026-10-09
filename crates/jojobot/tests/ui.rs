@@ -82,6 +82,14 @@ fn as_text(raw: &str) -> String {
 /// the MCP surface or the browser listing ever sees a record, and a test
 /// store that skipped this layer would carry no mention at all — unreachable
 /// before it was ever unwritten.
+/// **A fact whose fields are the state it sets on its thing**, as a verb's
+/// `sets` would make them: every key is also named in the setting bag, which
+/// reaches the thing whether or not own fields do.
+fn set_on(mut fact: NewFact) -> NewFact {
+    fact.sets = fact.fields.keys().cloned().collect();
+    fact
+}
+
 async fn seeded_memory() -> Arc<dyn Memory> {
     let store: Arc<dyn Memory> =
         Arc::new(mention::Mentioning::new(Arc::new(InMemoryMemory::booted())));
@@ -185,6 +193,7 @@ async fn seed(store: &dyn Memory) {
             Date::constant(2026, 3, 6),
         );
         piece.fields = [(key.to_string(), value.to_string())].into_iter().collect();
+        piece.sets = [key.to_string()].into_iter().collect();
         store.capture(piece).await.expect("the field is written");
     }
     // **One key written twice, on two different days.** The fold shows what it
@@ -202,6 +211,7 @@ async fn seed(store: &dyn Memory) {
         takings.fields = [("takings".to_string(), value.to_string())]
             .into_iter()
             .collect();
+        takings.sets = ["takings".to_string()].into_iter().collect();
         store.capture(takings).await.expect("the field is written");
     }
     // A type the fold makes the stall answer whole, which no one of its records
@@ -1899,6 +1909,7 @@ async fn with_an_operators_mail(board: &Board) -> OperatorMail {
     naming
         .fields
         .insert("operator".to_string(), "person:lisa".to_string());
+    naming.sets.insert("operator".to_string());
     board
         .memory
         .capture(naming)
@@ -3031,7 +3042,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         ("rhythm:abseiling", "2024-01-06"),
     ] {
         memory
-            .capture(NewFact {
+            .capture(set_on(NewFact {
                 fields: [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "due_date".to_string()),
@@ -3044,7 +3055,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
                     "the loop was set up",
                     Date::constant(2026, 3, 5),
                 )
-            })
+            }))
             .await
             .expect("the schedule is written");
     }
@@ -3062,7 +3073,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(set_on(NewFact {
             fields: [
                 ("selects".to_string(), "rhythm".to_string()),
                 ("asks".to_string(), "overdue".to_string()),
@@ -3074,7 +3085,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
                 "what has gone quiet",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the question is written");
     memory
@@ -3088,7 +3099,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(set_on(NewFact {
             fields: [("selects".to_string(), "pet".to_string())]
                 .into_iter()
                 .collect(),
@@ -3097,7 +3108,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
                 "which pets are here",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the question is written");
     memory
@@ -3111,7 +3122,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(set_on(NewFact {
             fields: [("selects".to_string(), "sandwich".to_string())]
                 .into_iter()
                 .collect(),
@@ -3120,7 +3131,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
                 "which sandwiches are here",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the question is written");
     memory
@@ -3148,7 +3159,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(set_on(NewFact {
             fields: [("selects".to_string(), "rhythm".to_string())]
                 .into_iter()
                 .collect(),
@@ -3157,11 +3168,11 @@ async fn memory_with_views() -> Arc<dyn Memory> {
                 "which loop is the old one",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the question is written");
     memory
-        .capture(NewFact {
+        .capture(set_on(NewFact {
             fields: [
                 ("key".to_string(), "counts_from".to_string()),
                 ("value".to_string(), "2020-01-06".to_string()),
@@ -3173,7 +3184,7 @@ async fn memory_with_views() -> Arc<dyn Memory> {
                 "filters to counts_from 2020-01-06",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the filter record is written");
 
@@ -3502,7 +3513,7 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
             .written()
             .expect("nothing on this board collides with it");
         memory
-            .capture(NewFact {
+            .capture(set_on(NewFact {
                 fields: [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "due_date".to_string()),
@@ -3515,7 +3526,7 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
                     "the loop was set up",
                     Date::constant(2026, 3, 5),
                 )
-            })
+            }))
             .await
             .expect("the schedule is written");
     }
@@ -3530,7 +3541,7 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(set_on(NewFact {
             fields: [("timezone".to_string(), zone.to_string())]
                 .into_iter()
                 .collect(),
@@ -3539,7 +3550,7 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
                 "where the operator lives",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the zone is written");
 

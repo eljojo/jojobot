@@ -158,7 +158,7 @@ async fn throwing_a_birthday_party() {
             json!({
                 "subject": guest, "content": said, "provenance": "testimony",
                 "shape": "attendance", "object": "event:birthday-party",
-                "fields": {"answer": answer},
+                "sets": {"answer": answer},
             }),
         )
         .await;

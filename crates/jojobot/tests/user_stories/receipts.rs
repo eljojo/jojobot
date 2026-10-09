@@ -121,7 +121,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
             "subject": "rhythm:descale",
             "content": "set the loop up",
             "recorded_at": "2026-08-01",
-            "fields": {
+            "sets": {
                 "name": "Descale",
                 "last_check_in": "2026-08-01",
                 "cadence_days": "7",
@@ -227,7 +227,7 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
             json!({
                 "subject": "bot:omega", "content": "keep the kettle descaled",
                 "provenance": "testimony",
-                "fields": {"starred": "true", "one_liner": "keeps the kettle descaled"},
+                "fields": {"starred": "true"}, "sets": {"one_liner": "keeps the kettle descaled"},
             }),
         )
         .await

@@ -221,6 +221,7 @@ async fn world(aged: bool) -> World {
                     .into_iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect();
+                record.sets = record.fields.keys().cloned().collect();
             }
             let written = memory.capture(record).await.expect("a fact lands");
             let jojobot_domain::memory::Guarded::Written(fact) = written else {
@@ -244,6 +245,7 @@ async fn world(aged: bool) -> World {
             repainted.fields = [("colour".to_string(), "blue".to_string())]
                 .into_iter()
                 .collect();
+            repainted.sets = ["colour".to_string()].into_iter().collect();
             memory.capture(repainted).await.expect("a fact lands");
         }
     }

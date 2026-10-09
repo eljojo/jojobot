@@ -149,7 +149,7 @@ async fn backing_answers_the_keys_asked_for_and_a_shared_claims_note_arrives_onc
                 "content": "what the pump is",
                 "provenance": "testimony",
                 "details": "read off the box in the shed, and wobbleprobe is the one word to count",
-                "fields": {
+                "sets": {
                     "pressure": "90",
                     "hose": "braided",
                     "valve": "presta",
@@ -165,7 +165,7 @@ async fn backing_answers_the_keys_asked_for_and_a_shared_claims_note_arrives_onc
             "subject": "thing:floor-pump",
             "content": "what colour the pump is",
             "provenance": "testimony",
-            "fields": {"colour": "red"},
+            "sets": {"colour": "red"},
         }),
     )
     .await;

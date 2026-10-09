@@ -179,7 +179,7 @@ async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_wor
                 "subject": "promise:return-the-wrench",
                 "content": "has to go back to the neighbour",
                 "provenance": "testimony",
-                "fields": {"promised_by": "2026-07-01"},
+                "sets": {"promised_by": "2026-07-01"},
             }),
         )
         .await;
@@ -315,7 +315,7 @@ async fn a_promises_refusal_names_ended_and_ending_it_stops_it_falling_due() {
                 "subject": "promise:return-the-wrench",
                 "content": "has to go back to the neighbour",
                 "provenance": "testimony",
-                "fields": {"promised_by": "2026-07-01"},
+                "sets": {"promised_by": "2026-07-01"},
             }),
         )
         .await;
@@ -346,7 +346,7 @@ async fn a_promises_refusal_names_ended_and_ending_it_stops_it_falling_due() {
     // ── following it ends the promise, which keeps its day ──────────────────
     s.call(
         "update_fact",
-        json!({"address": address, "fields": {"ended": PromiseEnd::Delivered.as_token()}}),
+        json!({"address": address, "sets": {"ended": PromiseEnd::Delivered.as_token()}}),
     )
     .await;
     let held = s.recall("promise:return-the-wrench").await;

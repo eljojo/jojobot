@@ -947,6 +947,7 @@ mod tests {
                     "due_on".to_string(),
                     "2026-09-14".to_string(),
                 )]),
+                derived: ["due_on".to_string()].into_iter().collect(),
                 ..NewFact::about(
                     alpha.clone(),
                     "wired through the whole stack",
@@ -975,6 +976,7 @@ mod tests {
                 "due_on".to_string(),
                 "2026-09-21".to_string(),
             )]),
+            derived: ["due_on".to_string()].into_iter().collect(),
             ..NewFact::about(
                 alpha.clone(),
                 "written around the whole stack",

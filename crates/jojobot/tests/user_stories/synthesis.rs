@@ -124,7 +124,7 @@ async fn one_summary_stands_for_three_separate_notes() {
             "subject": "person:gayle",
             "content": "worked out from the pattern sheet",
             "provenance": "inference",
-            "fields": {"shoulder_width": "narrow"},
+            "sets": {"shoulder_width": "narrow"},
         }),
     )
     .await;
@@ -134,7 +134,7 @@ async fn one_summary_stands_for_three_separate_notes() {
             "subject": "person:gayle",
             "content": "the tailor measured it directly",
             "provenance": "testimony",
-            "fields": {"shoulder_width": "narrow"},
+            "sets": {"shoulder_width": "narrow"},
         }),
     )
     .await;

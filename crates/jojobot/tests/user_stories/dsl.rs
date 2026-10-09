@@ -1407,15 +1407,14 @@ impl Session {
     /// it takes no fields.
     pub async fn hedged_with(&self, subject: &str, content: &str, fields: Value) -> String {
         let body = self
-            .write(
-                &format!("a hedged record about {subject}"),
-                "capture",
+            .write(&format!("a hedged record about {subject}"), "capture", {
+                let (own, set) = bags(fields);
                 json!({
                     "subject": subject, "content": content,
                     "provenance": "testimony", "standing": "open",
-                    "fields": fields,
-                }),
-            )
+                    "fields": own, "sets": set,
+                })
+            })
             .await;
         address_of(&body)
     }
@@ -1563,10 +1562,13 @@ impl Session {
         self.write(
             &format!("correcting the fields of {address}"),
             "update_fact",
-            json!({
-                "address": address,
-                "fields": set, "clear_fields": clear,
-            }),
+            {
+                let (own, setting) = bags(set);
+                json!({
+                    "address": address,
+                    "fields": own, "sets": setting, "clear_fields": clear,
+                })
+            },
         )
         .await;
     }
@@ -1747,15 +1749,14 @@ impl Session {
         refs: &[&str],
     ) -> String {
         let body = self
-            .write(
-                &format!("a record about {subject}"),
-                "capture",
+            .write(&format!("a record about {subject}"), "capture", {
+                let (own, set) = bags(fields);
                 json!({
                     "subject": subject, "content": content,
                     "provenance": "testimony",
-                    "fields": fields, "refs": refs,
-                }),
-            )
+                    "fields": own, "sets": set, "refs": refs,
+                })
+            })
             .await;
         address_of(&body)
     }
@@ -2127,6 +2128,26 @@ fn argument_names(node: &Value, found: &mut Vec<String>) {
 }
 
 /// The address a write handed back, which is how a claim is edited later.
+/// **A story's keys, told into the two bags a write has.** A key that only
+/// describes its record (`read_from`, `starred`, ...) is one of the record's own
+/// fields; every other key is the state a story sets on the thing, so it goes in
+/// the setting bag, which reaches the thing whether or not own fields do. The
+/// describing keys are read from the build, not listed here.
+fn bags(keys: Value) -> (Value, Value) {
+    let describing = jojobot_mcp::seed::describing_keys();
+    let (mut own, mut set) = (serde_json::Map::new(), serde_json::Map::new());
+    if let Value::Object(map) = keys {
+        for (key, value) in map {
+            if describing.contains(&key) {
+                own.insert(key, value);
+            } else {
+                set.insert(key, value);
+            }
+        }
+    }
+    (Value::Object(own), Value::Object(set))
+}
+
 fn address_of(body: &Value) -> String {
     body["address"]
         .as_str()

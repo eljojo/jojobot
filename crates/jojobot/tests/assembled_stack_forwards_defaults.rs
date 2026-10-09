@@ -132,6 +132,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     indexed
         .capture(NewFact {
             fields: fields(&[("note", "first")]),
+            sets: fields(&[("note", "first")]).into_keys().collect(),
             ..NewFact::about(gamma.clone(), "gamma's first write", date(2026, 9, 1))
         })
         .await
@@ -155,6 +156,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     indexed
         .capture(NewFact {
             fields: fields(&[("note", "second")]),
+            sets: fields(&[("note", "second")]).into_keys().collect(),
             ..NewFact::about(gamma.clone(), "gamma's second write", date(2026, 9, 2))
         })
         .await
@@ -192,6 +194,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     let tuned = indexed
         .capture(NewFact {
             fields: fields(&[("pitch", "low")]),
+            sets: fields(&[("pitch", "low")]).into_keys().collect(),
             ..NewFact::about(gamma.clone(), "gamma tuned the piano", date(2026, 9, 4))
         })
         .await
@@ -213,6 +216,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         .capture(NewFact {
             derived_from: Some(tuned.address()),
             fields: fields(&[("fires", piano.as_str())]),
+            sets: fields(&[("fires", piano.as_str())]).into_keys().collect(),
             ..NewFact::about(
                 gamma.clone(),
                 format!("gamma boiled @{kettle}"),
@@ -325,6 +329,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     indexed
         .capture(NewFact {
             fields: fields(&[("due_on", "2026-09-14")]),
+            derived: fields(&[("due_on", "2026-09-14")]).into_keys().collect(),
             ..NewFact::about(alpha.clone(), "alpha's own due date", date(2026, 9, 1))
         })
         .await

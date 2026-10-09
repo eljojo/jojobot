@@ -25,7 +25,7 @@ use super::dsl::Story;
 fn naming(operator: &str) -> serde_json::Value {
     json!({
         "subject": "topic:instance", "content": "who the operator is",
-        "provenance": "testimony", "fields": {"operator": operator},
+        "provenance": "testimony", "sets": {"operator": operator},
     })
 }
 
@@ -71,7 +71,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             "capture",
             json!({
                 "subject": "bot:patty", "content": "patty reports to marge",
-                "provenance": "testimony", "fields": {"reports_to": "bot:marge"},
+                "provenance": "testimony", "sets": {"reports_to": "bot:marge"},
             }),
         )
         .await;
@@ -85,7 +85,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             "capture",
             json!({
                 "subject": "bot:ralph", "content": "ralph reports to patty",
-                "provenance": "testimony", "fields": {"reports_to": "bot:patty"},
+                "provenance": "testimony", "sets": {"reports_to": "bot:patty"},
             }),
         )
         .await;
@@ -105,7 +105,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     nelson
         .refused(
             "update_fact",
-            json!({"address": address, "fields": {"operator": "person:milhouse"}}),
+            json!({"address": address, "sets": {"operator": "person:milhouse"}}),
         )
         .await
         .says("operator")
@@ -173,7 +173,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     nelson
         .call(
             "update_fact",
-            json!({"address": current, "fields": {"operator": "person:milhouse"}}),
+            json!({"address": current, "sets": {"operator": "person:milhouse"}}),
         )
         .await;
     nelson
@@ -206,7 +206,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             "capture",
             json!({
                 "subject": "topic:widgets", "content": "who the operator is",
-                "provenance": "testimony", "fields": {"operator": "person:lisa"},
+                "provenance": "testimony", "sets": {"operator": "person:lisa"},
             }),
         )
         .await;
@@ -236,7 +236,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             "capture",
             json!({
                 "subject": "thing:handcart", "content": "who runs it",
-                "provenance": "inference", "fields": {"operator": "person:lisa"},
+                "provenance": "inference", "sets": {"operator": "person:lisa"},
             }),
         )
         .await
@@ -244,7 +244,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     ralph
         .call(
             "update_fact",
-            json!({"address": runs, "fields": {"operator": "person:milhouse"}}),
+            json!({"address": runs, "sets": {"operator": "person:milhouse"}}),
         )
         .await;
     s.call("recall", json!({"subject": "thing:handcart"}))
@@ -278,7 +278,7 @@ async fn a_report_held_by_an_archived_bot_still_makes_its_manager_the_head() {
             "capture",
             json!({
                 "subject": "bot:bart", "content": "bart reports to nelson",
-                "provenance": "testimony", "fields": {"reports_to": "bot:nelson"},
+                "provenance": "testimony", "sets": {"reports_to": "bot:nelson"},
             }),
         )
         .await;

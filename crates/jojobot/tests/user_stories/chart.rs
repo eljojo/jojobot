@@ -13,7 +13,7 @@ use super::dsl::Story;
 fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
     json!({
         "subject": subject, "content": format!("{subject} reports to {manager}"),
-        "provenance": "testimony", "fields": {"reports_to": manager},
+        "provenance": "testimony", "sets": {"reports_to": manager},
     })
 }
 
@@ -78,7 +78,7 @@ async fn the_chart_is_changed_only_by_a_superior() {
             "capture",
             json!({
                 "subject": "bot:sigma", "content": "more seats for me",
-                "provenance": "testimony", "fields": {"rule_seats": "9"},
+                "provenance": "testimony", "sets": {"rule_seats": "9"},
             }),
         )
         .await
@@ -88,7 +88,7 @@ async fn the_chart_is_changed_only_by_a_superior() {
             "capture",
             json!({
                 "subject": "bot:sigma", "content": "more seats for sigma",
-                "provenance": "testimony", "fields": {"rule_seats": "9"},
+                "provenance": "testimony", "sets": {"rule_seats": "9"},
             }),
         )
         .await;
@@ -183,7 +183,7 @@ async fn the_head_of_a_chart_places_itself() {
     omega
         .refused(
             "update_fact",
-            json!({"address": address, "fields": {"reports_to": "bot:omega"}}),
+            json!({"address": address, "sets": {"reports_to": "bot:omega"}}),
         )
         .await
         .says("\"wrote\":false")
@@ -246,7 +246,7 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
     // ── an edit of the claim that names the manager ─────────────────────────
     s.refused(
         "update_fact",
-        json!({"address": address, "fields": {"reports_to": "bot:otto"}}),
+        json!({"address": address, "sets": {"reports_to": "bot:otto"}}),
     )
     .await
     .says("\"wrote\":false")
@@ -285,7 +285,7 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
     omega
         .call(
             "update_fact",
-            json!({"address": address, "fields": {"reports_to": "bot:otto"}}),
+            json!({"address": address, "sets": {"reports_to": "bot:otto"}}),
         )
         .await;
     s.call("recall", json!({"subject": "bot:sigma"}))
@@ -332,7 +332,7 @@ async fn a_ceiling_key_sent_as_a_setting_is_refused_as_a_capture_of_it_is() {
             "capture",
             json!({
                 "subject": "bot:sigma", "content": "more seats",
-                "provenance": "testimony", "fields": {"rule_seats": "9"},
+                "provenance": "testimony", "sets": {"rule_seats": "9"},
             }),
         )
         .await
@@ -417,7 +417,7 @@ async fn a_write_that_names_no_manager_is_told_to_name_one_and_sends_nobody_look
         who.refused(
             "capture",
             json!({"subject": subject, "content": "who I report to",
-                   "provenance": "testimony", "fields": {"reports_to": value}}),
+                   "provenance": "testimony", "sets": {"reports_to": value}}),
         )
         .await
         .says("\"wrote\":false")

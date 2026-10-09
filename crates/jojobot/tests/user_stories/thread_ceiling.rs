@@ -27,7 +27,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     let reports_to = |bot: &str, manager: &str| {
         json!({
             "subject": bot, "content": format!("{bot} reports up"),
-            "provenance": "testimony", "fields": {"reports_to": manager},
+            "provenance": "testimony", "sets": {"reports_to": manager},
         })
     };
 
@@ -47,7 +47,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "capture",
             json!({
                 "subject": "thread:milhouse-moves", "content": "how much the move holds",
-                "fields": {"thought_capacity": "3"},
+                "sets": {"thought_capacity": "3"},
             }),
         )
         .await
@@ -66,7 +66,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             }),
         )
         .await;
-    let raise = |value: &str| json!({"address": address, "fields": {"thought_capacity": value}});
+    let raise = |value: &str| json!({"address": address, "sets": {"thought_capacity": value}});
 
     // ── ralph never raises it, and the refusal names the bots that may ──────
     ralph
@@ -81,7 +81,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "capture",
             json!({
                 "subject": "thread:milhouse-moves", "content": "a larger ceiling",
-                "fields": {"thought_capacity": "50"},
+                "sets": {"thought_capacity": "50"},
             }),
         )
         .await
@@ -128,7 +128,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     let ages = |value: &str| {
         json!({
             "subject": "thread:milhouse-moves", "content": "how long the move's thoughts last",
-            "fields": {"thought_ages_after_runs": value},
+            "sets": {"thought_ages_after_runs": value},
         })
     };
     ralph
@@ -146,8 +146,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_ages_after_runs\":\"4\"");
-    let age =
-        |value: &str| json!({"address": ageing, "fields": {"thought_ages_after_runs": value}});
+    let age = |value: &str| json!({"address": ageing, "sets": {"thought_ages_after_runs": value}});
     ralph
         .refused("update_fact", age("9"))
         .await
@@ -176,7 +175,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "capture",
             json!({
                 "subject": "bot:ralph", "content": "its own room",
-                "fields": {"thought_capacity": "9"},
+                "sets": {"thought_capacity": "9"},
             }),
         )
         .await
@@ -187,7 +186,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "capture",
             json!({
                 "subject": "bot:ralph", "content": "its room, set by another",
-                "fields": {"thought_capacity": "9"},
+                "sets": {"thought_capacity": "9"},
             }),
         )
         .await;
@@ -199,7 +198,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "capture",
             json!({
                 "subject": "bot:ralph", "content": "its own ageing",
-                "fields": {"thought_ages_after_runs": "7"},
+                "sets": {"thought_ages_after_runs": "7"},
             }),
         )
         .await
@@ -210,7 +209,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "capture",
             json!({
                 "subject": "bot:ralph", "content": "its ageing, set by another",
-                "fields": {"thought_ages_after_runs": "7"},
+                "sets": {"thought_ages_after_runs": "7"},
             }),
         )
         .await;
