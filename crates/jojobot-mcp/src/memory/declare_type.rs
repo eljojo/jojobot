@@ -77,14 +77,19 @@ pub struct FieldArgs {
     pub(crate) folds: Option<String>,
     /// **Whether a thing has to hold this key to be one of these at all.**
     /// Defaults to false, and leave it there unless the key really is what
-    /// makes the thing what it is: the required keys are the ones a thing is
-    /// measured against by the reader who asks *which of these ARE one of
-    /// these*.
+    /// makes the thing what it is: the required keys are the floor a WRITE to a
+    /// kind may not take away.
+    ///
+    /// ⚠️ **The reader's strict question is wider than the floor.** `fits_type`
+    /// (*which of these ARE one*) keeps only the things holding EVERY key the
+    /// type declares, optional ones included; `answers_type` keeps those holding
+    /// SOME and names what each lacks. An optional key is never demanded of a
+    /// write, and a thing without it is a complete thing, but not one `fits_type`
+    /// keeps.
     ///
     /// ⚠️ **This says nothing about what the key HOLDS.** The two are separate
     /// questions, and the useful one is usually "the colour has to be a colour"
-    /// rather than "everything must have a colour". An optional key is welcome,
-    /// never demanded, and a thing without it is complete.
+    /// rather than "everything must have a colour".
     ///
     /// ⚠️ **And a type you declare here holds no write to either answer.** On a
     /// KIND's key, a value is checked against `holds` whenever the key is
@@ -146,28 +151,31 @@ pub struct DeclareTypeArgs {
 #[tool_router(router = declare_type_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Declare a type: a name, and the keys a THING of it carries. This is \
-                       WRITE-TIME HELP and never a gate — it tells a writer which keys to fill \
-                       and tells `search` which keys to look for. THE UNIT IS THE THING: a thing \
-                       answers a type over every write on it, folded, so a thing described over \
-                       two sittings answers a type neither sitting answers alone. It admits \
-                       nothing: a thing \
-                       carrying these keys is found by search answers_type whether or not \
-                       anybody declared it, and a thing carrying some of them is found too, \
-                       saying which it lacks. So declaring a type never makes a thing findable \
-                       and never stops one being found, and there is nothing to undeclare. A \
-                       type arrives COMPLETE: give at least one key, because a name with nothing \
-                       under it is a type nobody can query by. Declaring a name that already \
-                       exists REPLACES its keys, whole — a type is the keys it names now, and \
-                       one that accumulated every key it ever named would report keys the writer \
+        description = "Declare a type: a name, and the keys a THING of it carries. Its \
+                       `fields` are KEY DEFINITIONS — each a key with optional `holds`, \
+                       `folds`, `required` and `one_of` — not the key/value bag capture and \
+                       update_fact take as `fields`, nor the key filters recall takes. This \
+                       is WRITE-TIME HELP and never a gate — it tells a writer which keys to \
+                       fill and tells `search` which keys to look for. THE UNIT IS THE THING: \
+                       a thing answers a type over every write on it, folded, so a thing \
+                       described over two sittings answers a type neither sitting answers \
+                       alone. It admits nothing: a thing carrying these keys is found by \
+                       search answers_type whether or not anybody declared it, and a thing \
+                       carrying some of them is found too, saying which it lacks. So \
+                       declaring a type never makes a thing findable and never stops one \
+                       being found, and there is nothing to undeclare. A type arrives \
+                       COMPLETE: give at least one key, because a name with nothing under it \
+                       is a type nobody can query by. Declaring a name that already exists \
+                       REPLACES its keys, whole — a type is the keys it names now, and one \
+                       that accumulated every key it ever named would report keys the writer \
                        had already dropped as keys a thing lacks. KEYS ARE SCOPED BY THE TYPE \
                        that names them and are registered nowhere: two types may use one key \
-                       name and mean their own thing by it. SOME TYPES SHIP WITH THE SOFTWARE and \
-                       those are CLOSED: declaring over one comes back blocked, because a caller \
-                       cannot extend, shrink or replace a type the software owns — declare a name \
-                       of your own instead. Every type you declare is yours. The answer names \
-                       every type that exists, by name only, so you can see what is there without \
-                       asking a second time."
+                       name and mean their own thing by it. SOME TYPES SHIP WITH THE SOFTWARE \
+                       and those are CLOSED: declaring over one comes back blocked, because a \
+                       caller cannot extend, shrink or replace a type the software owns — \
+                       declare a name of your own instead. Every type you declare is yours. \
+                       The answer names every type that exists, by name only, so you can see \
+                       what is there without asking a second time."
     )]
     pub(crate) async fn declare_type(
         &self,

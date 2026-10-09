@@ -391,7 +391,7 @@ pub struct RecallArgs {
     ///
     /// **Off by default because it is a second read of each object**, and most
     /// reads want the value rather than its pedigree. Ask for it when you are
-    /// about to act on a value, or when you need to know whether the user said
+    /// about to act on a value, or when you need to know whether the operator said
     /// it. A key whose writes are summed has no single winning claim and is not
     /// here.
     ///
@@ -446,7 +446,7 @@ pub struct RecallArgs {
     /// clock never** — the day is yours to give, so *what is owed as of next
     /// Friday* is the same question asked about a different day.
     ///
-    /// **What falls due, and when, is the KIND's own answer.** A loop is next
+    /// **What falls due, and when, is the KIND's own answer.** A rhythm is next
     /// due a cadence after the date its cycle counts from; another sort of owed
     /// thing computes its moment its own way, and this filter compares the
     /// moment rather than computing it.
@@ -455,12 +455,12 @@ pub struct RecallArgs {
     /// never late, because nothing computes a due moment for a person.
     ///
     /// **A thing that carries none of what its kind falls due on is absent
-    /// too**: a loop nobody has put a schedule on made no promise to be late
+    /// too**: a rhythm nobody has put a schedule on made no promise to be late
     /// against.
     ///
     /// **But a thing whose due moment cannot be READ comes back owed**,
     /// carrying its fields so you can see which key it is short of. That is
-    /// deliberate: a half-built loop that surfaced at no read ever would never
+    /// deliberate: a half-built rhythm that surfaced at no read ever would never
     /// be heard from again.
     ///
     /// **Absence here is not proof a write landed.** This asks whether
@@ -618,8 +618,8 @@ pub struct NearArgs {
     /// it. Omit it for a week.
     #[serde(default)]
     pub(crate) within_days: Option<u32>,
-    /// **Which clock to compare**: `recorded_on` — the day the claim was made,
-    /// the default — `taken_in`, the day jojobot took the record in, or
+    /// **Which clock to compare**: `recorded_on` — the day in a claim's
+    /// `recorded_at`, the day it was made, the default — `taken_in`, the day jojobot took the record in, or
     /// `happened_at`, the day the thing itself happened.
     ///
     /// ⚠️ **They answer different questions.** *What did Milhouse say back in
@@ -1643,17 +1643,18 @@ impl Jojobot {
                        kind, parent, answers_type or fields, or a record's own address \
                        (history_record or built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
-                       write of each key winning (a loop under a snooze also carries `snooze` \
-                       {until, in_force}). facts, prose, charter, history, history_record, \
-                       values, backing and stood_for ask for more, each off by default and \
-                       each saying what it left out; `keys` asks for less (fields_left_out \
-                       names what it hid, and a view's shows_keys yields to it). WHICH EDGES: \
-                       follow {shape or relation, direction, depth, keeping, fits_type}, and \
-                       the answer nests. Unlike search, recall returns claims of EVERY status \
-                       unless you pass `status`. Your own past runs are kind session. AN \
-                       ANSWER STOPS AT THE CEILING, never mid-record: not_shown names the \
-                       offset that reads on. An empty answer names what it looked through, as \
-                       searched. Each argument's own description holds the rest."
+                       write of each key winning (a rhythm under a snooze also carries \
+                       `snooze` {until, in_force}). facts, prose, charter, history, \
+                       history_record, values, backing and stood_for ask for more, each off \
+                       by default and each saying what it left out; `keys` asks for less \
+                       (fields_left_out names what it hid, and a view's shows_keys yields to \
+                       it). WHICH EDGES: follow {shape or relation, direction, depth, \
+                       keeping, fits_type}, and the answer nests. Unlike search, recall \
+                       returns claims of EVERY status unless you pass `status`. Your own past \
+                       runs are kind session. AN ANSWER STOPS AT THE CEILING, never \
+                       mid-record: not_shown names the offset that reads on. An empty answer \
+                       names what it looked through, as searched. Each argument's own \
+                       description holds the rest."
     )]
     pub(crate) async fn recall(
         &self,

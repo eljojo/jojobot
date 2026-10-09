@@ -67,7 +67,7 @@ pub struct OrientArgs {
     /// valid one, `"opening"` included.
     #[serde(default)]
     pub(crate) section: Option<String>,
-    /// The session handle you are already carrying, if you have one — the same
+    /// The session id you are already carrying, if you have one — the same
     /// `sid` that rides every other call you make. Leave it off when you have
     /// none: this door is where one comes from, so a first boot has nothing to
     /// pass. **A handle is never turned away here**, whatever became of it: the
@@ -101,7 +101,7 @@ pub struct OrientArgs {
     /// else. A zone you invent moves the day for everything this run writes.
     ///
     /// It is what *today* means for everything day-grained: the date a `capture`
-    /// gets when you name none, and whether a recurring loop has fallen due.
+    /// gets when you name none, and whether a rhythm has fallen due.
     /// A zone you send wins over the instance's, and the boot tells you when the
     /// one you sent differs from it.
     ///
@@ -166,8 +166,8 @@ impl Jojobot {
                        hypothesis), and the counts of the mailbox it owns. THIS DOOR CREATES \
                        NO IDENTITY: a name that is no bot comes back blocked, listing the \
                        bots that exist. Booting starts or resumes that bot's session — there \
-                       is no separate start verb — and THIS DOOR IS WHERE A SESSION HANDLE \
-                       COMES FROM: that `sid` rides every verb after it, reads included, and \
+                       is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES \
+                       FROM: that `sid` rides every verb after it, reads included, and \
                        passing `sid` here tells you whether it still addresses your session. \
                        A bot with a run to pick up gets a resume-or-new choice and no sid \
                        until it answers with `resume`: a sid, `new`, or the wrap_code a wrap \

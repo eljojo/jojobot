@@ -91,14 +91,14 @@ pub struct UpdateFactArgs {
     /// with restore: true). Rewriting `content` into its own denial ("the club
     /// does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
     /// sentence about what is not so where a claim about what is true belongs. A
-    /// negative is still an ordinary fact when it is not correcting anything: "he
+    /// negative is still an ordinary fact when it is not correcting anything: "the guest
     /// did not attend" stands on its own, written with `capture` like any other
     /// claim.
     #[serde(default)]
     pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
     /// needs `confirmed_by_user` whichever value it held: a claim you read
-    /// somewhere is not a step towards the user having said it. An
+    /// somewhere is not a step towards the operator having said it. An
     /// `observation` must carry `read_from`, here as at capture — and **taking
     /// the source off a claim that stays an observation is refused for the same
     /// reason**, because both leave a machine read of a system nobody named.
@@ -121,7 +121,7 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub(crate) standing: Option<String>,
     /// Required for two promotions of an EXISTING claim: anything → testimony
-    /// (inference or observation alike), and an open standing → settled. Set it only when the user has actually
+    /// (inference or observation alike), and an open standing → settled. Set it only when the operator has actually
     /// confirmed the claim. Nothing else is gated on it — a fresh `capture`
     /// declares its provenance and its standing on honour.
     #[serde(default)]

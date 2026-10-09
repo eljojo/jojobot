@@ -153,9 +153,9 @@ pub struct SearchArgs {
     /// — an incomplete answer, accepted and explained, never a silent mix
     /// of two orderings.
     ///
-    /// `clock` picks the day ranking reads: `recorded_on` (the default: the day a
-    /// claim was said) or `happened_at` (the day the thing itself did); a claim
-    /// with no happened_at ranks by recorded_on, and `rank_fallbacks` counts them.
+    /// `clock` picks the day ranking reads: `recorded_on` (the default) is the
+    /// day in a claim's `recorded_at`, and `happened_at` is the day the thing
+    /// itself did.
     #[serde(default)]
     pub(crate) clock: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on

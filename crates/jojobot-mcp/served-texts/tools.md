@@ -115,7 +115,7 @@ A creation whose aliases, or whose `sets` as a first claim, could not be read ba
 
 ```text
 The other names this one answers to — nickname, short form, initials.
-Screened and searched exactly as `name` is, so a nickname the user
+Screened and searched exactly as `name` is, so a nickname the operator
 actually says is both recognized and findable. No commas.
 ```
 
@@ -227,7 +227,7 @@ own parent.
 the parent is moving), so where a thing sits is not final, but choose it
 as deliberately as the handle: a reparent is a write like any other.
 
-A `rhythm` requires one — it is a loop ON something, and the parent is
+A `rhythm` or a `promise` requires one — a rhythm is ON something and a promise is somebody's job, and the parent is
 what says on what.
 ```
 
@@ -264,7 +264,7 @@ attributed, never journalled.
 #### `add_entity` — argument `/inputSchema.source`
 
 ```text
-Where this entity came from — **never invented**: the user named it, or
+Where this entity came from — **never invented**: the operator named it, or
 a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
 ```
 
@@ -620,7 +620,7 @@ refused.
 with the record saying plainly that it did not — which is what lets a
 skipped cycle be told from a completed one later. `snoozed` does NOT
 consume the cycle: it lasts until the day it names in `snoozed_until`,
-and the loop comes back then and is acted on again.
+and the rhythm comes back then and is acted on again.
 
 **jojobot does the arithmetic.** It writes `outcome`, `last_check_in`
 (the day of this check-in, `recorded_at`, today when you send none) and,
@@ -630,8 +630,8 @@ compute those yourself and do not send them in `fields`.
 
 **A snooze names the day it lasts until**, as `snoozed_until` in
 `fields` (`YYYY-MM-DD`), a day after this check-in's own, which is
-`recorded_at` (today when you send none). The loop is
-not owed again before that day, and on it the loop comes back and is
+`recorded_at` (today when you send none). The rhythm is
+not owed again before that day, and on it the rhythm comes back and is
 acted on again; it falls due on the later of that day and its own. A
 snooze with no day, or a day that is not after that day, comes back
 blocked and nothing is written. The next `ran` or `skipped` check-in
@@ -644,8 +644,8 @@ on the check-in and never a unit of the schedule.
 A rhythm short of its `cadence_days` or its `advances_from` comes back
 blocked naming the key it is short of, and nothing is written. A rhythm
 short only of `counts_from` still takes a `ran` or `skipped` check-in —
-that outcome OPENS the loop, and the basis becomes this check-in's own
-date. `snoozed` cannot open a loop, so it still refuses on a
+that outcome OPENS the rhythm, and the basis becomes this check-in's own
+date. `snoozed` cannot open a rhythm, so it still refuses on a
 `counts_from` the rhythm does not hold.
 ```
 
@@ -927,6 +927,7 @@ comes back with candidates and nothing is written. Create it with
 
 ```text
 Declare a type: a name, and the keys a THING of it carries.
+Its `fields` are KEY DEFINITIONS — each a key with optional `holds`, `folds`, `required` and `one_of` — not the key/value bag capture and update_fact take as `fields`, nor the key filters recall takes.
 This is WRITE-TIME HELP and never a gate — it tells a writer which keys to fill and tells `search` which keys to look for.
 THE UNIT IS THE THING: a thing answers a type over every write on it, folded, so a thing described over two sittings answers a type neither sitting answers alone.
 It admits nothing: a thing carrying these keys is found by search answers_type whether or not anybody declared it, and a thing carrying some of them is found too, saying which it lacks.
@@ -1116,14 +1117,19 @@ refused, because a comma is what separates the items of a list.
 ```text
 **Whether a thing has to hold this key to be one of these at all.**
 Defaults to false, and leave it there unless the key really is what
-makes the thing what it is: the required keys are the ones a thing is
-measured against by the reader who asks *which of these ARE one of
-these*.
+makes the thing what it is: the required keys are the floor a WRITE to a
+kind may not take away.
+
+⚠️ **The reader's strict question is wider than the floor.** `fits_type`
+(*which of these ARE one*) keeps only the things holding EVERY key the
+type declares, optional ones included; `answers_type` keeps those holding
+SOME and names what each lacks. An optional key is never demanded of a
+write, and a thing without it is a complete thing, but not one `fits_type`
+keeps.
 
 ⚠️ **This says nothing about what the key HOLDS.** The two are separate
 questions, and the useful one is usually "the colour has to be a colour"
-rather than "everything must have a colour". An optional key is welcome,
-never demanded, and a thing without it is complete.
+rather than "everything must have a colour".
 
 ⚠️ **And a type you declare here holds no write to either answer.** On a
 KIND's key, a value is checked against `holds` whenever the key is
@@ -1784,7 +1790,7 @@ No side effects.
 #### `ping` — argument `/inputSchema.sid`
 
 ```text
-The session handle you are carrying, if you have one — the same `sid`
+The session id you are carrying, if you have one — the same `sid`
 that rides every other call you make. A probe needs no identity, so it
 is never required and **never turned away**: the answer says whether the
 handle you carried still addresses your session, beside the build that
@@ -2046,7 +2052,7 @@ THE ARCHIVE IS THE EXCEPTION, and it is not a loophole: a `processed` message co
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.
 Same envelope a delivery hands over, seen_before and all: true means somebody had already taken this message, so it is a leftover rather than fresh mail.
 Taking delivery is NOT handling: call mark_processed once you have acted, and only then.
-Three refusals wear the status: blocked shape — an id that names nothing at all, an id naming an item jojobot cannot read (which comes back saying why, and needs a person rather than a retry), and a message that is not yours to take.
+A refusal is an answer with status: blocked and nothing taken, in three kinds: an id that names nothing at all; an id naming an item jojobot cannot read (which comes back saying why, and needs a person rather than a retry); and a message that is not yours to take.
 A message a DIFFERENT run posted than the one reading it carries `written_by_other_run`, naming that run and whether it has since ended.
 ```
 
@@ -2102,7 +2108,7 @@ Use it for a handle, a kind, a type, a key and its value; use search when you on
 THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds) or view (a question already worked out, asked by name, so start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type or fields, or a record's own address (history_record or built_on).
-WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a loop under a snooze also carries `snooze` {until, in_force}).
+WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (fields_left_out names what it hid, and a view's shows_keys yields to it).
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
@@ -2611,8 +2617,8 @@ store already holds.
 #### `recall` — argument `/inputSchema/$defs/NearArgs.clock`
 
 ```text
-**Which clock to compare**: `recorded_on` — the day the claim was made,
-the default — `taken_in`, the day jojobot took the record in, or
+**Which clock to compare**: `recorded_on` — the day in a claim's
+`recorded_at`, the day it was made, the default — `taken_in`, the day jojobot took the record in, or
 `happened_at`, the day the thing itself happened.
 
 ⚠️ **They answer different questions.** *What did Milhouse say back in
@@ -2702,7 +2708,7 @@ write won the key, its provenance and its standing.
 
 **Off by default because it is a second read of each object**, and most
 reads want the value rather than its pedigree. Ask for it when you are
-about to act on a value, or when you need to know whether the user said
+about to act on a value, or when you need to know whether the operator said
 it. A key whose writes are summed has no single winning claim and is not
 here.
 
@@ -2974,7 +2980,7 @@ you name, never a judgement that something should happen. **It reads a
 clock never** — the day is yours to give, so *what is owed as of next
 Friday* is the same question asked about a different day.
 
-**What falls due, and when, is the KIND's own answer.** A loop is next
+**What falls due, and when, is the KIND's own answer.** A rhythm is next
 due a cadence after the date its cycle counts from; another sort of owed
 thing computes its moment its own way, and this filter compares the
 moment rather than computing it.
@@ -2983,12 +2989,12 @@ moment rather than computing it.
 never late, because nothing computes a due moment for a person.
 
 **A thing that carries none of what its kind falls due on is absent
-too**: a loop nobody has put a schedule on made no promise to be late
+too**: a rhythm nobody has put a schedule on made no promise to be late
 against.
 
 **But a thing whose due moment cannot be READ comes back owed**,
 carrying its fields so you can see which key it is short of. That is
-deliberate: a half-built loop that surfaced at no read ever would never
+deliberate: a half-built rhythm that surfaced at no read ever would never
 be heard from again.
 
 **Absence here is not proof a write landed.** This asks whether
@@ -3584,9 +3590,9 @@ and the answer's own `rank_fallbacks` says how many that happened to
 — an incomplete answer, accepted and explained, never a silent mix
 of two orderings.
 
-`clock` picks the day ranking reads: `recorded_on` (the default: the day a
-claim was said) or `happened_at` (the day the thing itself did); a claim
-with no happened_at ranks by recorded_on, and `rank_fallbacks` counts them.
+`clock` picks the day ranking reads: `recorded_on` (the default) is the
+day in a claim's `recorded_at`, and `happened_at` is the day the thing
+itself did.
 ```
 
 #### `search` — argument `/inputSchema.edge`
@@ -3820,7 +3826,7 @@ New here? Call this first — it is the ONE door, whether or not you have an ide
 With no bot it is a read-only orientation: what jojobot is, a live snapshot (entities by kind, EVERY BOT NAMED so you can see which identities you could boot as) and the skills index (a name and what each is FOR, never the procedures: call again with skill: its name to get one).
 NAME A BOT and the answer also carries that identity: its charter, its rules as dated claims each with its own provenance (testimony and observation are settled, inference is a hypothesis), and the counts of the mailbox it owns.
 THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing the bots that exist.
-Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION HANDLE COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
+Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: a sid, `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads it in full.
 `claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease, and wrapping releases it.
@@ -3996,7 +4002,7 @@ valid one, `"opening"` included.
 #### `start_here` — argument `/inputSchema.sid`
 
 ```text
-The session handle you are already carrying, if you have one — the same
+The session id you are already carrying, if you have one — the same
 `sid` that rides every other call you make. Leave it off when you have
 none: this door is where one comes from, so a first boot has nothing to
 pass. **A handle is never turned away here**, whatever became of it: the
@@ -4028,7 +4034,7 @@ works in another zone, and send it again when you resume from somewhere
 else. A zone you invent moves the day for everything this run writes.
 
 It is what *today* means for everything day-grained: the date a `capture`
-gets when you name none, and whether a recurring loop has fallen due.
+gets when you name none, and whether a rhythm has fallen due.
 A zone you send wins over the instance's, and the boot tells you when the
 one you sent differs from it.
 
@@ -4537,7 +4543,7 @@ two different edits.
 
 ```text
 Required for two promotions of an EXISTING claim: anything → testimony
-(inference or observation alike), and an open standing → settled. Set it only when the user has actually
+(inference or observation alike), and an open standing → settled. Set it only when the operator has actually
 confirmed the claim. Nothing else is gated on it — a fresh `capture`
 declares its provenance and its standing on honour.
 ```
@@ -4636,7 +4642,7 @@ The entity the edge points at, as `kind:slug`. **It must already exist** —
 ```text
 `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
 needs `confirmed_by_user` whichever value it held: a claim you read
-somewhere is not a step towards the user having said it. An
+somewhere is not a step towards the operator having said it. An
 `observation` must carry `read_from`, here as at capture — and **taking
 the source off a claim that stays an observation is refused for the same
 reason**, because both leave a machine read of a system nobody named.
@@ -4750,7 +4756,7 @@ status included, so there is no un-archive (an archived ENTITY comes back
 with restore: true). Rewriting `content` into its own denial ("the club
 does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
 sentence about what is not so where a claim about what is true belongs. A
-negative is still an ordinary fact when it is not correcting anything: "he
+negative is still an ordinary fact when it is not correcting anything: "the guest
 did not attend" stands on its own, written with `capture` like any other
 claim.
 ```

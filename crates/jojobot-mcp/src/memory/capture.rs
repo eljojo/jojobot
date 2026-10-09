@@ -209,7 +209,7 @@ pub struct CaptureArgs {
     /// with the record saying plainly that it did not — which is what lets a
     /// skipped cycle be told from a completed one later. `snoozed` does NOT
     /// consume the cycle: it lasts until the day it names in `snoozed_until`,
-    /// and the loop comes back then and is acted on again.
+    /// and the rhythm comes back then and is acted on again.
     ///
     /// **jojobot does the arithmetic.** It writes `outcome`, `last_check_in`
     /// (the day of this check-in, `recorded_at`, today when you send none) and,
@@ -219,8 +219,8 @@ pub struct CaptureArgs {
     ///
     /// **A snooze names the day it lasts until**, as `snoozed_until` in
     /// `fields` (`YYYY-MM-DD`), a day after this check-in's own, which is
-    /// `recorded_at` (today when you send none). The loop is
-    /// not owed again before that day, and on it the loop comes back and is
+    /// `recorded_at` (today when you send none). The rhythm is
+    /// not owed again before that day, and on it the rhythm comes back and is
     /// acted on again; it falls due on the later of that day and its own. A
     /// snooze with no day, or a day that is not after that day, comes back
     /// blocked and nothing is written. The next `ran` or `skipped` check-in
@@ -233,8 +233,8 @@ pub struct CaptureArgs {
     /// A rhythm short of its `cadence_days` or its `advances_from` comes back
     /// blocked naming the key it is short of, and nothing is written. A rhythm
     /// short only of `counts_from` still takes a `ran` or `skipped` check-in —
-    /// that outcome OPENS the loop, and the basis becomes this check-in's own
-    /// date. `snoozed` cannot open a loop, so it still refuses on a
+    /// that outcome OPENS the rhythm, and the basis becomes this check-in's own
+    /// date. `snoozed` cannot open a rhythm, so it still refuses on a
     /// `counts_from` the rhythm does not hold.
     #[serde(default)]
     pub(crate) check_in: Option<String>,

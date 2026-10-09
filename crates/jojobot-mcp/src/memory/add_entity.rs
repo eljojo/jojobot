@@ -70,11 +70,11 @@ pub struct AddEntityArgs {
     /// Display name, as a human would write it.
     pub(crate) name: String,
     /// The other names this one answers to — nickname, short form, initials.
-    /// Screened and searched exactly as `name` is, so a nickname the user
+    /// Screened and searched exactly as `name` is, so a nickname the operator
     /// actually says is both recognized and findable. No commas.
     #[serde(default)]
     pub(crate) aliases: Option<Vec<String>>,
-    /// Where this entity came from — **never invented**: the user named it, or
+    /// Where this entity came from — **never invented**: the operator named it, or
     /// a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
     pub(crate) source: String,
     /// Optional cross-link to this entity in the task layer, in whatever form
@@ -97,7 +97,7 @@ pub struct AddEntityArgs {
     /// the parent is moving), so where a thing sits is not final, but choose it
     /// as deliberately as the handle: a reparent is a write like any other.
     ///
-    /// A `rhythm` requires one — it is a loop ON something, and the parent is
+    /// A `rhythm` or a `promise` requires one — a rhythm is ON something and a promise is somebody's job, and the parent is
     /// what says on what.
     #[serde(default)]
     pub(crate) parent: Option<String>,

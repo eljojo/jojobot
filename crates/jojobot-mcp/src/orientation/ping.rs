@@ -8,7 +8,7 @@ use super::*;
 /// Arguments to `ping` — a probe, with or without a session behind it.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PingArgs {
-    /// The session handle you are carrying, if you have one — the same `sid`
+    /// The session id you are carrying, if you have one — the same `sid`
     /// that rides every other call you make. A probe needs no identity, so it
     /// is never required and **never turned away**: the answer says whether the
     /// handle you carried still addresses your session, beside the build that

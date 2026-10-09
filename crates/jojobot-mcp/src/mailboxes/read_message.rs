@@ -22,30 +22,32 @@ pub struct ReadMessageArgs {
 #[tool_router(router = read_message_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Take delivery of ONE message by id — the selective half of read_mailbox, \
-                       for when you want a single message (the one a search hit named) and have \
-                       no business owning the rest of the box. That one moves `new` to `read`; \
-                       nothing else in the box is touched. IT MUST BE IN YOUR OWN BOX: reading is \
-                       taking delivery, so opening somebody else's message would move their mail \
-                       out of `new` and it would never look fresh to them again — the same reason \
-                       read_mailbox takes no box name. Ids are a plain counter, so the one beside \
-                       yours is somebody else's; that comes back status: blocked and moves \
-                       nothing. To reach another box, post_message writes into it without reading \
-                       it, which is the shape of a request. THE ARCHIVE IS THE EXCEPTION, and it \
-                       is not a loophole: a `processed` message comes back unchanged and flagged, \
-                       from any bot's box, because processed is terminal — reading one moves nothing \
-                       and takes nothing on, and it is what a search hit over old mail points at. \
-                       THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any \
-                       state, whoever wrote it. \
-                       Same envelope a delivery hands over, seen_before and all: true means \
-                       somebody had already taken this message, so it is a leftover rather than \
-                       fresh mail. Taking delivery is NOT handling: call mark_processed once you \
-                       have acted, and only then. Three refusals wear the status: blocked shape — \
-                       an id that names nothing at all, an id naming an item jojobot cannot read \
-                       (which comes back saying why, and needs a person rather than a retry), and a \
-                       message that is not yours to take. A message a DIFFERENT run posted than \
-                       the one reading it carries `written_by_other_run`, naming that run and \
-                       whether it has since ended."
+        description = "Take delivery of ONE message by id — the selective half of \
+                       read_mailbox, for when you want a single message (the one a search hit \
+                       named) and have no business owning the rest of the box. That one moves \
+                       `new` to `read`; nothing else in the box is touched. IT MUST BE IN \
+                       YOUR OWN BOX: reading is taking delivery, so opening somebody else's \
+                       message would move their mail out of `new` and it would never look \
+                       fresh to them again — the same reason read_mailbox takes no box name. \
+                       Ids are a plain counter, so the one beside yours is somebody else's; \
+                       that comes back status: blocked and moves nothing. To reach another \
+                       box, post_message writes into it without reading it, which is the \
+                       shape of a request. THE ARCHIVE IS THE EXCEPTION, and it is not a \
+                       loophole: a `processed` message comes back unchanged and flagged, from \
+                       any bot's box, because processed is terminal — reading one moves \
+                       nothing and takes nothing on, and it is what a search hit over old \
+                       mail points at. THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a \
+                       message in it, in any state, whoever wrote it. Same envelope a \
+                       delivery hands over, seen_before and all: true means somebody had \
+                       already taken this message, so it is a leftover rather than fresh \
+                       mail. Taking delivery is NOT handling: call mark_processed once you \
+                       have acted, and only then. A refusal is an answer with status: blocked \
+                       and nothing taken, in three kinds: an id that names nothing at all; an \
+                       id naming an item jojobot cannot read (which comes back saying why, \
+                       and needs a person rather than a retry); and a message that is not \
+                       yours to take. A message a DIFFERENT run posted than the one reading \
+                       it carries `written_by_other_run`, naming that run and whether it has \
+                       since ended."
     )]
     pub(crate) async fn read_message(
         &self,
