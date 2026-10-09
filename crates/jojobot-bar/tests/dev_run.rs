@@ -251,6 +251,68 @@ fn a_diff_that_touches_no_package_is_refused() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **A branch that changed nothing has nothing to run, and says so.** The loop
+/// is run from habit, on main as often as on a branch, and a refusal there reads
+/// as a failure. Nothing is built or tested and the exit is zero; the line names
+/// the commit it compared with.
+///
+/// Paired with the case above it: a diff that touches only paths in no package is
+/// still refused, because that one is a question for the person.
+#[test]
+fn a_clean_tree_has_nothing_to_run_and_is_not_refused() {
+    let repo = repository();
+    let base = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo)
+            .output()
+            .expect("run git")
+            .stdout,
+    )
+    .expect("utf8");
+    let ran = dev(&repo);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    assert!(
+        ran.stdout.contains(&format!(
+            "scope: ok — nothing changed since {}; nothing to run",
+            &base.trim()[..10]
+        )),
+        "{}",
+        ran.stdout
+    );
+    assert!(ran.stdout.contains("verdict: GREEN"), "{}", ran.stdout);
+    assert!(
+        !ran.calls
+            .iter()
+            .any(|c| c.starts_with("build") || c.starts_with("test")),
+        "nothing is built or tested on a clean tree: {:?}",
+        ran.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **Every phase a dev run ran says how long it took.** The figure is the
+/// phase's own wall time, in the line beside its verdict.
+#[test]
+fn a_dev_run_says_how_long_each_phase_took() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev(&repo);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    for phase in ["fmt-check", "build", "jobs"] {
+        let line = ran
+            .stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("{phase}: ")))
+            .unwrap_or_else(|| panic!("no {phase} line: {}", ran.stdout));
+        assert!(
+            line.contains("wall "),
+            "{phase} carries its wall time: {line}"
+        );
+    }
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **With no `main` to take a merge base from, every package is selected**, and
 /// the verdict names the packages and says it is not a boundary run.
 #[test]

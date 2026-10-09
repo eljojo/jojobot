@@ -187,6 +187,22 @@ fn run_phase(
     Ok((status.success(), phase_text))
 }
 
+/// **The jobs line of a verdict**: how many test binaries ran side by side, at
+/// which limit, and the wall time of all of them together when it was measured.
+fn jobs_detail(limit: usize, wall: Option<std::time::Duration>) -> String {
+    match wall {
+        Some(wall) => format!(
+            "{limit} test binaries at a time ({TEST_JOBS_VARIABLE}), wall {}s",
+            wall.as_secs()
+        ),
+        None => format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
+    }
+}
+
+/// **What each test job did, in the order the jobs were listed**: whether it
+/// exited zero, and the wall time of that one job.
+type JobWalls = Vec<(bool, std::time::Duration)>;
+
 /// **Run each job as its own `cargo test --workspace <job> --no-fail-fast
 /// --locked`, `limit` at a time**, and return whether every one
 /// exited zero together with all of their text.
@@ -204,14 +220,15 @@ fn run_test_jobs(
     jobs: &[Vec<String>],
     limit: usize,
     history: Option<&Run>,
-) -> std::io::Result<(bool, String)> {
+) -> std::io::Result<(bool, String, JobWalls)> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let dir = log_path.with_extension("jobs");
     fs::create_dir_all(&dir)?;
     let next = AtomicUsize::new(0);
-    let done: Mutex<Vec<Option<(bool, String)>>> = Mutex::new(vec![None; jobs.len()]);
+    let done: Mutex<Vec<Option<(bool, String, std::time::Duration)>>> =
+        Mutex::new(vec![None; jobs.len()]);
     let workers = limit.min(jobs.len().max(1));
     std::thread::scope(|scope| {
         for _ in 0..workers {
@@ -220,9 +237,10 @@ fn run_test_jobs(
                     let i = next.fetch_add(1, Ordering::SeqCst);
                     let Some(job) = jobs.get(i) else { break };
                     let file = dir.join(format!("{i}.log"));
-                    let result = (|| -> std::io::Result<(bool, String)> {
+                    let result = (|| -> std::io::Result<(bool, String, std::time::Duration)> {
                         let out = File::create(&file)?;
                         let err = out.try_clone()?;
+                        let started = std::time::Instant::now();
                         let status = in_the_run_root(&mut Command::new(cargo))
                             .arg("test")
                             .args(job_args(prefix, job))
@@ -230,9 +248,16 @@ fn run_test_jobs(
                             .stdout(Stdio::from(out))
                             .stderr(Stdio::from(err))
                             .status()?;
-                        Ok((status.success(), fs::read_to_string(&file)?))
+                        let took = started.elapsed();
+                        Ok((status.success(), fs::read_to_string(&file)?, took))
                     })()
-                    .unwrap_or_else(|e| (false, format!("bar: could not run this job: {e}\n")));
+                    .unwrap_or_else(|e| {
+                        (
+                            false,
+                            format!("bar: could not run this job: {e}\n"),
+                            std::time::Duration::ZERO,
+                        )
+                    });
                     if let Some(run) = history
                         && let Err(e) = run.record_job(job, result.0, &parse_job(&result.1))
                     {
@@ -246,11 +271,17 @@ fn run_test_jobs(
 
     let mut all_ok = true;
     let mut all_text = String::new();
+    let mut walls = Vec::with_capacity(jobs.len());
     let mut log = OpenOptions::new().append(true).open(log_path)?;
     let results = done.into_inner().expect("no job panics while holding this");
     for (job, result) in jobs.iter().zip(results) {
-        let (ok, text) = result.unwrap_or((false, String::from("bar: this job never ran\n")));
+        let (ok, text, took) = result.unwrap_or((
+            false,
+            String::from("bar: this job never ran\n"),
+            std::time::Duration::ZERO,
+        ));
         all_ok &= ok;
+        walls.push((ok, took));
         writeln!(
             log,
             "\n$ cargo test {} --no-fail-fast --locked",
@@ -259,7 +290,7 @@ fn run_test_jobs(
         log.write_all(text.as_bytes())?;
         all_text.push_str(&text);
     }
-    Ok((all_ok, all_text))
+    Ok((all_ok, all_text, walls))
 }
 
 /// **`bar rooms --test <name> [--test <name> ...]`: the room suites, side by
@@ -316,7 +347,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     summary.phase_ok("build", "compiled");
 
     let history = begin_history("rooms", limit);
-    let (ok, text) = run_test_jobs(
+    let (ok, text, _) = run_test_jobs(
         &log_path,
         &cargo,
         &["-p", "jojobot-exercise", "--features", "rooms"],
@@ -341,8 +372,9 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
 
 /// **The paths the branch changed**, for `bar dev`: everything that differs
 /// from the merge base with `main`, committed or not, and the files git does
-/// not track yet. `None` when there is no merge base to take.
-fn changed_paths() -> Option<Vec<String>> {
+/// not track yet, with the merge base they were taken from. `None` when there is
+/// no merge base to take.
+fn changed_paths() -> Option<(String, Vec<String>)> {
     let base = git_stdout(&["merge-base", "main", "HEAD"]);
     let base = base.trim();
     if base.is_empty() {
@@ -355,7 +387,7 @@ fn changed_paths() -> Option<Vec<String>> {
         .collect();
     paths.sort();
     paths.dedup();
-    Some(paths)
+    Some((base.to_string(), paths))
 }
 
 /// **`bar dev`: the everyday loop, a level below the report.** It checks the
@@ -383,20 +415,41 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
 
+    // **A branch that changed nothing has nothing to run**, and that is an
+    // answer rather than a refusal: the loop is run from habit, on main as often
+    // as on a branch. A diff that changed paths in no package is still refused
+    // below, because that one is a question for the person.
+    let changed = changed_paths();
+    if let Some((base, paths)) = &changed
+        && paths.is_empty()
+    {
+        summary.phase_ok(
+            "scope",
+            &format!(
+                "nothing changed since {}; nothing to run",
+                base.chars().take(10).collect::<String>()
+            ),
+        );
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let started = std::time::Instant::now();
     let (ok, _) = run_phase(
         &log_path,
         "cargo fmt --all --check",
         &cargo,
         &["fmt", "--all", "--check"],
     )?;
+    let took = started.elapsed();
     if !ok {
-        summary.phase_failed("fmt-check", "not formatted — see log");
+        summary.phase_failed_in("fmt-check", "not formatted — see log", took);
         summary.phase_skipped("build");
         summary.phase_skipped("test");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
-    summary.phase_ok("fmt-check", "formatted");
+    summary.phase_ok_in("fmt-check", "formatted", took);
 
     // **Only stdout is read as metadata**: a warning on stderr is not JSON. The
     // capture is large, so the log gets the command and any stderr, not the
@@ -433,8 +486,8 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
 
     // **The scope.** With no merge base to take, every package runs: the bar
     // errs toward running more, and the line says why.
-    let (touched, why) = match changed_paths() {
-        Some(paths) => (dev::touched(&paths, &workspace), None),
+    let (touched, why) = match changed {
+        Some((_, paths)) => (dev::touched(&paths, &workspace), None),
         None => (
             dev::Touched {
                 whole_workspace: true,
@@ -477,24 +530,26 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         ),
     );
 
+    let started = std::time::Instant::now();
     let (ok, text) = run_phase(
         &log_path,
         "cargo build --workspace --locked",
         &cargo,
         &["build", "--workspace", "--locked"],
     )?;
+    let took = started.elapsed();
     if !ok {
         let verdict = summarize_test_output(&text);
         if verdict.compiled {
-            summary.phase_failed("build", "see log");
+            summary.phase_failed_in("build", "see log", took);
         } else {
-            summary.phase_failed("build", "DID NOT COMPILE — see log");
+            summary.phase_failed_in("build", "DID NOT COMPILE — see log", took);
         }
         summary.phase_skipped("test");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
-    summary.phase_ok("build", "compiled");
+    summary.phase_ok_in("build", "compiled", took);
 
     let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
     let home = std::env::var("HOME").ok();
@@ -517,7 +572,9 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
          report or a carry",
     );
 
-    let (ok, text) = run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None)?;
+    let started = std::time::Instant::now();
+    let (ok, text, _) = run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None)?;
+    summary.phase_ok("jobs", &jobs_detail(limit, Some(started.elapsed())));
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
     finish(&mut summary, &log_path);
@@ -813,21 +870,23 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
 
+    let started = std::time::Instant::now();
     let (ok, _) = run_phase(
         &log_path,
         "cargo fmt --all --check",
         &cargo,
         &["fmt", "--all", "--check"],
     )?;
+    let took = started.elapsed();
     if !ok {
-        summary.phase_failed("fmt-check", "not formatted — see log");
+        summary.phase_failed_in("fmt-check", "not formatted — see log", took);
         summary.phase_skipped("build");
         summary.phase_skipped("test");
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
-    summary.phase_ok("fmt-check", "formatted");
+    summary.phase_ok_in("fmt-check", "formatted", took);
 
     // **Built before it is driven, not left to `cargo test` to build only
     // what it happens to depend on.** `jojobot-exercise`'s suites spawn the
@@ -838,45 +897,55 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     // guard then refuses rather than driving it. The guard is correct and
     // stays exactly as it is; this phase is what keeps it from firing on an
     // ordinary green run.
+    let started = std::time::Instant::now();
     let (ok, text) = run_phase(
         &log_path,
         "cargo build --workspace --locked",
         &cargo,
         &["build", "--workspace", "--locked"],
     )?;
+    let took = started.elapsed();
     if !ok {
         let verdict = summarize_test_output(&text);
         if verdict.compiled {
-            summary.phase_failed("build", "see log");
+            summary.phase_failed_in("build", "see log", took);
         } else {
-            summary.phase_failed("build", "DID NOT COMPILE — see log");
+            summary.phase_failed_in("build", "DID NOT COMPILE — see log", took);
         }
         summary.phase_skipped("test");
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
-    summary.phase_ok("build", "compiled");
+    summary.phase_ok_in("build", "compiled", took);
 
     // **The same run as `cargo test --workspace --no-fail-fast --locked`,
     // split by test binary and run side by side.** One serial run sums every
     // suite's wall time; the slowest single suite is what the split leaves.
     // The listing says which binaries exist, so a binary the plain run would
     // execute is in exactly one job and the suite and case counts are the same.
+    let started = std::time::Instant::now();
     let (listed, listing) = run_phase(
         &log_path,
         "cargo test --workspace --no-run --locked",
         &cargo,
         &["test", "--workspace", "--no-run", "--locked"],
     )?;
+    let took = started.elapsed();
+    if listed {
+        summary.phase_ok_in("test-compile", "test binaries built", took);
+    } else {
+        summary.phase_failed_in("test-compile", "see log", took);
+    }
     let mut level_line = None;
     let mut wall = None;
+    let mut doc_tests = None;
     let (ok, text) = if listed {
         let (jobs, line) = jobs_for(level, test_jobs(&listing));
         level_line = Some(line);
         let history = begin_history(level.name(), limit);
         let started = std::time::Instant::now();
-        let ran = run_test_jobs(
+        let (ok, text, walls) = run_test_jobs(
             &log_path,
             &cargo,
             &["--workspace"],
@@ -885,8 +954,14 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             history.as_ref(),
         )?;
         wall = Some(started.elapsed());
+        // **The doc-tests are one job among the others**, and a slow one is
+        // worth its own line: the jobs' wall time is the slowest of them.
+        doc_tests = jobs
+            .iter()
+            .position(|job| job.as_slice() == ["--doc".to_string()])
+            .map(|at| walls[at]);
         finish_history(history.as_ref());
-        ran
+        (ok, text)
     } else {
         // A listing that failed is a build that failed: the same text reads
         // as "did not compile", exactly as a failed plain run did.
@@ -898,22 +973,19 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     if let Some(line) = &level_line {
         summary.phase_ok("level", line);
     }
-    summary.phase_ok(
-        "jobs",
-        &match wall {
-            Some(wall) => format!(
-                "{limit} test binaries at a time ({TEST_JOBS_VARIABLE}), wall {}s",
-                wall.as_secs()
-            ),
-            None => format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
-        },
-    );
+    summary.phase_ok("jobs", &jobs_detail(limit, wall));
+    match doc_tests {
+        Some((true, took)) => summary.phase_ok_in("doc-tests", "ran", took),
+        Some((false, took)) => summary.phase_failed_in("doc-tests", "see log", took),
+        None => {}
+    }
     summary.test_phase(ok, &verdict, known);
     // **The lint runs whatever the tests said.** A red test step used to end
     // the run here, and a lint failure then stayed hidden behind every test that
     // was red; the two are separate questions and the verdict carries both. The
     // run is green only when both are.
 
+    let started = std::time::Instant::now();
     let (ok, _) = run_phase(
         &log_path,
         "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
@@ -932,10 +1004,11 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             "warnings",
         ],
     )?;
+    let took = started.elapsed();
     if ok {
-        summary.phase_ok("lint", "clean");
+        summary.phase_ok_in("lint", "clean", took);
     } else {
-        summary.phase_failed("lint", "see log");
+        summary.phase_failed_in("lint", "see log", took);
     }
 
     finish(&mut summary, &log_path);

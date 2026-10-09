@@ -372,6 +372,12 @@ pub fn render_roster_report(new: &[String], base: &str) -> String {
     out
 }
 
+/// **A wall time as a verdict line says it**: seconds to one decimal, so a
+/// phase that takes under a second is not printed as nothing.
+pub fn wall(took: std::time::Duration) -> String {
+    format!("wall {:.1}s", took.as_secs_f64())
+}
+
 /// **A single ten-line-or-fewer verdict a caller reads instead of the raw
 /// stream.** Every phase this build runs — `fmt-check`, `test`, `lint` — adds
 /// one line; a failing `test` phase adds a few more, capped, never the whole
@@ -393,6 +399,17 @@ impl Summary {
     /// changes on its own.
     pub fn phase_ok(&mut self, phase: &str, detail: &str) {
         self.lines.push(format!("{phase}: ok — {detail}"));
+    }
+
+    /// **A phase that ran clean, with the wall time it took.** The time is the
+    /// phase's own, read around the one command it ran.
+    pub fn phase_ok_in(&mut self, phase: &str, detail: &str, took: std::time::Duration) {
+        self.phase_ok(phase, &format!("{detail} ({})", wall(took)));
+    }
+
+    /// **A phase that failed, with the wall time it took.**
+    pub fn phase_failed_in(&mut self, phase: &str, detail: &str, took: std::time::Duration) {
+        self.phase_failed(phase, &format!("{detail} ({})", wall(took)));
     }
 
     /// **A phase that did not run at all**, because an earlier one already
