@@ -16,7 +16,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'status' holds one of someday, next, now, waiting, done on anything that is a 'work', and 'nonsense' is not one. This thing is a 'work' now, so 'status' has to go on holding one of someday, next, now, waiting, done — sending the same value again will not change the answer. Write a value that holds one of someday, next, now, waiting, done, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared. The allowed words are the project's columns: write columns on the project to add a word of your own.",
+  "how_to_proceed": "Nothing was written: 'status' holds one of someday, next, now, waiting, done on anything that is a 'work', and 'nonsense' is not one. This thing is a 'work' now, so 'status' has to go on holding one of someday, next, now, waiting, done — sending the same value again will not change the answer. Write a value that holds one of someday, next, now, waiting, done, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared. This is filed under no project, so it holds the shipped five. A work item takes the columns of the project it is filed under, and a project's columns extend the shipped five and never replace them.",
   "status": "blocked",
   "wrote": false
 }
@@ -384,7 +384,7 @@ answer: {
       "part": "charter"
     }
   ],
-  "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. Unstar a rule on bot:gamma with update_fact, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better carried by a skill than by a seat, and a group of rules that all bind is better carried by one record that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
+  "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. A star is changed with update_fact on the rule's address and fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred stays on its claim. Unstar a rule on bot:gamma that way, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better carried by a skill than by a seat, and a group of rules that all bind is better carried by one record that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
   "over": 2000,
   "status": "blocked",
   "wrote": false

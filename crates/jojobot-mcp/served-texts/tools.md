@@ -3927,23 +3927,26 @@ that are.
 #### `start_here` — argument `/inputSchema.timezone`
 
 ```text
-**The timezone this session works in** — an IANA name like
-`America/New_York` or `Europe/Madrid`. Send it when you boot, and send
-it again when you resume from somewhere else.
+**Omit this on a boot.** The instance holds the operator's zone and
+answers every run that sends none in it; the boot says which zone it
+used and where it came from. Send an IANA name only when this run really
+works in another zone, and send it again when you resume from somewhere
+else. A zone you invent moves the day for everything this run writes.
 
 It is what *today* means for everything day-grained: the date a `capture`
 gets when you name none, and whether a recurring loop has fallen due.
-A zone you send wins over the instance's.
+A zone you send wins over the instance's, and the boot tells you when the
+one you sent differs from it.
 
 ⚠️ **Two sessions in different zones will disagree about what today is
 for the same stored claim, and that is correct.** A claim captured at
-nine in the evening in New York is the 18th there and the 19th in
-Madrid; both runs are reading the same claim and answering in their own
-frame. It is not a fault and there is nothing to work around.
+nine in the evening is already the next day in a zone further east; both
+runs are reading the same claim and answering in their own frame. It is
+not a fault and there is nothing to work around.
 
 Send none and the instance's zone answers, or UTC when its operator set
-none; the boot says which. On a resume, sending none keeps the zone the
-run already had rather than moving it.
+none. On a resume, sending none keeps the zone the run already had
+rather than moving it.
 ```
 
 #### `start_here` — argument `/inputSchema.today`
@@ -3978,6 +3981,7 @@ THIS VERB DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that ca
 Any change to what it is CALLED — name or aliases — faces the same check a creation does, because an alias is a name: it can come back status: blocked with candidates, and the override_token that refusal carries is how you confirm a genuinely shared name — a token lifts the one refusal that minted it and no other.
 Passing `aliases` REPLACES the whole set ([] clears it); source and crm edits are never questioned.
 `sets` sets keys on the thing in the same call, through a claim of inference; a call that sends only `sets` leaves the entity itself alone, and a key that needs the operator's word is written with capture.
+A rule's `starred` mark stays on its claim, so it is not set here: update_fact on the rule's address with fields {starred: "true"} or {starred: "false"} stars or unstars it.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
 ```
