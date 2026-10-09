@@ -27,11 +27,12 @@ trap cleanup EXIT
 echo "building $REF ($RESOLVED) in a detached worktree at $WORKTREE_DIR"
 git -C "$REPO_ROOT" worktree add --detach "$WORKTREE_DIR" "$RESOLVED"
 
-# **The worktree builds into a target directory of its own.** The devShell
-# points CARGO_TARGET_DIR at one directory shared by every checkout, and a
-# build of an older ref written there is served to the next build of this
-# checkout in place of its own crates. `env` runs after the shell hook, so it
-# wins over the hook's value. The directory goes with the worktree.
+# **The worktree builds into a target directory of its own.** The devShell sets
+# no CARGO_TARGET_DIR, but the caller's environment may point it at one
+# directory shared by every checkout, and a build of an older ref written there
+# is served to the next build of this checkout in place of its own crates.
+# `env` runs inside the shell, so it wins over a value the caller inherited. The
+# directory goes with the worktree.
 WORKTREE_TARGET="$WORKTREE_DIR/target"
 (cd "$WORKTREE_DIR" && nix develop -c env CARGO_TARGET_DIR="$WORKTREE_TARGET" cargo build -p jojobot)
 

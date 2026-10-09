@@ -5,6 +5,20 @@ How work lands in jojobot.
 These are renderings of decisions that live in the decision log. Where this file
 and that log disagree, the log wins.
 
+## Build and check
+
+Every command runs through the flake, so a machine needs nix and nothing else:
+
+    nix develop -c make check     # the bar
+    nix develop -c make help      # every target, one line each
+
+**Green means the bar's own verdict line reads GREEN and `make` exits zero**: the
+workspace is formatted, it builds, every test target passes and clippy is clean.
+`make check` reports every target instead of stopping at the first failure, so
+the count of suites it prints is how much was checked. Between edits,
+`nix develop -c make narrow CRATE=<crate> [FILTER=<substring>]` runs one crate;
+`make check` is what runs before a report, a carry or a review.
+
 ## Two sessions, never one
 
 A **coordinator** holds the vision and the context, scopes each slice, writes the
@@ -37,8 +51,8 @@ A milestone lands as a handful of commits, not dozens. One commit per coherent
 problem — never one per file, never one per checklist item. A fix and the test
 proving it are one commit.
 
-Commit each unit when it goes green. A finished diff that needs splitting means a
-commit was deferred too long.
+Commit each unit when it goes green (see Build and check). A finished diff that
+needs splitting means a commit was deferred too long.
 
 ## Every commit names its authority, in one line
 

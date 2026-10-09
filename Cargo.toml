@@ -77,15 +77,17 @@ reqwest = { version = "0.13", default-features = false, features = [
 
 # --- full-text search: the index behind the `search` verb ---
 # Default features off on purpose: they buy on-disk directories (mmap, file
-# locking) and compression, and this index lives in RAM and is rebuilt from
-# Outline at start — so none of that is load-bearing, it is only build time.
+# locking) and compression, and this index lives in RAM and is rebuilt from the
+# store at start — so none of that is load-bearing, it is only build time.
 tantivy = { version = "0.25", default-features = false }
 
 # --- the mailbox and session store: Dolt, spoken to over the MySQL wire ---
 # Default features off and the runtime named: the defaults pull a TLS stack and
-# every driver, and this talks to one child process over a unix socket on the
+# every driver, and this talks to one child process over loopback TCP on the
 # same machine, where there is nothing to encrypt and nothing else to speak to.
-# Pinned at 0.8: 0.9 requires rustc 1.94 against this workspace's 1.85.
+# Pinned at 0.8: 0.9 declares rustc 1.94 as its minimum, and this workspace
+# declares 1.85 (`rust-version` above). The pinned toolchain, 1.95.0 in
+# rust-toolchain.toml, would build 0.9; the declared minimum is what it breaks.
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "mysql",

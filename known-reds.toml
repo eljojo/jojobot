@@ -17,4 +17,16 @@
 # entry can be tightened. An entry with no `expects` accepts any failure of its
 # test, as before.
 #
+# An entry reads like this. It is commented out here so that it is not read:
+#
+#     [[known_red]]
+#     test = "the_name_cargo_test_prints"
+#     card = 1234
+#     owner = "dev"
+#     since = "2026-10-09"
+#     expects = ["a string one line of the failure holds"]
+#
+# `owner` names the line of work that holds the card, for example `dev3`, and
+# `card` is the card's number on the work-queue board.
+#
 # No test is listed now.

@@ -34,9 +34,9 @@ fn workflow() -> String {
 ///
 /// Two halves, and they fail differently. A workflow that runs some other
 /// command is a second standard that will drift from this one. A workflow that
-/// runs `make check` outside the flake gets a different toolchain, and the
-/// shellHook that sets the load-bearing environment never runs — so it fails
-/// in ways nobody can reproduce locally.
+/// runs `make check` outside the flake gets a different toolchain, and not the
+/// `dolt` and `make` the dev shell puts on the path — so it fails in ways nobody
+/// can reproduce locally.
 #[test]
 fn the_automated_bar_is_the_same_command_the_house_rules_name() {
     let yaml = workflow();

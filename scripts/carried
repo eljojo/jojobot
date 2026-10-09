@@ -11,8 +11,9 @@
 #   [3] whether main has moved on since this checkout left it.
 #
 # It reads and nothing else: it runs no fetch and no network command, and uses
-# whatever origin/main the repository already has. MAIN and ORIGIN_MAIN name
-# the two references, for a repository that calls them something else.
+# whatever origin/main the repository already has. CARRIED_MAIN and
+# CARRIED_ORIGIN_MAIN name the two references, for a repository that calls them
+# something else; a bare MAIN or ORIGIN_MAIN in the environment changes nothing.
 set -euo pipefail
 
 MAIN="${CARRIED_MAIN:-main}"

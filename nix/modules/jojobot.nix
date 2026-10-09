@@ -83,6 +83,14 @@ in
       description = ''
         Optional path to an environment file (e.g. an agenix secret) with
         additional JOJOBOT_* variables. Values here override the options above.
+
+        The browser UI is switched on here and nowhere else: set both
+        JOJOBOT_UI_CLIENT_ID (the OAuth client id registered at the issuer) and
+        JOJOBOT_UI_BASE_URL (the origin, scheme included, a browser reaches this
+        server on), with `issuer` set. JOJOBOT_ALLOWED_SUBJECTS, a comma-separated
+        list of token subjects, limits who may log in; the operator's mailbox page
+        is served only when it names one person. A JOJOBOT_UI_CLIENT_SECRET is
+        refused at start.
       '';
     };
 

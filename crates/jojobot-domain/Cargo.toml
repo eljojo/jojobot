@@ -9,7 +9,7 @@ rust-version.workspace = true
 # ubiquitous language and the invariants. Adapters depend on it, never the
 # reverse.
 [dependencies]
-# async-trait: the Memory port is I/O in its real adapter (Outline over HTTP),
+# async-trait: the Memory port is I/O in its real adapter (the Dolt store),
 # so the port method is async. async-trait keeps it dyn-compatible (Arc<dyn
 # Memory>) — no wire types leak in; this is still pure vocabulary.
 async-trait = { workspace = true }
