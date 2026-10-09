@@ -2,7 +2,9 @@
 //!
 //! The protecting half comes first: a job leaves only with evidence, and the
 //! lack of evidence keeps it. A job with too few recorded runs, or with a red in
-//! its recent runs that nobody has called a flake, stays in every level. Nothing
+//! its recent runs that nobody has called a flake, stays in every level. A red
+//! counts only when `main` contains the head its run recorded; a head that is
+//! missing or cannot be told counts too. Nothing
 //! here switches a job off; the report level is a subset of the boundary level
 //! and the boundary level runs everything.
 
@@ -43,8 +45,29 @@ fn call_for<'a>(run: &JobRun, test: &str, calls: &'a [RecordedCall]) -> Option<&
         .max_by(|a, b| a.at.cmp(&b.at))
 }
 
+/// **Whether a run's red counts against its job.** A red on a head `main` does
+/// not contain is work in progress on another line, and it says nothing about
+/// whether `main` is safe to pass. A run that recorded no head, or whose head
+/// cannot be told, counts: the bar errs toward running more.
+fn counts(run: &JobRun, ancestry: Ancestry) -> bool {
+    match run.head.as_deref() {
+        None => true,
+        Some(head) => ancestry(head) != Some(false),
+    }
+}
+
+/// **How many red runs in a job's newest window were ignored** because their
+/// head is not in `main`.
+pub fn ignored_reds(runs: &[JobRun], ancestry: Ancestry) -> usize {
+    runs[runs.len().saturating_sub(DEFECT_WINDOW)..]
+        .iter()
+        .filter(|run| !run.ok || !run.failed.is_empty())
+        .filter(|run| !counts(run, ancestry))
+        .count()
+}
+
 /// **Where a job stands**, given its recorded runs oldest first and every call.
-pub fn standing(runs: &[JobRun], calls: &[RecordedCall]) -> Standing {
+pub fn standing(runs: &[JobRun], calls: &[RecordedCall], ancestry: Ancestry) -> Standing {
     if runs.len() < MIN_RUNS {
         return Standing::TooFewRuns { have: runs.len() };
     }
@@ -57,6 +80,9 @@ pub fn standing(runs: &[JobRun], calls: &[RecordedCall]) -> Standing {
         } else {
             run.failed.iter().map(|test| Some(test.as_str())).collect()
         };
+        if !reds.is_empty() && !counts(run, ancestry) {
+            continue;
+        }
         for red in reds {
             match red.and_then(|test| call_for(run, test, calls)) {
                 Some(call) if call.call == "defect" => return Standing::DefectCalled,
@@ -127,6 +153,48 @@ pub struct LeftOut {
 pub struct Plan {
     pub run: Vec<Vec<String>>,
     pub left_out: Vec<LeftOut>,
+    /// The red job runs in the newest windows that were ignored because their
+    /// head is not in `main`.
+    pub ignored: usize,
+}
+
+/// **Whether a recorded head is contained in `main`**: `Some(true)` when it is,
+/// `Some(false)` when `main` does not contain it, `None` when it cannot be told.
+pub type Ancestry<'a> = &'a dyn Fn(&str) -> Option<bool>;
+
+/// **What `git merge-base --is-ancestor <head> main` answered**, from its exit
+/// status: zero is contained, one is not, and anything else (an unknown commit
+/// exits 128) is a head that cannot be told. A process that ended without a
+/// status cannot be told either.
+pub fn contained_from_exit(code: Option<i32>) -> Option<bool> {
+    match code {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
+/// **Whether a recorded head is safe to hand to git as a revision.** A head
+/// comes from a file in the history directory, and one that starts with a dash
+/// would be read as an option.
+pub fn is_a_revision(head: &str) -> bool {
+    !head.is_empty() && !head.starts_with('-')
+}
+
+/// **The sentence the report's level line ends with.**
+pub fn report_line(plan: &Plan, total: usize) -> String {
+    let left: Vec<&str> = plan.left_out.iter().map(|l| l.job.as_str()).collect();
+    format!(
+        "report, {} of {total} jobs, left to the boundary: {}; ignored {} reds on heads main \
+         does not contain",
+        plan.run.len(),
+        if left.is_empty() {
+            "none".to_string()
+        } else {
+            left.join(", ")
+        },
+        plan.ignored,
+    )
 }
 
 /// **The report level's jobs**, from the listed jobs and the history. A job
@@ -138,16 +206,19 @@ pub fn report_plan(
     jobs: &[Vec<String>],
     history: &History,
     slow: &dyn Fn(&[JobRun]) -> bool,
+    ancestry: Ancestry,
 ) -> Plan {
     let mut plan = Plan {
         run: Vec::new(),
         left_out: Vec::new(),
+        ignored: 0,
     };
     for job in jobs {
         let name = job_name(job);
         let runs = history.jobs.get(&name).map_or(&[][..], Vec::as_slice);
+        plan.ignored += ignored_reds(runs, ancestry);
         let leaves = !ALWAYS_RUN.contains(&name.as_str())
-            && standing(runs, &history.calls) == Standing::Eligible
+            && standing(runs, &history.calls, ancestry) == Standing::Eligible
             && slow(runs);
         if leaves {
             plan.left_out.push(LeftOut { job: name });
@@ -161,6 +232,21 @@ pub fn report_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn everything_in_main(_: &str) -> Option<bool> {
+        Some(true)
+    }
+
+    /// An ancestry answer from a list of heads; a head not on the list cannot
+    /// be resolved.
+    fn ancestry_of<'a>(known: &'a [(&'a str, bool)]) -> impl Fn(&str) -> Option<bool> + 'a {
+        move |head| {
+            known
+                .iter()
+                .find(|(named, _)| *named == head)
+                .map(|(_, contained)| *contained)
+        }
+    }
 
     fn run(n: usize, failed: &[&str]) -> JobRun {
         JobRun {
@@ -198,9 +284,18 @@ mod tests {
     /// says how many it has. Four clean runs are not enough; five are.
     #[test]
     fn a_job_needs_five_recorded_runs() {
-        assert_eq!(standing(&[], &[]), Standing::TooFewRuns { have: 0 });
-        assert_eq!(standing(&clean(4), &[]), Standing::TooFewRuns { have: 4 });
-        assert_eq!(standing(&clean(5), &[]), Standing::Eligible);
+        assert_eq!(
+            standing(&[], &[], &everything_in_main),
+            Standing::TooFewRuns { have: 0 }
+        );
+        assert_eq!(
+            standing(&clean(4), &[], &everything_in_main),
+            Standing::TooFewRuns { have: 4 }
+        );
+        assert_eq!(
+            standing(&clean(5), &[], &everything_in_main),
+            Standing::Eligible
+        );
     }
 
     /// **A red called a defect holds the job for the newest twenty runs and no
@@ -218,13 +313,13 @@ mod tests {
         runs.extend((1..20).map(|n| run(n, &[])));
         assert_eq!(runs.len(), 20);
         assert_eq!(
-            standing(&runs, &calls),
+            standing(&runs, &calls, &everything_in_main),
             Standing::DefectCalled,
             "the red is the oldest of twenty"
         );
         runs.push(run(20, &[]));
         assert_eq!(
-            standing(&runs, &calls),
+            standing(&runs, &calls, &everything_in_main),
             Standing::Eligible,
             "twenty-one runs push it out"
         );
@@ -236,7 +331,10 @@ mod tests {
     fn an_uncalled_red_holds_a_job_and_a_flake_does_not() {
         let mut runs = clean(6);
         runs[3] = run(3, &["a::b"]);
-        assert_eq!(standing(&runs, &[]), Standing::RedNotCalledFlake);
+        assert_eq!(
+            standing(&runs, &[], &everything_in_main),
+            Standing::RedNotCalledFlake
+        );
         let by_run = [call(
             "a::b",
             "flake",
@@ -244,7 +342,10 @@ mod tests {
             None,
             "2026-10-08T00:00:00Z",
         )];
-        assert_eq!(standing(&runs, &by_run), Standing::Eligible);
+        assert_eq!(
+            standing(&runs, &by_run, &everything_in_main),
+            Standing::Eligible
+        );
         let by_head = [call(
             "a::b",
             "flake",
@@ -252,7 +353,10 @@ mod tests {
             Some("h003"),
             "2026-10-08T00:00:00Z",
         )];
-        assert_eq!(standing(&runs, &by_head), Standing::Eligible);
+        assert_eq!(
+            standing(&runs, &by_head, &everything_in_main),
+            Standing::Eligible
+        );
         let other_test = [call(
             "a::c",
             "flake",
@@ -261,7 +365,7 @@ mod tests {
             "2026-10-08T00:00:00Z",
         )];
         assert_eq!(
-            standing(&runs, &other_test),
+            standing(&runs, &other_test, &everything_in_main),
             Standing::RedNotCalledFlake,
             "a call is about one test"
         );
@@ -273,7 +377,7 @@ mod tests {
             "2026-10-08T00:00:00Z",
         )];
         assert_eq!(
-            standing(&runs, &other_run),
+            standing(&runs, &other_run, &everything_in_main),
             Standing::RedNotCalledFlake,
             "and about one run"
         );
@@ -289,7 +393,10 @@ mod tests {
             ..run(2, &["a::b"])
         };
         let unplaced = [call("a::b", "flake", None, None, "2026-10-08T00:00:00Z")];
-        assert_eq!(standing(&runs, &unplaced), Standing::RedNotCalledFlake);
+        assert_eq!(
+            standing(&runs, &unplaced, &everything_in_main),
+            Standing::RedNotCalledFlake
+        );
     }
 
     /// **The newest call on a red decides.** A flake that is later called a
@@ -302,12 +409,18 @@ mod tests {
             call("a::b", "flake", Some("r002"), None, "2026-10-08T01:00:00Z"),
             call("a::b", "defect", Some("r002"), None, "2026-10-08T02:00:00Z"),
         ];
-        assert_eq!(standing(&runs, &flake_then_defect), Standing::DefectCalled);
+        assert_eq!(
+            standing(&runs, &flake_then_defect, &everything_in_main),
+            Standing::DefectCalled
+        );
         let defect_then_flake = [
             call("a::b", "defect", Some("r002"), None, "2026-10-08T01:00:00Z"),
             call("a::b", "flake", Some("r002"), None, "2026-10-08T02:00:00Z"),
         ];
-        assert_eq!(standing(&runs, &defect_then_flake), Standing::Eligible);
+        assert_eq!(
+            standing(&runs, &defect_then_flake, &everything_in_main),
+            Standing::Eligible
+        );
     }
 
     /// **A job that failed without naming a test holds itself.** A crashed
@@ -319,7 +432,10 @@ mod tests {
             ok: false,
             ..run(1, &[])
         };
-        assert_eq!(standing(&runs, &[]), Standing::RedNotCalledFlake);
+        assert_eq!(
+            standing(&runs, &[], &everything_in_main),
+            Standing::RedNotCalledFlake
+        );
     }
 
     fn job(parts: &[&str]) -> Vec<String> {
@@ -348,7 +464,12 @@ mod tests {
     /// cost rule says: nothing has the runs to leave with. The protecting half.
     #[test]
     fn with_no_history_the_report_level_runs_every_job() {
-        let plan = report_plan(&listed(), &History::default(), &|_| true);
+        let plan = report_plan(
+            &listed(),
+            &History::default(),
+            &|_| true,
+            &everything_in_main,
+        );
         assert_eq!(plan.run, listed());
         assert!(plan.left_out.is_empty());
     }
@@ -364,7 +485,7 @@ mod tests {
         red[5] = run(5, &["a::b"]);
         history.jobs.insert("test-beta".into(), red);
         let slow_only_alpha = |runs: &[JobRun]| runs.len() == 5;
-        let plan = report_plan(&listed(), &history, &slow_only_alpha);
+        let plan = report_plan(&listed(), &history, &slow_only_alpha, &everything_in_main);
         let left: Vec<&str> = plan.left_out.iter().map(|l| l.job.as_str()).collect();
         assert_eq!(
             left,
@@ -388,7 +509,7 @@ mod tests {
     #[test]
     fn the_upgrade_gate_stays_whatever_its_history() {
         let history = history_of(&[("test-upgrade_gate", 30)]);
-        let plan = report_plan(&listed(), &history, &|_| true);
+        let plan = report_plan(&listed(), &history, &|_| true, &everything_in_main);
         assert!(plan.run.contains(&job(&["--test", "upgrade_gate"])));
         assert!(plan.left_out.is_empty());
     }
@@ -480,7 +601,7 @@ mod tests {
         let mut history = History::default();
         history.jobs.insert("test-alpha".into(), runs);
         let jobs = vec![job(&["--test", "alpha"])];
-        let held = report_plan(&jobs, &history, &is_slow);
+        let held = report_plan(&jobs, &history, &is_slow, &everything_in_main);
         assert_eq!(held.run, jobs, "an uncalled red holds it");
         history.calls.push(call(
             "a::b",
@@ -489,8 +610,131 @@ mod tests {
             None,
             "2026-10-08T00:00:00Z",
         ));
-        let freed = report_plan(&jobs, &history, &is_slow);
+        let freed = report_plan(&jobs, &history, &is_slow, &everything_in_main);
         assert!(freed.run.is_empty());
         assert_eq!(freed.left_out.len(), 1);
+    }
+
+    fn six_runs_with_a_red_at_three() -> Vec<JobRun> {
+        let mut runs = clean(6);
+        runs[3] = run(3, &["a::b"]);
+        runs
+    }
+
+    /// **A red on a head `main` contains counts against the job.**
+    #[test]
+    fn a_red_on_a_head_main_contains_holds_the_job() {
+        let known = [("h003", true)];
+        assert_eq!(
+            standing(&six_runs_with_a_red_at_three(), &[], &ancestry_of(&known)),
+            Standing::RedNotCalledFlake
+        );
+    }
+
+    /// **A red on a head `main` does not contain is ignored for leaving**, so the
+    /// job is eligible, and a plan with a cost lets it go and counts the red it
+    /// ignored.
+    #[test]
+    fn a_red_on_a_head_main_lacks_does_not_hold_the_job() {
+        let known = [("h003", false)];
+        let runs = six_runs_with_a_red_at_three();
+        assert_eq!(
+            standing(&runs, &[], &ancestry_of(&known)),
+            Standing::Eligible
+        );
+
+        let mut history = History::default();
+        history.jobs.insert("test-alpha".into(), runs);
+        let jobs = vec![job(&["--test", "alpha"])];
+        let plan = report_plan(&jobs, &history, &|_| true, &ancestry_of(&known));
+        assert_eq!(plan.left_out.len(), 1);
+        assert_eq!(plan.ignored, 1);
+        assert!(plan.run.is_empty());
+    }
+
+    /// **The exit status of the ancestry question maps to contained, not
+    /// contained, or cannot be told**, and a head that would be read as an option
+    /// is never handed to git.
+    #[test]
+    fn git_exit_statuses_and_unsafe_heads_are_read_for_what_they_are() {
+        assert_eq!(contained_from_exit(Some(0)), Some(true));
+        assert_eq!(contained_from_exit(Some(1)), Some(false));
+        assert_eq!(contained_from_exit(Some(128)), None, "an unknown commit");
+        assert_eq!(contained_from_exit(None), None, "no status");
+        assert!(is_a_revision("0adc2869"));
+        assert!(!is_a_revision(""));
+        assert!(!is_a_revision("--output=/tmp/x"));
+    }
+
+    /// **A head that cannot be resolved counts, and so does a run that recorded
+    /// no head.** The bar errs toward running more. The run with no head is not
+    /// looked up at all.
+    #[test]
+    fn an_unknown_head_and_a_run_with_no_head_hold_the_job() {
+        let nothing_known: [(&str, bool); 0] = [];
+        assert_eq!(
+            standing(
+                &six_runs_with_a_red_at_three(),
+                &[],
+                &ancestry_of(&nothing_known)
+            ),
+            Standing::RedNotCalledFlake,
+            "git could not place the head"
+        );
+
+        let mut runs = clean(6);
+        runs[3] = JobRun {
+            head: None,
+            ..run(3, &["a::b"])
+        };
+        let never_asked =
+            |_: &str| -> Option<bool> { panic!("a run with no head is not looked up") };
+        assert_eq!(
+            standing(&runs, &[], &never_asked),
+            Standing::RedNotCalledFlake
+        );
+    }
+
+    /// **A defect called on a head `main` lacks is ignored too**: the red is not
+    /// on the line of work the report level protects.
+    #[test]
+    fn a_defect_called_on_a_head_main_lacks_is_ignored() {
+        let known = [("h003", false)];
+        let calls = [call(
+            "a::b",
+            "defect",
+            Some("r003"),
+            None,
+            "2026-10-08T00:00:00Z",
+        )];
+        assert_eq!(
+            standing(
+                &six_runs_with_a_red_at_three(),
+                &calls,
+                &ancestry_of(&known)
+            ),
+            Standing::Eligible
+        );
+    }
+
+    /// **The plan counts the reds it ignored across the jobs, and the level line
+    /// says how many.** A red that counts is not in the number.
+    #[test]
+    fn the_level_line_says_how_many_reds_were_ignored() {
+        let mut history = History::default();
+        let mut alpha = clean(8);
+        alpha[3] = run(3, &["a::b"]);
+        alpha[4] = run(4, &["a::b"]);
+        history.jobs.insert("test-alpha".into(), alpha);
+        let mut beta = clean(8);
+        beta[2] = run(2, &["c::d"]);
+        history.jobs.insert("test-beta".into(), beta);
+        let known = [("h003", false), ("h004", false), ("h002", true)];
+
+        let plan = report_plan(&listed(), &history, &|_| true, &ancestry_of(&known));
+
+        assert_eq!(plan.ignored, 2, "alpha's two reds, not beta's");
+        let line = report_line(&plan, listed().len());
+        assert!(line.contains("ignored 2 reds"), "{line}");
     }
 }

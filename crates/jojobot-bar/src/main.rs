@@ -24,9 +24,10 @@ use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::{
     CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
-    TEST_JOBS_VARIABLE, grown_files, history_root, is_slow, iso_utc, jobs_limit, load_known_reds,
-    oversized_files, parse_call, parse_job, read_history, render_size_report, report_plan, run_id,
-    summarize_test_output, test_healthy, test_jobs, write_call,
+    TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision, is_slow,
+    iso_utc, jobs_limit, load_known_reds, oversized_files, parse_call, parse_job, read_history,
+    render_size_report, report_line, report_plan, run_id, summarize_test_output, test_healthy,
+    test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -522,6 +523,21 @@ impl Level {
     }
 }
 
+/// **Whether `main` contains a recorded head**, by `git merge-base
+/// --is-ancestor`. `None` when git cannot tell: a head it does not know, a
+/// head that would be read as an option, or no git at all.
+fn main_contains(head: &str) -> Option<bool> {
+    if !is_a_revision(head) {
+        return None;
+    }
+    let status = Command::new("git")
+        .args(["merge-base", "--is-ancestor", head, "main"])
+        .output()
+        .ok()?
+        .status;
+    contained_from_exit(status.code())
+}
+
 /// **The jobs a level runs, and the line that says which.** The boundary level
 /// runs the listing as it stands. The report level asks the history, which is
 /// empty when none can be read, so a missing history runs everything.
@@ -537,18 +553,19 @@ fn jobs_for(level: Level, all: Vec<Vec<String>>) -> (Vec<Vec<String>>, String) {
             let history = history_root(variable.as_deref(), home.as_deref())
                 .map(|root| read_history(&root, &["check", "report"]))
                 .unwrap_or_default();
-            let plan = report_plan(&all, &history, &is_slow);
-            let left: Vec<&str> = plan.left_out.iter().map(|l| l.job.as_str()).collect();
-            let line = format!(
-                "report, {} of {} jobs, left to the boundary: {}",
-                plan.run.len(),
-                all.len(),
-                if left.is_empty() {
-                    "none".to_string()
-                } else {
-                    left.join(", ")
-                }
-            );
+            // **Asked of git once per head.** A red counts against a job only when
+            // `main` contains the run's head: the history holds every run of every
+            // line of work, and a red on another line's unmerged work says nothing
+            // about the jobs `main` has to pass.
+            let asked = std::cell::RefCell::new(std::collections::HashMap::new());
+            let ancestry = |head: &str| -> Option<bool> {
+                *asked
+                    .borrow_mut()
+                    .entry(head.to_string())
+                    .or_insert_with(|| main_contains(head))
+            };
+            let plan = report_plan(&all, &history, &is_slow, &ancestry);
+            let line = report_line(&plan, all.len());
             (plan.run, line)
         }
     }

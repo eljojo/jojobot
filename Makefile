@@ -46,7 +46,9 @@ check: ## The DONE bar: formatted, green, clippy-clean
 # the recorded history lets go. A job leaves only with at least five recorded
 # runs, no red in its newest twenty that is not called a flake, and a
 # load-discounted median of thirty seconds or more; the upgrade gate never
-# leaves. With no history it runs everything the boundary bar runs. A carry, a
+# leaves. A red counts only when the run's recorded head is contained in `main`:
+# the history holds the runs of every line of work, and a red on another line's
+# unmerged head is ignored, and counted in the level line. With no history it runs everything the boundary bar runs. A carry, a
 # review and a push run `check`, not this.
 report: ## The report bar: check less the slow jobs the history lets go
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- report

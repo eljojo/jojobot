@@ -21,8 +21,9 @@ pub use calls::{CALL_USAGE, Call, parse_call, write_call};
 pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
 pub use levels::{
-    ALWAYS_RUN, DEFECT_WINDOW, LEAVE_AT_MS, LeftOut, MIN_RUNS, Plan, Standing, discounted_ms,
-    is_slow, median_cost_ms, report_plan, standing,
+    ALWAYS_RUN, Ancestry, DEFECT_WINDOW, LEAVE_AT_MS, LeftOut, MIN_RUNS, Plan, Standing,
+    contained_from_exit, discounted_ms, is_a_revision, is_slow, median_cost_ms, report_line,
+    report_plan, standing,
 };
 pub use reading::{History, JobRun, RecordedCall, read_history};
 pub use recording::{HISTORY_DIR_VARIABLE, Run, RunHeader, history_root, iso_utc, run_id};
