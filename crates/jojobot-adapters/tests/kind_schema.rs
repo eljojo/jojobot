@@ -416,10 +416,11 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
 
     // **The positive the negatives rest on: the shipped key governs a write
     // that sets it.** Without this half the case passes on a build that
-    // declares nothing.
+    // declares nothing. The key is `owner`, which holds a handle; a work item's
+    // `status` refuses nothing, so a word outside the five lands.
     let refused = store
         .capture(NewFact {
-            fields: [("status".to_string(), "mostly done".to_string())]
+            fields: [("owner".to_string(), "mostly done".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(
@@ -429,19 +430,20 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
             )
         })
         .await
-        .expect_err("free text is not a status once the kind ships the key");
+        .expect_err("text that is no handle is not an owner once the kind ships the key");
     let said = refused.to_string();
-    for allowed in jojobot_domain::memory::kinds::WORK_STATUSES {
-        assert!(
-            said.contains(allowed),
-            "the refusal names '{allowed}': {said}"
-        );
-    }
+    assert!(said.contains("owner"), "the refusal names the key: {said}");
     captured(&store, &thing, "waiting", Some("status")).await;
     assert_eq!(
         store.fields(&thing).await.expect("reads")["status"],
         "waiting",
         "a status the key holds repairs the thing",
+    );
+    captured(&store, &thing, "mostly done", Some("status")).await;
+    assert_eq!(
+        store.fields(&thing).await.expect("reads")["status"],
+        "mostly done",
+        "a work item's status lands whatever the word",
     );
 
     server.stop().await;

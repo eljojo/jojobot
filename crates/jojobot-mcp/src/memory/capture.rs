@@ -1061,6 +1061,7 @@ impl Jojobot {
                 crate::answer::note_postcondition(&mut body, line);
                 self.note_reach_and_hint(&mut body, &fact, &own_sent);
                 self.note_seat_pushed_off(&fact, &mut body).await;
+                self.note_status_word(&fact, &mut body).await;
                 self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);

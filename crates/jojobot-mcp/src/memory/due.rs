@@ -162,6 +162,7 @@ impl Jojobot {
             Err(_) => return (attention::DueMove::Unchanged, false),
         };
         let held = projected.clone();
+        let instance = self.instance_fields().await;
         let existing_due_on = projected
             .get(attention::DUE_ON)
             .and_then(|v| v.trim().parse().ok());
@@ -170,7 +171,14 @@ impl Jojobot {
         }
         projected.extend(incoming.iter().map(|(k, v)| (k.clone(), v.clone())));
         (
-            attention::moved_due_moment_as(&kind, &carriers, existing_due_on, &held, &projected),
+            attention::moved_due_moment_as(
+                &kind,
+                &carriers,
+                existing_due_on,
+                &held,
+                &projected,
+                &instance,
+            ),
             attention::due_is_derived(&carriers, &projected),
         )
     }

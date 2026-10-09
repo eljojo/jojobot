@@ -1669,7 +1669,8 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         fail("the due day beside an edit that set another key", &read);
     }
 
-    // The next write is held to the project's own list.
+    // The next write lands whatever its word, and the answer names the project's
+    // own list, which the older build wrote and this one reads unchanged.
     let landed = surface
         .call(
             "capture",
@@ -1680,7 +1681,7 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
     if landed.contains("\"status\":\"blocked\"") {
         fail("a status the project lists", &landed);
     }
-    let refused = surface
+    let unlisted = surface
         .call(
             "capture",
             json!({"subject": "work:upgrade-fixture-task", "content": "an unlisted status",
@@ -1688,10 +1689,16 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
                    "sid": sid}),
         )
         .await;
-    if !refused.contains("\"status\":\"blocked\"") || !refused.contains("review") {
-        fail("a refusal naming the project's own columns", &refused);
+    if unlisted.contains("\"status\":\"blocked\"")
+        || !unlisted.contains("status_word_note")
+        || !unlisted.contains("review")
+    {
+        fail(
+            "an unlisted status landing with the project's columns named",
+            &unlisted,
+        );
     }
-    let refused = surface
+    let unlisted = surface
         .call(
             "capture",
             json!({"subject": "project:upgrade-fixture-project", "content": "an unlisted status",
@@ -1699,11 +1706,22 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
                    "sid": sid}),
         )
         .await;
-    if !refused.contains("\"status\":\"blocked\"") {
+    if unlisted.contains("\"status\":\"blocked\"") || !unlisted.contains("status_word_note") {
         fail(
             "the project's own keys holding a status it does not list",
-            &refused,
+            &unlisted,
         );
+    }
+    // **The columns the older build wrote are where they were** after both writes.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "project:upgrade-fixture-project"}),
+        )
+        .await;
+    let project_after = fields_of(&read, "the project after the writes");
+    if project_after["columns"] != project["columns"] {
+        fail("the recorded columns after the writes", &read);
     }
 }
 

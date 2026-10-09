@@ -3776,44 +3776,6 @@ pub fn guard_fit(
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
-    guard_fit_in(kind, before, after, declared, None)
-}
-
-/// **The project whose columns govern a work item's or a project's status**, and
-/// the list it holds.
-///
-/// A work item is governed by the project it is filed under. A project filed
-/// under a project is governed by that one, and a project filed under none is
-/// governed by itself. `columns` is `None` when the governing project lists
-/// none, so the shipped five hold; the project is named all the same, because
-/// it is where a word of the caller's own is written.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GoverningColumns {
-    /// The project whose columns these are, as its handle reads today.
-    pub project: EntityId,
-    /// The columns it lists, in its own order. They extend the shipped five.
-    pub columns: Option<Vec<String>>,
-}
-
-/// **[`guard_fit`], for a thing filed under a project that lists its own
-/// columns.**
-///
-/// **A work item's status, and a project's own, is held to those columns
-/// instead of the shipped five**, and the refusal names that list. `project_columns` is what the
-/// caller read off the thing's project on this write: `None` is a thing under no
-/// project, or under one that lists none, and it is held to the declaration's
-/// own set. The store reads the project because a guard that stays pure cannot.
-///
-/// **A project's own list has to hold every shipped status**, so the shipped
-/// words mean the same thing on every board. A list that drops one is refused
-/// when it is written.
-pub fn guard_fit_in(
-    kind: &str,
-    before: &BTreeMap<String, String>,
-    after: &BTreeMap<String, String>,
-    declared: &[types::DeclaredType],
-    project_columns: Option<&GoverningColumns>,
-) -> Result<(), MemoryError> {
     // **The prefix as written, never the parsed kind.** A handle whose kind the
     // set never loaded still names one, and a guard that went quiet on an
     // unseeded process would stop refusing rather than say it could not tell.
@@ -3836,17 +3798,21 @@ pub fn guard_fit_in(
             if before.get(&field.key) == Some(value) {
                 continue;
             }
-            let (governing, governed_by) = match project_columns {
-                Some(governs) if kinds::holds_columns(kind) && field.key == kinds::STATUS => (
-                    types::Field {
-                        one_of: governs.columns.clone().or_else(|| field.one_of.clone()),
-                        ..field.clone()
-                    },
-                    Some(governs.project.as_str().into()),
-                ),
-                _ => (field.clone(), None),
+            // **The words a work item or project may hold are the vocabulary
+            // of its `status`, not a reason to refuse.** A word outside the
+            // accepted set lands: the answer to the write says so, and the read
+            // of the thing counts the word as unfinished (rule 426). What the
+            // key holds is still checked: its value type, and the kind a
+            // reference points at. Every other named set keeps its refusal until
+            // a strictness switch exists.
+            let field = &if kinds::holds_columns(kind) && field.key == kinds::STATUS {
+                types::Field {
+                    one_of: None,
+                    ..field.clone()
+                }
+            } else {
+                field.clone()
             };
-            let field = &governing;
             if !field.accepts(value) {
                 let bad = types::Mistyped {
                     key: field.key.clone(),
@@ -3861,7 +3827,6 @@ pub fn guard_fit_in(
                     key: bad.key.clone(),
                     wanted: bad.wanted(),
                     value: bad.value,
-                    governed_by,
                 });
             }
         }
@@ -3890,11 +3855,14 @@ pub fn guard_fit_in(
             });
         }
     }
-    // **A project's columns have to hold every shipped status.** A board that
-    // dropped one would leave the shipped word meaning nothing there, and "what
-    // is waiting" would answer differently from one project to the next. Checked
-    // when the list is set, like every other key a kind declares.
-    if kind == EntityKind::PROJECT.as_token()
+    // **A list of columns has to hold every shipped status**, on a project and on
+    // the instance's own record alike. A board that dropped one would leave the
+    // shipped word meaning nothing there, and "what is waiting" would answer
+    // differently from one board to the next. Checked when the list is set, like
+    // every other key a kind declares. The instance is a topic, and the guard
+    // knows a kind rather than a handle, so any topic that lists columns is held
+    // to it.
+    if (kind == EntityKind::PROJECT.as_token() || kind == EntityKind::TOPIC.as_token())
         && let Some(value) = after.get(kinds::COLUMNS)
         && before.get(kinds::COLUMNS) != Some(value)
     {
@@ -3911,8 +3879,29 @@ pub fn guard_fit_in(
                     kinds::WORK_STATUSES.join(", ")
                 ),
                 value: value.clone(),
-                governed_by: None,
             });
+        }
+    }
+    // **A shipped status word cannot be given another meaning.** The instance
+    // maps its own words with `status_word/<word>`; a mapping whose word is one
+    // of the shipped five would let `done` mean something else on one instance,
+    // and "what is finished" would stop being one question. Checked when the
+    // mapping is set. Held on any topic carrying one, for the reason the list
+    // above is.
+    if kind == EntityKind::TOPIC.as_token() {
+        for (key, value) in after {
+            let Some(word) = key.strip_prefix(kinds::STATUS_WORD) else {
+                continue;
+            };
+            if before.get(key) == Some(value) {
+                continue;
+            }
+            if kinds::WORK_STATUSES.contains(&word.trim()) {
+                return Err(MemoryError::RemapsShippedWord {
+                    word: word.trim().to_string(),
+                    value: value.clone(),
+                });
+            }
         }
     }
     // **A loop that cannot say when its next cycle falls due is refused when it
@@ -5264,10 +5253,19 @@ pub enum MemoryError {
         /// What the write would have put there, so the caller sees what it
         /// sent rather than being told it was wrong.
         value: String,
-        /// **The project whose columns held this status**, when the key is a
-        /// status. It is where the caller writes `columns` to add a word, so
-        /// the refusal can name it rather than say "the project".
-        governed_by: Option<Box<str>>,
+    },
+    /// **A mapping that gives a shipped status word another meaning.** The word
+    /// is one of the five the software ships and it means itself on every
+    /// instance, so the write is well formed and cannot land. The way forward is
+    /// a word of the instance's own.
+    #[error(
+        "'{word}' is a shipped status word and means itself, so it cannot be mapped to '{value}'"
+    )]
+    RemapsShippedWord {
+        /// The shipped word the write tried to map.
+        word: String,
+        /// What the write mapped it to.
+        value: String,
     },
     /// The addressed fact doesn't exist, in an entity that does. Never
     /// auto-created, never guessed at — the live addresses come back so the

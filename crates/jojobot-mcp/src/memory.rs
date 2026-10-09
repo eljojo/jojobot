@@ -29,6 +29,7 @@ pub mod retract;
 pub mod search;
 pub mod set_charter;
 pub mod starred;
+pub mod status_words;
 #[cfg(test)]
 pub mod testing;
 pub mod update_entity;

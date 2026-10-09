@@ -468,6 +468,9 @@ impl Jojobot {
                 if let Some(due) = crate::answer::falls_due_sentence(&entity.id, due_moved) {
                     crate::answer::note_postcondition(&mut body, due);
                 }
+                if let Some(fact) = &first_claim {
+                    self.note_status_word(fact, &mut body).await;
+                }
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

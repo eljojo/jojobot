@@ -707,3 +707,52 @@ async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
         .await;
     story.finish().await;
 }
+
+/// **A word outside a declared set is still refused on a loop**, while a work
+/// item's status word lands. A loop whose `advances_from` holds a word the
+/// arithmetic cannot read would read overdue every day, so the named set on a
+/// loop keeps its refusal until a switch for strictness exists; only a work
+/// item's or a project's status is let through. The refusal names the values the
+/// key takes, and the good value lands beside it.
+#[tokio::test]
+async fn a_bad_advances_from_is_still_refused_and_a_good_one_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "The Kettle").await;
+    s.add_under("thing:kettle", "rhythm:descale", "Descale")
+        .await;
+
+    s.refused(
+        "capture",
+        json!({
+            "subject": "rhythm:descale", "content": "descale the kettle monthly",
+            "provenance": "testimony",
+            "fields": {
+                "cadence_days": "30", "advances_from": "whenever",
+                "last_check_in": "2026-08-01",
+            },
+        }),
+    )
+    .await
+    .says("advances_from")
+    .says("due_date")
+    .says("\"wrote\":false");
+    s.recall("rhythm:descale")
+        .await
+        .never_says("\"cadence_days\"");
+
+    s.event_with(
+        "rhythm:descale",
+        "descale the kettle monthly",
+        json!({
+            "cadence_days": "30", "advances_from": "due_date",
+            "last_check_in": "2026-08-01",
+        }),
+        &[],
+    )
+    .await;
+    s.recall("rhythm:descale")
+        .await
+        .says("\"advances_from\":\"due_date\"");
+    story.finish().await;
+}

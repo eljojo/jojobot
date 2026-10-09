@@ -309,52 +309,6 @@ impl InMemoryMemory {
         Ok(())
     }
 
-    /// **The columns of the project a work item or project is filed under**, read off the
-    /// project's own folded fields — the same read the real store takes inside
-    /// the write's transaction. `None` is a thing that is not work or a work
-    /// item under no project. A governing project that lists none is still
-    /// named, with no columns, so the refusal can say where to write them.
-    ///
-    /// **A project under no project is governed by its own list**, as this
-    /// write leaves it (`own_after`), so the route a refusal names, writing
-    /// `columns` on the project, works for a project that has nowhere else to
-    /// write them. One under a project keeps that project's list.
-    fn project_columns_of(
-        &self,
-        thing: &Entity,
-        index: &[Entity],
-        former: &[FormerHandle],
-        facts: &[Fact],
-        declared: &[crate::memory::types::DeclaredType],
-        own_after: &std::collections::BTreeMap<String, String>,
-    ) -> Option<crate::memory::GoverningColumns> {
-        if !crate::memory::kinds::holds_columns(thing.kind.as_token()) {
-            return None;
-        }
-        let Some(project) = thing
-            .parent
-            .as_ref()
-            .and_then(|parent| super::resolve_handle(parent, index, former))
-            .filter(|project| project.kind == EntityKind::PROJECT)
-        else {
-            return (thing.kind == EntityKind::PROJECT).then(|| crate::memory::GoverningColumns {
-                project: thing.id.clone(),
-                columns: crate::memory::kinds::columns_of(own_after),
-            });
-        };
-        let home = match &project.badge {
-            Some(badge) => EntityId(badge.clone()),
-            None => project.id.clone(),
-        };
-        Some(crate::memory::GoverningColumns {
-            project: project.id.clone(),
-            columns: crate::memory::kinds::columns_of(&super::super::folded_fields(
-                &self.writes_on(&home, facts),
-                declared,
-            )),
-        })
-    }
-
     /// **The keys a KIND names, read as the kind's own.**
     ///
     /// The two halves share one place and are told apart by who declared them.
@@ -2144,14 +2098,11 @@ impl Memory for InMemoryMemory {
         // badge carries no kind token to parse.
         let governs = self.kind_keys_of(subject_entity.kind.as_token());
         let after = super::super::stood_after_capture(&writes, &stored, &declared);
-        let columns =
-            self.project_columns_of(&subject_entity, &index, &former, &facts, &declared, &after);
-        super::super::guard_fit_in(
+        super::super::guard_fit(
             subject_entity.kind.as_token(),
             &super::super::folded_fields(&writes, &declared),
             &after,
             &governs,
-            columns.as_ref(),
         )?;
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
@@ -2701,8 +2652,7 @@ impl Memory for InMemoryMemory {
         // **Off the entity resolved above, never off `home`** — that is a
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
-        let columns = self.project_columns_of(entity, &index, &former, &facts, &declared, &after);
-        super::super::guard_fit_in(kind.as_token(), &before, &after, &governs, columns.as_ref())?;
+        super::super::guard_fit(kind.as_token(), &before, &after, &governs)?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind** — the same check the real store runs, atomically with the
         // write it gates.

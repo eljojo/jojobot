@@ -71,7 +71,24 @@ pub async fn unzoned_frame(memory: &dyn Memory) -> jiff::tz::TimeZone {
         .unwrap_or(jiff::tz::TimeZone::UTC)
 }
 
+/// **The instance's own record, folded**, for the readers that need what the
+/// operator wrote on it besides a zone: the status words it maps and the columns
+/// it lists. Empty when the record or the store cannot be read, which reads as an
+/// instance that mapped nothing. Public so the operator's window reads a status
+/// the same way the verbs do.
+pub async fn instance_fields_of(memory: &dyn Memory) -> std::collections::BTreeMap<String, String> {
+    memory
+        .fields(&EntityId(INSTANCE_RECORD.to_string()))
+        .await
+        .unwrap_or_default()
+}
+
 impl Jojobot {
+    /// **What the instance's record holds**, folded; see [`instance_fields_of`].
+    pub(crate) async fn instance_fields(&self) -> std::collections::BTreeMap<String, String> {
+        instance_fields_of(&*self.memory).await
+    }
+
     /// **What the instance's record holds for its zone.**
     pub(crate) async fn instance_zone(&self) -> InstanceZone {
         instance_zone_of(&*self.memory).await

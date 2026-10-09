@@ -8,18 +8,11 @@ Written by `every_text_a_model_reads_matches_the_snapshot` in `crates/jojobot-mc
 
 One row per error kind in each of the three lanes, built from the sample the lane's own table of kinds holds: the error as it reads, then the answer the caller gets. The sample data is placeholder text. **Not here:** a refusal written inline at the verb that raises it, from data it only has at that moment. Its words appear in this file only where the same words are in a description or an error kind's template.
 
-### Refusal of a status outside the vocabulary, rendered from a live write
+### Note on a status outside the vocabulary, rendered from a live write
 
 ```text
 vocabulary (WORK_STATUSES): someday, next, now, waiting, done
-answer: {
-  "attempted": "",
-  "candidates": [],
-  "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'status' holds one of someday, next, now, waiting, done on anything that is a 'work', and 'nonsense' is not one. This thing is a 'work' now, so 'status' has to go on holding one of someday, next, now, waiting, done — sending the same value again will not change the answer. Write a value that holds one of someday, next, now, waiting, done, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared. This is filed under no project, so it holds the shipped five. A work item takes the columns of the project it is filed under, and a project's columns extend the shipped five and never replace them.",
-  "status": "blocked",
-  "wrote": false
-}
+status_word_note: 'nonsense' is not one of the words this work holds: someday, next, now, waiting, done. It counts as not finished. One write binds it: add it to `columns` on topic:instance (every board), or write `status_word/nonsense` on topic:instance set to the shipped word it means, one of someday, next, now, waiting, done.
 ```
 
 ### Memory refusal `InvalidFact`
@@ -327,6 +320,20 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'starts' holds date on anything that is a 'trip', and 'soon' is not one. This thing is a 'trip' now, so 'starts' has to go on holding date — sending the same value again will not change the answer. Write a value that holds date, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
+### Memory refusal `RemapsShippedWord`
+
+```text
+reads: 'done' is a shipped status word and means itself, so it cannot be mapped to 'someday'
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'done' is a shipped status word and means itself, so it cannot be mapped to 'someday'. 'done' is one of the five words the software ships and it means itself on every instance, so sending this again will not change the answer. Map a word of your own instead: write `status_word/<your word>` set to the shipped word it should mean, one of someday, next, now, waiting, done.",
   "status": "blocked",
   "wrote": false
 }

@@ -2717,15 +2717,15 @@ pub async fn referring_to_finds_a_target_named_in_a_list_of_references<M: Memory
     );
 }
 
-/// **A work item's status is held to the columns of the project it is filed
-/// under, and to the shipped five when it is filed under none.**
+/// **A work item's status lands whatever word it holds, and the lists that
+/// name the words are guarded when they are written.**
 ///
-/// A project's columns are an ordered list that holds every shipped status and
-/// whatever else the project adds. The check reads the project's record on the
-/// write, so a column the project adds is accepted, a word outside the list is
-/// refused with the list named, and a project that drops a shipped status is
-/// refused when it says so.
-pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(store: &M) {
+/// A declared named set never refuses a write: the word lands on a work item or
+/// project under a board that lists it, under one that does not, and under none.
+/// What stays refused is a list of columns that drops a shipped status, on a
+/// project and on the instance alike, and a mapping that gives a shipped word
+/// another meaning.
+pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: &M) {
     crate::memory::kinds::seed(store)
         .await
         .expect("the kinds are seeded");
@@ -2734,12 +2734,14 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
     let in_board = EntityId("work:contract-columns-in-board".into());
     let in_plain = EntityId("work:contract-columns-in-plain".into());
     let loose = EntityId("work:contract-columns-loose".into());
+    let instance = EntityId("topic:contract-status-words".into());
     for (id, name, parent) in [
         (&board, "Contract Columns Board", None),
         (&plain, "Contract Columns Plain", None),
         (&in_board, "Contract Columns In Board", Some(&board)),
         (&in_plain, "Contract Columns In Plain", Some(&plain)),
         (&loose, "Contract Columns Loose", None),
+        (&instance, "Contract Status Words", None),
     ] {
         add(
             store,
@@ -2756,138 +2758,87 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
             .collect(),
         ..NewFact::about(thing.clone(), "where it stands", date(2026, 10, 1))
     };
-    let columns_on = |project: &EntityId, columns: &str| NewFact {
+    let columns_on = |holder: &EntityId, columns: &str| NewFact {
         fields: [("columns".to_string(), columns.to_string())]
             .into_iter()
             .collect(),
-        ..NewFact::about(project.clone(), "the board's columns", date(2026, 10, 1))
+        ..NewFact::about(holder.clone(), "the columns", date(2026, 10, 1))
+    };
+    let word_on = |holder: &EntityId, word: &str, meaning: &str| NewFact {
+        fields: [(format!("status_word/{word}"), meaning.to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(holder.clone(), "what a word means", date(2026, 10, 1))
     };
 
-    // ① A project whose list drops a shipped status is refused, and the
-    // refusal names the five. Nothing is stored.
-    let refused = store
-        .capture(columns_on(&board, "someday, next, now, done"))
-        .await
-        .expect_err("a list without 'waiting' is not a superset of the shipped five");
-    let MemoryError::BreaksType {
-        name, key, wanted, ..
-    } = &refused
-    else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert_eq!((name.as_str(), key.as_str()), ("project", "columns"));
-    for shipped in crate::memory::kinds::WORK_STATUSES {
+    // ① A list that drops a shipped status is refused on a project and on the
+    // instance, and the refusal names the five. Nothing is stored.
+    for (holder, kind) in [(&board, "project"), (&instance, "topic")] {
+        let refused = store
+            .capture(columns_on(holder, "someday, next, now, done"))
+            .await
+            .expect_err("a list without 'waiting' is not a superset of the shipped five");
+        let MemoryError::BreaksType {
+            name, key, wanted, ..
+        } = &refused
+        else {
+            panic!("expected BreaksType, got {refused:?}");
+        };
+        assert_eq!((name.as_str(), key.as_str()), (kind, "columns"));
+        for shipped in crate::memory::kinds::WORK_STATUSES {
+            assert!(
+                wanted.contains(shipped),
+                "the refusal names '{shipped}': {wanted}"
+            );
+        }
         assert!(
-            wanted.contains(shipped),
-            "the refusal names '{shipped}': {wanted}"
+            !store
+                .fields(holder)
+                .await
+                .expect("the store answers")
+                .contains_key("columns"),
+            "the refused list left nothing behind",
         );
     }
-    assert!(
-        !store
-            .fields(&board)
-            .await
-            .expect("the store answers")
-            .contains_key("columns"),
-        "the refused list left nothing behind",
-    );
 
-    // ② A project's own list, in its own order, is accepted and reads back
-    // as written.
-    capture(
-        store,
-        columns_on(
-            &board,
-            "inbox, next release, this release, someday, next, now, waiting, done",
-        ),
-    )
-    .await;
-    assert_eq!(
-        store
-            .fields(&board)
-            .await
-            .expect("the store answers")
-            .get("columns")
-            .map(String::as_str),
-        Some("inbox, next release, this release, someday, next, now, waiting, done"),
-        "the order is the project's own",
-    );
+    // ② A list of its own, in its own order, is accepted and reads back as
+    // written, on a project and on the instance.
+    let own = "inbox, next release, this release, someday, next, now, waiting, done";
+    for holder in [&board, &instance] {
+        capture(store, columns_on(holder, own)).await;
+        assert_eq!(
+            store
+                .fields(holder)
+                .await
+                .expect("the store answers")
+                .get("columns")
+                .map(String::as_str),
+            Some(own),
+            "the order is the holder's own",
+        );
+    }
 
-    // ③ A column the project added is accepted on a work item filed under
-    // it; a word outside the list is refused and the list is named.
-    capture(store, status_on(&in_board, "this release")).await;
-    assert_eq!(
-        store.fields(&in_board).await.expect("reads")["status"],
-        "this release",
-    );
-    let refused = store
-        .capture(status_on(&in_board, "backlog"))
-        .await
-        .expect_err("'backlog' is not one of the board's columns");
-    let MemoryError::BreaksType {
-        wanted,
-        value,
-        governed_by,
-        ..
-    } = &refused
-    else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert_eq!(value, "backlog");
-    assert!(
-        wanted.contains("next release") && wanted.contains("inbox"),
-        "the refusal names the project's own list: {wanted}",
-    );
-    assert_eq!(
-        governed_by.as_deref(),
-        Some(board.as_str()),
-        "the refusal names the project whose columns hold the work item",
-    );
+    // ③ A word lands wherever it is written: one the board lists, one it does
+    // not, under a project that lists none, and under no project. A named set
+    // refuses nothing.
+    for (thing, word) in [
+        (&in_board, "this release"),
+        (&in_board, "backlog"),
+        (&in_plain, "this release"),
+        (&in_plain, "waiting"),
+        (&loose, "this release"),
+        (&loose, "next"),
+    ] {
+        capture(store, status_on(thing, word)).await;
+        assert_eq!(
+            store.fields(thing).await.expect("reads")["status"],
+            word,
+            "{word} lands on {thing:?}",
+        );
+    }
 
-    // ④ The same column on a work item under a project with no list is
-    // refused, and the shipped five are what it names; a shipped word is
-    // accepted there.
-    let refused = store
-        .capture(status_on(&in_plain, "this release"))
-        .await
-        .expect_err("a project with no columns holds its work to the shipped five");
-    let MemoryError::BreaksType {
-        wanted,
-        governed_by,
-        ..
-    } = &refused
-    else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert!(
-        wanted.contains("waiting") && !wanted.contains("inbox"),
-        "the shipped five and no other: {wanted}",
-    );
-    assert_eq!(
-        governed_by.as_deref(),
-        Some(plain.as_str()),
-        "a project that lists none is still the one the refusal names",
-    );
-    capture(store, status_on(&in_plain, "waiting")).await;
-
-    // ⑤ A work item filed under no project is held to the shipped five.
-    let refused = store
-        .capture(status_on(&loose, "this release"))
-        .await
-        .expect_err("a work item with no project is held to the shipped five");
-    let MemoryError::BreaksType { governed_by, .. } = &refused else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert_eq!(
-        governed_by, &None,
-        "a work item under no project has no project to name"
-    );
-    capture(store, status_on(&loose, "next")).await;
-
-    // ⑥ A project's own status follows the same rule one level up: a project
-    // filed under a project is held to that project's columns, and the refusal
-    // names that project. A project filed under NONE is governed by itself: the
-    // shipped five when it lists no columns, and the refusal names the project
-    // itself, because it is where the columns are written.
+    // ④ A project's own status follows the same rule one level up: under a
+    // project, under none, and with a list of its own.
     let sub = EntityId("project:contract-columns-sub".into());
     add(
         store,
@@ -2897,76 +2848,22 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
         },
     )
     .await;
-    capture(store, status_on(&sub, "this release")).await;
-    let refused = store
-        .capture(status_on(&sub, "backlog"))
-        .await
-        .expect_err("a sub-project is held to its parent project's columns");
-    let MemoryError::BreaksType { governed_by, .. } = &refused else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert_eq!(
-        governed_by.as_deref(),
-        Some(board.as_str()),
-        "the refusal names the parent, whose columns govern the sub-project",
-    );
-    let refused = store
-        .capture(status_on(&plain, "this release"))
-        .await
-        .expect_err("a project under no project that lists none is held to the shipped five");
-    let MemoryError::BreaksType {
-        wanted,
-        governed_by,
-        ..
-    } = &refused
-    else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert!(
-        wanted.contains("waiting") && !wanted.contains("inbox"),
-        "the shipped five and no other: {wanted}",
-    );
-    assert_eq!(
-        governed_by.as_deref(),
-        Some(plain.as_str()),
-        "a project under no project is governed by itself, and the refusal says so",
-    );
-    capture(store, status_on(&plain, "now")).await;
+    for (project, word) in [
+        (&sub, "this release"),
+        (&sub, "backlog"),
+        (&plain, "this release"),
+        (&board, "this release"),
+        (&board, "backlog"),
+    ] {
+        capture(store, status_on(project, word)).await;
+        assert_eq!(
+            store.fields(project).await.expect("reads")["status"],
+            word,
+            "{word} lands on {project:?}",
+        );
+    }
 
-    // ⑦ A project filed under no project takes its OWN columns as the words its
-    // status may hold. The route the refusal names has to work: the list the
-    // project wrote is the list that governs it, and the refusal names that list.
-    capture(store, status_on(&board, "this release")).await;
-    assert_eq!(
-        store.fields(&board).await.expect("reads")["status"],
-        "this release",
-        "a project under no project holds a word its own list added",
-    );
-    let refused = store
-        .capture(status_on(&board, "backlog"))
-        .await
-        .expect_err("'backlog' is not one of the board's own columns");
-    let MemoryError::BreaksType {
-        wanted,
-        value,
-        governed_by,
-        ..
-    } = &refused
-    else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert_eq!(value, "backlog");
-    assert!(
-        wanted.contains("next release") && wanted.contains("inbox"),
-        "the refusal names the project's own list: {wanted}",
-    );
-    assert_eq!(
-        governed_by.as_deref(),
-        Some(board.as_str()),
-        "a project under no project names itself",
-    );
-
-    // …and one write may carry the list and the word that list adds.
+    // ⑤ One write may carry the list and the word that list adds.
     let fresh = EntityId("project:contract-columns-fresh".into());
     add(
         store,
@@ -2998,25 +2895,36 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
         "considering",
     );
 
-    // A project under a project keeps its parent's list: a list of its own does
-    // not widen it, and the refusal names the parent's.
-    capture(
-        store,
-        columns_on(&sub, "backlog, someday, next, now, waiting, done"),
-    )
-    .await;
-    let refused = store
-        .capture(status_on(&sub, "backlog"))
-        .await
-        .expect_err("a sub-project's own list does not widen its parent's");
-    let MemoryError::BreaksType { wanted, .. } = &refused else {
-        panic!("expected BreaksType, got {refused:?}");
-    };
-    assert!(
-        wanted.contains("inbox") && !wanted.contains("backlog"),
-        "the refusal names the parent's list and not the sub-project's: {wanted}",
+    // ⑥ A word the instance maps is stored as written, and a shipped word
+    // cannot be given another meaning. The refused write changes nothing and the
+    // good write still lands after it.
+    capture(store, word_on(&instance, "considering", "someday")).await;
+    assert_eq!(
+        store.fields(&instance).await.expect("reads")["status_word/considering"],
+        "someday",
     );
-    capture(store, status_on(&sub, "this release")).await;
+    let before = store.fields(&instance).await.expect("reads");
+    for shipped in crate::memory::kinds::WORK_STATUSES {
+        let refused = store
+            .capture(word_on(&instance, shipped, "someday"))
+            .await
+            .expect_err("a shipped word cannot be remapped");
+        let MemoryError::RemapsShippedWord { word, value } = &refused else {
+            panic!("expected RemapsShippedWord, got {refused:?}");
+        };
+        assert_eq!((word.as_str(), value.as_str()), (shipped, "someday"));
+    }
+    assert_eq!(
+        store.fields(&instance).await.expect("reads"),
+        before,
+        "the refused mappings left the instance as it was",
+    );
+    capture(store, word_on(&instance, "closed", "done")).await;
+    assert_eq!(
+        store.fields(&instance).await.expect("reads")["status_word/closed"],
+        "done",
+        "a good mapping still lands after the refused ones",
+    );
 }
 
 pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
@@ -14896,7 +14804,7 @@ pub async fn a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal<M:
 pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M: Memory>(
     store: &M,
 ) {
-    // The kinds' keys, or a status outside the five is a key nobody declared.
+    // The kinds' keys, or a reference key holding no handle is a key nobody declared.
     crate::memory::kinds::seed(store)
         .await
         .expect("the kinds are seeded");
@@ -14949,10 +14857,10 @@ pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M:
     store
         .add_entity_with_first_claim(
             NewEntity::new(refused.clone(), "Sigma", "contract-fixture"),
-            first_claim(&refused, &[("status", "not-a-status")]),
+            first_claim(&refused, &[("waiting_on", "not a handle")]),
         )
         .await
-        .expect_err("a status outside the five refuses the whole call");
+        .expect_err("a reference key holding no handle refuses the whole call");
     assert!(
         !listed(refused).await,
         "a refused first claim left a thing behind",
@@ -15336,7 +15244,7 @@ macro_rules! all_cases {
         $m!(a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room($store));
         $m!(a_manager_folded_into_another_keeps_its_reports_in_the_chain($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
-        $m!(a_work_items_status_is_held_to_its_projects_columns($store));
+        $m!(a_work_items_status_lands_whatever_word_it_holds($store));
         $m!(a_child_names_its_parent_and_reads_back($store));
         $m!(children_are_handles_and_one_level_deep($store));
         $m!(a_write_that_rewrites_a_child_leaves_it_where_it_was($store));

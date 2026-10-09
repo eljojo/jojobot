@@ -39,7 +39,8 @@ pub const SHIPPED: [&str; 17] = [
 /// A closed set, and the build's: a status a cold session can ask "what is
 /// next" of has to be a word every writer spells the same way. A project that
 /// needs a finer state says it under a key of its own, which no kind refuses,
-/// and the refusal for an unlisted status says so.
+/// or lists the word under `columns`; a word outside the lists still lands, and
+/// the answer to the write says so.
 pub const WORK_STATUSES: [&str; 5] = ["someday", "next", "now", "waiting", "done"];
 
 /// **The status that finishes a piece of work**: the last of the five. A work
@@ -59,15 +60,71 @@ pub fn finishing_kinds() -> Vec<&'static str> {
         .collect()
 }
 
+/// **The prefix of the keys that say what an instance's own status word
+/// means.** `status_word/considering` set to `someday` makes `considering` read
+/// as `someday` wherever a status is read. The key lives on the instance's
+/// record, beside its `columns`.
+pub const STATUS_WORD: &str = "status_word/";
+
+/// **What a status word means**, as one of the shipped five, or `None` when the
+/// instance has not said.
+///
+/// A shipped word means itself, whatever a stored mapping says, so `done` is
+/// never remapped. Any other word means what the instance maps it to, provided
+/// that is a shipped word; a mapping to anything else maps nothing. An unmapped
+/// word has no meaning here, and a caller reads that as not finished.
+pub fn meaning_of<'a>(
+    word: &'a str,
+    instance: &'a std::collections::BTreeMap<String, String>,
+) -> Option<&'a str> {
+    let word = word.trim();
+    if let Some(shipped) = WORK_STATUSES.iter().find(|shipped| **shipped == word) {
+        return Some(shipped);
+    }
+    let mapped = instance.get(&format!("{STATUS_WORD}{word}"))?.trim();
+    WORK_STATUSES
+        .iter()
+        .find(|shipped| **shipped == mapped)
+        .copied()
+}
+
+/// **The words a work item's or project's status is accepted at**, in the order
+/// a reader walks them: the shipped five, then the instance's own columns, then
+/// the governing project's, each word once. A project cannot shut out a word
+/// the instance lists, because both lists are added to the five and neither
+/// replaces it. `project` is the governing project's folded fields, or `None`
+/// for a thing under none.
+pub fn accepted_words(
+    instance: &std::collections::BTreeMap<String, String>,
+    project: Option<&std::collections::BTreeMap<String, String>>,
+) -> Vec<String> {
+    let mut words: Vec<String> = WORK_STATUSES.iter().map(|word| word.to_string()).collect();
+    for listed in [columns_of(instance), project.and_then(columns_of)]
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if !words.contains(&listed) {
+            words.push(listed);
+        }
+    }
+    words
+}
+
 /// **Whether a thing of this kind is finished**: a work item or a project whose
-/// status is `done`. A finished thing is not owed, and its date stays on the
-/// record. Every other kind owes by its dates alone, whatever a `status` key
-/// on it says.
-pub fn is_finished(kind: &str, fields: &std::collections::BTreeMap<String, String>) -> bool {
+/// status means `done`, by the shipped word or by a word the instance maps to
+/// it. A finished thing is not owed, and its date stays on the record. A word
+/// nobody mapped is not finished. Every other kind owes by its dates alone,
+/// whatever a `status` key on it says.
+pub fn is_finished(
+    kind: &str,
+    fields: &std::collections::BTreeMap<String, String>,
+    instance: &std::collections::BTreeMap<String, String>,
+) -> bool {
     holds_columns(kind)
         && fields
             .get(STATUS)
-            .is_some_and(|held| held.trim() == FINISHED)
+            .is_some_and(|held| meaning_of(held, instance) == Some(FINISHED))
 }
 
 /// The key a project holds its own ordered list of statuses under.
@@ -212,7 +269,15 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         // before anybody has made the operator an entity. It decides whose box
         // operator mail lands in, so the build guards who may write it: see
         // `GUARDED_KEYS`.
-        "topic" => vec![Field::pointing_at("operator", super::EntityKind::PERSON)],
+        //
+        // **The same record lists the instance's own `columns`**, the words its
+        // work may hold beside the shipped five, and maps those words onto
+        // shipped ones with `status_word/<word>` keys. The `columns` key is
+        // built exactly as a project's is.
+        "topic" => vec![
+            Field::pointing_at("operator", super::EntityKind::PERSON),
+            Field::listing(COLUMNS, ValueType::Text),
+        ],
         // **A question asked by name.** The keys are what a view IS: what it
         // selects over, and what it keeps. They are required because a view
         // missing either is a question nobody can ask — unlike a loop, where
@@ -647,6 +712,71 @@ mod tests {
             declared.iter().all(|f| !f.required),
             "a topic is whole without an operator: {declared:?}"
         );
+    }
+
+    /// **The words a work item's status may hold are the shipped five, the
+    /// instance's columns and the governing project's, once each and in that
+    /// order.** A project cannot take a word the instance lists out of the set,
+    /// and the instance cannot take one the project lists.
+    #[test]
+    fn the_accepted_words_are_the_five_then_the_instances_then_the_projects() {
+        let fields = |columns: &str| -> std::collections::BTreeMap<String, String> {
+            [(COLUMNS.to_string(), columns.to_string())]
+                .into_iter()
+                .collect()
+        };
+        let instance = fields("considering, someday, next, now, waiting, done");
+        let project = fields("inbox, someday, next, now, waiting, done, considering");
+        assert_eq!(
+            accepted_words(&instance, Some(&project)),
+            [
+                "someday",
+                "next",
+                "now",
+                "waiting",
+                "done",
+                "considering",
+                "inbox"
+            ],
+        );
+        assert_eq!(
+            accepted_words(&std::collections::BTreeMap::new(), None),
+            WORK_STATUSES,
+            "with no list anywhere the five hold",
+        );
+        assert_eq!(
+            accepted_words(&std::collections::BTreeMap::new(), Some(&project)),
+            [
+                "someday",
+                "next",
+                "now",
+                "waiting",
+                "done",
+                "inbox",
+                "considering"
+            ],
+            "a project's own order is kept for the words it adds",
+        );
+    }
+
+    /// **`meaning_of` reads a shipped word as itself and a mapped word as what it
+    /// is mapped to, and says nothing for any other.**
+    #[test]
+    fn a_word_means_itself_when_shipped_what_it_is_mapped_to_otherwise_and_nothing_else() {
+        let instance: std::collections::BTreeMap<String, String> = [
+            ("status_word/considering", "someday"),
+            ("status_word/vague", "finished"),
+            ("status_word/done", "someday"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        assert_eq!(meaning_of("next", &instance), Some("next"));
+        assert_eq!(meaning_of("considering", &instance), Some("someday"));
+        assert_eq!(meaning_of(" considering ", &instance), Some("someday"));
+        assert_eq!(meaning_of("done", &instance), Some("done"));
+        assert_eq!(meaning_of("vague", &instance), None);
+        assert_eq!(meaning_of("unheard of", &instance), None);
     }
 
     /// **`work` and `project` hold one status vocabulary, and it is a closed

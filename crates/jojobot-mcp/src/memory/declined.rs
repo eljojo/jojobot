@@ -251,6 +251,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::ClaimTooLarge { .. }
         | MemoryError::ThingTooLarge { .. }
         | MemoryError::BreaksType { .. }
+        | MemoryError::RemapsShippedWord { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::NotYours { .. }
         | MemoryError::RoomFull { .. }
@@ -682,7 +683,6 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref name,
             ref key,
             ref wanted,
-            ref governed_by,
             ..
         } => Ok(blocked_body(
             &EntityId(String::new()),
@@ -692,25 +692,22 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  holding {wanted} — sending the same value again will not change the answer. \
                  Write a value that holds {wanted}, or say what you meant under a key of your \
                  own: adding keys is never refused, and only the keys a type names are held to \
-                 what it declared.{}",
-                // **The allowed list is a project's columns**, so a caller who
-                // wants a word outside it is told which project holds the
-                // list, and that writing `columns` there extends the shipped
-                // five and never replaces them.
-                match (name.as_str(), key.as_str(), governed_by) {
-                    ("work" | "project", "status", Some(project)) => format!(
-                        " The allowed words are the columns of {project}, and they always keep \
-                         every shipped word: a project's columns extend the shipped five and \
-                         never replace them. Write columns on {project} to add a word of your \
-                         own, then send the status again."
-                    ),
-                    ("work" | "project", "status", None) => " This is filed under no project, so \
-                         it holds the shipped five. A work item takes the columns of the project \
-                         it is filed under, and a project's columns extend the shipped five \
-                         and never replace them."
-                        .to_string(),
-                    _ => String::new(),
-                }
+                 what it declared."
+            ),
+        )),
+        // **A shipped word means itself, so the way forward is a word of the
+        // caller's own** (rule 261). The five are named so the mapping can be
+        // written whole in the next call.
+        MemoryError::RemapsShippedWord { ref word, .. } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. '{word}' is one of the five words the software ships \
+                 and it means itself on every instance, so sending this again will not change \
+                 the answer. Map a word of your own instead: write `{}<your word>` set to the \
+                 shipped word it should mean, one of {}.",
+                jojobot_domain::memory::kinds::STATUS_WORD,
+                jojobot_domain::memory::kinds::WORK_STATUSES.join(", "),
             ),
         )),
         // **A different refusal, so a different way forward.** These two are
@@ -1345,6 +1342,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksType { .. }
+        | MemoryError::RemapsShippedWord { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
@@ -1894,7 +1892,14 @@ pub(crate) mod tests {
                     key: s("starts"),
                     wanted: s("date"),
                     value: s("soon"),
-                    governed_by: None,
+                },
+                Some("change"),
+            ),
+            (
+                "RemapsShippedWord",
+                MemoryError::RemapsShippedWord {
+                    word: s("done"),
+                    value: s("someday"),
                 },
                 Some("change"),
             ),

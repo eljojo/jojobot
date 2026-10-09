@@ -259,6 +259,9 @@ impl Jojobot {
                         fact_receipt_json(fact, self.dated(None, args.sid.as_deref()).await?),
                     );
                 }
+                if let Some(fact) = &claim {
+                    self.note_status_word(fact, &mut body).await;
+                }
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

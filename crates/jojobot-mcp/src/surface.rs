@@ -2273,9 +2273,9 @@ fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
          that a type does not will conclude nothing does: {taught}"
     );
     // **A kind can hold a key to one of a named set, and the paragraph says
-    // which key and which set.** A project's status is refused outside its list,
-    // so a paragraph that said nothing is ever blocked by a type would be false
-    // about the first write a cold session makes on a project. Pinned by the
+    // which key and which set.** A project's status holds the shipped five and
+    // the words its lists add, and a paragraph that named neither would leave a
+    // cold session guessing at the first write it makes on a project. Pinned by the
     // identifiers a caller sends, never by the sentence around them.
     for key in [
         jojobot_domain::memory::kinds::STATUS,

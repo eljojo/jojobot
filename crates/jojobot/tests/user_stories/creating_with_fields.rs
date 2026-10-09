@@ -63,20 +63,25 @@ async fn a_refused_field_refuses_the_whole_call_and_creates_nothing() {
     let s = story.session().await;
     s.add("project:atlas", "Atlas").await;
 
-    let sent = |status: &str| {
+    let sent = |key: &str, value: &str| {
         json!({
             "kind": "work", "handle": "sigma", "name": "Sigma", "source": "user-named",
             "parent": "project:atlas",
-            "sets": {"status": status},
+            "sets": {key: value},
         })
     };
-    s.refused("add_entity", sent("drafted, not asked"))
+    // A key that holds a reference refuses text that is no handle.
+    s.refused("add_entity", sent("waiting_on", "drafted, not asked"))
         .await
-        .says("status");
+        .says("waiting_on");
     s.list("work").await.never_says("work:sigma");
 
-    // The same call with an accepted word lands: nothing was left in the way.
-    let made = s.call("add_entity", sent("now")).await.json();
+    // The same call with a handle that exists lands: nothing was left in the way.
+    s.add("person:lisa", "Lisa").await;
+    let made = s
+        .call("add_entity", sent("waiting_on", "person:lisa"))
+        .await
+        .json();
     assert_eq!(made["id"], "work:sigma", "{made}");
     s.list("work").await.says("work:sigma");
     story.finish().await;

@@ -523,36 +523,65 @@ mod tests {
     use crate::memory::capture::CaptureArgs;
     use crate::memory::testing::*;
 
-    /// **The shipped vocabulary, asked of one handler**: a status outside the
-    /// shipped five is refused on a piece of work and nothing is written, and a
-    /// status inside it lands.
-    async fn holds_the_status_vocabulary(jojobot: &Jojobot, label: &str) {
+    /// **The shipped keys, asked of one handler**: a key that holds a handle
+    /// refuses text that is no handle and nothing is written, and a handle that
+    /// exists lands. A work item's status refuses nothing: a word outside the
+    /// shipped five lands and the answer names it, and a word inside lands quiet.
+    async fn holds_the_shipped_keys(jojobot: &Jojobot, label: &str) {
         ensure(jojobot, "work:phi").await;
-        let said = |status: &str| CaptureArgs {
+        ensure(jojobot, "person:lisa").await;
+        let said = |key: &str, value: &str| CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
-                [("status".to_string(), status.to_string())]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..capture_args("work:phi", "a status for the guard to judge")
+            fields: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+            ..capture_args("work:phi", "a value for the guard to judge")
         };
         let refused = jojobot
-            .capture(Parameters(said("nonsense")))
+            .capture(Parameters(said("owner", "not a handle")))
             .await
             .expect("capture call ok");
         let refused = json_of(&refused);
         assert_eq!(
             refused["status"], "blocked",
-            "{label}: a status outside the vocabulary was accepted: {refused}"
+            "{label}: text that is no handle was accepted under a reference key: {refused}"
         );
         assert!(
-            fields_of(jojobot, "work:phi").await.get("status").is_none(),
-            "{label}: a refused status left a trace"
+            fields_of(jojobot, "work:phi").await.get("owner").is_none(),
+            "{label}: a refused owner left a trace"
         );
-        // The positive the refusal rests on: the same write with a word the
-        // vocabulary holds lands, so the refusal above is about the word.
-        capture_ok(jojobot, said("now")).await;
+        // The positive the refusal rests on: a handle that exists lands, so the
+        // refusal above is about the value.
+        capture_ok(jojobot, said("owner", "person:lisa")).await;
+        assert_eq!(
+            fields_of(jojobot, "work:phi").await["owner"],
+            "person:lisa",
+            "{label}"
+        );
+        // A status word outside the five lands, and the answer names it.
+        let landed = json_of(
+            &jojobot
+                .capture(Parameters(said("status", "nonsense")))
+                .await
+                .expect("capture call ok"),
+        );
+        assert!(
+            landed["status_word_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("nonsense")),
+            "{label}: a status outside the vocabulary was not named: {landed}"
+        );
+        assert_eq!(
+            fields_of(jojobot, "work:phi").await["status"],
+            "nonsense",
+            "{label}"
+        );
+        // One inside the five lands with nothing to say.
+        let quiet = json_of(
+            &jojobot
+                .capture(Parameters(said("status", "now")))
+                .await
+                .expect("capture call ok"),
+        );
+        assert!(quiet.get("status_word_note").is_none(), "{label}: {quiet}");
         assert_eq!(
             fields_of(jojobot, "work:phi").await["status"],
             "now",
@@ -560,16 +589,16 @@ mod tests {
         );
     }
 
-    /// **Every plain handler a verb test can reach enforces the shipped
-    /// vocabulary.** The plain handler used to hold the shipped kinds with no
-    /// keys, so a status outside the five was accepted with a write receipt and
-    /// a test whose point was the vocabulary could not fail. Each constructor
-    /// that builds its own store is asked, so one that falls back to a bare
-    /// store reddens here by name.
+    /// **Every plain handler a verb test can reach holds the shipped keys.** The
+    /// plain handler used to hold the shipped kinds with no keys, so a value a
+    /// key does not hold was accepted with a write receipt and a test whose
+    /// point was a kind's keys could not fail. Each constructor that builds its
+    /// own store is asked, so one that falls back to a bare store reddens here by
+    /// name.
     #[tokio::test]
-    async fn every_plain_handler_refuses_a_status_outside_the_shipped_vocabulary() {
+    async fn every_plain_handler_holds_the_shipped_keys_and_lets_a_status_word_land() {
         for (label, jojobot) in plain_handlers() {
-            holds_the_status_vocabulary(&jojobot, label).await;
+            holds_the_shipped_keys(&jojobot, label).await;
         }
     }
 
@@ -613,9 +642,9 @@ mod tests {
 
     /// **A project's own columns, asked of one handler.** A project filed under
     /// no project is governed by its own list: a word outside the shipped five
-    /// is refused until the project lists it, and one write can carry the list
-    /// and a status that uses it. A project filed under it keeps that list, and
-    /// a list of its own does not widen it.
+    /// lands and names the project until the project lists it, and one write
+    /// can carry the list and a status that uses it. A project filed under it
+    /// keeps that list, and a list of its own does not widen it.
     async fn holds_the_project_columns(jojobot: &Jojobot, label: &str) {
         ensure(jojobot, "project:atlas").await;
         let status_of = |subject: &'static str| async move {
@@ -625,20 +654,22 @@ mod tests {
                 .and_then(|v| v.as_str().map(str::to_string))
         };
 
-        // No list: the shipped five hold, and the refusal names the project
-        // whose list a word is written on.
-        let refused = project_write(jojobot, "project:atlas", &[("status", "inbox")]).await;
-        assert_eq!(
-            refused["status"], "blocked",
-            "{label}: a word no list names was accepted: {refused}"
-        );
+        // No list: the shipped five hold, and the note names the project whose
+        // list a word is written on.
+        let named = project_write(jojobot, "project:atlas", &[("status", "inbox")]).await;
         assert!(
-            refused.to_string().contains("project:atlas"),
-            "{label}: the refusal does not name the project that governs: {refused}"
+            named["status_word_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("project:atlas")),
+            "{label}: a word no list names did not name the project that governs: {named}"
         );
-        assert_eq!(status_of("project:atlas").await, None, "{label}");
+        assert_eq!(
+            status_of("project:atlas").await.as_deref(),
+            Some("inbox"),
+            "{label}: a word no list names did not land"
+        );
 
-        // One write carries the list and a status that uses it.
+        // One write carries the list and a status that uses it, and says nothing.
         let landed = project_write(
             jojobot,
             "project:atlas",
@@ -649,20 +680,23 @@ mod tests {
         )
         .await;
         assert_ne!(landed["status"], "blocked", "{label}: {landed}");
-        assert_eq!(
-            status_of("project:atlas").await.as_deref(),
-            Some("inbox"),
-            "{label}"
+        assert!(
+            landed.get("status_word_note").is_none(),
+            "{label}: {landed}"
         );
 
-        // A word the list does not name is refused; one it does name lands.
-        let refused = project_write(jojobot, "project:atlas", &[("status", "backlog")]).await;
-        assert_eq!(
-            refused["status"], "blocked",
-            "{label}: a word outside the list was accepted: {refused}"
+        // A word the list does not name lands and the list is named; one it
+        // does name lands with nothing to say.
+        let outside = project_write(jojobot, "project:atlas", &[("status", "backlog")]).await;
+        assert!(
+            outside["status_word_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("inbox")),
+            "{label}: a word outside the list did not name the list: {outside}"
         );
         let kept = project_write(jojobot, "project:atlas", &[("status", "now")]).await;
         assert_ne!(kept["status"], "blocked", "{label}: {kept}");
+        assert!(kept.get("status_word_note").is_none(), "{label}: {kept}");
 
         // A project filed under it is held to that list.
         jojobot
@@ -673,8 +707,8 @@ mod tests {
             .await
             .expect("add_entity call ok");
         let inherited = project_write(jojobot, "project:the-shed", &[("status", "inbox")]).await;
-        assert_ne!(
-            inherited["status"], "blocked",
+        assert!(
+            inherited.get("status_word_note").is_none(),
             "{label}: a project under atlas did not take atlas's list: {inherited}"
         );
         let widened = project_write(
@@ -686,8 +720,10 @@ mod tests {
             ],
         )
         .await;
-        assert_eq!(
-            widened["status"], "blocked",
+        assert!(
+            widened["status_word_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("project:atlas") && note.contains("inbox")),
             "{label}: a list of its own widened the parent's: {widened}"
         );
     }

@@ -680,14 +680,29 @@ async fn view_section(
         // zone the instance's record holds, and UTC only when it holds none.
         let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
         let today = state.clock.today_in(&frame);
+        // **The words the operator mapped**, so a status that means `done` here
+        // finishes a thing exactly as it does in the verbs.
+        let instance =
+            jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await;
         found.retain(|object| {
-            attention::owed_as(object.entity.kind.as_token(), &carriers, &object.fields)
-                .owed_on(today)
+            attention::owed_as(
+                object.entity.kind.as_token(),
+                &carriers,
+                &object.fields,
+                &instance,
+            )
+            .owed_on(today)
         });
         // Oldest due first — see the identical line in recall.rs's own owed
         // read, the other caller of this same domain function.
         found.sort_by_key(|object| {
-            attention::owed_as(object.entity.kind.as_token(), &carriers, &object.fields).staleness()
+            attention::owed_as(
+                object.entity.kind.as_token(),
+                &carriers,
+                &object.fields,
+                &instance,
+            )
+            .staleness()
         });
     }
     if found.is_empty() {

@@ -3325,6 +3325,121 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
     ct.cancel();
 }
 
+/// **The overdue page leaves out a project whose status word the instance maps
+/// to `done`, and keeps one whose word nobody mapped.** Two projects hold the
+/// same past decide-by day. The instance's record maps `wrapped` to `done`, and
+/// says nothing about `adrift`, so the first is finished and the second is not.
+/// The page reads the instance's record the way the verbs do.
+#[tokio::test]
+async fn the_overdue_page_reads_the_words_the_instance_maps() {
+    let memory = memory_with_views().await;
+    for (handle, status) in [("project:atlas", "wrapped"), ("project:visa", "adrift")] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                handle,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the project is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(NewFact {
+                fields: [
+                    ("decide_by".to_string(), "2020-01-01".to_string()),
+                    ("status".to_string(), status.to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "where it stands",
+                    Date::constant(2026, 3, 5),
+                )
+            })
+            .await
+            .expect("the status is written");
+    }
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("topic:instance".into()),
+            "This instance",
+            "the operator",
+        ))
+        .await
+        .expect("the instance's record is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [("status_word/wrapped".to_string(), "done".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("topic:instance".into()),
+                "what the operator's words mean",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the mapping is written");
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:my-projects".into()),
+            "My Projects",
+            "the operator",
+        ))
+        .await
+        .expect("the view is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [
+                ("selects".to_string(), "project".to_string()),
+                ("asks".to_string(), "overdue".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:my-projects".into()),
+                "which projects are late",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the question is written");
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:my-projects/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let answer = page
+        .split_once("id=\"answer\"")
+        .expect("the page carries the view's answer")
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+
+    assert!(
+        answer.contains("project:visa"),
+        "a word nobody mapped is not finished, so the project is late: {answer}"
+    );
+    assert!(
+        !answer.contains("project:atlas"),
+        "a word mapped to done finishes the project: {answer}"
+    );
+    ct.cancel();
+}
+
 /// **A handle that is no view is unaffected.**
 #[tokio::test]
 async fn a_page_that_is_no_view_carries_no_answer() {

@@ -749,8 +749,13 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
 /// **What is owed by a thing of this kind**: [`owed`], except that a finished
 /// work item or project owes nothing. Its date stays on the record; it is no
 /// longer asked for.
-pub fn owed_as(kind: &str, carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due {
-    if crate::memory::kinds::is_finished(kind, fields) {
+pub fn owed_as(
+    kind: &str,
+    carriers: &[&dyn Carrier],
+    fields: &BTreeMap<String, String>,
+    instance: &BTreeMap<String, String>,
+) -> Due {
+    if crate::memory::kinds::is_finished(kind, fields, instance) {
         return Due::Never;
     }
     owed(carriers, fields)
@@ -876,8 +881,9 @@ pub fn moved_due_moment_as(
     existing: Option<Date>,
     held: &BTreeMap<String, String>,
     projected: &BTreeMap<String, String>,
+    instance: &BTreeMap<String, String>,
 ) -> DueMove {
-    if crate::memory::kinds::is_finished(kind, projected) {
+    if crate::memory::kinds::is_finished(kind, projected, instance) {
         return match existing {
             Some(_) => DueMove::Cleared,
             None => DueMove::Unchanged,
@@ -1782,14 +1788,15 @@ mod tests {
             .collect()
         };
         let past = date(2026, 6, 1);
+        let none = BTreeMap::new();
 
         for kind in ["work", "project"] {
             assert!(
-                owed_as(kind, &asked, &held("now")).owed_on(past),
+                owed_as(kind, &asked, &held("now"), &none).owed_on(past),
                 "{kind} at now with a past decide_by is owed",
             );
             assert!(
-                !owed_as(kind, &asked, &held("done")).owed_on(past),
+                !owed_as(kind, &asked, &held("done"), &none).owed_on(past),
                 "{kind} at done is not owed",
             );
             assert_eq!(
@@ -1799,7 +1806,7 @@ mod tests {
             );
         }
         assert!(
-            owed_as("thing", &asked, &held("done")).owed_on(past),
+            owed_as("thing", &asked, &held("done"), &none).owed_on(past),
             "a status on a thing of another kind finishes nothing",
         );
 
@@ -1810,11 +1817,12 @@ mod tests {
                 Some(date(2026, 1, 1)),
                 &held("now"),
                 &held("done"),
+                &none,
             ),
             DueMove::Cleared,
         );
         assert_eq!(
-            moved_due_moment_as("work", &asked, None, &held("now"), &held("now")),
+            moved_due_moment_as("work", &asked, None, &held("now"), &held("now"), &none),
             DueMove::Set(date(2026, 1, 1)),
         );
         assert_eq!(
@@ -1824,8 +1832,89 @@ mod tests {
                 Some(date(2026, 1, 1)),
                 &held("now"),
                 &held("done"),
+                &none,
             ),
             DueMove::Unchanged,
+        );
+    }
+
+    /// **A status word the operator mapped behaves as its shipped word, and a
+    /// word nobody mapped is not finished.** The instance's `status_word/<word>`
+    /// keys say what a word means. A word mapped to `done` finishes a work item
+    /// or project, a word mapped to anything else is owed like that word, a word
+    /// with no mapping is owed, and a shipped word means itself whatever a stored
+    /// mapping says. A mapping whose value is no shipped word maps nothing.
+    #[test]
+    fn a_mapped_status_word_behaves_as_its_shipped_word_and_an_unmapped_one_is_unfinished() {
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+        let fields = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let held = |status: &str| fields(&[(DECIDE_BY, "2026-01-01"), ("status", status)]);
+        let past = date(2026, 6, 1);
+        let mapping = fields(&[
+            ("status_word/considering", "someday"),
+            ("status_word/closed", "done"),
+            ("status_word/vague", "finished"),
+        ]);
+
+        assert!(
+            owed_as("work", &asked, &held("considering"), &mapping).owed_on(past),
+            "a word mapped to an unfinished word is owed like it",
+        );
+        assert!(
+            !owed_as("work", &asked, &held("closed"), &mapping).owed_on(past),
+            "a word mapped to done finishes the work",
+        );
+        assert!(
+            !owed_as("project", &asked, &held("closed"), &mapping).owed_on(past),
+            "a project reads the mapping the same way",
+        );
+        assert!(
+            owed_as("work", &asked, &held("wrapped up"), &mapping).owed_on(past),
+            "a word nobody mapped is not finished",
+        );
+        assert!(
+            owed_as("work", &asked, &held("vague"), &mapping).owed_on(past),
+            "a mapping to a word the software does not ship maps nothing",
+        );
+        assert!(
+            owed_as("thing", &asked, &held("closed"), &mapping).owed_on(past),
+            "a status on a thing of another kind finishes nothing, mapped or not",
+        );
+        let hostile = fields(&[("status_word/done", "someday")]);
+        assert!(
+            !owed_as("work", &asked, &held("done"), &hostile).owed_on(past),
+            "a shipped word means itself whatever a stored mapping says",
+        );
+
+        assert_eq!(
+            moved_due_moment_as(
+                "work",
+                &asked,
+                Some(date(2026, 1, 1)),
+                &held("now"),
+                &held("closed"),
+                &mapping,
+            ),
+            DueMove::Cleared,
+            "the mover clears the moment of a work item moved into a word that means done",
+        );
+        assert_eq!(
+            moved_due_moment_as(
+                "work",
+                &asked,
+                None,
+                &held("closed"),
+                &held("considering"),
+                &mapping,
+            ),
+            DueMove::Set(date(2026, 1, 1)),
+            "and puts it back when the work moves to a word that means something unfinished",
         );
     }
 
@@ -1854,6 +1943,7 @@ mod tests {
                 leftover,
                 &fields(&[("status", "now")]),
                 &fields(&[("status", "next")]),
+                &BTreeMap::new(),
             ),
             DueMove::Unchanged,
             "no carrier answered before or after, so the date was never jojobot's to clear",
@@ -1865,6 +1955,7 @@ mod tests {
                 leftover,
                 &fields(&[("status", "now")]),
                 &fields(&[("status", "done")]),
+                &BTreeMap::new(),
             ),
             DueMove::Cleared,
             "finishing clears it whether or not a carrier answered",
@@ -1876,6 +1967,7 @@ mod tests {
                 leftover,
                 &fields(&[(DECIDE_BY, "2026-06-01"), ("status", "now")]),
                 &fields(&[("status", "now")]),
+                &BTreeMap::new(),
             ),
             DueMove::Cleared,
             "a carrier answered before and no longer does, so the stored date is stale",

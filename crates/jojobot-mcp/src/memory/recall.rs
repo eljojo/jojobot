@@ -494,8 +494,17 @@ fn hit_candidate_ceiling(hit_count: usize, limit: usize) -> bool {
 /// Which clock a neighbourhood read compares.
 /// **What an object owes, asked of its kind too**: a finished work item or
 /// project owes nothing — see [`attention::owed_as`].
-fn owed_by(carriers: &[&dyn attention::Carrier], object: &graph::Object) -> attention::Due {
-    attention::owed_as(object.entity.kind.as_token(), carriers, &object.fields)
+fn owed_by(
+    carriers: &[&dyn attention::Carrier],
+    object: &graph::Object,
+    instance: &std::collections::BTreeMap<String, String>,
+) -> attention::Due {
+    attention::owed_as(
+        object.entity.kind.as_token(),
+        carriers,
+        &object.fields,
+        instance,
+    )
 }
 
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
@@ -2179,20 +2188,23 @@ impl Jojobot {
             // owes nothing, which is what keeps a person out of an answer about
             // what is late.
             let asked = self.carriers();
+            // **What the operator mapped their status words to**, read once: a
+            // word mapped to `done` finishes a work item or project here too.
+            let instance = self.instance_fields().await;
             let before = found.len();
-            found.retain(|object| owed_by(&asked, object).owed_on(as_of));
+            found.retain(|object| owed_by(&asked, object, &instance).owed_on(as_of));
             overdue_excluded = Some(before - found.len());
             // **Oldest due first — which has gone quiet longest, answered by
             // the order rather than left for a caller to re-derive from dates
             // it was never given.** Ordering an already-found, already-filtered
             // set costs nothing extra to find.
-            found.sort_by_key(|object| owed_by(&asked, object).staleness());
+            found.sort_by_key(|object| owed_by(&asked, object, &instance).staleness());
             // **Read off the same `Due` the order already came from**, so the
             // number on the wire cannot disagree with the position it is in.
             overdue_by_days = Some(
                 found
                     .iter()
-                    .map(|object| owed_by(&asked, object).days_overdue(as_of))
+                    .map(|object| owed_by(&asked, object, &instance).days_overdue(as_of))
                     .collect(),
             );
         }

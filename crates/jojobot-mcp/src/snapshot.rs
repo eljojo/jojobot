@@ -350,13 +350,14 @@ fn answered(result: Result<rmcp::model::CallToolResult, rmcp::ErrorData>) -> Str
     }
 }
 
-/// **The refusal of a status outside the vocabulary, from a live write.** A
-/// piece of work is given a status nobody declared and the answer is read as a
-/// caller reads it, so the words in it are the words the domain builds from the
-/// statuses it holds today. The vocabulary is printed first, from the same
+/// **The note on a status outside the vocabulary, from a live write.** A piece
+/// of work is given a status nobody declared. It lands, and the answer carries a
+/// note the caller reads, so the words in it are the words the build composes
+/// from the statuses it holds today. Only the note is printed: the rest of the
+/// answer holds a timestamp. The vocabulary is printed first, from the same
 /// constant, so a status added or dropped changes this file even where the
-/// refusal's wording does not show it.
-async fn status_refusal(doc: &mut Doc) {
+/// note's wording does not show it.
+async fn status_note(doc: &mut Doc) {
     use jojobot_domain::memory::kinds::WORK_STATUSES;
     let jojobot = handler_shipped();
     crate::memory::testing::ensure(&jojobot, "work:atlas-root").await;
@@ -365,15 +366,19 @@ async fn status_refusal(doc: &mut Doc) {
     let result = jojobot
         .capture(Parameters(args))
         .await
-        .expect("a refusal is an answer");
+        .expect("a status outside the vocabulary lands");
+    let answer = json_of(&result);
+    let note = answer["status_word_note"]
+        .as_str()
+        .expect("the answer carries the note");
     doc.text(
         3,
-        "Refusal of a status outside the vocabulary, rendered from a live write",
+        "Note on a status outside the vocabulary, rendered from a live write",
         "text",
         &format!(
-            "vocabulary (WORK_STATUSES): {}\nanswer: {}",
+            "vocabulary (WORK_STATUSES): {}\nstatus_word_note: {}",
             WORK_STATUSES.join(", "),
-            pretty(&json_of(&result))
+            note
         ),
     );
 }
@@ -387,7 +392,7 @@ async fn refusals(doc: &mut Doc) {
          it, from data it only has at that moment. Its words appear in this file only where the \
          same words are in a description or an error kind's template.",
     );
-    status_refusal(doc).await;
+    status_note(doc).await;
     for (label, error, _) in crate::memory::declined::tests::memory_refusal_rows() {
         let reads = error.to_string();
         let said = answered(crate::memory::declined::memory_declined("capture", error));

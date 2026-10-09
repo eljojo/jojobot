@@ -429,8 +429,9 @@ next". A claim that says "now" or "next" is chronology, and the next write of
 sentence.
 
 `status` is where the work stands. It takes one of five words: `someday`,
-`next`, `now`, `waiting` or `done`. A word outside the five is refused, and the
-refusal names them. `owner` is the handle of the person who does the work.
+`next`, `now`, `waiting` or `done`. A word outside the five lands, counts as not
+finished, and the answer names the words that govern and the write that binds
+it. `owner` is the handle of the person who does the work.
 `waiting_on` is the handle of the person whose move it is. When that person is
 the operator, their handle is the one the boot names on its operator line.
 `depends_on` lists
@@ -445,8 +446,10 @@ the order you want it, under `columns`. The work filed under that project may
 then take any word on the list. A project that is not filed under a project
 takes its own list for its own status. A project filed under a project keeps
 that project's list, and a list of its own does not widen it. The list always
-keeps the shipped words. A word outside the list is refused, and the refusal
-names the list and the project that holds it.
+keeps the shipped words. A word outside the list lands, counts as not finished,
+and the answer names the list and the project that holds it. The instance's own
+record lists `columns` the same way for every project, and a `status_word/<word>`
+key on it, set to a shipped word, says what one of your own words means.
 
     capture  subject: "project:atlas"  fields: {"columns": "inbox, someday, next, now, waiting, done"}
 

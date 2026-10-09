@@ -446,7 +446,7 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
 
 /// **Where a piece of work stands is kept on the keys the skill names**, so
 /// what is next, what waits on whom and what stands on what are each a read of
-/// one key, and a status outside the project's list is refused with the list.
+/// one key, and a status outside the project's list lands with the list named.
 #[tokio::test]
 async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
     let story = Story::begin("bot:gamma").await;
@@ -516,8 +516,8 @@ async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
         .await;
     stands_on_phi.says("work:sigma");
 
-    let refused = s
-        .refused(
+    let landed = s
+        .call(
             "capture",
             json!({
                 "subject": "work:phi", "content": "where it stands",
@@ -525,7 +525,198 @@ async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
             }),
         )
         .await;
-    refused.says("inbox");
+    landed.says("inbox");
+    s.call("recall", json!({"subject": "work:phi"}))
+        .await
+        .says("\"status\":\"backlog\"");
+    story.finish().await;
+}
+
+/// **"Considering" is the operator's word, and nothing refuses it.** On a fresh
+/// project with no parent it lands, and the receipt names the words the project
+/// holds, says the word counts as not finished, and names the one write that
+/// binds it. After the instance maps it to a shipped word the receipt is quiet,
+/// the thing still falls due, and `done` still finishes.
+#[tokio::test]
+async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add("topic:instance", "This instance").await;
+
+    // ── lands, and the receipt names what governs the word ──────────────────
+    let landed = s
+        .call(
+            "capture",
+            json!({
+                "subject": "project:atlas", "content": "weighing it up",
+                "provenance": "testimony",
+                "fields": {"status": "considering", "decide_by": "2026-01-01"},
+            }),
+        )
+        .await;
+    let note = landed.json()["status_word_note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a word outside the set is named: {}", landed.json()))
+        .to_string();
+    for governing in ["someday", "next", "now", "waiting", "done"] {
+        assert!(
+            note.contains(governing),
+            "the note names {governing}: {note}"
+        );
+    }
+    assert!(
+        note.contains("considering") && note.contains("columns") && note.contains("status_word/"),
+        "the note names the word and the two writes that bind it: {note}"
+    );
+    s.call("recall", json!({"subject": "project:atlas"}))
+        .await
+        .says("\"status\":\"considering\"");
+
+    // ── an unmapped word is not finished, so the thing is owed ──────────────
+    let owed = || {
+        s.call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-06-01"}}),
+        )
+    };
+    owed().await.says("project:atlas");
+
+    // ── the instance maps it: the receipt goes quiet, the thing still falls due
+    s.event_with(
+        "topic:instance",
+        "what the operator's words mean",
+        json!({"status_word/considering": "someday", "status_word/closed": "done"}),
+        &[],
+    )
+    .await;
+    let mapped = s
+        .call(
+            "capture",
+            json!({
+                "subject": "project:atlas", "content": "still weighing it up",
+                "provenance": "testimony", "fields": {"status": "considering"},
+            }),
+        )
+        .await;
+    assert!(
+        mapped.json().get("status_word_note").is_none(),
+        "a mapped word is named no more: {}",
+        mapped.json()
+    );
+    owed().await.says("project:atlas");
+
+    // ── a word mapped to done finishes it, and a shipped word still does ───
+    s.event_with(
+        "project:atlas",
+        "closed out",
+        json!({"status": "closed"}),
+        &[],
+    )
+    .await;
+    owed().await.never_says("project:atlas");
+    // The word that means done takes the stored moment off, as `done` does.
+    s.call("recall", json!({"subject": "project:atlas"}))
+        .await
+        .never_says("\"due_on\"");
+    s.event_with(
+        "project:atlas",
+        "reopened",
+        json!({"status": "considering"}),
+        &[],
+    )
+    .await;
+    owed().await.says("project:atlas");
+    s.event_with("project:atlas", "over", json!({"status": "done"}), &[])
+        .await;
+    owed().await.never_says("project:atlas");
+
+    // ── a mapping written AFTER the status finishes the thing when it is read ─
+    //
+    // The stored due moment is still on the project, because no write moved
+    // it; only the read can leave the project out.
+    s.event_with("project:atlas", "parked", json!({"status": "wrapped"}), &[])
+        .await;
+    owed().await.says("project:atlas");
+    s.event_with(
+        "topic:instance",
+        "wrapped means done",
+        json!({"status_word/wrapped": "done"}),
+        &[],
+    )
+    .await;
+    owed().await.never_says("project:atlas");
+    story.finish().await;
+}
+
+/// **A word the instance lists is quiet even before it is mapped**, and a shipped
+/// word cannot be given another meaning: the bad mapping fails, names the way
+/// forward, leaves the instance as it was, and the good mapping still lands.
+#[tokio::test]
+async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_alone() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add("topic:instance", "This instance").await;
+    s.event_with(
+        "topic:instance",
+        "the operator's words",
+        json!({"columns": "considering, someday, next, now, waiting, done"}),
+        &[],
+    )
+    .await;
+
+    // The listed word lands with no note: the accepted set holds it.
+    let listed = s
+        .call(
+            "capture",
+            json!({
+                "subject": "project:atlas", "content": "weighing it up",
+                "provenance": "testimony", "fields": {"status": "considering"},
+            }),
+        )
+        .await;
+    assert!(
+        listed.json().get("status_word_note").is_none(),
+        "a word the instance lists needs no note: {}",
+        listed.json()
+    );
+
+    // A list that drops a shipped word is refused here as on a project.
+    s.refused(
+        "capture",
+        json!({
+            "subject": "topic:instance", "content": "a shorter list",
+            "provenance": "testimony", "fields": {"columns": "someday, next, now, done"},
+        }),
+    )
+    .await
+    .says("waiting")
+    .says("\"wrote\":false");
+
+    let before = s.recall("topic:instance").await.json();
+    s.refused(
+        "capture",
+        json!({
+            "subject": "topic:instance", "content": "done means something else",
+            "provenance": "testimony", "fields": {"status_word/done": "someday"},
+        }),
+    )
+    .await
+    .says("status_word/")
+    .says("done")
+    .says("\"wrote\":false");
+    assert_eq!(s.recall("topic:instance").await.json(), before);
+    s.event_with(
+        "topic:instance",
+        "closed means done",
+        json!({"status_word/closed": "done"}),
+        &[],
+    )
+    .await;
+    s.recall("topic:instance")
+        .await
+        .says("\"status_word/closed\":\"done\"");
     story.finish().await;
 }
 
@@ -586,5 +777,94 @@ async fn an_answer_the_operator_asked_to_keep_is_there_for_a_later_session() {
         )
         .await
         .says("\"budget_truth\":\"150\"");
+    story.finish().await;
+}
+
+/// **Every verb that can set a status names a word outside the set**, and none
+/// of them names a word inside it: creating a work item with a status, editing
+/// it through the entity, and editing the claim that holds it.
+#[tokio::test]
+async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_that() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+
+    // ── add_entity with a status ────────────────────────────────────────────
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "phi", "name": "Phi", "source": "user-named",
+                "parent": "project:atlas", "sets": {"status": "considering"},
+            }),
+        )
+        .await
+        .json();
+    assert!(
+        made["status_word_note"]
+            .as_str()
+            .is_some_and(|note| note.contains("considering")),
+        "creating with an outside word names it: {made}"
+    );
+
+    // ── update_entity with a status ─────────────────────────────────────────
+    let edited = s
+        .call(
+            "update_entity",
+            json!({"handle": "work:phi", "sets": {"status": "pondering"}}),
+        )
+        .await
+        .json();
+    assert!(
+        edited["status_word_note"]
+            .as_str()
+            .is_some_and(|note| note.contains("pondering")),
+        "editing the entity names it: {edited}"
+    );
+    let inside = s
+        .call(
+            "update_entity",
+            json!({"handle": "work:phi", "sets": {"status": "now"}}),
+        )
+        .await
+        .json();
+    assert!(
+        inside.get("status_word_note").is_none(),
+        "a word inside the set is not named: {inside}"
+    );
+
+    // ── update_fact on the claim that holds it ──────────────────────────────
+    let address = s
+        .event_with(
+            "work:phi",
+            "where it stands",
+            json!({"status": "next"}),
+            &[],
+        )
+        .await;
+    let claim = s
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"status": "musing"}}),
+        )
+        .await
+        .json();
+    assert!(
+        claim["status_word_note"]
+            .as_str()
+            .is_some_and(|note| note.contains("musing")),
+        "editing the claim names it: {claim}"
+    );
+    let back = s
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"status": "waiting"}}),
+        )
+        .await
+        .json();
+    assert!(
+        back.get("status_word_note").is_none(),
+        "a word inside the set is not named: {back}"
+    );
     story.finish().await;
 }

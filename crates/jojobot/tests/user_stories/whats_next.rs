@@ -77,10 +77,10 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     )
     .await;
 
-    // ── a status that is free text is refused, and the refusal says what the
-    // key holds ──────────────────────────────────────────────────────────────
+    // ── a status that is free text lands, and the answer says what the key
+    // holds ──────────────────────────────────────────────────────────────
     let refused = s
-        .refused(
+        .call(
             "capture",
             json!({
                 "subject": "work:phi", "content": "where it stands",
@@ -95,11 +95,10 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     // The list is the project's columns, and writing columns extends it.
     refused.says("columns");
 
-    // **A word outside the project's columns is refused and the list is
-    // named**, while a work item under no project is held to the five: the
+    // **A word outside the project's columns lands and the list is named**, while a work item under no project is held to the five: the
     // project's own column is no column there.
     let outside = s
-        .refused(
+        .call(
             "capture",
             json!({
                 "subject": "work:first-mix", "content": "where it stands",
@@ -111,9 +110,9 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     outside.says("inbox");
     outside.says("this release");
     outside.says("columns");
-    // The refusal names the five and not the project's list, which the call
+    // The answer names the five and not the project's list, which the call
     // could not echo: the caller sent `inbox`, so that word proves nothing.
-    s.refused(
+    s.call(
         "capture",
         json!({
             "subject": "work:sigma", "content": "where it stands",
@@ -124,6 +123,17 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     .await
     .says("someday")
     .never_says("this release");
+
+    // The three words above landed, so the three items are put back where they
+    // stood before the cold session asks what is next.
+    for (subject, status) in [
+        ("work:phi", "next"),
+        ("work:first-mix", "now"),
+        ("work:sigma", "waiting"),
+    ] {
+        s.event_with(subject, "put back", json!({"status": status}), &[])
+            .await;
+    }
 
     // ── a cold session, told nothing, asks ──────────────────────────────────
     let cold = story.as_bot("bot:assistant").await;
@@ -259,11 +269,11 @@ async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
     story.finish().await;
 }
 
-/// "The refusal told me to write columns on the project, I did, and it refused
-/// the word again." A project filed under no project has nowhere else to write
-/// its columns, so its own list governs its own status, and the route the
-/// refusal names works. One filed under a project keeps that project's list,
-/// and a list of its own does not widen it.
+/// "The note told me to write columns on the project, I did, and it named the
+/// word again." A project filed under no project has nowhere else to write its
+/// columns, so its own list governs its own status, and the route the note names
+/// works. One filed under a project keeps that project's list, and a list of its
+/// own does not widen it.
 #[tokio::test]
 async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_project_to_its_parents()
  {
@@ -280,7 +290,7 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
     )
     .await;
 
-    // ── under no project: the refusal is followed to the end ─────────────────
+    // ── under no project: the note is followed to the end ───────────────────
     let status = |subject: &str, word: &str| {
         json!({
             "subject": subject, "content": "where it stands",
@@ -288,14 +298,14 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
         })
     };
     let write = status("project:visa", "considering");
-    // ① The word is refused. The refusal names the project whose columns
-    // govern, which is this one, and the shipped words it always keeps.
-    let refused = s.refused("capture", write.clone()).await;
+    // ① The word lands. The answer names the project whose columns govern,
+    // which is this one, and the shipped words it always keeps.
+    let refused = s.call("capture", write.clone()).await;
     refused.says("project:visa");
     for word in ["someday", "next", "now", "waiting", "done"] {
         refused.says(word);
     }
-    // ② The columns are written where the refusal says.
+    // ② The columns are written where the note says.
     s.event_with(
         "project:visa",
         "the board's columns",
@@ -303,15 +313,15 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
         &[],
     )
     .await;
-    // ③ The same write now lands, and ④ the status reads back.
-    s.call("capture", write).await;
+    // ③ The same write now lands with nothing more to say, and ④ the status
+    // reads back.
+    let quiet = s.call("capture", write).await.json();
+    assert!(quiet.get("status_word_note").is_none(), "{quiet}");
     s.recall("project:visa")
         .await
         .says("\"status\":\"considering\"");
-    // The list that governs is the one the refusal now names, in full.
-    let again = s
-        .refused("capture", status("project:visa", "pondering"))
-        .await;
+    // The list that governs is the one the note now names, in full.
+    let again = s.call("capture", status("project:visa", "pondering")).await;
     again.says("considering");
     again.says("project:visa");
 
@@ -346,9 +356,9 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
         &[],
     )
     .await;
-    // The refusal names the parent, whose columns govern, and its words.
+    // The note names the parent, whose columns govern, and its words.
     let child = s
-        .refused("capture", status("project:jojobot-server", "backlog"))
+        .call("capture", status("project:jojobot-server", "backlog"))
         .await;
     child.says("project:kitchen-floor");
     child.says("inbox");
@@ -367,11 +377,12 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
 }
 
 /// "The orientation said no write is ever blocked by a type, and the project
-/// refused my status." The essay a cold session reads says which key a kind holds
-/// to a named set and where that set is extended, and the session that follows
-/// the refusal the essay prepared it for ends with the write landed.
+/// told me my status was outside its words." The essay a cold session reads says
+/// which key a kind holds to a named set and where that set is extended, and the
+/// session that follows the note the essay prepared it for ends with a write
+/// that no longer needs one.
 #[tokio::test]
-async fn a_cold_session_taught_by_the_essay_follows_a_status_refusal_to_a_landed_write() {
+async fn a_cold_session_taught_by_the_essay_follows_a_status_note_to_a_write_that_needs_none() {
     let story = Story::begin("bot:otto").await;
 
     // ── the essay, read by a session that was told nothing ──────────────────
@@ -398,12 +409,15 @@ async fn a_cold_session_taught_by_the_essay_follows_a_status_refusal_to_a_landed
         "subject": "project:atlas", "content": "where it stands",
         "provenance": "testimony", "fields": {"status": "considering"},
     });
-    let refused = s.refused("capture", write.clone()).await;
-    // The refusal names the project that holds the list, as the essay said it would.
-    refused.says("project:atlas");
-    refused.says("columns");
+    let landed = s.call("capture", write.clone()).await;
+    // The answer names the project that holds the list, as the essay said it would.
+    landed.says("project:atlas");
+    landed.says("columns");
+    s.recall("project:atlas")
+        .await
+        .says("\"status\":\"considering\"");
 
-    // ── it follows the refusal: columns on that project, then the same write ──
+    // ── it follows the note: columns on that project, then the same write ───
     s.event_with(
         "project:atlas",
         "the board's columns",
@@ -411,10 +425,8 @@ async fn a_cold_session_taught_by_the_essay_follows_a_status_refusal_to_a_landed
         &[],
     )
     .await;
-    s.call("capture", write).await;
-    s.recall("project:atlas")
-        .await
-        .says("\"status\":\"considering\"");
+    let quiet = s.call("capture", write).await.json();
+    assert!(quiet.get("status_word_note").is_none(), "{quiet}");
 
     story.finish().await;
 }
