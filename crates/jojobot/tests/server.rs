@@ -1138,3 +1138,276 @@ async fn a_request_declaring_a_revision_jojobot_cannot_serve_is_refused_too() {
 
     ct.cancel();
 }
+
+/// A log buffer a subscriber writes into, read back by the case that installed
+/// it.
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogBuffer {
+    /// Every WARN-or-worse line logged so far.
+    fn warnings(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// **Capture what the server logs at WARN for the rest of the case.** The case
+/// runs on the test's own single thread, and so does the server it spawns, so
+/// a subscriber set for this thread sees the server's events.
+fn capture_warnings() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+    let buffer = LogBuffer::default();
+    let writer = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .finish();
+    (buffer, tracing::subscriber::set_default(subscriber))
+}
+
+/// **The next JSON-RPC message on an open event stream**, or `None` when the
+/// stream has ended. An event is complete at a blank line; one that carries no
+/// data, such as the priming event, is skipped.
+async fn next_stream_message(
+    stream: &mut reqwest::Response,
+    pending: &mut String,
+) -> Option<serde_json::Value> {
+    loop {
+        while let Some(end) = pending.find("\n\n") {
+            let event: String = pending.drain(..end + 2).collect();
+            if let Some(message) = event
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .find_map(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+            {
+                return Some(message);
+            }
+        }
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.chunk())
+            .await
+            .unwrap_or_else(|_| {
+                panic!("the stream neither carried nor ended within five seconds: {pending:?}")
+            })
+            .ok()??;
+        pending.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
+    }
+}
+
+/// The listen request every case below opens: the one category jojobot
+/// advertises.
+async fn open_listen(
+    http: &reqwest::Client,
+    url: &str,
+    session: Option<&str>,
+    id: u32,
+) -> reqwest::Response {
+    over(
+        http,
+        url,
+        "2026-07-28",
+        session,
+        id,
+        "subscriptions/listen",
+        serde_json::json!({ "notifications": { "toolsListChanged": true } }),
+    )
+    .send()
+    .await
+    .unwrap()
+}
+
+/// **Tasks the test runtime holds alive right now.** The server this file
+/// spawns runs on the test's own runtime, so a request the server still holds
+/// open shows here.
+fn live_tasks() -> usize {
+    tokio::runtime::Handle::current()
+        .metrics()
+        .num_alive_tasks()
+}
+
+/// **A client on the newest revision may listen for a changed tool list.**
+///
+/// jojobot agrees to `2026-07-28` and advertises that its tool list can move,
+/// and that revision is where a client asks to be told: `subscriptions/listen`
+/// is acknowledged and then held open. Answering method-not-found to a method
+/// the agreed revision defines is a wrong answer, and the SDK logs it at WARN
+/// on every connection.
+///
+/// The request carries its own version and no handshake precedes it, as a
+/// client on this revision sends it. A request with no session cannot be
+/// cancelled by a notification, because a notification is a request of its own
+/// and meets a different handler: the client ends it by closing the stream.
+#[tokio::test]
+async fn a_client_on_the_newest_revision_may_listen() {
+    let (warnings, _log) = capture_warnings();
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+
+    let mut stream = open_listen(&http, &url, None, 7).await;
+    assert!(
+        stream.status().is_success(),
+        "{} {:?}",
+        stream.status(),
+        stream.headers()
+    );
+    let mut pending = String::new();
+    let first = next_stream_message(&mut stream, &mut pending)
+        .await
+        .expect("the listen is answered with an acknowledgement");
+    assert!(
+        first["error"].is_null(),
+        "a listen on the newest revision is not refused: {first}"
+    );
+    assert_eq!(
+        first["method"], "notifications/subscriptions/acknowledged",
+        "the first thing on the stream is the acknowledgement: {first}"
+    );
+    assert_eq!(
+        first["params"]["notifications"]["toolsListChanged"], true,
+        "the acknowledgement names the one category that was asked for and is served: {first}"
+    );
+
+    // It is held open: nothing more arrives and the stream does not end.
+    let held = tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        next_stream_message(&mut stream, &mut pending),
+    )
+    .await;
+    assert!(
+        held.is_err(),
+        "a listen is held open until the client closes it: {held:?}"
+    );
+
+    drop(stream);
+    assert!(
+        warnings.warnings().is_empty(),
+        "listening is not a fault, so it logs no WARN: {}",
+        warnings.warnings()
+    );
+    ct.cancel();
+}
+
+/// **Closing the connection ends the listen the server is holding.** The
+/// parked request is the cost of serving it, so it has to be shown to end
+/// rather than assumed to: a connection per call, four listens per connection,
+/// and any that outlived the connection would pile up for as long as the
+/// process runs.
+///
+/// Measured as the tasks the runtime holds. The count rises while the listen
+/// is open and returns to what it was before the connection existed once the
+/// stream is dropped.
+#[tokio::test]
+async fn closing_the_connection_ends_the_listen() {
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    // Let the server's own start-up tasks settle, so the count below is the
+    // listen's and not theirs.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let before = live_tasks();
+
+    let http = reqwest::Client::new();
+    let mut stream = open_listen(&http, &url, None, 3).await;
+    let mut pending = String::new();
+    let first = next_stream_message(&mut stream, &mut pending)
+        .await
+        .expect("the listen is acknowledged");
+    assert_eq!(first["method"], "notifications/subscriptions/acknowledged");
+    let open = live_tasks();
+    assert!(
+        open > before,
+        "an open listen holds tasks ({before} before, {open} while open), or this measures nothing"
+    );
+
+    drop(stream);
+    drop(http);
+    let mut after = live_tasks();
+    for _ in 0..50 {
+        if after <= before {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        after = live_tasks();
+    }
+    assert!(
+        after <= before,
+        "the server still holds the listen after the connection closed: {before} tasks before, \
+         {open} while open, {after} after"
+    );
+    ct.cancel();
+}
+
+/// **A method jojobot does not implement still answers method-not-found, and
+/// the SDK still logs it at WARN.** The pair of the case above: a real error
+/// stays loud.
+#[tokio::test]
+async fn a_method_jojobot_does_not_implement_still_answers_method_not_found() {
+    let (warnings, _log) = capture_warnings();
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+    let (session, _) = open_with(&http, &url, "2026-07-28").await;
+
+    let answered = over(
+        &http,
+        &url,
+        "2026-07-28",
+        session.as_deref(),
+        9,
+        "prompts/get",
+        serde_json::json!({ "name": "nothing" }),
+    )
+    .send()
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+    let message = support::event_stream_message(&answered);
+    assert_eq!(message["error"]["code"], -32601, "{message}");
+    assert!(
+        warnings.warnings().contains("-32601") || warnings.warnings().contains("MethodNotFound"),
+        "the SDK reports the refusal at WARN: {}",
+        warnings.warnings()
+    );
+    ct.cancel();
+}
+
+/// **A client on an older revision still gets method-not-found for a listen.**
+/// There the method does not exist, and `resources/subscribe` is how such a
+/// client asks.
+#[tokio::test]
+async fn a_client_on_an_older_revision_is_told_listen_is_not_a_method() {
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+    let (session, _) = open_with(&http, &url, "2025-11-25").await;
+
+    let answered = over(
+        &http,
+        &url,
+        "2025-11-25",
+        session.as_deref(),
+        4,
+        "subscriptions/listen",
+        serde_json::json!({ "notifications": { "toolsListChanged": true } }),
+    )
+    .send()
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+    let message = support::event_stream_message(&answered);
+    assert_eq!(message["error"]["code"], -32601, "{message}");
+    ct.cancel();
+}

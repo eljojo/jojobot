@@ -490,6 +490,26 @@ impl ServerHandler for Jojobot {
         .with_instructions(instructions())
     }
 
+    /// **`subscriptions/listen` is served for the one category jojobot
+    /// advertises: a changed tool list.** The newest revision jojobot agrees to
+    /// defines this method, and a client on it opens one per category it wants
+    /// to hear about. Answering method-not-found to it was a wrong answer, and
+    /// the SDK logs every such answer at WARN, on every connection.
+    ///
+    /// The SDK acknowledges the filter and then holds the request open until
+    /// the client cancels or the connection ends. Nothing is sent on it: the
+    /// tool list moves only when a new build is deployed, and that ends the
+    /// connection. A client on an older revision still gets method-not-found,
+    /// because there the method does not exist.
+    fn accepted_subscription_filter(
+        &self,
+        _requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        let mut accepted = SubscriptionFilter::default();
+        accepted.tools_list_changed = Some(true);
+        Some(accepted)
+    }
+
     /// **Tell a client, the moment it connects, that the list it is about to
     /// cache is not a constant.**
     ///
