@@ -728,7 +728,7 @@ pub async fn migrate_permanent_ids(
             .await
         }
         (true, Some(Err(e))) => Migrated::Skipped(e.to_string()),
-        (true, None) => unreachable!("an owed column pass read the rename history"),
+        (true, None) => Migrated::Skipped("the rename history was not read".to_string()),
     };
     let sender_column = match (owed("message sender column"), &former) {
         (false, _) => Migrated::Settled,
@@ -741,7 +741,7 @@ pub async fn migrate_permanent_ids(
             .await
         }
         (true, Some(Err(e))) => Migrated::Skipped(e.to_string()),
-        (true, None) => unreachable!("an owed column pass read the rename history"),
+        (true, None) => Migrated::Skipped("the rename history was not read".to_string()),
     };
     vec![
         ("mail mentions", mail_mentions),
