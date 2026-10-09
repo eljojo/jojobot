@@ -293,3 +293,40 @@ async fn a_new_callers_boot_names_fix_by_and_what_each_word_asks() {
         "the old rule is false now that a refusal can say retry"
     );
 }
+
+/// **A fresh real instance's anonymous boot ships the whole essay, with room to
+/// spare.** The first caller of an instance with nothing written is the one the
+/// essay is for, and the boot trims itself to the ceiling and says what it cut,
+/// so an essay that grew past the room would still answer and nothing would
+/// fail: the caller would read less and be told so.
+///
+/// **This is the pin on the real boot.** The unit cases that hold the essay to
+/// the ceiling run on a bare handler whose snapshot is smaller than a real
+/// instance's (card 2121), so they can say it fits while it does not. Here the
+/// answer is served by the wired server with the shipped kinds declared.
+///
+/// **`MARGIN` is the room the answer keeps under the ceiling** for the next
+/// additions to the essay and for the characters a serialized answer spends on
+/// escapes. An essay change that eats it fails here before it elides a section.
+#[tokio::test]
+async fn a_fresh_real_instances_anonymous_boot_ships_the_whole_essay_with_room_to_spare() {
+    const MARGIN: usize = 600;
+    let story = Story::begin_with_nothing_written().await;
+    let (anon, _) = story.call("start_here", json!({})).await;
+    let whole = anon.raw().chars().count();
+    let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+    let booted = anon.json();
+    assert_eq!(
+        booted["orientation_elided"], false,
+        "the essay does not ship whole on a fresh real instance: the answer is {whole} of \
+         {budget} characters, and it says: {}",
+        booted["orientation_note"],
+    );
+    assert!(
+        whole + MARGIN <= budget,
+        "the whole essay ships but the answer is {whole} of {budget} characters, which leaves \
+         {} and the pin keeps {MARGIN}",
+        budget - whole,
+    );
+    story.finish().await;
+}
