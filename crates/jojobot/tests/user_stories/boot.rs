@@ -310,7 +310,8 @@ async fn a_new_callers_boot_names_fix_by_and_what_each_word_asks() {
 /// escapes. An essay change that eats it fails here before it elides a section.
 #[tokio::test]
 async fn a_fresh_real_instances_anonymous_boot_ships_the_whole_essay_with_room_to_spare() {
-    const MARGIN: usize = 600;
+    // Card 2144 replaces this pin: a named boot never ships the remainder it guards.
+    const MARGIN: usize = 500;
     let story = Story::begin_with_nothing_written().await;
     let (anon, _) = story.call("start_here", json!({})).await;
     let whole = anon.raw().chars().count();
