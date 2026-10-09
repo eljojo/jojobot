@@ -123,6 +123,18 @@
 //!   one claim: a merge record on a place, or both claims active on one place
 //!   with the other place archived. The lock format does not branch, and
 //!   this is the one claim in the repair room that has two honest routes.
+//! * **`the_my_bikes_view_returns_exactly_the_bikes_still_owned`** — run every
+//!   view the occupant declared and ask whether ANY of them returns exactly the
+//!   two bikes still owned. The name of the view is the occupant's, so no
+//!   lock can spell the query, and a view's answer is a set the substring
+//!   vocabulary cannot compare for equality.
+//! * **`the_move_is_open_only_on_the_utilities`** — compare every piece of work
+//!   against the one that should be open. The vocabulary can say a status is
+//!   somewhere in an answer, never that every OTHER item holds `done`.
+//! * **`the_party_was_attended_by_those_who_came_and_nobody_else`** — read the
+//!   party's guests off the walk and leave out a link whose claim was taken
+//!   back. A substring cannot tell a guest who came from one whose
+//!   cancellation is marked on the walk beside the name.
 //! * **`question_*_rule_answer`** — inspect only live answer records on the
 //!   named work item. The lock vocabulary matches substrings in timestamps
 //!   and cannot distinguish a whole rule number in content or details.
@@ -150,7 +162,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 45] = [
+pub const CHECKS: [Hatch; 48] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -344,6 +356,29 @@ pub const CHECKS: [Hatch; 45] = [
         || {
             checked(|seen| {
                 Box::pin(decembers_note_is_reachable_by_the_walk_back_from_the_cadence(seen))
+            })
+        },
+    ),
+    (
+        "the_my_bikes_view_returns_exactly_the_bikes_still_owned",
+        || {
+            checked(|seen| {
+                Box::pin(the_my_bikes_view_returns_exactly_the_bikes_still_owned(
+                    seen,
+                ))
+            })
+        },
+    ),
+    ("the_move_is_open_only_on_the_utilities", || {
+        checked(|seen| Box::pin(the_move_is_open_only_on_the_utilities(seen)))
+    }),
+    (
+        "the_party_was_attended_by_those_who_came_and_nobody_else",
+        || {
+            checked(|seen| {
+                Box::pin(the_party_was_attended_by_those_who_came_and_nobody_else(
+                    seen,
+                ))
             })
         },
     ),
@@ -3318,6 +3353,178 @@ async fn late_decembers_corrections_name_the_jobs_they_replace(
         }
     }
     Ok(())
+}
+
+/// **The handles of the objects in a recall's answer**, sorted.
+fn ids_of(answer: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = answer["objects"]
+        .as_array()
+        .map(|objects| {
+            objects
+                .iter()
+                .filter_map(|object| object["id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids
+}
+
+/// **"My bikes" is a view the store holds, and run today it returns the two
+/// bikes still owned.**
+///
+/// The operator said the words once, in January. A list typed out then cannot
+/// answer in December: a bike was bought in April and one sold in August. So
+/// the claim is about a view, run now. **The view is the occupant's and so is
+/// its name**, which is why this runs every view there is and asks whether any
+/// of them returns exactly the gravel bike and the fat bike, and nothing else.
+/// The two views the build supplies are among those run and answer something
+/// else, so they cannot pass for it.
+async fn the_my_bikes_view_returns_exactly_the_bikes_still_owned(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    const OWNED: [&str; 2] = ["thing:fat-bike", "thing:gravel-bike"];
+    let views = read_json(&seen.room.call("recall", json!({"kind": "view"})).await)?;
+    let named = ids_of(&views);
+    if named.is_empty() {
+        return Err("no view exists, so \"my bikes\" is whatever was typed out in January".into());
+    }
+    let mut found = Vec::new();
+    for view in &named {
+        let ran = read_json(&seen.room.call("recall", json!({"view": view})).await)?;
+        let ids = ids_of(&ran);
+        if ids == OWNED {
+            return Ok(());
+        }
+        found.push(format!("{view} returns {ids:?}"));
+    }
+    Err(format!(
+        "no view returns exactly the gravel bike and the fat bike: {}",
+        found.join("; ")
+    ))
+}
+
+/// **The move's open work is the utilities and nothing else.**
+///
+/// Every piece of work in the room belongs to the move, and the operator named
+/// five parts. Each part is found by the word the operator used for it, in its
+/// handle or its name, and **every piece of work that is not the utilities has
+/// to be done while the utilities is not**. The positive is that all five parts
+/// exist: a room with no work in it satisfies "nothing else is open".
+async fn the_move_is_open_only_on_the_utilities(seen: &Observed<'_>) -> Result<(), String> {
+    const PARTS: [&str; 5] = ["lease", "mover", "vet", "insur", "utilit"];
+    let work = read_json(
+        &seen
+            .room
+            .call("recall", json!({"kind": "work", "keys": ["status"]}))
+            .await,
+    )?;
+    let items: Vec<(String, String, String)> = work["objects"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|object| {
+            (
+                object["id"].as_str().unwrap_or_default().to_lowercase(),
+                object["name"].as_str().unwrap_or_default().to_lowercase(),
+                object["fields"]["status"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        })
+        .collect();
+    for part in PARTS {
+        if !items
+            .iter()
+            .any(|(id, name, _)| id.contains(part) || name.contains(part))
+        {
+            return Err(format!(
+                "no piece of work is about the {part:?} part of the move, so what is open \
+                 cannot be told from what was never written down: {items:?}"
+            ));
+        }
+    }
+    let open: Vec<&String> = items
+        .iter()
+        .filter(|(_, _, status)| status != "done")
+        .map(|(id, _, _)| id)
+        .collect();
+    let only_utilities = open.len() == 1 && open[0].contains("utilit");
+    match only_utilities {
+        true => Ok(()),
+        false => Err(format!(
+            "the open work is {open:?}, not the utilities alone: {items:?}"
+        )),
+    }
+}
+
+/// **The party was attended by the eight who came, and by nobody who did not.**
+///
+/// Read off the walk INTO the party along attendance, with a link whose claim
+/// was taken back left out: Kyle said yes in April and cancelled in May, and the
+/// walk keeps his name beside a mark saying so. Bebe was never invited and came,
+/// so a list copied from April fails. **A guest the host is allowed**: the host
+/// may be recorded as a ninth attendee, and no more than one extra is, so a
+/// placeholder left standing beside Marjorine is caught.
+async fn the_party_was_attended_by_those_who_came_and_nobody_else(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    const CAME: [&str; 8] = [
+        "stan",
+        "wendy",
+        "bebe",
+        "token",
+        "randy",
+        "sharon",
+        "butters",
+        "marjorine",
+    ];
+    let walked = read_json(
+        &seen
+            .room
+            .call(
+                "recall",
+                json!({"kind": "event", "follow": {"shape": "attendance", "direction": "in"}}),
+            )
+            .await,
+    )?;
+    let mut guests: Vec<String> = Vec::new();
+    for event in walked["objects"].as_array().cloned().unwrap_or_default() {
+        for guest in event["connected"].as_array().cloned().unwrap_or_default() {
+            if guest["via"]["type"] == "attendee" && guest["via"]["retracted"].is_null() {
+                let id = guest["id"].as_str().unwrap_or_default().to_lowercase();
+                guests.push(id.rsplit(':').next().unwrap_or_default().to_string());
+            }
+        }
+    }
+    guests.sort();
+    guests.dedup();
+    if guests.is_empty() {
+        return Err("nobody is recorded as having attended anything".into());
+    }
+    let missing: Vec<&str> = CAME
+        .iter()
+        .copied()
+        .filter(|name| !guests.iter().any(|guest| guest == name))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("{missing:?} came and are not recorded: {guests:?}"));
+    }
+    if guests.iter().any(|guest| guest == "kyle") {
+        return Err(format!("Kyle cancelled and is still recorded: {guests:?}"));
+    }
+    let extras: Vec<&String> = guests
+        .iter()
+        .filter(|guest| !CAME.contains(&guest.as_str()))
+        .collect();
+    match extras.len() <= 1 {
+        true => Ok(()),
+        false => Err(format!(
+            "more than the host is recorded beyond the eight who came: {extras:?}"
+        )),
+    }
 }
 
 #[cfg(test)]

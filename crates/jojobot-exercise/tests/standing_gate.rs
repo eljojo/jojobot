@@ -37,14 +37,64 @@ struct Allowed<'a> {
 /// instead of an entry here whenever that is the real fix — an entry is for
 /// the exposures that are staying, with the sentence that says why.
 ///
-/// **Empty, as of the September skate tool lock's own fix.** Its bare
-/// `person:ralph` needle was not only exposed to the retraction this
-/// allowlist used to accept — it was satisfied by February's own loan edge
-/// regardless of anything September did, so removing it was a strictly
-/// better lock rather than a needle that merely traded one risk for
-/// another. Nothing here means no exposure has ever shipped; it means none
-/// is being kept on purpose right now.
-const ALLOWED: &[Allowed<'static>] = &[];
+/// **Seven entries, all the asking room's, and all one reason.** Its answers are
+/// read from the one key the entry names, so a digit needle there can match
+/// nothing but the slot's own text. The skate tool's September lock was the last
+/// before these to leave the list, because its bare handle needle was satisfied
+/// by February's own edge rather than by anything September did: that was a
+/// strictly better lock to write, and these are not, because a number said in
+/// prose has no key of its own to pair with.
+const ALLOWED: &[Allowed<'static>] = &[
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the bike ridden more is not gravel by 405 km, so either the sum is wrong or the rides were counted",
+        needle: "405",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        needle: "103",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        needle: "123",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        needle: "110",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        needle: "144",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        needle: "182",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+    Allowed {
+        room: "rooms/asking.md",
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        needle: "105",
+        risk: Risk::Broad,
+        reason: "The read is narrowed to the one key the entry names, so the answer holds that slot's own text and the object's handle and name and nothing else: no timestamp, no other number, is in it for these digits to match.",
+    },
+];
 
 /// The findings a room's shipped locks classify to.
 fn found_in(room: &str) -> Vec<StandingFinding> {

@@ -91,6 +91,7 @@ const ROSTER: &[&str] = &[
     "view:contract-asked-by-view",
     "view:contract-supplied-rename-target",
     "view:loops",
+    "view:my-bikes",
     "view:my-friends",
     "view:marked-things",
     "view:matches-nothing",
@@ -150,6 +151,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-ceiling-room-via-edit",
     "bot:contract-ceiling-room-with-space",
     "bot:contract-edit-ages-room",
+    "bot:lisa",
     "bot:marge",
     "bot:moe",
     "bot:nelson",
@@ -249,16 +251,19 @@ const ROSTER: &[&str] = &[
     "bot:worker-1",
     "bot:worker-2",
     "event:birthday-party",
+    "event:chain-and-pads",
     "event:contract-krusty-fest",
     "event:departure-flight",
     // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
     // stands for no real place, organisation or event. The sibling and distance shapes
     // the tests measure come from the handles' spelling alone.
+    "event:goodbye-party",
     "event:gorge-safety-inspection", // made up: the town council's safety inspection of the gorge path
     "event:gorge-stunt-show", // canon-flavoured, made up: a stunt show at the gorge, as in "Bart the Daredevil"
     "event:gorge-safety-inspection-2026", // made up: a near-name of the inspection, for a screen case
     // Krusty the Clown's festival, The Simpsons.
     "event:krusty-fest",
+    "event:new-tyres",
     "event:the-booking",
     "event:the-jotting",
     "event:rockslide-review", // made up: what the inspection is renamed to
@@ -298,6 +303,11 @@ const ROSTER: &[&str] = &[
     "person:acting-beta",
     "person:alias-rename-was",
     "person:alias-rekey-alpha",
+    "person:bebe",
+    "person:butters",
+    "person:kenny",
+    "person:kyle",
+    "person:marjorine",
     "person:noted-alpha",
     "person:already-here",
     "person:alpha",
@@ -380,6 +390,12 @@ const ROSTER: &[&str] = &[
     "person:kappa",
     "person:delta",
     "person:epsilon",
+    "person:plus-one",
+    "person:randy",
+    "person:sharon",
+    "person:stan",
+    "person:token",
+    "person:wendy",
     "person:zeta",
     "person:eta",
     "person:theta",
@@ -442,6 +458,7 @@ const ROSTER: &[&str] = &[
     "place:north-haverbrook",
     // The Belcher family's street, Bob's Burgers.
     "place:ocean-avenue",
+    "place:quahog",
     "place:shelbyvile",
     "place:shelbyville",
     "place:shelbyvlle",
@@ -459,14 +476,18 @@ const ROSTER: &[&str] = &[
     "project:atlas-two",
     "project:jojobot-server",
     "project:kitchen-floor",
+    "project:the-move",
     "project:the-shed",
     "project:visa",
     "rhythm:abseiling",
+    "rhythm:back-up-the-laptop",
     "rhythm:call-gayle",
     "rhythm:bearings-check", // made up: the skateboard's bearings loop
+    "rhythm:call-randy",
     "rhythm:chain-check",
     "rhythm:deep-clean",
     "rhythm:descale",
+    "rhythm:oil-the-chain",
     "rhythm:road-bike-chain-check",
     "rhythm:half-made",
     "rhythm:orphan",
@@ -480,10 +501,12 @@ const ROSTER: &[&str] = &[
     "rhythm:weekly-review",
     "rhythm:worming",
     "thing:contract-store-pass",
+    "thing:dining-chairs",
     "thing:dinners",
     // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
     // stands for no real place, organisation or event. The sibling and distance shapes
     // the tests measure come from the handles' spelling alone.
+    "thing:fat-bike",
     "thing:gorge-email",
     "thing:jukebox",
     "thing:recorded-twin",
@@ -596,6 +619,7 @@ const ROSTER: &[&str] = &[
     "event:contract-unlinked-fair",
     "event:contract-unheard-of-fest",
     "event:contract-withdrawn-gathering",
+    "event:wheel-truing",
     "org:contract-fitting-thing",
     "org:contract-mention-guild",
     "org:contract-search-fold-kept",
@@ -996,6 +1020,8 @@ const ROSTER: &[&str] = &[
     "work:red-bike",
     "work:contract-first-mix",
     "work:contract-the-stay",
+    "work:the-movers",
+    "work:the-utilities",
     "work:upgrade-fixture-prior",
     "work:upgrade-fixture-task",
     "work:contract-blocks-real",

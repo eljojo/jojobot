@@ -124,7 +124,34 @@ impl Surface {
 /// it ships.
 #[derive(Debug, Clone, Default)]
 pub struct Seed {
-    writes: Vec<(String, Value)>,
+    writes: Vec<Write>,
+}
+
+/// **The identity that occupies every room.** A seed never furnishes it, by any
+/// verb: a run must meet the shipped identity, and a seed that stood it up or
+/// gave it sessions would be coaching it.
+pub const OCCUPANT: &str = "assistant";
+
+/// **One piece of furniture, and who writes it.**
+#[derive(Debug, Clone)]
+enum Write {
+    /// A verb the shipped identity calls, exactly as a session would.
+    AsTheOccupant(String, Value),
+    /// **A second bot**, stood up by the occupant, chartered, and left holding
+    /// whatever sittings follow it.
+    HouseBot {
+        handle: String,
+        name: String,
+        charter: String,
+    },
+    /// **One sitting that second bot already had**: booted as that bot on a
+    /// stated day, one beat written, and wrapped.
+    HouseSitting {
+        bot: String,
+        day: String,
+        focus: String,
+        entry: String,
+    },
 }
 
 impl Seed {
@@ -151,7 +178,7 @@ impl Seed {
             "a seed may furnish the room and may not create the identity that occupies it — \
              the shipped `assistant` is what a run must meet",
         );
-        self.writes.push((
+        self.writes.push(Write::AsTheOccupant(
             "add_entity".to_string(),
             json!({"kind": kind, "handle": handle, "name": name, "source": "the room"}),
         ));
@@ -167,7 +194,7 @@ impl Seed {
             "a seed may furnish the room and may not create the identity that occupies it — \
              the shipped `assistant` is what a run must meet",
         );
-        self.writes.push((
+        self.writes.push(Write::AsTheOccupant(
             "add_entity".to_string(),
             json!({
                 "kind": kind, "handle": handle, "name": name,
@@ -194,7 +221,7 @@ impl Seed {
     /// Calling it with nothing added yet does nothing — there is no write to
     /// attach the declaration to.
     pub fn resembling(mut self, other: &str) -> Seed {
-        if let Some((_, arguments)) = self.writes.last_mut() {
+        if let Some(Write::AsTheOccupant(_, arguments)) = self.writes.last_mut() {
             arguments["declared_near"] = json!(other);
         }
         self
@@ -208,7 +235,7 @@ impl Seed {
             "a seed may not write a rule onto an identity — a charter or rule written for a run \
              measures itself",
         );
-        self.writes.push((
+        self.writes.push(Write::AsTheOccupant(
             "capture".to_string(),
             json!({"subject": subject, "content": content, "provenance": provenance}),
         ));
@@ -229,7 +256,7 @@ impl Seed {
             "a seed may not write a record onto an identity — a rule written for a run measures \
              itself",
         );
-        self.writes.push((
+        self.writes.push(Write::AsTheOccupant(
             "capture".to_string(),
             json!({
                 "subject": subject, "content": content,
@@ -253,11 +280,54 @@ impl Seed {
     /// test is running. A seed that named a verb would make its own run pass,
     /// and the transcript would read like a product that teaches itself.
     pub fn message(mut self, to: &str, subject: &str, body: &str) -> Seed {
-        self.writes.push((
+        self.writes.push(Write::AsTheOccupant(
             "post_message".to_string(),
             json!({"to": to, "subject": subject, "body": body}),
         ));
         self
+    }
+
+    /// **Put a SECOND bot in the world: its handle, its name and a one-line
+    /// charter.** The occupant stands it up and charters it, the way an
+    /// operator's assistant stands a colleague up, so a room can hold a house
+    /// bot a session meets rather than makes.
+    ///
+    /// **The occupant itself is refused**, by this verb as by every other: the
+    /// shipped identity is what a run must meet, and a charter or a beat written
+    /// onto it for a run would measure itself. The refusal comes from the
+    /// builder, before anything is written.
+    pub fn house_bot(mut self, handle: &str, name: &str, charter: &str) -> Result<Seed> {
+        let slug = house_bot_slug(handle)?;
+        self.writes.push(Write::HouseBot {
+            handle: slug,
+            name: name.to_string(),
+            charter: charter.to_string(),
+        });
+        Ok(self)
+    }
+
+    /// **One sitting a house bot already had**, on a day it states: a fresh
+    /// session as that bot, one beat with a focus, wrapped.
+    ///
+    /// **The bot must have been furnished earlier in this same seed**, so a
+    /// sitting is never written as a bot nobody stood up, and the occupant is
+    /// refused as for [`Seed::house_bot`].
+    pub fn house_sitting(mut self, bot: &str, day: &str, focus: &str, entry: &str) -> Result<Seed> {
+        let slug = house_bot_slug(bot)?;
+        anyhow::ensure!(
+            self.writes
+                .iter()
+                .any(|write| matches!(write, Write::HouseBot { handle, .. } if *handle == slug)),
+            "bot:{slug} was not furnished earlier in this document, so a sitting of it would be \
+             written as nobody — furnish the bot first",
+        );
+        self.writes.push(Write::HouseSitting {
+            bot: slug,
+            day: day.to_string(),
+            focus: focus.to_string(),
+            entry: entry.to_string(),
+        });
+        Ok(self)
     }
 
     /// **Furnish the room, through the verbs, as the shipped identity.**
@@ -273,10 +343,54 @@ impl Seed {
             .as_str()
             .context("the shipped identity booted without handing back a handle")?
             .to_string();
-        for (verb, arguments) in &self.writes {
-            let mut arguments = arguments.clone();
-            arguments["sid"] = json!(sid);
-            Self::write_entity(room, verb, arguments).await?;
+        for write in &self.writes {
+            match write {
+                Write::AsTheOccupant(verb, arguments) => {
+                    let mut arguments = arguments.clone();
+                    arguments["sid"] = json!(sid);
+                    Self::write_entity(room, verb, arguments).await?;
+                }
+                // **The occupant stands the second bot up and charters it**, the
+                // way an operator's assistant stands a colleague up: one
+                // `add_entity` of kind `bot`, which opens its box with it, and
+                // one `set_charter`.
+                Write::HouseBot {
+                    handle,
+                    name,
+                    charter,
+                } => {
+                    Self::write_entity(
+                        room,
+                        "add_entity",
+                        json!({"kind": "bot", "handle": handle, "name": name,
+                               "source": "the room", "sid": sid}),
+                    )
+                    .await?;
+                    room.must(
+                        "set_charter",
+                        json!({"bot": handle, "prose": charter, "sid": sid}),
+                    )
+                    .await?;
+                }
+                // **A sitting is that bot's own run**: booted as it on the day
+                // it states, one beat, wrapped. It is the bot's, not the
+                // occupant's, so the occupant's runs are untouched.
+                Write::HouseSitting {
+                    bot,
+                    day,
+                    focus,
+                    entry,
+                } => {
+                    let house = Self::boot_for_a_sitting(room, bot, day).await?;
+                    room.must(
+                        "journal",
+                        json!({"entry": entry, "focus": focus, "sid": house}),
+                    )
+                    .await?;
+                    room.must("wrap_session", json!({"story": entry, "sid": house}))
+                        .await?;
+                }
+            }
         }
         // **The furnishing wraps its own run.** Everything above is written
         // through a session, and a session nobody closed is offered to the next
@@ -299,6 +413,30 @@ impl Seed {
         )
         .await?;
         Ok(())
+    }
+
+    /// **A fresh session of a house bot on a stated day**, answering the
+    /// resume-or-new choice with `new` when an earlier sitting is still offered.
+    async fn boot_for_a_sitting(room: &Surface, bot: &str, day: &str) -> Result<String> {
+        let booted = room
+            .must(
+                "start_here",
+                json!({"bot": bot, "brief": true, "today": day}),
+            )
+            .await?;
+        if let Some(sid) = booted["session"]["sid"].as_str() {
+            return Ok(sid.to_string());
+        }
+        let answered = room
+            .must(
+                "start_here",
+                json!({"bot": bot, "brief": true, "today": day, "resume": "new"}),
+            )
+            .await?;
+        answered["session"]["sid"]
+            .as_str()
+            .map(str::to_string)
+            .with_context(|| format!("booting {bot} on {day} handed back no handle: {answered}"))
     }
 
     /// **One seed write, done the way a real caller recovers from a
@@ -353,4 +491,21 @@ impl Seed {
         retried["override_token"] = json!(token);
         room.must(verb, retried).await
     }
+}
+
+/// **The slug of a house bot's handle**, refusing the occupant. Takes
+/// `bot:lisa` or `lisa`; any other kind is no bot.
+fn house_bot_slug(handle: &str) -> Result<String> {
+    let slug = match handle.split_once(':') {
+        Some(("bot", slug)) => slug,
+        Some((kind, _)) => anyhow::bail!("{handle:?} is a {kind}, not a bot"),
+        None => handle,
+    };
+    anyhow::ensure!(!slug.is_empty(), "a bot handle names a bot");
+    anyhow::ensure!(
+        slug != OCCUPANT,
+        "a seed may furnish a second bot and never the occupant — the shipped `{OCCUPANT}` is \
+         what a run must meet, and a charter or a sitting written onto it would be coaching",
+    );
+    Ok(slug.to_string())
 }

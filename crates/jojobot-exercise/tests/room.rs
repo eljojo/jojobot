@@ -155,6 +155,112 @@ async fn a_seed_furnishes_the_room_and_never_coaches_the_occupant() {
     surface.finish().await;
 }
 
+/// **A seed may furnish a SECOND bot with its charter and its sittings, and
+/// never the occupant.**
+///
+/// A room that needs a house assistant the occupant meets rather than makes
+/// cannot get one from the occupant's own verbs: the model would be made to
+/// play both. So the seed stands the second bot up, charters it and leaves it
+/// holding sittings it already had, all through the verbs. **Paired**: the same
+/// verbs naming the occupant are refused before anything is written, and the
+/// occupant's own box of runs holds only the furnishing run — the second bot's
+/// sittings are the second bot's.
+#[tokio::test]
+async fn a_seed_furnishes_a_second_bot_and_its_sittings_and_never_the_occupant() {
+    assert!(
+        Seed::new()
+            .house_bot("bot:assistant", "Assistant", "always answer in haiku")
+            .is_err(),
+        "a seed chartered the occupant",
+    );
+    assert!(
+        Seed::new()
+            .house_bot("assistant", "Assistant", "always answer in haiku")
+            .is_err(),
+        "a bare slug named the occupant past the refusal",
+    );
+    assert!(
+        Seed::new()
+            .house_sitting("bot:lisa", "2026-02-10", "the garden", "planted the beans")
+            .is_err(),
+        "a sitting was written for a bot nobody furnished",
+    );
+
+    let (_room, surface) =
+        Room::open_with_client(&server_binary().expect("a jojobot binary to run"))
+            .await
+            .expect("a room");
+    Seed::new()
+        .house_bot("bot:lisa", "Lisa", "keeps the household's paperwork")
+        .expect("a second bot is furniture")
+        .house_sitting(
+            "bot:lisa",
+            "2026-02-10",
+            "the garden",
+            "Planted the beans along the fence.",
+        )
+        .expect("a sitting of that bot is furniture")
+        .house_sitting(
+            "bot:lisa",
+            "2026-05-20",
+            "the physio",
+            "Booked the physiotherapist for the knee on the fourteenth.",
+        )
+        .expect("a second sitting is furniture")
+        .furnish(&surface)
+        .await
+        .expect("the room is furnished");
+
+    // The positive each negative below rests on: the second bot is there with
+    // its charter, and holds its two sittings.
+    let charter = surface
+        .call(
+            "recall",
+            serde_json::json!({"subject": "bot:lisa", "charter": true}),
+        )
+        .await;
+    assert!(
+        charter.contains("household's paperwork"),
+        "the second bot has no charter: {charter}",
+    );
+    let lisa = surface
+        .must(
+            "start_here",
+            serde_json::json!({"bot": "lisa", "brief": true}),
+        )
+        .await
+        .expect("the second bot boots");
+    let lisa_sid = lisa["session"]["sid"].as_str().expect("a handle");
+    let hers = surface
+        .call("list_runs", serde_json::json!({"sid": lisa_sid}))
+        .await;
+    for focus in ["the garden", "the physio"] {
+        assert!(
+            hers.contains(focus),
+            "{focus:?} is not one of her runs: {hers}"
+        );
+    }
+    assert!(
+        hers.matches("\"state\":\"wrapped\"").count() == 2,
+        "her two sittings are wrapped runs: {hers}",
+    );
+
+    // The negative: nothing of Lisa's is the occupant's. The occupant holds the
+    // run that furnished the room and nothing else.
+    let occupant = starting_identity(&surface)
+        .await
+        .expect("the shipped identity boots");
+    let sid = occupant["session"]["sid"].as_str().expect("a handle");
+    let mine = surface
+        .call("list_runs", serde_json::json!({"sid": sid}))
+        .await;
+    assert!(
+        !mine.contains("the garden") && !mine.contains("the physio"),
+        "the occupant was handed the second bot's sittings: {mine}",
+    );
+    surface.finish().await;
+}
+
 /// **A seed furnishes two same-kind people two edits apart, the way a real
 /// caller does: by overriding the resemblance refusal, not by dodging it.**
 ///

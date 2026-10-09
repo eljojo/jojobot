@@ -57,6 +57,12 @@ pub const TRICK_ROOM: &str = "rooms/trick.md";
 /// two projects, four cold sittings across nine months. Not the default.
 pub const AGENCY_ROOM: &str = "rooms/agency.md";
 
+/// **The asking room** — nine sittings of a year, then one cold sitting asked a
+/// dozen ordinary questions about all of it. Each question is one a cold
+/// session cannot answer by remembering: a computation, a word the operator
+/// said once, or state the store owns. Not the default.
+pub const ASKING_ROOM: &str = "rooms/asking.md";
+
 /// **The adoption experiment's wording arm (E1)** — the same room with each
 /// fact said in its key's own word.
 pub const ADOPTION_WORDING_ROOM: &str = "rooms/adoption-wording.md";
@@ -81,7 +87,7 @@ type Room = (&'static str, Option<InRust>, bool);
 ///
 /// **Exactly one entry carries `true`** — decision log 299 — and this table is
 /// the only place that name lives; nothing outside it repeats it.
-const ROOMS: [Room; 11] = [
+const ROOMS: [Room; 12] = [
     (BIKE_ROOM, None, false),
     (LOOP_ROOM, None, false),
     (YEAR_ROOM, None, false),
@@ -93,6 +99,7 @@ const ROOMS: [Room; 11] = [
     (REPAIR_ROOM, None, false),
     (TRICK_ROOM, None, false),
     (AGENCY_ROOM, None, false),
+    (ASKING_ROOM, None, false),
 ];
 
 /// **The room a run uses when none is named** — decision log 299.

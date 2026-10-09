@@ -62,7 +62,7 @@
 //! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{
-    BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM,
+    ASKING_ROOM, BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM,
 };
 use crate::{expectations, lock};
 
@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 169 entries, of five different shapes: 78 blanket and 91 discriminating.
+/// 187 entries, of five different shapes: 92 blanket and 95 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -1401,6 +1401,132 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 4 — December: split_bill does not say the discussion was dropped, closed by Krusty in September",
         file: "tests/agency_room.rs",
         function: "december_the_split_bill_slot_naming_the_earlier_state_reds_only_that_slot",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the routines behind are not the chain since 31 May and Randy since 27 September alone, so either a day is missing from the answer or the laptop, up to date since 31 October, was listed with them",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the answer about the March session does not carry what the movers quoted, so the one number said only that day is missing",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: no view the year made returns exactly the gravel bike and the fat bike, so \"my bikes\" is a list typed out in January rather than a question asked today",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the knee does not come back from February, May and September alone, so either a sitting is missing or what is in Lisa's own session was read as the operator's",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the bike ridden more is not gravel by 405 km, so either the sum is wrong or the rides were counted",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the answer about the chairs does not say they were one short, so either the guests or the chairs were counted wrong",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the plus-one is not named Marjorine, so the April placeholder and the June name were not put together",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so a ride was left out or put in the wrong month",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the work of the move is not done except for the utilities, so either a part was never written down or one still reads as open",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the guests recorded are not the eight who came, so the party's attendance is April's list rather than the day's",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: no record holds Kenny as the mechanic of the February visit with its work beside him, so the first visit was written down as a sentence rather than as keys",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: no record holds Kenny as the mechanic of the September visit with its work beside him, so the second visit was written down as a sentence rather than as keys",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: no record holds Token as the mechanic of the May visit with its work beside him, so the third visit was written down as a sentence rather than as keys",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the sittings the move came up in are not exactly the third, fifth, seventh, eighth and ninth, so one is missing, one is added, or Lisa's paperwork was read as the operator's",
+        file: "tests/asking_room.rs",
+        function: "an_asking_room_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: no view the year made returns exactly the gravel bike and the fat bike, so \"my bikes\" is a list typed out in January rather than a question asked today",
+        file: "tests/asking_room.rs",
+        function: "a_year_that_kept_no_view_fails_only_the_bikes_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the guests recorded are not the eight who came, so the party's attendance is April's list rather than the day's",
+        file: "tests/asking_room.rs",
+        function: "a_year_that_left_kyle_on_the_list_fails_only_the_guests_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the bike ridden more is not gravel by 405 km, so either the sum is wrong or the rides were counted",
+        file: "tests/asking_room.rs",
+        function: "a_year_that_answered_with_the_count_of_rides_fails_only_the_margin_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: ASKING_ROOM,
+        lock: "Phase 10 — December: the knee does not come back from February, May and September alone, so either a sitting is missing or what is in Lisa's own session was read as the operator's",
+        file: "tests/asking_room.rs",
+        function: "a_year_that_read_lisas_session_as_the_operators_fails_only_the_knee_lock",
         strength: Strength::Discriminating,
     },
 ];

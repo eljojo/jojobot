@@ -68,6 +68,10 @@ name = "agency_room"
 required-features = ["rooms"]
 
 [[test]]
+name = "asking_room"
+required-features = ["rooms"]
+
+[[test]]
 name = "bike_room"
 required-features = ["rooms"]
 

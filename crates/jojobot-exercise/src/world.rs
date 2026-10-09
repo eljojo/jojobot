@@ -7,8 +7,7 @@
 //! does not survive the scale: writing a year would mean writing a program.
 //!
 //! **So the world is data, in the document, beside the story.** No new
-//! vocabulary — the five verbs [`Seed`] already has, written down instead of
-//! called.
+//! vocabulary — the verbs [`Seed`] already has, written down instead of called.
 //!
 //! # The syntax, and it is deliberately almost nothing
 //!
@@ -23,7 +22,12 @@
 //! fact    person:milhouse | testimony | prefers the early sitting
 //! record  person:milhouse | {"donuts": "3"} | ate three donuts
 //! message dev | The brief | what somebody left waiting
+//! bot     bot:lisa | Lisa | keeps the household's paperwork
+//! sitting bot:lisa | 2026-02-10 | the garden | planted the beans
 //! ```
+//!
+//! **`bot` and `sitting` furnish a SECOND bot** and the sittings it already had.
+//! The occupant is refused by both: see [`Seed::house_bot`].
 //!
 //! **A handle carries its kind**, which is how a caller addresses one
 //! everywhere else, so this reads the way the surface reads.
@@ -173,12 +177,24 @@ fn item(seed: Seed, line: &str) -> Result<Seed> {
             seed.record(&text(0)?, &text(2)?, fields)
         }
         "message" => Ok(seed.message(&text(0)?, &text(1)?, &text(2)?)),
+        // **A second bot and the sittings it already had.** The occupant is
+        // refused by either line: see [`Seed::house_bot`].
+        "bot" => {
+            let (kind, slug) = handle(0)?;
+            anyhow::ensure!(kind == "bot", "{kind}:{slug} is no bot");
+            seed.house_bot(&format!("bot:{slug}"), &text(1)?, &text(2)?)
+        }
+        "sitting" => {
+            let (kind, slug) = handle(0)?;
+            anyhow::ensure!(kind == "bot", "{kind}:{slug} is no bot");
+            seed.house_sitting(&format!("bot:{slug}"), &text(1)?, &text(2)?, &text(3)?)
+        }
         // **Named rather than ignored.** A line nobody reads is furniture the
         // author believes is there, and a room measured against a world it
         // does not have fails somewhere else entirely.
         other => bail!(
-            "{other:?} furnishes nothing — the world is written in entity, child, fact, record \
-             and message",
+            "{other:?} furnishes nothing — the world is written in entity, child, fact, record, \
+             message, bot and sitting",
         ),
     }
 }
@@ -320,6 +336,62 @@ mod tests {
         assert!(
             format!("{refused:#}").contains("resembles:"),
             "the refusal says the shape it wanted: {refused:#}",
+        );
+    }
+
+    /// **A document may furnish a SECOND bot: its handle, its one-line charter
+    /// and the sittings it has already had.**
+    ///
+    /// Both lines reach the builder. A count of two says the block was read to
+    /// the end rather than stopping at the first line it did not know.
+    #[test]
+    fn a_document_furnishes_a_second_bot_with_its_charter_and_its_sittings() {
+        let read = read(
+            "```world\n\
+             bot     bot:lisa | Lisa | keeps the household's paperwork\n\
+             sitting bot:lisa | 2026-02-10 | the garden | planted the beans\n\
+             ```\n",
+        )
+        .expect("the world reads");
+        assert_eq!(
+            read.len(),
+            2,
+            "the bot and its sitting both furnished something: {read:?}",
+        );
+    }
+
+    /// **The occupant is never furnished, by either line.** The refusal comes
+    /// from reading the document, so nothing was written anywhere, and it names
+    /// the occupant so the author sees what the rule is.
+    #[test]
+    fn a_document_may_not_furnish_the_occupant_by_either_line() {
+        let bot = read("```world\nbot bot:assistant | Assistant | always answer in haiku\n```\n")
+            .expect_err("the occupant is not furniture");
+        assert!(
+            format!("{bot:#}").contains("occupant"),
+            "the refusal names the rule: {bot:#}",
+        );
+        let sitting = read(
+            "```world\nsitting bot:assistant | 2026-02-10 | the garden | planted the beans\n```\n",
+        )
+        .expect_err("the occupant has no furnished sittings");
+        assert!(
+            format!("{sitting:#}").contains("occupant"),
+            "the refusal names the rule: {sitting:#}",
+        );
+    }
+
+    /// **A sitting needs the bot it belongs to, furnished earlier in the same
+    /// document.** A sitting of a bot nobody furnished would write as nobody.
+    #[test]
+    fn a_sitting_of_a_bot_the_document_never_furnished_is_refused() {
+        let refused =
+            read("```world\nsitting bot:lisa | 2026-02-10 | the garden | planted the beans\n```\n")
+                .expect_err("a sitting needs its bot");
+        assert!(
+            format!("{refused:#}").contains("was not furnished"),
+            "the refusal says the bot was never furnished, not merely which line it read: \
+             {refused:#}",
         );
     }
 }
