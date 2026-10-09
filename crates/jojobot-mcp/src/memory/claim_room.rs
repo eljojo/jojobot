@@ -213,6 +213,32 @@ impl Jojobot {
         Self::refuses_a_thing_too_big_to_read((&after, &fold), Some((&current, &fold)))
     }
 
+    /// **The same check for one edit that relabels a thing and sets keys on it.**
+    /// The record is measured beside the thing the whole call would leave: the new
+    /// name and aliases, and the keys the record sets in its folded fields.
+    /// Measured beside the thing as it stands, a list of aliases and a note that
+    /// each fit can together leave a row that does not. A row that is over after
+    /// the call is the cause named, as for any record.
+    pub(crate) async fn refuses_a_relabelling_with_a_claim_too_big_to_read(
+        &self,
+        handle: &EntityId,
+        patch: &EntityPatch,
+        new: &NewFact,
+    ) -> Option<MemoryError> {
+        let (current, fold) = self.thing_as_read(handle, None).await?;
+        let mut after = current.clone();
+        if let Some(name) = &patch.name {
+            after.name = name.clone();
+        }
+        if let Some(aliases) = &patch.aliases {
+            after.aliases = aliases.clone();
+        }
+        let held = self.memory.recall(&new.subject).await.ok()?.len();
+        let fact = prospective_fact(new, held + 1, Some(widest_stamp(self.clock().now())));
+        let measured = self.measured_beside(&fact, &after, fold);
+        self.refusal_for(&fact, None, None, measured).await
+    }
+
     /// **The same check for a merge.** The survivor takes the duplicate's name
     /// and aliases as aliases and the duplicate's keys under its own, so the
     /// row is measured with both folded in, and the account the merge writes

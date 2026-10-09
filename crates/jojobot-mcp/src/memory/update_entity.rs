@@ -185,8 +185,16 @@ impl Jojobot {
                         recorded_at,
                     )
                 };
-                if let Some(refused) = self.refuses_a_new_claim_too_big_to_read(&first, None).await
-                {
+                // **A call that relabels the thing as well as setting keys is
+                // measured as the one thing it would leave**, not as two writes
+                // each beside the thing as it stands.
+                let too_big = if patch.name.is_some() || patch.aliases.is_some() {
+                    self.refuses_a_relabelling_with_a_claim_too_big_to_read(&handle, &patch, &first)
+                        .await
+                } else {
+                    self.refuses_a_new_claim_too_big_to_read(&first, None).await
+                };
+                if let Some(refused) = too_big {
                     return memory_declined("update_entity", refused);
                 }
                 // **A star or a seat count set here is a capture's**: the claim

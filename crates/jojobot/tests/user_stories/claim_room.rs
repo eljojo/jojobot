@@ -915,3 +915,86 @@ async fn a_merge_into_a_thing_whose_aliases_are_past_one_answer_is_refused_whole
         "nothing moved: {after}"
     );
 }
+
+/// "I gave a thing a long list of aliases and a note in one edit. Does the edit
+/// land when each part would have landed alone and the two together could not be
+/// read back?"
+///
+/// **An edit that carries both is measured as the thing it would leave.** The
+/// aliases are about half an answer and the note is about half an answer: each
+/// lands alone, on a thing of its own, and together they are refused with
+/// nothing written. A thing's own row holds its name, its aliases and its keys,
+/// and a note set in the same call is one of the keys.
+#[tokio::test]
+async fn aliases_and_a_note_that_land_alone_are_refused_together() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    // Aliases of about 190 characters, the longest an alias may be.
+    let long_aliases = |seed: usize, count: usize| -> Vec<String> {
+        (0..count)
+            .map(|i| {
+                format!("{} ", word(seed * 1_000 + i))
+                    .repeat(17)
+                    .trim()
+                    .to_string()
+            })
+            .collect()
+    };
+    let (aliases_alone, note_alone, together_on) = (
+        fresh_thing(&otto, 140_001).await,
+        fresh_thing(&otto, 140_002).await,
+        fresh_thing(&otto, 140_003).await,
+    );
+
+    // ── each part lands alone ───────────────────────────────────────────────
+    let landed = otto
+        .attempt(
+            "update_entity",
+            json!({"handle": aliases_alone, "aliases": long_aliases(141, 70)}),
+        )
+        .await;
+    assert!(!refused(&landed), "70 long aliases land alone: {landed}");
+    let landed = otto
+        .attempt(
+            "update_entity",
+            json!({"handle": note_alone, "sets": {"note": text(11_000)}}),
+        )
+        .await;
+    assert!(!refused(&landed), "a note of 11,000 lands alone: {landed}");
+
+    // ── together they are refused, for their size ───────────────────────────
+    let together = otto
+        .attempt(
+            "update_entity",
+            json!({
+                "handle": together_on,
+                "aliases": long_aliases(142, 70),
+                "sets": {"note": text(11_000)},
+            }),
+        )
+        .await;
+
+    assert!(
+        refused(&together),
+        "the two land alone and cannot be read back together: {together}"
+    );
+    assert!(
+        together["what_is_over"].is_string(),
+        "refused for its size, not for a name already worn: {together}"
+    );
+    let after = otto
+        .call("recall", json!({"subject": together_on}))
+        .await
+        .json();
+    assert_eq!(
+        after["objects"][0]["alternateName"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "nothing was written: {after}"
+    );
+    assert!(
+        after["objects"][0]["fields"].get("note").is_none(),
+        "nothing was written: {after}"
+    );
+}
