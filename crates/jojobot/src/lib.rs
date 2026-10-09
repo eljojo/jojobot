@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod push;
 pub mod routes;
 pub mod ui;
 pub mod wiring;
@@ -65,6 +66,9 @@ pub struct AppState {
     /// built per connection, so a day read once at startup has to reach every
     /// handler the factory makes after it.
     pub clock: jojobot_domain::clock::Clock,
+    /// **Told after a post to the operator lands**, when the instance is set up
+    /// to push to a phone. `None` pushes nothing.
+    pub push: Option<Arc<dyn jojobot_domain::push::Nudge>>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -92,6 +96,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     // every handle it ever issued.
     let registry = state.registry.clone();
     let clock = state.clock;
+    let push = state.push.clone();
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
@@ -105,7 +110,8 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 teachings.clone(),
                 registry.clone(),
             )
-            .on_clock(clock))
+            .on_clock(clock)
+            .pushing(push.clone()))
         },
         LocalSessionManager::default().into(),
         server_config,

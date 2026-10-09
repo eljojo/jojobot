@@ -100,6 +100,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
+        push: None,
     }
 }
 
@@ -125,6 +126,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
+        push: None,
     }
 }
 
@@ -257,6 +259,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: None,
             clock: jojobot_domain::clock::Clock::default(),
+            push: None,
         }
     }
 }
@@ -343,6 +346,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
+        push: None,
     }
 }
 
@@ -416,6 +420,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
+        push: None,
     }
 }
 

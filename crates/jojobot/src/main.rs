@@ -106,9 +106,33 @@ async fn main() -> anyhow::Result<()> {
     // sequence a restart runs before it can serve anything; see
     // `jojobot::wiring::boot_store`'s own doc for what is fatal in it and why.
     let dir = jojobot::wiring::resolve_store_dir()?;
-    let booted =
-        jojobot::wiring::boot_store(&dir, jojobot::wiring::resolve_store_port(), config.clock)
-            .await?;
+    let booted = jojobot::wiring::boot_store_pushing(
+        &dir,
+        jojobot::wiring::resolve_store_port(),
+        config.clock,
+        config.ntfy.is_some(),
+    )
+    .await?;
+
+    // **Pushes to the operator's phone**, only when the instance is set up for
+    // them. An instance with no ntfy settings starts no task and says nothing.
+    let push: Option<Arc<dyn jojobot_domain::push::Nudge>> = match &config.ntfy {
+        None => None,
+        Some(ntfy_config) => {
+            tracing::info!(
+                server = %ntfy_config.url,
+                "mail posted to the operator is pushed to their phone through ntfy"
+            );
+            let notifier = jojobot::push::Ntfy::new(ntfy_config.clone())
+                .context("building the ntfy client")?;
+            Some(Arc::new(jojobot::push::Runner::start(
+                booted.outbox.clone(),
+                booted.mailboxes.clone(),
+                Arc::new(notifier),
+                jojobot_domain::push::Policy::default(),
+            )))
+        }
+    };
 
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
@@ -127,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         registry: booted.registry,
         ui,
         clock: config.clock,
+        push,
     };
     // The pool every port above holds is only good for as long as this
     // process's own store is running. Kept alive for the rest of `main`

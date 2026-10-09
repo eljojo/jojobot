@@ -110,6 +110,9 @@ mod operator_key;
 /// A bot leaves the operator a message, and no bot can read it back.
 #[path = "user_stories/operators_mailbox.rs"]
 mod operators_mailbox;
+/// A message in the operator's mailbox reaches their phone.
+#[path = "user_stories/operators_phone.rs"]
+mod operators_phone;
 /// A write says what it made owed, in the answer to the write.
 #[path = "user_stories/owed_receipt.rs"]
 mod owed_receipt;

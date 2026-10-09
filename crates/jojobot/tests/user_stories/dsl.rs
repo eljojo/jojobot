@@ -305,6 +305,35 @@ impl Story {
         Self::serve(bot, Self::wired(InMemoryMemory::booted())).await
     }
 
+    /// **Serve a jojobot set up to push the operator's mail to a phone**, over a
+    /// mail store that writes a push for every message that lands in a person's
+    /// box. `notifier` is the service the pushes go to and `policy` how long a
+    /// failed one is chased: a story that waits out the real hour would wait an
+    /// hour.
+    pub async fn begin_pushing(
+        bot: &str,
+        notifier: Arc<dyn jojobot_domain::push::Notifier>,
+        policy: jojobot_domain::push::Policy,
+    ) -> Self {
+        let mail = Arc::new(InMemoryMailboxes::knowing_any_owner().pushing());
+        let runs = Arc::new(InMemorySessions::new());
+        let bare = bot
+            .strip_prefix("bot:")
+            .expect("a bot handle carries its kind prefix");
+        let story = Self::spawn(
+            bare,
+            Self::wired(InMemoryMemory::booted()),
+            mail,
+            runs,
+            jojobot_domain::clock::Clock::default(),
+            false,
+            Some((notifier, policy)),
+        )
+        .await;
+        story.stand_up_the_bot().await;
+        story
+    }
+
     /// **A fresh jojobot nobody has written to**, served for the identity every
     /// instance arrives holding. [`begin`](Story::begin) stands its bot up by
     /// writing as that identity, which leaves a run behind in every story; this
@@ -323,6 +352,7 @@ impl Story {
             runs,
             jojobot_domain::clock::Clock::default(),
             false,
+            None,
         )
         .await
     }
@@ -415,6 +445,7 @@ impl Story {
             self.runs.clone(),
             jojobot_domain::clock::Clock::default(),
             true,
+            None,
         )
         .await
     }
@@ -437,6 +468,7 @@ impl Story {
             self.runs.clone(),
             clock,
             true,
+            None,
         )
         .await
     }
@@ -457,7 +489,7 @@ impl Story {
         // restart can be served over the same three stores.
         let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let runs = Arc::new(InMemorySessions::new());
-        let story = Self::spawn(bot, store, mail, runs, clock, false).await;
+        let story = Self::spawn(bot, store, mail, runs, clock, false, None).await;
         story.stand_up_the_bot().await;
         story
     }
@@ -475,6 +507,12 @@ impl Story {
         // an empty store does not, because a story about what a search says of
         // its own coverage is about a server that has not scanned yet.
         inherited: bool,
+        // **Where pushes to the operator go**, when this server is set up to
+        // push: the sender, and how long a failed push is chased.
+        push: Option<(
+            Arc<dyn jojobot_domain::push::Notifier>,
+            jojobot_domain::push::Policy,
+        )>,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -523,6 +561,14 @@ impl Story {
             idp.validator_for(UI_CLIENT, &[READER]),
             reqwest::Client::new(),
         );
+        let push: Option<Arc<dyn jojobot_domain::push::Nudge>> = push.map(|(notifier, policy)| {
+            Arc::new(jojobot::push::Runner::start(
+                mail_store.outbox(),
+                boxes.clone(),
+                notifier,
+                policy,
+            )) as Arc<dyn jojobot_domain::push::Nudge>
+        });
         let state = AppState {
             resource: format!("http://{addr}/mcp"),
             issuer: Some(crate::support::ISS.to_string()),
@@ -538,6 +584,7 @@ impl Story {
             // The shape a story runs against is the one a fresh instance
             // serves: an operator who set nothing gets both lines.
             clock,
+            push,
         };
         let ct = CancellationToken::new();
         let app = build_app(state, ct.child_token());

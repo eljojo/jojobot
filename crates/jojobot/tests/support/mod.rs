@@ -422,3 +422,149 @@ pub fn event_stream_message(body: &str) -> serde_json::Value {
         .find_map(|json| serde_json::from_str::<serde_json::Value>(json).ok())
         .unwrap_or_else(|| panic!("one JSON-RPC message, streamed or plain: {body}"))
 }
+
+// --- a fake ntfy server -------------------------------------------------------
+//
+// **A real HTTP server that can be taken down**, because a push that never left
+// the process would prove the policy and not the call: the call is a JSON POST
+// to the server's root with an Authorization header, and a server that is down
+// answers a 503, which is the answer ntfy gives when its host is up and the
+// service is not.
+
+/// One publish the server accepted.
+#[derive(Clone, Debug)]
+pub struct Published {
+    /// The `Authorization` header, as sent.
+    pub authorization: Option<String>,
+    /// The JSON body, as sent.
+    pub body: serde_json::Value,
+}
+
+struct NtfyState {
+    down: std::sync::atomic::AtomicBool,
+    /// Whether attachments are off, as on a server with no attachment cache
+    /// set: a file is refused with a 400, which is what ntfy answers.
+    no_attachments: std::sync::atomic::AtomicBool,
+    attempts: std::sync::atomic::AtomicUsize,
+    accepted: Mutex<Vec<Published>>,
+}
+
+/// A running fake ntfy server.
+pub struct FakeNtfy {
+    /// Its address, scheme included, with no trailing slash.
+    pub url: String,
+    state: Arc<NtfyState>,
+}
+
+impl FakeNtfy {
+    /// A server that is up.
+    pub async fn start() -> Self {
+        let state = Arc::new(NtfyState {
+            down: std::sync::atomic::AtomicBool::new(false),
+            no_attachments: std::sync::atomic::AtomicBool::new(false),
+            attempts: std::sync::atomic::AtomicUsize::new(0),
+            accepted: Mutex::new(Vec::new()),
+        });
+        async fn publish(
+            axum::extract::State(state): axum::extract::State<Arc<NtfyState>>,
+            headers: axum::http::HeaderMap,
+            body: axum::body::Bytes,
+        ) -> axum::http::StatusCode {
+            use std::sync::atomic::Ordering;
+            state.attempts.fetch_add(1, Ordering::SeqCst);
+            if state.down.load(Ordering::SeqCst) {
+                return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+            }
+            let Ok(body) = serde_json::from_slice(&body) else {
+                return axum::http::StatusCode::BAD_REQUEST;
+            };
+            state.accepted.lock().unwrap().push(Published {
+                authorization: headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string),
+                body,
+            });
+            axum::http::StatusCode::OK
+        }
+        // **A body too long for a message is sent as a file**, to the topic's
+        // own address, with the title and the notification text in headers.
+        async fn upload(
+            axum::extract::State(state): axum::extract::State<Arc<NtfyState>>,
+            axum::extract::Path(topic): axum::extract::Path<String>,
+            headers: axum::http::HeaderMap,
+            body: axum::body::Bytes,
+        ) -> axum::http::StatusCode {
+            use std::sync::atomic::Ordering;
+            state.attempts.fetch_add(1, Ordering::SeqCst);
+            if state.down.load(Ordering::SeqCst) {
+                return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+            }
+            if state.no_attachments.load(Ordering::SeqCst) {
+                return axum::http::StatusCode::BAD_REQUEST;
+            }
+            let header = |name: &str| {
+                headers
+                    .get(name)
+                    .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+            };
+            state.accepted.lock().unwrap().push(Published {
+                authorization: header("authorization"),
+                body: serde_json::json!({
+                    "attachment": true,
+                    "topic": topic,
+                    "title": header("title"),
+                    "filename": header("filename"),
+                    "message": header("message"),
+                    "text": String::from_utf8_lossy(&body),
+                }),
+            });
+            axum::http::StatusCode::OK
+        }
+        let app = Router::new()
+            .route("/", post(publish))
+            .route("/{topic}", axum::routing::put(upload))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        FakeNtfy {
+            url: format!("http://{addr}"),
+            state,
+        }
+    }
+
+    /// Answer every publish with a 503 from here.
+    pub fn go_down(&self) {
+        self.state
+            .down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Refuse every file with a 400 from here, as a server with attachments off
+    /// does. Text still goes through.
+    pub fn refuse_attachments(&self) {
+        self.state
+            .no_attachments
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Accept publishes again.
+    pub fn come_up(&self) {
+        self.state
+            .down
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// How many publishes were attempted, accepted or not.
+    pub fn attempts(&self) -> usize {
+        self.state
+            .attempts
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Every publish the server accepted, in order.
+    pub fn published(&self) -> Vec<Published> {
+        self.state.accepted.lock().unwrap().clone()
+    }
+}

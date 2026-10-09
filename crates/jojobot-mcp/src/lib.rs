@@ -169,6 +169,9 @@ pub struct Jojobot {
     /// A field because the handler is built per connection, so a decision read
     /// once at startup has to reach every handler the factory makes after it.
     clock: jojobot_domain::clock::Clock,
+    /// **Told after a post to the operator lands**, when this instance pushes.
+    /// `None` is an instance with no push service set up.
+    push: Option<Arc<dyn jojobot_domain::push::Nudge>>,
 }
 
 /// **The verbs still living in this file.** Every context that has moved out
@@ -281,7 +284,14 @@ impl Jojobot {
             registry,
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
+            push: None,
         }
+    }
+
+    /// The same handler, nudging `push` after every post to the operator.
+    #[must_use]
+    pub fn pushing(self, push: Option<Arc<dyn jojobot_domain::push::Nudge>>) -> Self {
+        Self { push, ..self }
     }
 
     /// The same handler, running on a stated day rather than the real clock.

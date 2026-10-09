@@ -260,6 +260,9 @@ pub struct Booted {
     pub search: Arc<dyn Search>,
     /// What `AppState.mailboxes` is.
     pub mailboxes: Arc<dyn Mailboxes>,
+    /// The pushes waiting to go out, read from the same rows the mail store
+    /// writes them into.
+    pub outbox: Arc<dyn jojobot_domain::push::Outbox>,
     /// What `AppState.sessions` is.
     pub sessions: Arc<dyn Sessions>,
     /// What `AppState.teachings` is.
@@ -329,6 +332,18 @@ fn report_stored_records_over_the_ceiling(scan: &[jojobot_domain::memory::search
 /// a convenience over it. Refusing to start over one of them failing would
 /// be a worse outcome than serving on what the store already has.
 pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<Booted> {
+    boot_store_pushing(dir, port, clock, false).await
+}
+
+/// **[`boot_store`], with the mail store told whether a post to a person's box
+/// writes a push.** An instance with no push service set up passes `false`, and
+/// then writes no outbox row nobody would send.
+pub async fn boot_store_pushing(
+    dir: &Path,
+    port: u16,
+    clock: Clock,
+    pushing: bool,
+) -> anyhow::Result<Booted> {
     // **The SQL store jojobot runs itself**, brought up and migrated before
     // anything else is wired.
     let (store, applied) = Dolt::ready(dir, port).await.with_context(|| {
@@ -550,7 +565,12 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
     // this handle resolve" is the whole of what crosses. It reads through the
     // projection so a bot created this session is an owner this session.
     let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.clone()));
-    let bare_mail_store = Arc::new(DoltMailboxes::open(store.pool().clone(), owners));
+    let bare_mail_store = match pushing {
+        true => DoltMailboxes::open(store.pool().clone(), owners).pushing(),
+        false => DoltMailboxes::open(store.pool().clone(), owners),
+    };
+    let bare_mail_store = Arc::new(bare_mail_store);
+    let outbox: Arc<dyn jojobot_domain::push::Outbox> = bare_mail_store.clone();
     let bare_sessions = Arc::new(DoltSessions::open(store.pool().clone()));
 
     // **The one-time text migration (rule 260).** A journal beat or a
@@ -769,6 +789,7 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
         memory: indexed,
         search,
         mailboxes,
+        outbox,
         sessions,
         teachings,
         registry,

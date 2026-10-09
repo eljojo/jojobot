@@ -67,6 +67,9 @@ pub struct Config {
     /// **The clock this server runs on.** The real one unless an operator
     /// stated a day for the whole run.
     pub clock: jojobot_domain::clock::Clock,
+    /// `None` means no push service is set up: nothing is pushed and nothing
+    /// is logged about it.
+    pub ntfy: Option<crate::push::NtfyConfig>,
 }
 
 impl Config {
@@ -83,6 +86,11 @@ impl Config {
     /// - `JOJOBOT_UI_CLIENT_SECRET` — gone; setting it refuses to start.
     /// - `JOJOBOT_TODAY` — a `YYYY-MM-DD` day for this server to act out.
     ///   Unset is the real clock, which is what every deployment gets.
+    /// - `JOJOBOT_NTFY_URL` and `JOJOBOT_NTFY_TOPIC` — set both to push the
+    ///   operator's mail to their phone through that ntfy server and topic.
+    ///   Neither set pushes nothing; one without the other refuses to start.
+    /// - `JOJOBOT_NTFY_TOKEN` — the access token for the topic, when it needs
+    ///   one. A credential: it is never logged.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -181,13 +189,64 @@ impl Config {
         // longer borrowable.
         let ui = build_ui(raw.ui_client_id, raw.ui_base_url, auth.is_some())?;
 
+        let ntfy = build_ntfy(raw.ntfy_url, raw.ntfy_topic, raw.ntfy_token)?;
+
         Ok(Config {
             bind,
             resource,
             auth,
             ui,
             clock,
+            ntfy,
         })
+    }
+}
+
+/// Assemble where pushes go, or `None` when no push service is set up.
+///
+/// **Half of it refuses to start.** A server with no topic, or a topic with no
+/// server, or a token with neither, would push nothing while the operator
+/// believed their phone was told: the same silent failure the allowlist guards
+/// against above.
+fn build_ntfy(
+    url: Option<String>,
+    topic: Option<String>,
+    token: Option<String>,
+) -> anyhow::Result<Option<crate::push::NtfyConfig>> {
+    let url = url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
+    let topic = topic
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let token = token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    match (url, topic, token) {
+        (None, None, None) => Ok(None),
+        (Some(url), Some(topic), token) => {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                anyhow::bail!(
+                    "JOJOBOT_NTFY_URL ({url:?}) is not an http or https address. It takes the \
+                     ntfy server's address with its scheme, such as https://ntfy.example."
+                );
+            }
+            Ok(Some(crate::push::NtfyConfig {
+                url: url.trim_end_matches('/').to_string(),
+                topic,
+                token,
+            }))
+        }
+        (Some(_), None, _) => anyhow::bail!(
+            "JOJOBOT_NTFY_URL is set but JOJOBOT_NTFY_TOPIC is not — a push needs both a server \
+             and a topic. Set the topic, or unset JOJOBOT_NTFY_URL."
+        ),
+        (None, Some(_), _) => anyhow::bail!(
+            "JOJOBOT_NTFY_TOPIC is set but JOJOBOT_NTFY_URL is not — a push needs both a server \
+             and a topic. Set the server, or unset JOJOBOT_NTFY_TOPIC."
+        ),
+        (None, None, Some(_)) => anyhow::bail!(
+            "JOJOBOT_NTFY_TOKEN is set but JOJOBOT_NTFY_URL and JOJOBOT_NTFY_TOPIC are not — a \
+             token authorises a push to a topic. Set both, or unset the token."
+        ),
     }
 }
 
@@ -250,6 +309,9 @@ struct RawEnv {
     /// Unparsed, because a day that is no day refuses the boot rather than
     /// being read as *not set* — see [`Config::build`].
     today: Option<String>,
+    ntfy_url: Option<String>,
+    ntfy_topic: Option<String>,
+    ntfy_token: Option<String>,
 }
 
 impl RawEnv {
@@ -269,6 +331,9 @@ impl RawEnv {
                 .is_ok_and(|v| !v.is_empty()),
             ui_base_url: std::env::var("JOJOBOT_UI_BASE_URL").ok(),
             today: std::env::var("JOJOBOT_TODAY").ok(),
+            ntfy_url: std::env::var("JOJOBOT_NTFY_URL").ok(),
+            ntfy_topic: std::env::var("JOJOBOT_NTFY_TOPIC").ok(),
+            ntfy_token: std::env::var("JOJOBOT_NTFY_TOKEN").ok(),
         }
     }
 }
@@ -334,6 +399,9 @@ mod tests {
     fn raw_subjects(subjects: Option<&str>) -> RawEnv {
         RawEnv {
             today: None,
+            ntfy_url: None,
+            ntfy_topic: None,
+            ntfy_token: None,
             bind: "127.0.0.1:8080".to_string(),
             resource: None,
             issuer: Some("https://issuer.example".to_string()),
@@ -377,6 +445,9 @@ mod tests {
         // even in loopback dev mode.
         let raw = RawEnv {
             today: None,
+            ntfy_url: None,
+            ntfy_topic: None,
+            ntfy_token: None,
             bind: "127.0.0.1:8080".to_string(),
             resource: None,
             issuer: None,
@@ -425,6 +496,9 @@ mod tests {
     fn raw(bind: &str, issuer: Option<&str>, allow_no_auth: bool) -> RawEnv {
         RawEnv {
             today: None,
+            ntfy_url: None,
+            ntfy_topic: None,
+            ntfy_token: None,
             bind: bind.to_string(),
             resource: None,
             issuer: issuer.map(str::to_string),
@@ -481,6 +555,9 @@ mod tests {
     fn raw_ui(issuer: Option<&str>, client_id: Option<&str>, base_url: Option<&str>) -> RawEnv {
         RawEnv {
             today: None,
+            ntfy_url: None,
+            ntfy_topic: None,
+            ntfy_token: None,
             bind: "127.0.0.1:8080".to_string(),
             resource: None,
             issuer: issuer.map(str::to_string),
@@ -588,5 +665,92 @@ mod tests {
     #[test]
     fn origin_passthrough_without_scheme() {
         assert_eq!(origin_of("not-a-url"), "not-a-url");
+    }
+
+    /// A loopback development environment with the three push settings as given.
+    fn with_ntfy(url: Option<&str>, topic: Option<&str>, token: Option<&str>) -> RawEnv {
+        RawEnv {
+            ntfy_url: url.map(str::to_string),
+            ntfy_topic: topic.map(str::to_string),
+            ntfy_token: token.map(str::to_string),
+            ..raw("127.0.0.1:8080", None, true)
+        }
+    }
+
+    /// **No push settings push nothing.** The default instance, and blank values
+    /// (an environment file with the keys present and empty) read as not set.
+    #[test]
+    fn no_ntfy_settings_means_no_push() {
+        assert!(
+            Config::build(with_ntfy(None, None, None))
+                .unwrap()
+                .ntfy
+                .is_none()
+        );
+        assert!(
+            Config::build(with_ntfy(Some(" "), Some(""), Some("")))
+                .unwrap()
+                .ntfy
+                .is_none()
+        );
+    }
+
+    /// **A server and a topic set a push up**, the token is optional, and a
+    /// trailing slash on the server is dropped so the call is made to the root.
+    #[test]
+    fn a_server_and_a_topic_set_a_push_up_with_or_without_a_token() {
+        let open = Config::build(with_ntfy(
+            Some("https://ntfy.example/"),
+            Some("phone"),
+            None,
+        ))
+        .unwrap()
+        .ntfy
+        .expect("a push is set up");
+        assert_eq!(
+            (open.url.as_str(), open.topic.as_str(), open.token.clone()),
+            ("https://ntfy.example", "phone", None)
+        );
+        let closed = Config::build(with_ntfy(
+            Some("http://127.0.0.1:2586"),
+            Some("phone"),
+            Some("tk_example"),
+        ))
+        .unwrap()
+        .ntfy
+        .expect("a push is set up");
+        assert_eq!(closed.token.as_deref(), Some("tk_example"));
+    }
+
+    /// **Half a setup refuses to start, naming the one that is missing.** And the
+    /// credential never prints, in the refusal or in the config's Debug.
+    #[test]
+    fn half_a_push_setup_refuses_to_start_and_the_token_never_prints() {
+        let url_only =
+            Config::build(with_ntfy(Some("https://ntfy.example"), None, None)).unwrap_err();
+        assert!(format!("{url_only:#}").contains("JOJOBOT_NTFY_TOPIC"));
+        let topic_only = Config::build(with_ntfy(None, Some("phone"), None)).unwrap_err();
+        assert!(format!("{topic_only:#}").contains("JOJOBOT_NTFY_URL"));
+        let token_only = Config::build(with_ntfy(None, None, Some("tk_wiggum"))).unwrap_err();
+        assert!(format!("{token_only:#}").contains("JOJOBOT_NTFY_TOKEN"));
+        assert!(!format!("{token_only:#}").contains("tk_wiggum"));
+
+        let configured = Config::build(with_ntfy(
+            Some("https://ntfy.example"),
+            Some("phone"),
+            Some("tk_wiggum"),
+        ))
+        .unwrap()
+        .ntfy
+        .unwrap();
+        assert!(!format!("{configured:?}").contains("tk_wiggum"));
+    }
+
+    /// A server that is no http address is refused rather than called.
+    #[test]
+    fn a_server_without_a_scheme_is_refused() {
+        let refused =
+            Config::build(with_ntfy(Some("ntfy.example"), Some("phone"), None)).unwrap_err();
+        assert!(format!("{refused:#}").contains("JOJOBOT_NTFY_URL"));
     }
 }

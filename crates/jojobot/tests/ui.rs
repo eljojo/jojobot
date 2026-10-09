@@ -445,6 +445,7 @@ async fn spawn_jojobot_serving(
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
         clock: jojobot_domain::clock::Clock::default(),
+        push: None,
     };
 
     let ct = CancellationToken::new();

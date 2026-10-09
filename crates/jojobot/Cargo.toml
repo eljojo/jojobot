@@ -23,6 +23,10 @@ serde.workspace = true
 serde_json.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true
+# The ports are async and dyn-compatible through async-trait: the ntfy sender
+# implements the domain's `Notifier`, and a story fixture that wraps a store to
+# make it unreachable implements `Memory` the same way.
+async-trait.workspace = true
 # PKCE: the challenge is base64url of a SHA-256, and both halves are spelled out
 # in RFC 7636. Nothing else here hashes or encodes.
 sha2 = "0.10"
@@ -44,9 +48,6 @@ jojobot-domain = { workspace = true, features = ["testing"] }
 # cannot reproduce the failure (the fake never re-parses a kind from a stored
 # row, so it is not hostile where the real store is).
 jojobot-adapters = { workspace = true, features = ["testing"] }
-# The Memory port is async and dyn-compatible through async-trait, so a story
-# fixture that wraps a store to make it unreachable implements it the same way.
-async-trait = { workspace = true }
 # rmcp client, for the end-to-end ping test. native-tls keeps the test build off
 # aws-lc/cmake, matching the server's TLS choice (the test server is plain HTTP).
 rmcp = { workspace = true, features = [

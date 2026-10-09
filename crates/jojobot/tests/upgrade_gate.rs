@@ -22,6 +22,8 @@ use jojobot_adapters::testing::free_port;
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
+mod support;
+
 const FIXTURE_DIR: &str = "tests/fixtures/upgrade";
 /// The fixture recorded from the build deploy 3 shipped, kept beside the first:
 /// a store that build filled is what a deployed instance holds when it takes
@@ -136,6 +138,134 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
 #[tokio::test]
 async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
     boots_on_a_store_filled_by(FIXTURE_DIR, "boots").await;
+}
+
+/// **The outbox migration arrives on a store a deployed build filled, and a
+/// message posted to the operator is pushed from it.** The restored store has no
+/// outbox table. The current binary, set up for ntfy, boots over it and applies
+/// the migration; a message posted to the operator through the served surface
+/// reaches a server standing in for ntfy; and the row in the store ends as sent.
+/// The boot holds to the gate's own bar: no warning, no error line.
+#[tokio::test]
+async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_is_pushed() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("push-outbox").await;
+
+    // The deployed build had no outbox: the table is absent before the boot.
+    let before = open_the_store(&state_dir, store_port).await;
+    let tables: Vec<String> = sqlx::query_scalar("SHOW TABLES LIKE 'push_outbox'")
+        .fetch_all(before.pool())
+        .await
+        .expect("the tables read");
+    assert!(
+        tables.is_empty(),
+        "the restored store already has an outbox: {tables:?}"
+    );
+    let mut before = before;
+    before.stop().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let ntfy = support::FakeNtfy::start().await;
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
+    let booted = boot_current_with(
+        &state_dir,
+        store_port,
+        &git_ref,
+        false,
+        Some(reports),
+        &[],
+        &[
+            ("JOJOBOT_NTFY_URL", ntfy.url.clone()),
+            ("JOJOBOT_NTFY_TOPIC", "phone".to_string()),
+        ],
+    )
+    .await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let started = surface
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
+        .await
+        .expect("the shipped identity boots");
+    let sid = started["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the boot handed back no handle: {started}"))
+        .to_string();
+    // The deployed instance may already name its operator; if it does not, the
+    // case names one, the way an operator does.
+    let instance = surface
+        .must("recall", json!({"subject": "topic:instance", "sid": sid}))
+        .await
+        .expect("the instance record reads");
+    let operator = match instance["objects"][0]["fields"]["operator"].as_str() {
+        Some(named) => named.to_string(),
+        None => {
+            surface
+                .must(
+                    "add_entity",
+                    json!({"kind": "person", "handle": "ned-flanders", "name": "Ned Flanders",
+                           "source": "user-named", "sid": sid}),
+                )
+                .await
+                .expect("the operator is added");
+            surface
+                .must(
+                    "capture",
+                    json!({"subject": "topic:instance", "content": "who the operator is",
+                           "provenance": "testimony",
+                           "fields": {"operator": "person:ned-flanders"}, "sid": sid}),
+                )
+                .await
+                .expect("the operator is named");
+            "person:ned-flanders".to_string()
+        }
+    };
+    let posted = surface
+        .must(
+            "post_message",
+            json!({"to": operator, "subject": "the lease",
+                   "body": "it is signed", "sid": sid}),
+        )
+        .await
+        .expect("the post to the operator lands");
+    let id = posted["id"]
+        .as_str()
+        .expect("a post hands back its id")
+        .to_string();
+
+    let mut waited = 0;
+    while ntfy.published().is_empty() && waited < 500 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        waited += 1;
+    }
+    let published = ntfy.published();
+    assert_eq!(
+        published.len(),
+        1,
+        "one push reached the server: {published:?}"
+    );
+    assert_eq!(published[0].body["title"], "the lease");
+    surface.finish().await;
+    booted.stop().await;
+
+    // The store ends with the row, sent: the migration made the table and the
+    // post wrote into it in the same transaction as the message.
+    let mut after = open_the_store(&state_dir, store_port).await;
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT message_id, state FROM push_outbox")
+        .fetch_all(after.pool())
+        .await
+        .expect("the outbox reads");
+    assert_eq!(rows, vec![(id, "sent".to_string())]);
+    after.stop().await;
+    drop(scratch);
 }
 
 /// The same proof over the store the build deploy 3 shipped filled.
@@ -786,6 +916,7 @@ async fn boot_current_allowing(
         stored_over_the_ceiling,
         Some(reports),
         &[],
+        &[],
     )
     .await
 }
@@ -808,6 +939,7 @@ async fn boot_current_expecting(
         false,
         ambiguous_reports,
         tolerated_warnings,
+        &[],
     )
     .await
 }
@@ -820,10 +952,14 @@ async fn boot_current_with(
     stored_over_the_ceiling: bool,
     ambiguous_reports: Option<usize>,
     tolerated_warnings: &[&str],
+    // **Settings the case gives the instance beyond the gate's own**, as it
+    // would in the service's environment file.
+    environment: &[(&str, String)],
 ) -> Booted {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
+        .envs(environment.iter().map(|(key, value)| (*key, value)))
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
