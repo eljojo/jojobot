@@ -1431,9 +1431,10 @@ impl DoltMemory {
         new: NewEntity,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let index = self.known(tx).await?;
-        if let guard::Decision::Block(candidates) = guard::decide(
+        if let guard::Decision::Block(candidates) = guard::decide_under(
             &new.id,
             &new.labels(),
+            new.parent.as_ref(),
             &index,
             new.override_token.as_deref(),
         ) {
@@ -3652,9 +3653,13 @@ impl Memory for DoltMemory {
         // it would collide with its own former name the moment the new one
         // is close to it.
         let others: Vec<Entity> = known.into_iter().filter(|e| &e.id != from).collect();
-        if let guard::Decision::Block(candidates) =
-            guard::decide(to, &renamed.labels(), &others, override_token)
-        {
+        if let guard::Decision::Block(candidates) = guard::decide_under(
+            to,
+            &renamed.labels(),
+            renamed.parent.as_ref(),
+            &others,
+            override_token,
+        ) {
             return Ok(Guarded::Blocked {
                 attempted: to.clone(),
                 candidates,

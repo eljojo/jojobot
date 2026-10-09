@@ -261,6 +261,17 @@ const ROSTER: &[&str] = &[
     "event:gorge-safety-inspection", // made up: the town council's safety inspection of the gorge path
     "event:gorge-stunt-show", // canon-flavoured, made up: a stunt show at the gorge, as in "Bart the Daredevil"
     "event:gorge-safety-inspection-2026", // made up: a near-name of the inspection, for a screen case
+    "event:gorge-stunt-show-2026-10-05", // made up: a dated showing, for a screen case on dated series
+    "event:gorge-stunt-show-2026-10-08", // made up: the next showing of the series
+    // A dated series (rehearsals of the stunt show) for the screen cases on handles that
+    // differ only by a full date; the rounds are the same shape with no date in them.
+    "event:stunt-rehearsal-2026-10-05",
+    "event:stunt-rehearsal-2026-10-05-final",
+    "event:stunt-rehearsal-2026-10-08",
+    "event:stunt-rehearsal-2026-10-09",
+    "event:stunt-rehearsal-2026-11-02",
+    "event:stunt-round-1",
+    "event:stunt-round-2",
     // Krusty the Clown's festival, The Simpsons.
     "event:krusty-fest",
     "event:new-tyres",
@@ -563,6 +574,8 @@ const ROSTER: &[&str] = &[
     "thing:upgrade-fixture-thing",
     "topic:all-rules",
     "topic:instance",
+    "topic:stunt-rehearsals",
+    "topic:stunt-schedule",
     "topic:the-five-words",
     "topic:widgets",
     "thread:contract-ageing-line",
@@ -624,6 +637,11 @@ const ROSTER: &[&str] = &[
     "event:contract-renamed-gate-now",
     "event:contract-renamed-gate-was",
     "event:contract-renamed-other",
+    "event:contract-rehearsal-2026-10-05",
+    "event:contract-rehearsal-2026-10-05-final",
+    "event:contract-rehearsal-2026-10-08",
+    "event:contract-round-1",
+    "event:contract-round-2",
     "event:contract-the-jotting",
     "event:contract-the-sketch",
     "event:contract-unlinked-fair",
@@ -1002,6 +1020,7 @@ const ROSTER: &[&str] = &[
     "thing:handcart",
     "thing:handcart-2",
     "thing:handcart-lost",
+    "topic:contract-rehearsals",
     "topic:contract-run-of-stalls",
     "topic:contract-status-words",
     "topic:contract-widgets",

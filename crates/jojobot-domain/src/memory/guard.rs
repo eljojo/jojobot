@@ -155,6 +155,18 @@ fn folded(labels: &[&str]) -> Vec<String> {
 /// doesn't know is a second entity waiting to be created under the name the user
 /// actually says.
 pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<EntityMatch> {
+    screen_under(handle, labels, None, index)
+}
+
+/// [`screen`] for a write that also says what it sits under. The parent is
+/// what lets the screen tell a dated series from a duplicate: see
+/// [`dated_apart`].
+pub fn screen_under(
+    handle: &EntityId,
+    labels: &[&str],
+    parent: Option<&EntityId>,
+    index: &[Entity],
+) -> Vec<EntityMatch> {
     let incoming_slug = handle.slug();
     let incoming_names = folded(labels);
     let incoming_name_slugs: Vec<String> = incoming_names.iter().map(|n| slugify(n)).collect();
@@ -167,6 +179,7 @@ pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<Entit
                 incoming_slug,
                 &incoming_names,
                 &incoming_name_slugs,
+                parent,
                 e,
             )
             .map(|reason| EntityMatch {
@@ -208,7 +221,7 @@ pub fn screen_labels(
     let mut matches: Vec<EntityMatch> = index
         .iter()
         .filter_map(|e| {
-            name_reason(kind, &incoming, &incoming_slugs, e).map(|reason| EntityMatch {
+            name_reason(kind, &incoming, &incoming_slugs, false, e).map(|reason| EntityMatch {
                 handle: e.id.clone(),
                 kind: e.kind,
                 name: e.name.clone(),
@@ -231,6 +244,7 @@ fn reason_for(
     incoming_slug: &str,
     incoming_names: &[String],
     incoming_name_slugs: &[String],
+    parent: Option<&EntityId>,
     existing: &Entity,
 ) -> Option<MatchReason> {
     if &existing.id == handle {
@@ -254,7 +268,14 @@ fn reason_for(
     }
 
     // The name channels, shared with `screen_labels`.
-    let by_name = name_reason(handle.kind(), incoming_names, incoming_name_slugs, existing);
+    let siblings = parent.is_some() && parent == existing.parent.as_ref();
+    let by_name = name_reason(
+        handle.kind(),
+        incoming_names,
+        incoming_name_slugs,
+        siblings,
+        existing,
+    );
     if matches!(
         by_name,
         Some(MatchReason::SameName | MatchReason::SameNameOtherKind)
@@ -266,6 +287,11 @@ fn reason_for(
     // being one letter apart says nothing.
     if !same_kind {
         return None;
+    }
+    // Two entries of one dated series are distinct by their dates, however
+    // few characters the dates differ in.
+    if siblings && dated_apart(incoming_slug, existing.id.slug()) {
+        return by_name;
     }
     if edit_distance(incoming_slug, existing.id.slug()) <= NEAR {
         return Some(MatchReason::NearSlug);
@@ -307,10 +333,48 @@ fn contained(a: &str, b: &str) -> bool {
     subset(&a, &b) || subset(&b, &a)
 }
 
+/// A slug read as a dated entry: the stem before a full ISO date, the date, and
+/// whatever follows it. `stunt-rehearsal-2026-10-05-final` is the stem
+/// `stunt-rehearsal`, the day `2026-10-05` and the suffix `final`. A slug with
+/// no full date in it, or nothing before the date, is no entry of a series.
+fn dated(slug: &str) -> Option<(String, String, String)> {
+    let tokens: Vec<&str> = slug.split('-').collect();
+    let digits = |t: &str, n: usize| t.len() == n && t.bytes().all(|b| b.is_ascii_digit());
+    let at = (1..tokens.len().saturating_sub(2)).find(|&i| {
+        let (month, day) = (tokens[i + 1], tokens[i + 2]);
+        digits(tokens[i], 4)
+            && digits(month, 2)
+            && digits(day, 2)
+            && (1..=12).contains(&month.parse::<u32>().unwrap_or(0))
+            && (1..=31).contains(&day.parse::<u32>().unwrap_or(0))
+    })?;
+    Some((
+        tokens[..at].join("-"),
+        tokens[at..at + 3].join("-"),
+        tokens[at + 3..].join("-"),
+    ))
+}
+
+/// Whether two slugs are entries of one dated series on different days: the
+/// same stem, the same suffix and two different full dates. **Only a full date
+/// sets them apart.** A digit run that is no date does not, and neither does
+/// the same day twice, which is one entry seen twice. Callers ask it only of
+/// two things under the same parent.
+fn dated_apart(a: &str, b: &str) -> bool {
+    match (dated(a), dated(b)) {
+        (Some((stem_a, day_a, rest_a)), Some((stem_b, day_b, rest_b))) => {
+            stem_a == stem_b && rest_a == rest_b && day_a != day_b
+        }
+        _ => false,
+    }
+}
+
 /// The strongest reason an incoming set of **names** means an existing entity:
 /// some incoming label and some existing label agree once folded, an incoming
 /// label spells out the existing handle, or two labels are within a typo.
 /// `incoming` is already normalized, `incoming_slugs` are their slugified forms.
+/// `siblings` says the incoming write sits under the same parent as `existing`,
+/// which is what lets two names that differ only by a full date count as two.
 ///
 /// **Every label on both sides.** An entity's aliases are names it answers to,
 /// not decoration: matching only the preferred one lets the name the user
@@ -319,6 +383,7 @@ fn name_reason(
     kind: Option<EntityKind>,
     incoming: &[String],
     incoming_slugs: &[String],
+    siblings: bool,
     existing: &Entity,
 ) -> Option<MatchReason> {
     let same_kind = kind == Some(existing.kind);
@@ -338,9 +403,11 @@ fn name_reason(
     if !same_kind {
         return None;
     }
-    let near = incoming
-        .iter()
-        .any(|a| existing_names.iter().any(|b| edit_distance(a, b) <= NEAR));
+    let near = incoming.iter().any(|a| {
+        existing_names.iter().any(|b| {
+            edit_distance(a, b) <= NEAR && !(siblings && dated_apart(&slugify(a), &slugify(b)))
+        })
+    });
     near.then_some(MatchReason::NearName)
 }
 
@@ -374,7 +441,20 @@ pub fn decide(
     index: &[Entity],
     override_token: Option<&str>,
 ) -> Decision {
-    let matches = screen(handle, labels, index);
+    decide_under(handle, labels, None, index, override_token)
+}
+
+/// [`decide`] for a write that also says what it sits under: a creation, or a
+/// rename that keeps or changes the parent. Entries of a dated series under one
+/// parent are not near-misses of each other (see [`screen_under`]).
+pub fn decide_under(
+    handle: &EntityId,
+    labels: &[&str],
+    parent: Option<&EntityId>,
+    index: &[Entity],
+    override_token: Option<&str>,
+) -> Decision {
+    let matches = screen_under(handle, labels, parent, index);
     if matches.is_empty() {
         return Decision::Proceed;
     }
@@ -1336,5 +1416,94 @@ mod tests {
             "springfield-town-council"
         );
         assert_eq!(slugify("!!!"), "");
+    }
+
+    #[test]
+    fn a_slug_is_dated_only_by_a_full_date_after_a_stem() {
+        assert_eq!(
+            dated("stunt-rehearsal-2026-10-05-final"),
+            Some((
+                "stunt-rehearsal".into(),
+                "2026-10-05".into(),
+                "final".into()
+            ))
+        );
+        assert_eq!(
+            dated("stunt-rehearsal-2026-10-05"),
+            Some(("stunt-rehearsal".into(), "2026-10-05".into(), "".into()))
+        );
+        for not_dated in [
+            "stunt-round-1",
+            "stunt-round-2026",
+            "stunt-2026-10",
+            "stunt-2026-13-05",
+            "stunt-2026-10-32",
+            "stunt-2026-00-05",
+            "stunt-26-10-05",
+            "2026-10-05",
+            "2026-10-05-stunt",
+        ] {
+            assert_eq!(dated(not_dated), None, "{not_dated}");
+        }
+    }
+
+    #[test]
+    fn two_slugs_are_apart_by_a_date_only_when_stem_and_suffix_agree() {
+        assert!(dated_apart(
+            "stunt-rehearsal-2026-10-05",
+            "stunt-rehearsal-2026-10-08"
+        ));
+        assert!(dated_apart(
+            "stunt-rehearsal-2026-10-05-final",
+            "stunt-rehearsal-2027-10-05-final"
+        ));
+        for same in [
+            // The same day, and a suffix is no date.
+            ("stunt-rehearsal-2026-10-05", "stunt-rehearsal-2026-10-05"),
+            (
+                "stunt-rehearsal-2026-10-05",
+                "stunt-rehearsal-2026-10-05-final",
+            ),
+            // A different day under a different suffix or stem.
+            (
+                "stunt-rehearsal-2026-10-05",
+                "stunt-rehearsal-2026-10-08-final",
+            ),
+            ("stunt-rehearsal-2026-10-05", "stunt-practice-2026-10-08"),
+            // A digit run that is no date.
+            ("stunt-round-1", "stunt-round-2"),
+        ] {
+            assert!(!dated_apart(same.0, same.1), "{same:?}");
+        }
+    }
+
+    #[test]
+    fn dated_entries_under_one_parent_are_not_near_misses_of_each_other() {
+        let under = |parent: Option<&str>, id: &str, name: &str| Entity {
+            parent: parent.map(|p| EntityId(p.into())),
+            ..entity(id, name, "user-named")
+        };
+        let filed = vec![under(
+            Some("topic:widgets"),
+            "event:gorge-stunt-show-2026-10-05",
+            "Stunt show 2026-10-05",
+        )];
+        let widgets = EntityId("topic:widgets".into());
+        let other = EntityId("topic:instance".into());
+        let incoming = EntityId("event:gorge-stunt-show-2026-10-08".into());
+        let name = ["Stunt show 2026-10-08"];
+
+        assert!(
+            screen_under(&incoming, &name, Some(&widgets), &filed).is_empty(),
+            "a different day under the same parent is another entry"
+        );
+        assert!(
+            !screen_under(&incoming, &name, Some(&other), &filed).is_empty(),
+            "a different parent is no series, and the same near-miss stands"
+        );
+        assert!(
+            !screen_under(&incoming, &name, None, &filed).is_empty(),
+            "a write naming no parent is no series either"
+        );
     }
 }

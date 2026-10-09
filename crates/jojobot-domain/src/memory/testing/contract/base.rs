@@ -2980,6 +2980,72 @@ pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
     );
 }
 
+/// **Two entries of a dated series under one parent are two things**, however
+/// few characters their dates differ in. Only a different full date does it:
+/// the same day again, and a digit that is no date, are still near-misses.
+pub async fn a_dated_series_under_one_parent_is_not_a_near_miss<M: Memory>(store: &M) {
+    let parent = EntityId("topic:contract-rehearsals".into());
+    add(
+        store,
+        NewEntity::new(parent.clone(), "Contract Rehearsals", "contract-fixture"),
+    )
+    .await;
+    let under = |handle: &str, name: &str| NewEntity {
+        parent: Some(parent.clone()),
+        ..NewEntity::new(EntityId(handle.into()), name, "contract-fixture")
+    };
+
+    add(
+        store,
+        under(
+            "event:contract-rehearsal-2026-10-05",
+            "Rehearsal 2026-10-05",
+        ),
+    )
+    .await;
+    add(
+        store,
+        under(
+            "event:contract-rehearsal-2026-10-08",
+            "Rehearsal 2026-10-08",
+        ),
+    )
+    .await;
+
+    for refused in [
+        under(
+            "event:contract-rehearsal-2026-10-05-final",
+            "Rehearsal 2026-10-05 final",
+        ),
+        under("event:contract-rehearsal-2026-10-05", "Rehearsal again"),
+    ] {
+        let id = refused.id.clone();
+        assert!(
+            matches!(
+                store
+                    .add_entity(refused)
+                    .await
+                    .expect("add_entity should succeed"),
+                Guarded::Blocked { .. }
+            ),
+            "{id} names a day that is already filed, so it stays a near-miss",
+        );
+    }
+
+    add(store, under("event:contract-round-1", "Round 1")).await;
+    let id = EntityId("event:contract-round-2".into());
+    assert!(
+        matches!(
+            store
+                .add_entity(under("event:contract-round-2", "Round 2"))
+                .await
+                .expect("add_entity should succeed"),
+            Guarded::Blocked { .. }
+        ),
+        "{id} differs by a digit that is no date, so it stays a near-miss",
+    );
+}
+
 /// **Children come back as handles, one level down.** Zooming is the whole
 /// point: a parent read hands back the branch names and nothing else, so
 /// the caller pays only for the branch it descends into. A grandchild is
@@ -15261,6 +15327,7 @@ macro_rules! all_cases {
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_lands_whatever_word_it_holds($store));
         $m!(a_child_names_its_parent_and_reads_back($store));
+        $m!(a_dated_series_under_one_parent_is_not_a_near_miss($store));
         $m!(children_are_handles_and_one_level_deep($store));
         $m!(a_write_that_rewrites_a_child_leaves_it_where_it_was($store));
         $m!(a_parent_that_is_not_a_handle_is_refused_before_the_guard($store));

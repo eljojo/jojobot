@@ -1285,9 +1285,10 @@ impl Memory for InMemoryMemory {
             new.parent.as_ref(),
         )?;
         let index = self.known();
-        if let Decision::Block(candidates) = guard::decide(
+        if let Decision::Block(candidates) = guard::decide_under(
             &new.id,
             &new.labels(),
+            new.parent.as_ref(),
             &index,
             new.override_token.as_deref(),
         ) {
@@ -1727,9 +1728,13 @@ impl Memory for InMemoryMemory {
         // the index it is screened against — or it would collide with its
         // own former name the moment the new one is close to it.
         let others: Vec<Entity> = known.iter().filter(|e| &e.id != from).cloned().collect();
-        if let Decision::Block(candidates) =
-            guard::decide(to, &renamed.labels(), &others, override_token)
-        {
+        if let Decision::Block(candidates) = guard::decide_under(
+            to,
+            &renamed.labels(),
+            renamed.parent.as_ref(),
+            &others,
+            override_token,
+        ) {
             return Ok(Guarded::Blocked {
                 attempted: to.clone(),
                 candidates,

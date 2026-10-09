@@ -288,3 +288,109 @@ async fn a_rename_onto_a_spelling_that_resembles_someone_else_is_confirmed_and_l
 
     story.finish().await;
 }
+
+/// **A dated series is the ordinary shape of a recurring thing.** Rehearsals
+/// on three different days are three records under one parent, and their
+/// handles and names are one edit apart in the digits of the day. The guard
+/// reads a full date as the difference between them, so none is refused.
+#[tokio::test]
+async fn three_dated_visits_filed_under_one_parent_are_not_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("topic:stunt-rehearsals", "Stunt rehearsals").await;
+    s.add_under(
+        "topic:stunt-rehearsals",
+        "event:stunt-rehearsal-2026-10-05",
+        "Stunt rehearsal 2026-10-05",
+    )
+    .await;
+    s.add_under(
+        "topic:stunt-rehearsals",
+        "event:stunt-rehearsal-2026-10-08",
+        "Stunt rehearsal 2026-10-08",
+    )
+    .await;
+    s.add_under(
+        "topic:stunt-rehearsals",
+        "event:stunt-rehearsal-2026-11-02",
+        "Stunt rehearsal 2026-11-02",
+    )
+    .await;
+
+    // **Each one landed as its own record**, not folded into a sibling.
+    for (handle, day) in [
+        ("event:stunt-rehearsal-2026-10-05", "2026-10-05"),
+        ("event:stunt-rehearsal-2026-10-08", "2026-10-08"),
+        ("event:stunt-rehearsal-2026-11-02", "2026-11-02"),
+    ] {
+        s.recall(handle).await.says(day);
+    }
+
+    s.wrap("filed three rehearsals as three records").await;
+    story.finish().await;
+}
+
+/// **The exemption is the date and nothing wider.** Beside the dated series,
+/// the shapes that are still one record seen twice stay refused: a handle that
+/// differs by a digit that is no date, the same day again, and a dated handle
+/// filed under another parent.
+#[tokio::test]
+async fn only_a_different_full_date_under_the_same_parent_sets_two_handles_apart() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("topic:stunt-rehearsals", "Stunt rehearsals").await;
+    s.add("topic:stunt-schedule", "Stunt schedule").await;
+    s.add_under(
+        "topic:stunt-rehearsals",
+        "event:stunt-rehearsal-2026-10-05",
+        "Stunt rehearsal 2026-10-05",
+    )
+    .await;
+    s.add_under(
+        "topic:stunt-rehearsals",
+        "event:stunt-round-1",
+        "Stunt round 1",
+    )
+    .await;
+
+    // A digit that is not part of a date: still a near-miss.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "event", "handle": "stunt-round-2", "name": "Stunt round 2",
+            "source": "user-named", "parent": "topic:stunt-rehearsals",
+        }),
+    )
+    .await
+    .says("event:stunt-round-1");
+
+    // The same day again, with a suffix: the same-day collision stays.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "event", "handle": "stunt-rehearsal-2026-10-05-final",
+            "name": "Stunt rehearsal 2026-10-05 final",
+            "source": "user-named", "parent": "topic:stunt-rehearsals",
+        }),
+    )
+    .await
+    .says("event:stunt-rehearsal-2026-10-05");
+
+    // A different day, but under another parent: not the same series.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "event", "handle": "stunt-rehearsal-2026-10-09",
+            "name": "Stunt rehearsal 2026-10-09",
+            "source": "user-named", "parent": "topic:stunt-schedule",
+        }),
+    )
+    .await
+    .says("event:stunt-rehearsal-2026-10-05");
+
+    s.wrap("the date exemption left the other near-misses refused")
+        .await;
+    story.finish().await;
+}
