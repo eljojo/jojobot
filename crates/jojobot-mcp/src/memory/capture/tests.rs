@@ -3092,6 +3092,7 @@ async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
         .as_str()
         .unwrap_or_else(|| panic!("the write carries the same sentence the boot shows: {sixth}"));
     assert!(note.contains("skill"), "{note}");
+    assert!(note.contains("starred:"), "{note}");
 }
 
 /// **The echo note reaches the receipt — the wiring, not only the

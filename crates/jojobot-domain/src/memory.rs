@@ -3108,6 +3108,14 @@ pub struct CarriedSeats {
     pub dropped: Option<FactAddress>,
 }
 
+/// **The one route that changes a rule's star.** `starred` describes its
+/// claim and never folds onto the bot, so `update_entity`, which writes only a
+/// thing's keys, cannot reach it. Every message that tells a caller to star or
+/// unstar a rule says this, so the route is spelled once.
+pub const STAR_ROUTE: &str = "A star is changed with update_fact on the rule's address and \
+    fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred \
+    stays on its claim.";
+
 /// `in_force` is [`rules_in_force`]'s own answer, in the store's own order —
 /// oldest first, the same order the boot's own selection reads before it
 /// reverses to take the newest.
@@ -3132,8 +3140,8 @@ pub fn carried_seats_status(in_force: &[Fact], seats: usize) -> Option<CarriedSe
             "This identity has {count} rules starred to ride the boot, and only {} seats \
              exist. The seats are for rules that bind on every turn; a rule that binds at one \
              moment is better carried by what is read at that moment, such as a skill fetched \
-             for that job.",
-            seats,
+             for that job. {}",
+            seats, STAR_ROUTE,
         ),
         dropped,
     })

@@ -2238,6 +2238,11 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     let full = carried_seats_status(&starred(8), 8).expect("every seat taken says so");
     assert_eq!(full.starred, 8);
     assert!(full.dropped.is_none(), "nothing is displaced at the count");
+    assert!(
+        full.sentence.contains("update_fact") && full.sentence.contains("starred:"),
+        "the sentence names the route that changes a star: {}",
+        full.sentence
+    );
     let over = carried_seats_status(&starred(9), 8).expect("one over says so");
     assert_eq!(
         over.dropped.expect("the oldest is displaced").to_string(),

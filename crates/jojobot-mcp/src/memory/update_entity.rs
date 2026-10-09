@@ -81,7 +81,9 @@ impl Jojobot {
                        it); source and crm edits are never questioned. `sets` sets keys on the \
                        thing in the same call, through a claim of inference; a call that sends \
                        only `sets` leaves the entity itself alone, and a key that needs the \
-                       operator's word is written with capture. A handle that names \
+                       operator's word is written with capture. A rule's `starred` mark stays \
+                       on its claim, so it is not set here: update_fact on the rule's address \
+                       with fields {starred: \"true\"} or {starred: \"false\"} stars or unstars it. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
                        be read back whole in one answer are refused with nothing written."
     )]

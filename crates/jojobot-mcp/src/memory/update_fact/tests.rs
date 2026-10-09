@@ -2254,6 +2254,7 @@ async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
         panic!("the edit carries the same sentence the boot shows: {starred_later}")
     });
     assert!(note.contains("skill"), "{note}");
+    assert!(note.contains("starred:"), "{note}");
 }
 
 /// **`update_fact`'s own copy of the field-shadows-argument teaching** —

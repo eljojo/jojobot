@@ -147,6 +147,8 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     .await
     .says("rule_seats")
     .says("set_charter")
+    // The way to take a star off is the claim's own edit, named with the key.
+    .says("starred:")
     .says("\"wrote\":false");
     // Nothing was written.
     s.call("recall", json!({"subject": "bot:epsilon", "facts": true}))
@@ -1504,5 +1506,65 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     refusal.never_says("floor_parts");
+    story.finish().await;
+}
+
+/// **A rule written plain is starred afterwards through the claim's own
+/// edit.** `starred` describes its claim and never folds onto the bot, so
+/// `update_entity` cannot reach it; `update_fact` with the key in `fields`
+/// is the route, and the next boot carries the rule.
+#[tokio::test]
+async fn a_plain_rule_is_starred_later_through_update_fact_and_the_next_boot_carries_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:psi", "Psi").await;
+    let plain = s
+        .event_with(
+            "bot:psi",
+            "check the receipt before moving on",
+            json!({}),
+            &[],
+        )
+        .await;
+
+    // ── written plain: the boot does not carry it ───────────────────────────
+    let (before, _) = story
+        .call("start_here", json!({"bot": "psi", "brief": true}))
+        .await;
+    assert_eq!(
+        before.json()["identity"]["rules"].as_array().map(Vec::len),
+        Some(0),
+        "{}",
+        before.json()
+    );
+
+    // ── starred by editing the claim, and the next boot carries it ──────────
+    s.call(
+        "update_fact",
+        json!({"address": plain, "fields": {"starred": "true"}}),
+    )
+    .await;
+    let (after, _) = story
+        .call("start_here", json!({"bot": "psi", "brief": true}))
+        .await;
+    let rules = after.json()["identity"]["rules"].clone();
+    assert_eq!(rules.as_array().map(Vec::len), Some(1), "{rules}");
+    assert!(rules.to_string().contains("receipt"), "{rules}");
+
+    // ── and the same route takes the star off again ─────────────────────────
+    s.call(
+        "update_fact",
+        json!({"address": plain, "fields": {"starred": "false"}}),
+    )
+    .await;
+    let (gone, _) = story
+        .call("start_here", json!({"bot": "psi", "brief": true}))
+        .await;
+    assert_eq!(
+        gone.json()["identity"]["rules"].as_array().map(Vec::len),
+        Some(0),
+        "{}",
+        gone.json()
+    );
     story.finish().await;
 }

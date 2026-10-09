@@ -907,6 +907,13 @@ fn the_search_description_names_type_keys() {
     assert_description_names("search", &["type_keys", "teaching"]);
 }
 
+/// **`update_entity` says where a rule's star is edited**, since `starred`
+/// stays on its claim and this verb writes only the thing's keys.
+#[test]
+fn the_update_entity_description_names_the_route_to_star_a_rule() {
+    assert_description_names("update_entity", &["update_fact", "starred"]);
+}
+
 /// **`merge_entities` names the refusal a merge into your own bot can meet**,
 /// and the two ways past it.
 #[test]
