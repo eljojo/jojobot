@@ -171,7 +171,7 @@ pub(crate) async fn name_the_operator_as(jojobot: &Jojobot, sid: &str, person: &
     crate::memory::testing::capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some([("operator".to_string(), handle)].into()),
+            sets: Some([("operator".to_string(), handle)].into()),
             provenance: Some("testimony".into()),
             sid: Some(sid.to_string()),
             ..crate::memory::testing::capture_args("topic:instance", "who the operator is")

@@ -303,7 +303,7 @@ mod tests {
         let landed = capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "5".to_string(),
@@ -367,7 +367,7 @@ mod tests {
         let carrier = capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "7".to_string(),
@@ -465,7 +465,7 @@ mod tests {
             ..capture_args(subject, content)
         };
         let capacity = |bot: &str, held: &str| CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     held.to_string(),
@@ -607,7 +607,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "0".to_string(),
@@ -679,7 +679,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_BODY_CAP.to_string(),
                         "5".to_string(),

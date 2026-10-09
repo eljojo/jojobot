@@ -1695,7 +1695,7 @@ mod tests {
             &jojobot,
             &epsilon,
             CaptureArgs {
-                fields: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
+                sets: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
                 ..crate::memory::testing::capture_args("bot:omega", "omega reports to epsilon")
             },
         )
@@ -1780,7 +1780,7 @@ mod tests {
         crate::memory::testing::capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some([("operator".to_string(), "bot:gamma".to_string())].into()),
+                sets: Some([("operator".to_string(), "bot:gamma".to_string())].into()),
                 provenance: Some("testimony".into()),
                 ..crate::memory::testing::capture_args("topic:instance", "who the operator is")
             },
@@ -1873,7 +1873,7 @@ mod tests {
         owning(&jojobot, "gamma").await;
         crate::memory::testing::ensure(&jojobot, "person:milhouse").await;
         let names = |handle: &str| CaptureArgs {
-            fields: Some([("operator".to_string(), handle.to_string())].into()),
+            sets: Some([("operator".to_string(), handle.to_string())].into()),
             provenance: Some("testimony".into()),
             ..crate::memory::testing::capture_args("topic:instance", "who the operator is")
         };
@@ -1902,7 +1902,7 @@ mod tests {
             &jojobot,
             &head,
             CaptureArgs {
-                fields: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
+                sets: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
                 ..crate::memory::testing::capture_args("bot:omega", "omega reports to epsilon")
             },
         )

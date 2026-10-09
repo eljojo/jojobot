@@ -957,6 +957,9 @@ impl Memory for RacingMemory {
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "5".to_string(),
                     )]),
+                    sets: [jojobot_domain::memory::THOUGHT_CAPACITY.to_string()]
+                        .into_iter()
+                        .collect(),
                     ..NewFact::about(
                         self.racer.clone(),
                         "a second session raises the ceiling",

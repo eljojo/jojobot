@@ -261,7 +261,7 @@ mod tests {
     async fn the_operator_sets_the_zone(jojobot: &Jojobot, zone: &str) {
         let mut args = capture_args(INSTANCE_RECORD, "where the operator lives");
         args.provenance = Some("testimony".into());
-        args.fields = Some([(INSTANCE_ZONE_KEY.to_string(), zone.to_string())].into());
+        args.sets = Some([(INSTANCE_ZONE_KEY.to_string(), zone.to_string())].into());
         capture_ok(jojobot, args).await;
     }
 
@@ -456,7 +456,7 @@ mod tests {
         let names = |handle: &str| {
             let mut args = capture_args(INSTANCE_RECORD, "who the operator is");
             args.provenance = Some("testimony".into());
-            args.fields = Some([(INSTANCE_OPERATOR_KEY.to_string(), handle.to_string())].into());
+            args.sets = Some([(INSTANCE_OPERATOR_KEY.to_string(), handle.to_string())].into());
             args
         };
 
@@ -496,7 +496,7 @@ mod tests {
             &jojobot,
             &head,
             CaptureArgs {
-                fields: Some([("reports_to".to_string(), "bot:otto".to_string())].into()),
+                sets: Some([("reports_to".to_string(), "bot:otto".to_string())].into()),
                 ..capture_args("bot:omega", "omega reports to otto")
             },
         )

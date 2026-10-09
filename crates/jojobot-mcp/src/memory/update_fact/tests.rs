@@ -165,7 +165,7 @@ async fn an_update_says_what_it_replaced_and_what_it_left_alone() {
     let first = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("mood".to_string(), "delighted".to_string())]
                     .into_iter()
                     .collect(),
@@ -356,7 +356,7 @@ async fn a_clear_that_would_break_a_fit_is_blocked_and_says_what_it_would_cost()
     let whole = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cost".to_string(), "40".to_string()),
                     ("done_on".to_string(), "2026-04-18".to_string()),
@@ -392,7 +392,7 @@ async fn a_clear_that_would_break_a_fit_is_blocked_and_says_what_it_would_cost()
     let loose = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("cost".to_string(), "40".to_string())]
                     .into_iter()
                     .collect(),
@@ -426,7 +426,7 @@ async fn update_fact_sets_and_clears_a_field() {
     let captured = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cost".to_string(), "40".to_string()),
                     ("done_on".to_string(), "2026-04-18".to_string()),
@@ -443,7 +443,7 @@ async fn update_fact_sets_and_clears_a_field() {
     let set = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("cost".to_string(), "45".to_string())]
                         .into_iter()
                         .collect(),
@@ -526,7 +526,7 @@ async fn an_edit_that_moves_the_cadence_keeps_the_due_moment_current() {
     let opened = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("cadence_days".to_string(), "7".to_string()),
                         ("advances_from".to_string(), "check_in_date".to_string()),
@@ -550,7 +550,7 @@ async fn an_edit_that_moves_the_cadence_keeps_the_due_moment_current() {
     let edited = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("cadence_days".to_string(), "14".to_string())]
                         .into_iter()
                         .collect(),
@@ -616,7 +616,7 @@ async fn clearing_a_schedule_key_removes_the_stale_due_moment() {
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "check_in_date".to_string()),
@@ -712,7 +712,7 @@ async fn a_schedule_cleared_in_part_names_what_is_left_and_the_act_that_finishes
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "check_in_date".to_string()),
@@ -835,7 +835,7 @@ async fn clearing_counts_from_alone_gets_no_half_cleared_advisory() {
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "check_in_date".to_string()),
@@ -879,7 +879,7 @@ async fn update_fact_refuses_the_reserved_key() {
     let refused = blocked(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("retracts".to_string(), "person:alpha#f1".to_string())]
                         .into_iter()
                         .collect(),
@@ -1582,7 +1582,7 @@ async fn a_mark_set_through_update_fact_reads_back_and_an_ordinary_field_is_not_
     let with_field = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("stands_for".to_string(), "not a mark".to_string())]
                         .into_iter()
                         .collect(),
@@ -1822,7 +1822,7 @@ async fn a_record_can_be_marked_and_the_mark_can_be_changed() {
     let marked = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("starred".to_string(), "true".to_string())]
                     .into_iter()
                     .collect(),
@@ -1874,7 +1874,7 @@ async fn a_record_can_be_marked_and_the_mark_can_be_changed() {
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("starred".to_string(), "false".to_string())]
                     .into_iter()
                     .collect(),
@@ -2015,7 +2015,7 @@ async fn a_bot_cannot_raise_its_own_thought_capacity_by_patch() {
     let refused = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "5".to_string(),
@@ -2055,7 +2055,7 @@ async fn a_different_bot_can_raise_this_bots_thought_capacity_by_patch() {
     let edited = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "5".to_string(),
@@ -2123,7 +2123,7 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
     let set = blocked(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("holder".to_string(), "epsilon".to_string())]
                         .into_iter()
                         .collect(),
@@ -2213,7 +2213,7 @@ async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
         let receipt = capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("starred".to_string(), "true".to_string())]
                         .into_iter()
                         .collect(),
@@ -2236,7 +2236,7 @@ async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
     let starred_later = update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("starred".to_string(), "true".to_string())]
                     .into_iter()
                     .collect(),
@@ -2272,7 +2272,7 @@ async fn a_field_that_shadows_update_facts_own_argument_is_taught_once() {
     let shadowing = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("status".to_string(), "retired".to_string())]
                         .into_iter()
                         .collect(),
@@ -2296,7 +2296,7 @@ async fn a_field_that_shadows_update_facts_own_argument_is_taught_once() {
     let second = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("status".to_string(), "retired".to_string())]
                         .into_iter()
                         .collect(),
@@ -2334,7 +2334,7 @@ async fn an_edit_writing_a_declared_key_is_not_taught_it_shadows_an_argument() {
     let column = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("status".to_string(), "now".to_string())]
                         .into_iter()
                         .collect(),
@@ -2357,7 +2357,7 @@ async fn an_edit_writing_a_declared_key_is_not_taught_it_shadows_an_argument() {
     let shadow = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("provenance".to_string(), "testimony".to_string())]
                         .into_iter()
                         .collect(),
@@ -2407,7 +2407,7 @@ async fn an_edited_field_equal_to_todays_default_is_named_in_the_receipt() {
     let echoing = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         "one_liner".to_string(),
                         "The disposable implementer.".to_string(),
@@ -2435,7 +2435,7 @@ async fn an_edited_field_equal_to_todays_default_is_named_in_the_receipt() {
     let ordinary = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("greeting".to_string(), "Hey, it's Milhouse.".to_string())]
                         .into_iter()
                         .collect(),
@@ -2461,7 +2461,7 @@ async fn a_full_room_and_a_claim_that_would_join_it(jojobot: &Jojobot, bot: &str
     capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "1".to_string(),
@@ -2757,7 +2757,7 @@ async fn an_edit_ages_a_thought_on_the_bots_own_ageing_setting() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("thought_ages_after_runs".to_string(), "2".to_string())]
                     .into_iter()
                     .collect(),
@@ -3057,7 +3057,7 @@ async fn finishing_work_through_a_second_claim_takes_the_stored_due_moment_off()
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [
                     ("decide_by".to_string(), "2026-01-01".to_string()),
                     ("status".to_string(), "now".to_string()),
@@ -3073,7 +3073,7 @@ async fn finishing_work_through_a_second_claim_takes_the_stored_due_moment_off()
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [("owner".to_string(), "person:gamma".to_string())]
                     .into_iter()
                     .collect(),
@@ -3096,7 +3096,7 @@ async fn finishing_work_through_a_second_claim_takes_the_stored_due_moment_off()
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("status".to_string(), "done".to_string())]
                     .into_iter()
                     .collect(),
@@ -3142,7 +3142,7 @@ async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot
     let refused_write = blocked(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                fields: Some(
+                sets: Some(
                     [("due_on".to_string(), "2026-07-01".to_string())]
                         .into_iter()
                         .collect(),
@@ -3185,7 +3185,7 @@ async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "check_in_date".to_string()),
@@ -3248,7 +3248,7 @@ async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [
                     ("decide_by".to_string(), "2026-01-01".to_string()),
                     ("status".to_string(), "now".to_string()),
@@ -3301,7 +3301,7 @@ async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("status".to_string(), "done".to_string())]
                     .into_iter()
                     .collect(),
@@ -3321,7 +3321,7 @@ async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("status".to_string(), "now".to_string())]
                     .into_iter()
                     .collect(),
@@ -3345,7 +3345,7 @@ async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("status".to_string(), "done".to_string())]
                     .into_iter()
                     .collect(),
@@ -3453,7 +3453,7 @@ async fn ending_a_promise_takes_the_stored_due_moment_off_and_reopening_puts_it_
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [("promised_by".to_string(), "2026-07-01".to_string())]
                     .into_iter()
                     .collect(),
@@ -3472,7 +3472,7 @@ async fn ending_a_promise_takes_the_stored_due_moment_off_and_reopening_puts_it_
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("ended".to_string(), "delivered".to_string())]
                     .into_iter()
                     .collect(),
@@ -3521,7 +3521,7 @@ async fn an_edit_that_writes_or_clears_the_due_moment_is_refused() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [("promised_by".to_string(), "2026-07-01".to_string())]
                     .into_iter()
                     .collect(),
@@ -3535,7 +3535,7 @@ async fn an_edit_that_writes_or_clears_the_due_moment_is_refused() {
 
     for edit in [
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("due_on".to_string(), "2026-01-16".to_string())]
                     .into_iter()
                     .collect(),
@@ -3578,7 +3578,7 @@ async fn an_edit_that_writes_or_clears_the_due_moment_is_refused() {
     let moved = update_ok(
         &jojobot,
         UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("promised_by".to_string(), "2026-07-09".to_string())]
                     .into_iter()
                     .collect(),

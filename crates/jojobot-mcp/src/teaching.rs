@@ -692,7 +692,7 @@ mod tests {
             &jojobot,
             &sid,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("cadence_days".to_string(), "7".to_string()),
                         ("advances_from".to_string(), "check_in_date".to_string()),
@@ -855,7 +855,7 @@ mod tests {
             &jojobot,
             &sid,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("cadence_days".to_string(), "7".to_string()),
                         ("advances_from".to_string(), "check_in_date".to_string()),
@@ -926,7 +926,7 @@ mod tests {
         capture_ok(
             jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("cadence_days".to_string(), "7".to_string()),
                         ("advances_from".to_string(), "check_in_date".to_string()),
@@ -1098,7 +1098,7 @@ mod tests {
             &jojobot,
             &sid,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("cadence_days".to_string(), "7".to_string()),
                         ("advances_from".to_string(), "check_in_date".to_string()),

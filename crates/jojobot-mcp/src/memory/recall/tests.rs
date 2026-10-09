@@ -205,7 +205,7 @@ async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
             &jojobot,
             CaptureArgs {
                 sid: Some(sid.clone()),
-                fields: Some(
+                sets: Some(
                     [("promised_for".to_string(), promised_for.to_string())]
                         .into_iter()
                         .collect(),
@@ -222,7 +222,7 @@ async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
         &jojobot,
         CaptureArgs {
             sid: Some(sid.clone()),
-            fields: Some(
+            sets: Some(
                 [("promised_for".to_string(), "2026-08-01".to_string())]
                     .into_iter()
                     .collect(),
@@ -298,7 +298,7 @@ async fn a_read_can_ask_who_backs_the_value_it_is_about_to_act_on() {
             CaptureArgs {
                 sid: Some(sid.to_string()),
                 provenance: Some(if testimony { "testimony" } else { "inference" }.into()),
-                fields: Some(
+                sets: Some(
                     [("rent".to_string(), rent.to_string())]
                         .into_iter()
                         .collect(),
@@ -394,7 +394,7 @@ async fn a_value_whose_record_says_why_carries_that_note_and_one_with_none_carri
                 sid: Some(sid.to_string()),
                 provenance: Some("testimony".into()),
                 details: why.map(str::to_string),
-                fields: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+                sets: Some([(key.to_string(), value.to_string())].into_iter().collect()),
                 ..capture_args("person:alpha", &format!("what the {key} is"))
             },
         )
@@ -616,7 +616,7 @@ async fn recall_says_which_values_a_key_already_holds_and_refuses_no_new_one() {
             jojobot,
             CaptureArgs {
                 sid: Some(sid.to_string()),
-                fields: Some(
+                sets: Some(
                     [("colour".to_string(), colour.to_string())]
                         .into_iter()
                         .collect(),
@@ -706,7 +706,7 @@ async fn a_rhythm(jojobot: &Jojobot, handle: &str, cadence: &str, counts_from: &
     capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), cadence.to_string()),
                     ("advances_from".to_string(), "due_date".to_string()),
@@ -1503,7 +1503,7 @@ async fn recall_answers_with_the_writes_behind_a_key_when_asked() {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("donuts_eaten".to_string(), nth.to_string())]
                         .into_iter()
                         .collect(),
@@ -1575,7 +1575,7 @@ async fn recall_answers_with_the_folded_row_and_names_what_it_left_out() {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+                sets: Some([(key.to_string(), value.to_string())].into_iter().collect()),
                 ..capture_args("thing:gravel-bike", content)
             },
         )
@@ -1720,7 +1720,7 @@ async fn a_plain_recall_ships_the_fields_and_not_the_records() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("weight".to_string(), "11".to_string())]
                     .into_iter()
                     .collect(),
@@ -1770,7 +1770,7 @@ async fn a_long_history_is_capped_on_the_wire_and_says_what_it_left_out() {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("donuts_eaten".to_string(), nth.to_string())]
                         .into_iter()
                         .collect(),
@@ -2517,7 +2517,7 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
     capture_ok(
         &setup,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(attention::RUNS_OUT.to_string(), "2026-01-01".to_string())]
                     .into_iter()
                     .collect(),
@@ -2741,7 +2741,7 @@ async fn a_narrowed_key_reports_the_set_it_wanted() {
     capture_ok(
         &setup,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("worked".to_string(), "overnight".to_string())]
                     .into_iter()
                     .collect(),
@@ -3014,7 +3014,7 @@ async fn declared_view(jojobot: &Jojobot, slug: &str, keys: &[(&str, &str)]) {
     capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 keys.iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect(),
@@ -3289,7 +3289,7 @@ async fn declared_view_filter(jojobot: &Jojobot, view_slug: &str, key: &str, val
     capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("key".to_string(), key.to_string()),
                     ("value".to_string(), value.to_string()),
@@ -3328,7 +3328,7 @@ async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("priority".to_string(), "urgent".to_string())].into()),
+            sets: Some([("priority".to_string(), "urgent".to_string())].into()),
             ..capture_args("thing:contract-view-filter-urgent", "an urgent thing")
         },
     )
@@ -3336,7 +3336,7 @@ async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("priority".to_string(), "routine".to_string())].into()),
+            sets: Some([("priority".to_string(), "routine".to_string())].into()),
             ..capture_args("thing:contract-view-filter-routine", "a routine thing")
         },
     )
@@ -3405,7 +3405,7 @@ async fn a_callers_own_fields_still_override_the_views_filter() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("priority".to_string(), "urgent".to_string())].into()),
+            sets: Some([("priority".to_string(), "urgent".to_string())].into()),
             ..capture_args("thing:contract-view-filter-urgent", "an urgent thing")
         },
     )
@@ -3413,7 +3413,7 @@ async fn a_callers_own_fields_still_override_the_views_filter() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("priority".to_string(), "routine".to_string())].into()),
+            sets: Some([("priority".to_string(), "routine".to_string())].into()),
             ..capture_args("thing:contract-view-filter-routine", "a routine thing")
         },
     )
@@ -3486,7 +3486,7 @@ async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("flagged".to_string(), "yes".to_string())].into()),
+            sets: Some([("flagged".to_string(), "yes".to_string())].into()),
             ..capture_args("thing:contract-view-answers-marked", "carries the marker")
         },
     )
@@ -3578,7 +3578,7 @@ async fn a_view_naming_a_walk_reaches_the_neighbour_a_bare_selection_cannot() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     "owner".to_string(),
                     "person:contract-view-walk-owner".to_string(),
@@ -3633,7 +3633,7 @@ async fn a_colleagues_one_liner_rides_in_the_small_list_and_absence_is_plain() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     crate::orientation::charter::ONE_LINER_KEY.to_string(),
                     "Keeps the kitchen running.".to_string(),
@@ -3739,7 +3739,7 @@ async fn a_value_selects_and_a_walk_nests() {
         CaptureArgs {
             shape: Some("attendance".into()),
             object: Some("event:birthday-party".into()),
-            fields: Some(
+            sets: Some(
                 [("answer".to_string(), "yes".to_string())]
                     .into_iter()
                     .collect(),
@@ -3832,7 +3832,7 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
         CaptureArgs {
             shape: Some("attendance".into()),
             object: Some("event:birthday-party".into()),
-            fields: Some(
+            sets: Some(
                 [("nick", "pat"), ("mood", "calm"), ("shoe", "nine")]
                     .into_iter()
                     .map(|(key, value)| (key.to_string(), value.to_string()))
@@ -4058,7 +4058,7 @@ async fn a_record_scoped_filter_says_what_it_left_out() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("answer".to_string(), "yes".to_string())]
                     .into_iter()
                     .collect(),
@@ -4174,7 +4174,7 @@ async fn a_type_query_reaches_a_record_written_with_no_label() {
     capture_ok(
         &setup,
         CaptureArgs {
-            fields: Some([("odometer".to_string(), "18000".to_string())].into()),
+            sets: Some([("odometer".to_string(), "18000".to_string())].into()),
             ..capture_args("person:alpha", "the chain was replaced")
         },
     )
@@ -4258,7 +4258,7 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("born".to_string(), born.to_string()),
                         ("owner".to_string(), "person:bart".to_string()),
@@ -4445,7 +4445,7 @@ async fn a_value_is_found_without_naming_its_key_and_prose_is_not() {
         &jojobot,
         CaptureArgs {
             sid: Some(sid.clone()),
-            fields: Some(
+            sets: Some(
                 [("serviced_on".to_string(), day.to_string())]
                     .into_iter()
                     .collect(),
@@ -4898,7 +4898,7 @@ async fn an_unscoped_follow_reaches_a_handle_held_under_an_undeclared_key() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("favourite".to_string(), "topic:all-rules".to_string())].into()),
+            sets: Some([("favourite".to_string(), "topic:all-rules".to_string())].into()),
             ..capture_args("person:homer", "holds a handle under a key nobody declared")
         },
     )
@@ -4906,7 +4906,7 @@ async fn an_unscoped_follow_reaches_a_handle_held_under_an_undeclared_key() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("note".to_string(), "read topic:all-rules first".to_string())].into()),
+            sets: Some([("note".to_string(), "read topic:all-rules first".to_string())].into()),
             ..capture_args("person:hugo", "holds the handle inside a longer string")
         },
     )
@@ -4974,7 +4974,7 @@ async fn a_handle_naming_nothing_under_an_undeclared_key_is_blocked_with_candida
 
     let result = jojobot
         .capture(Parameters(CaptureArgs {
-            fields: Some([("blocks".to_string(), "work:sigmo".to_string())].into()),
+            sets: Some([("blocks".to_string(), "work:sigmo".to_string())].into()),
             ..capture_args("person:milhouse", "waits on work nobody has recorded")
         }))
         .await
@@ -4998,7 +4998,7 @@ async fn a_handle_naming_nothing_under_an_undeclared_key_is_blocked_with_candida
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some([("blocks".to_string(), "work:sigma".to_string())].into()),
+            sets: Some([("blocks".to_string(), "work:sigma".to_string())].into()),
             ..capture_args("person:milhouse", "waits on sigma")
         },
     )
@@ -5425,7 +5425,7 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "1".to_string(),
@@ -5670,7 +5670,7 @@ async fn a_room_read_ages_on_the_bots_own_setting_and_names_where_it_came_from()
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(fields),
+                sets: Some(fields),
                 ..capture_args(bot, "capacity is one")
             },
         )
@@ -5726,7 +5726,7 @@ async fn a_room_nothing_has_aged_out_of_carries_no_room_block() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "2".to_string(),
@@ -5944,7 +5944,7 @@ async fn one_update_moves_a_value_from_one_key_to_another() {
     let wrote = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("needed_by".to_string(), "2026-11-03".to_string())]
                     .into_iter()
                     .collect(),
@@ -5957,7 +5957,7 @@ async fn one_update_moves_a_value_from_one_key_to_another() {
 
     jojobot
         .update_fact(Parameters(UpdateFactArgs {
-            fields: Some(
+            sets: Some(
                 [("runs_out".to_string(), "2026-11-03".to_string())]
                     .into_iter()
                     .collect(),
@@ -6097,7 +6097,7 @@ async fn an_empty_selection_names_the_population_it_looked_through() {
         &jojobot,
         CaptureArgs {
             sid: Some(sid),
-            fields: Some([("volume".to_string(), "eleven".to_string())].into()),
+            sets: Some([("volume".to_string(), "eleven".to_string())].into()),
             ..capture_args("thing:teapot", "the dial goes to eleven")
         },
     )
@@ -6295,6 +6295,7 @@ async fn a_kind_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of_ob
             fact.fields = [("note".to_string(), "x".repeat(name_len))]
                 .into_iter()
                 .collect();
+            fact.sets = ["note".to_string()].into_iter().collect();
             let noted = memory.capture(fact).await;
             assert!(
                 matches!(noted, Ok(Guarded::Written(_))),

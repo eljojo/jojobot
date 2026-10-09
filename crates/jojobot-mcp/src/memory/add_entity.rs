@@ -1854,7 +1854,7 @@ mod tests {
             &jojobot
                 .capture(Parameters(CaptureArgs {
                     sid: Some(as_itself),
-                    fields: Some(
+                    sets: Some(
                         [("reports_to".to_string(), "bot:omega".to_string())]
                             .into_iter()
                             .collect(),

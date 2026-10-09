@@ -1540,7 +1540,7 @@ mod begin_retry {
         capture_ok(
             &healthy,
             CaptureArgs {
-                fields: Some([("timezone".to_string(), zone.to_string())].into()),
+                sets: Some([("timezone".to_string(), zone.to_string())].into()),
                 ..capture_args("topic:instance", "where the operator lives")
             },
         )

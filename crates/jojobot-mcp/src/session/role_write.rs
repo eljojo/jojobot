@@ -532,7 +532,7 @@ mod tests {
     /// ten minutes old: inside the lease and past the renewal age, so a write by
     /// the holder renews it and the claim moves.
     async fn an_old_shape_claim(jojobot: &Jojobot, bot: &str, role: &str, holder: &str) {
-        let fields = [
+        let fields: std::collections::BTreeMap<String, String> = [
             (
                 jojobot_domain::session::role_holder_key(role),
                 holder.to_string(),
@@ -547,6 +547,7 @@ mod tests {
         jojobot
             .memory
             .capture(NewFact {
+                sets: fields.keys().cloned().collect(),
                 fields,
                 ..NewFact::about(
                     EntityId(bot.into()),
@@ -848,6 +849,9 @@ mod tests {
         jojobot
             .memory
             .capture(NewFact {
+                sets: [jojobot_domain::memory::CLAIMS_ROLE.to_string()]
+                    .into_iter()
+                    .collect(),
                 fields: [(
                     jojobot_domain::memory::CLAIMS_ROLE.to_string(),
                     role.to_string(),

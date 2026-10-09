@@ -15,7 +15,7 @@ async fn a_weekly_rhythm(jojobot: &Jojobot, handle: &str, counts_from: &str, adv
     capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), advances.to_string()),
@@ -90,7 +90,7 @@ async fn a_check_in_beside_a_computed_key_is_refused_and_the_way_forward_is_the_
         &jojobot
             .capture(Parameters(CaptureArgs {
                 check_in: Some("ran".into()),
-                fields: Some(
+                sets: Some(
                     [("counts_from".to_string(), "2026-08-10".to_string())]
                         .into_iter()
                         .collect(),
@@ -151,7 +151,7 @@ async fn a_plain_capture_that_moves_the_cadence_keeps_the_due_moment_current() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [("cadence_days".to_string(), "14".to_string())]
                     .into_iter()
                     .collect(),
@@ -309,7 +309,7 @@ async fn a_capture_says_what_now_stands_and_what_it_left_alone() {
     let with_keys = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("mood".to_string(), "delighted".to_string())]
                     .into_iter()
                     .collect(),
@@ -434,7 +434,7 @@ async fn a_check_in_moves_the_schedule_and_a_snooze_does_not() {
         CaptureArgs {
             check_in: Some("snoozed".into()),
             recorded_at: Some("2026-08-19".into()),
-            fields: Some(
+            sets: Some(
                 [("snoozed_until".to_string(), "2026-08-22".to_string())]
                     .into_iter()
                     .collect(),
@@ -475,7 +475,7 @@ fn a_snooze_until(day: Option<&str>, on: &str) -> CaptureArgs {
     CaptureArgs {
         check_in: Some("snoozed".into()),
         recorded_at: Some(on.into()),
-        fields: day.map(|day| {
+        sets: day.map(|day| {
             [("snoozed_until".to_string(), day.to_string())]
                 .into_iter()
                 .collect()
@@ -548,7 +548,7 @@ async fn an_edit_that_changes_only_the_outcome_moves_the_stored_due_moment() {
     );
 
     let edit = |outcome: &str| UpdateFactArgs {
-        fields: Some(
+        sets: Some(
             [("outcome".to_string(), outcome.to_string())]
                 .into_iter()
                 .collect(),
@@ -680,7 +680,7 @@ async fn a_run_that_sends_a_snooze_day_is_refused() {
             .capture(Parameters(CaptureArgs {
                 check_in: Some("ran".into()),
                 recorded_at: Some("2026-08-10".into()),
-                fields: Some(
+                sets: Some(
                     [("snoozed_until".to_string(), "2026-08-20".to_string())]
                         .into_iter()
                         .collect(),
@@ -711,7 +711,7 @@ async fn a_check_in_carries_the_callers_own_measurement() {
         CaptureArgs {
             check_in: Some("ran".into()),
             recorded_at: Some("2026-08-12".into()),
-            fields: Some(
+            sets: Some(
                 [("reading_kwh".to_string(), "4184".to_string())]
                     .into_iter()
                     .collect(),
@@ -801,7 +801,7 @@ async fn a_check_in_that_also_sends_a_computed_key_is_refused() {
             .capture(Parameters(CaptureArgs {
                 check_in: Some("ran".into()),
                 recorded_at: Some("2026-08-10".into()),
-                fields: Some(
+                sets: Some(
                     [("counts_from".to_string(), "2026-09-01".to_string())]
                         .into_iter()
                         .collect(),
@@ -862,7 +862,7 @@ async fn a_check_in_on_something_that_is_not_a_rhythm_is_refused() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), "check_in_date".to_string()),
@@ -927,7 +927,7 @@ async fn a_hand_typed_schedule_basis_says_so_in_the_receipt_and_only_then() {
     let hand_typed = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("counts_from".to_string(), "2026-09-01".to_string())]
                     .into_iter()
                     .collect(),
@@ -995,7 +995,7 @@ async fn a_cadenced_rhythm_with_no_basis(jojobot: &Jojobot, handle: &str, advanc
     capture_ok(
         jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [
                     ("cadence_days".to_string(), "7".to_string()),
                     ("advances_from".to_string(), advances.to_string()),
@@ -1169,7 +1169,7 @@ async fn a_snooze_cannot_open_a_loop_and_the_refusal_names_what_can() {
             .capture(Parameters(CaptureArgs {
                 check_in: Some("snoozed".into()),
                 recorded_at: Some("2026-06-14".into()),
-                fields: Some(
+                sets: Some(
                     [("snoozed_until".to_string(), "2026-06-20".to_string())]
                         .into_iter()
                         .collect(),
@@ -1328,7 +1328,7 @@ async fn a_capture_is_receipted_without_reading_the_record_back() {
         &jojobot
             .capture(Parameters(CaptureArgs {
                 details: Some("and that the flue was the problem".into()),
-                fields: Some(
+                sets: Some(
                     [("mood".to_string(), "delighted".to_string())]
                         .into_iter()
                         .collect(),
@@ -1389,7 +1389,7 @@ async fn a_capture_carries_fields_with_no_label_and_reads_its_keys_back() {
     let body = json_of(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [
                         ("mood".to_string(), "delighted".to_string()),
                         ("weather".to_string(), "clear".to_string()),
@@ -2268,7 +2268,7 @@ async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "1".to_string(),
@@ -2416,7 +2416,7 @@ async fn a_full_room_of_one_old_thought(
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(fields),
+            sets: Some(fields),
             ..capture_args(bot, "capacity is one")
         },
     )
@@ -2557,7 +2557,7 @@ async fn a_bot_cannot_set_its_own_ageing_setting() {
     let refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("thought_ages_after_runs".to_string(), "1".to_string())]
                         .into_iter()
                         .collect(),
@@ -2584,7 +2584,7 @@ async fn a_different_bot_can_set_this_bots_ageing_setting() {
     let landed = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("thought_ages_after_runs".to_string(), "7".to_string())]
                     .into_iter()
                     .collect(),
@@ -2616,7 +2616,7 @@ async fn a_bot_cannot_raise_its_own_thought_capacity() {
     let refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                         "5".to_string(),
@@ -2689,7 +2689,7 @@ async fn a_renamed_bot_cannot_raise_its_own_ceiling_through_its_former_handle() 
     let refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                fields: ceiling(),
+                sets: ceiling(),
                 ..capture_args("bot:otto", "raising my own ceiling by the old name")
             }))
             .await
@@ -2709,7 +2709,7 @@ async fn a_renamed_bot_cannot_raise_its_own_ceiling_through_its_former_handle() 
     let landed = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: ceiling(),
+            sets: ceiling(),
             ..capture_args("bot:milhouse", "capacity is five")
         },
     )
@@ -2735,7 +2735,7 @@ async fn a_different_bot_can_raise_this_bots_thought_capacity() {
     let landed = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "5".to_string(),
@@ -2771,7 +2771,7 @@ async fn a_role_holder_field_cannot_be_set_through_an_ordinary_capture() {
     let refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::session::role_holder_key("dev-dispatch"),
                         "bot:otto".to_string(),
@@ -2815,7 +2815,7 @@ async fn a_role_claimed_at_field_cannot_be_set_through_an_ordinary_capture() {
     let refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [(
                         jojobot_domain::session::role_claimed_at_key("dev-dispatch"),
                         "2026-01-01T00:00:00Z".to_string(),
@@ -2844,7 +2844,7 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "1".to_string(),
@@ -2966,7 +2966,7 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
                     "10".to_string(),
@@ -3050,7 +3050,7 @@ async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
         let receipt = capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("starred".to_string(), "true".to_string())]
                         .into_iter()
                         .collect(),
@@ -3075,7 +3075,7 @@ async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
     let sixth = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("starred".to_string(), "true".to_string())]
                     .into_iter()
                     .collect(),
@@ -3114,7 +3114,7 @@ async fn a_captured_field_equal_to_todays_default_is_named_in_the_receipt() {
     let echoing = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [(
                     "one_liner".to_string(),
                     "The disposable implementer.".to_string(),
@@ -3144,7 +3144,7 @@ async fn a_captured_field_equal_to_todays_default_is_named_in_the_receipt() {
     let ordinary = capture_ok(
         &jojobot,
         CaptureArgs {
-            fields: Some(
+            sets: Some(
                 [("greeting".to_string(), "Hey, it's Milhouse.".to_string())]
                     .into_iter()
                     .collect(),
@@ -3219,7 +3219,7 @@ async fn a_plain_capture_of_a_day_carrier_keeps_the_callers_word() {
             &jojobot,
             CaptureArgs {
                 provenance: Some("testimony".into()),
-                fields: Some([(key.to_string(), day.to_string())].into_iter().collect()),
+                sets: Some([(key.to_string(), day.to_string())].into_iter().collect()),
                 ..capture_args(subject, "the operator said the day")
             },
         )
@@ -3240,7 +3240,7 @@ async fn a_plain_capture_of_a_day_carrier_keeps_the_callers_word() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [("cadence_days".to_string(), "14".to_string())]
                     .into_iter()
                     .collect(),
@@ -3269,7 +3269,7 @@ async fn a_capture_that_writes_the_due_moment_by_hand_is_refused() {
         &jojobot
             .capture(Parameters(CaptureArgs {
                 provenance: Some("testimony".into()),
-                fields: Some(
+                sets: Some(
                     [
                         ("promised_by".to_string(), "2026-01-16".to_string()),
                         ("due_on".to_string(), "2026-01-16".to_string()),
@@ -3299,7 +3299,7 @@ async fn a_capture_that_writes_the_due_moment_by_hand_is_refused() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 [("promised_by".to_string(), "2026-01-16".to_string())]
                     .into_iter()
                     .collect(),
@@ -3365,7 +3365,7 @@ async fn a_promise_the_deployed_code_left_without_its_due_moment_is_healed_by_it
         capture_ok(
             &jojobot,
             CaptureArgs {
-                fields: Some(
+                sets: Some(
                     [("promised_by".to_string(), day.to_string())]
                         .into_iter()
                         .collect(),
