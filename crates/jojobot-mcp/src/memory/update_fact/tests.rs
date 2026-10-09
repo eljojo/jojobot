@@ -3235,7 +3235,7 @@ async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot
 /// key and the read are asked, so neither can pass alone.
 #[tokio::test]
 async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
-    let jojobot = handler();
+    let jojobot = handler_indexed();
     ensure(&jojobot, "project:atlas").await;
     jojobot
         .add_entity(Parameters(AddEntityArgs {
@@ -3383,7 +3383,7 @@ async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
 #[tokio::test]
 async fn the_owed_read_leaves_out_a_finished_item_that_still_holds_a_stored_moment() {
     let memory = std::sync::Arc::new(InMemoryMemory::booted());
-    let jojobot = handler_over(memory.clone());
+    let jojobot = handler_indexed_over(memory.clone());
     ensure(&jojobot, "project:atlas").await;
     for handle in ["phi", "first-mix"] {
         let added = json_of(

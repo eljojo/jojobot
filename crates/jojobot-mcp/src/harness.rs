@@ -133,6 +133,32 @@ pub(crate) fn handler_shipped() -> Jojobot {
     )
 }
 
+/// **[`handler_shipped`] with the real index in front of it**, in the order
+/// `main.rs` wires them: the index over the store that already answers for
+/// what the build supplies. A recall that filters on a key asks the index for
+/// its carriers, so this is the seam where a supplied record the index never
+/// held would drop out of the answer.
+pub(crate) fn handler_shipped_indexed() -> Jojobot {
+    use jojobot_adapters::search::{IndexedMemory, Retrieval};
+    let supplied = crate::provisions();
+    let indexed = Arc::new(
+        IndexedMemory::new(Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+            InMemoryMemory::seeded().knowing(supplied.clone()),
+            supplied,
+        )))
+        .expect("the index opens"),
+    );
+    let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
+    Jojobot::new(
+        indexed,
+        search,
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 /// **A handler wired with `mention::Mentioning` in front of memory**, the
 /// same decorator `jojobot/src/wiring.rs` wraps the real store in.
 ///
@@ -177,14 +203,30 @@ pub(crate) fn handler_field_provisioned(at: EntityId, key: &str, value: &str) ->
     )
 }
 
-/// **A handler told which carriers answer for a due moment** — how a test puts
-/// a carrier the read has never seen in front of it.
-pub(crate) fn handler_carrying(
+/// **A handler over a store the case holds, with the real index in front of
+/// it.** A recall that filters on a key asks the index which things carry the
+/// key, so a case about that answer needs an index that answers from what the
+/// store holds; [`SpySearch`] answers with canned hits and so selects nothing.
+pub(crate) fn handler_indexed_over(memory: Arc<InMemoryMemory>) -> Jojobot {
+    handler_indexed_carrying(memory, jojobot_domain::attention::shipped())
+}
+
+/// [`handler_indexed_over`] over a store of its own.
+pub(crate) fn handler_indexed() -> Jojobot {
+    handler_indexed_over(Arc::new(plain_store()))
+}
+
+/// [`handler_indexed_over`] told which carriers answer for a due moment.
+pub(crate) fn handler_indexed_carrying(
+    memory: Arc<InMemoryMemory>,
     carriers: Vec<Box<dyn jojobot_domain::attention::Carrier>>,
 ) -> Jojobot {
+    use jojobot_adapters::search::{IndexedMemory, Retrieval};
+    let indexed = Arc::new(IndexedMemory::new(memory).expect("the index opens"));
+    let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     Jojobot::carrying(
-        Arc::new(plain_store()),
-        Arc::new(SpySearch::default()),
+        indexed,
+        search,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
         Arc::new(InMemoryTeachings::new()),
@@ -611,7 +653,7 @@ mod tests {
                 "handler_field_provisioned",
                 handler_field_provisioned(EntityId("work:sigma".into()), "note", "x"),
             ),
-            ("handler_carrying", handler_carrying(Vec::new())),
+            ("handler_indexed", handler_indexed()),
             ("handler_with", handler_with(Arc::new(SpySearch::default()))),
         ]
     }

@@ -194,7 +194,7 @@ async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
 
     let mut carriers = attention::shipped();
     carriers.push(Box::new(Pledges));
-    let jojobot = crate::harness::handler_carrying(carriers);
+    let jojobot = crate::harness::handler_indexed_carrying(shared_memory(), carriers);
     let sid = writing_as(&jojobot);
 
     // One owed and one not — the whole answer turns on the carrier's own
@@ -3322,7 +3322,7 @@ async fn declared_view_filter(jojobot: &Jojobot, view_slug: &str, key: &str, val
 /// bare read already narrowed.
 #[tokio::test]
 async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
-    let jojobot = handler();
+    let jojobot = handler_indexed();
     declared_view(&jojobot, "urgent-things", &[("selects", "thing")]).await;
     declared_view_filter(&jojobot, "urgent-things", "priority", "urgent").await;
     capture_ok(
@@ -3399,7 +3399,7 @@ async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
 /// carry both and pass the positive half for the wrong reason.
 #[tokio::test]
 async fn a_callers_own_fields_still_override_the_views_filter() {
-    let jojobot = handler();
+    let jojobot = handler_indexed();
     declared_view(&jojobot, "urgent-things", &[("selects", "thing")]).await;
     declared_view_filter(&jojobot, "urgent-things", "priority", "urgent").await;
     capture_ok(
@@ -6027,7 +6027,7 @@ async fn a_thing_a_recall_returned_is_a_thing_a_later_creation_is_asked_about() 
 /// the record and carries no line.
 #[tokio::test]
 async fn an_empty_selection_names_the_population_it_looked_through() {
-    let jojobot = crate::harness::handler();
+    let jojobot = crate::harness::handler_indexed();
     ensure(&jojobot, "thing:jukebox").await;
     jojobot
         .memory
@@ -6456,4 +6456,376 @@ async fn a_kind_recall_is_full_to_within_one_object_as_the_answer_is_served() {
             jojobot_domain::text::ANSWER_CEILING
         );
     }
+}
+
+/// **A search port that remembers what it was asked**, over the real index: the
+/// answer it gives is the index's own, so a case built on it cannot pass on a
+/// port that agrees with whatever the caller wanted.
+struct RecordingSearch {
+    inner: jojobot_adapters::search::Retrieval,
+    asked: std::sync::Mutex<Vec<SearchQuery>>,
+}
+
+#[async_trait::async_trait]
+impl jojobot_domain::memory::search::Search for RecordingSearch {
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+        self.asked.lock().expect("asked").push(query.clone());
+        self.inner.search(query).await
+    }
+    fn mail_coverage(&self) -> jojobot_domain::memory::search::Coverage {
+        self.inner.mail_coverage()
+    }
+    fn memory_coverage(&self) -> jojobot_domain::memory::search::Coverage {
+        self.inner.memory_coverage()
+    }
+    fn session_coverage(&self) -> jojobot_domain::memory::search::Coverage {
+        self.inner.session_coverage()
+    }
+}
+
+/// **A recall that filters on a key reads only the things that carry it.**
+///
+/// Thirty things, a handful carrying `owner`. A key filter asked of the thing is
+/// a lookup in the index, so the walk reads the records of the carriers and of
+/// no other thing; before it, any field filter read every thing's records and
+/// threw most away. The answer is the one the full read gave: the carriers that
+/// pass, in the same objects. A filter asked of one record still reads
+/// everyone, because the index holds what a thing holds and not what its
+/// records say.
+/// The case, over any store: the answers, what the index was asked, and (on a
+/// store that counts them) the records the walk read.
+async fn a_field_filtered_recall_asks_for_the_carriers(
+    inner: Arc<dyn Memory>,
+    counting: Option<Arc<InMemoryMemory>>,
+) {
+    use jojobot_adapters::search::{IndexedMemory, Retrieval};
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let indexed = Arc::new(IndexedMemory::new(inner).expect("index opens"));
+    let port = Arc::new(RecordingSearch {
+        inner: Retrieval::new(indexed.index(), vec![indexed.clone()]),
+        asked: std::sync::Mutex::new(Vec::new()),
+    });
+    let record_reads = || counting.as_ref().map_or(0, |store| store.record_reads());
+    let jojobot = Jojobot::new(
+        indexed.clone(),
+        port.clone(),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+
+    // Amy owns four (three open, one closed), bea owns one (open), the rest
+    // carry no owner at all.
+    let day = jiff::civil::date(2026, 10, 1);
+    let mut handles = Vec::new();
+    for i in 0..30usize {
+        // Ten letters that depend on nothing but the index, spread far apart so
+        // that no two screen as near-misses of each other and none is refused.
+        let mut state = (i as u64)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let word: String = (0..10)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (b'a' + ((state >> 33) % 26) as u8) as char
+            })
+            .collect();
+        let id = EntityId::new(EntityKind::THING, word.clone());
+        let added = indexed
+            .add_entity(NewEntity::new(
+                id.clone(),
+                format!("Spot {word}"),
+                "user-named",
+            ))
+            .await;
+        assert!(
+            matches!(added, Ok(jojobot_domain::memory::Guarded::Written(_))),
+            "{added:?}"
+        );
+        let fields: &[(&str, &str)] = match i {
+            0 | 10 | 20 => &[("owner", "amy"), ("status", "open")],
+            7 => &[("owner", "amy"), ("status", "closed")],
+            5 => &[("owner", "bea"), ("status", "open")],
+            _ => &[("mood", "curious")],
+        };
+        let note = NewFact {
+            fields: fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..NewFact::about(id.clone(), format!("a note about {i}"), day)
+        };
+        let written = indexed.capture(note).await;
+        assert!(
+            matches!(written, Ok(jojobot_domain::memory::Guarded::Written(_))),
+            "{written:?}"
+        );
+        handles.push(id.to_string());
+    }
+    let named = |indexes: &[usize]| -> Vec<String> {
+        let mut named: Vec<String> = indexes.iter().map(|i| handles[*i].clone()).collect();
+        named.sort();
+        named
+    };
+    let filter = |key: &str, value: Option<&str>, scope: Option<&str>| KeyFilterArgs {
+        key: Some(key.into()),
+        value: value.map(str::to_string),
+        compare: None,
+        scope: scope.map(str::to_string),
+    };
+    // Asks one recall and returns the ids it answered with, the records the walk
+    // read for it, and the holding the index was asked for.
+    let ask = |filters: Vec<KeyFilterArgs>| {
+        let (jojobot, port, record_reads) = (&jojobot, &port, &record_reads);
+        async move {
+            let (reads, asked) = (record_reads(), port.asked.lock().expect("asked").len());
+            let answer = json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        fields: Some(filters),
+                        ..of_nothing()
+                    }))
+                    .await
+                    .expect("recall ok"),
+            );
+            let mut ids: Vec<String> = answer["objects"]
+                .as_array()
+                .expect("objects")
+                .iter()
+                .map(|o| o["id"].as_str().expect("id").to_string())
+                .collect();
+            ids.sort();
+            let queries: Vec<SearchQuery> = port.asked.lock().expect("asked")[asked..].to_vec();
+            (ids, record_reads() - reads, queries)
+        }
+    };
+
+    // **What the index itself reads to stay current is not the walk's.** The fake
+    // has no signal that nothing changed, so every search re-reads the store to
+    // refresh the index; a real store has one. A value nobody holds is read by
+    // no walk at all, so what that call reads is the refresh, and every other
+    // call is measured past it.
+    let (ids, refresh, _) = ask(vec![filter("owner", Some("cy"), None)]).await;
+    assert!(ids.is_empty(), "{ids:?}");
+    assert!(
+        counting.is_none() || refresh > 0,
+        "the control measures the refresh"
+    );
+
+    // A key and a value: the four of amy's, and only those four were read.
+    let (ids, reads, asked) = ask(vec![filter("owner", Some("amy"), None)]).await;
+    assert_eq!(ids, named(&[0, 7, 10, 20]), "{ids:?}");
+    if counting.is_some() {
+        assert_eq!(
+            reads - refresh,
+            4,
+            "only the carriers were read, not the thirty"
+        );
+    }
+    assert_eq!(
+        asked
+            .iter()
+            .flat_map(|q| q.holding.iter())
+            .map(|h| (h.key.as_str(), h.value.as_deref()))
+            .collect::<Vec<_>>(),
+        [("owner", Some("amy"))],
+        "the index was asked for the key and the value: {asked:?}"
+    );
+
+    // Two filters: the index is asked for both, so the three open ones only.
+    let (ids, reads, _) = ask(vec![
+        filter("owner", Some("amy"), None),
+        filter("status", Some("open"), None),
+    ])
+    .await;
+    assert_eq!(ids, named(&[0, 10, 20]), "{ids:?}");
+    if counting.is_some() {
+        assert_eq!(reads - refresh, 3, "both entries narrowed the candidates");
+    }
+
+    // The key alone: everything carrying it.
+    let (ids, reads, _) = ask(vec![filter("owner", None, None)]).await;
+    assert_eq!(ids, named(&[0, 5, 7, 10, 20]), "{ids:?}");
+    if counting.is_some() {
+        assert_eq!(reads - refresh, 5);
+    }
+
+    // The control: a filter asked of one record is not answered by the index, so
+    // it still reads every thing, and the answer is unchanged by that.
+    let (ids, reads, asked) = ask(vec![filter("owner", Some("amy"), Some("record"))]).await;
+    assert_eq!(ids, named(&[0, 7, 10, 20]), "{ids:?}");
+    // No question went to the index, so the refresh is not in this count.
+    if counting.is_some() {
+        assert_eq!(reads, 30, "a record-scoped filter reads everyone");
+    }
+    assert!(
+        asked.iter().all(|q| q.holding.is_empty()),
+        "the index is not asked about what only a record says: {asked:?}"
+    );
+}
+
+/// **A recall that filters on a key reads only the things that carry it.**
+///
+/// Thirty things, a handful carrying `owner`. A key filter asked of the thing is
+/// a lookup in the index, so the walk reads the records of the carriers and of
+/// no other thing; before it, any field filter read every thing's records and
+/// threw most away. The answer is the one the full read gave: the carriers that
+/// pass, in the same objects. A filter asked of one record still reads
+/// everyone, because the index holds what a thing holds and not what its
+/// records say.
+#[tokio::test]
+async fn over_the_fake_a_field_filtered_recall_reads_only_the_things_carrying_the_key() {
+    let store = shared_memory();
+    a_field_filtered_recall_asks_for_the_carriers(store.clone(), Some(store)).await;
+}
+
+/// The same case over the real store: the answers are the same, and the index
+/// is asked for the same keys and values. (The real store does not count the
+/// records the walk reads, so that half is the fake's.)
+#[tokio::test]
+async fn over_the_real_store_a_field_filtered_recall_asks_the_index_and_answers_as_before() {
+    let scratch = LazinessScratch::new();
+    let mut store = jojobot_adapters::testing::start_unhurried(
+        &scratch.0,
+        jojobot_adapters::testing::free_port(),
+    )
+    .await
+    .expect("the real store comes up");
+    let pool = jojobot_adapters::testing::migrated_database(&store, "held")
+        .await
+        .expect("a database of this case's own");
+    jojobot_adapters::dolt::migrate::run(&pool)
+        .await
+        .expect("the schema");
+    let memory = jojobot_adapters::dolt::memory::DoltMemory::open(pool);
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    a_field_filtered_recall_asks_for_the_carriers(Arc::new(memory), None).await;
+    store.stop().await;
+}
+
+/// **A key-filtered recall over what the build supplies still names it.** The
+/// shipped views are records the store holds no row for, so the index has to
+/// hold them, or asking it for the carriers of `selects` drops them from the
+/// answer. The handles come from the build's own provisions rather than from
+/// this case, so a view added to the build is held to the same bar.
+#[tokio::test]
+async fn a_key_filtered_recall_over_the_shipped_views_names_every_one_through_the_index() {
+    let supplied = crate::provisions();
+    let shipped: Vec<String> = supplied
+        .records()
+        .filter(|(entity, _)| entity.kind == EntityKind::VIEW)
+        .map(|(entity, _)| entity.id.to_string())
+        .collect();
+    assert!(
+        shipped.len() >= 2,
+        "the build ships views to name: {shipped:?}"
+    );
+    for value in [None, Some("bot")] {
+        let answer = json_of(
+            &crate::harness::handler_shipped_indexed()
+                .recall(Parameters(RecallArgs {
+                    kind: Some("view".into()),
+                    fields: Some(vec![KeyFilterArgs {
+                        key: Some("selects".into()),
+                        value: value.map(str::to_string),
+                        compare: None,
+                        scope: None,
+                    }]),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let named: Vec<&str> = answer["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .filter_map(|o| o["id"].as_str())
+            .collect();
+        match value {
+            None => {
+                for handle in &shipped {
+                    assert!(named.contains(&handle.as_str()), "{handle} in {answer}");
+                }
+            }
+            Some(_) => assert!(named.contains(&"view:colleagues"), "{answer}"),
+        }
+    }
+}
+
+/// **A key-filtered recall does not trust an index answer cut at its ceiling.**
+/// The candidates a filter gets from the index are a list of at most
+/// `CARRIER_CANDIDATES_LIMIT`; at the ceiling the list may have lost carriers
+/// the full read would find, so the full read stands. One short of the ceiling
+/// the list is complete, and the walk reads those things and no others.
+#[tokio::test]
+async fn a_key_filtered_recall_falls_back_to_the_full_read_when_the_index_answer_is_cut() {
+    let memory = shared_memory();
+    let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+    let sid = writing_as(&setup);
+    ensure(&setup, "thing:teapot").await;
+    ensure(&setup, "thing:the-couch").await;
+    capture_ok(
+        &setup,
+        CaptureArgs {
+            sid: Some(sid),
+            fields: Some([("volume".to_string(), "eleven".to_string())].into()),
+            ..capture_args("thing:teapot", "the dial goes to eleven")
+        },
+    )
+    .await;
+    // The index names a thing that does not hold the key, and not the one that
+    // does: a list that is complete would be believed, a cut one may not be.
+    let the_couch = captured(&memory, "thing:the-couch").await;
+    let hits = |count: usize| -> Vec<Hit> {
+        std::iter::repeat_with(|| Hit::Entity {
+            entity: the_couch.clone(),
+            doc_id: "doc-couch".into(),
+            edges: Vec::new(),
+            answers: None,
+        })
+        .take(count)
+        .collect()
+    };
+    let asked = || RecallArgs {
+        kind: Some("thing".into()),
+        fields: Some(vec![KeyFilterArgs {
+            key: Some("volume".into()),
+            value: Some("eleven".into()),
+            compare: None,
+            scope: None,
+        }]),
+        ..of_nothing()
+    };
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        body["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .map(|o| o["id"].as_str().expect("id").to_string())
+            .collect()
+    };
+
+    let cut = handler_on(
+        memory.clone(),
+        Arc::new(SpySearch::answering(hits(CARRIER_CANDIDATES_LIMIT))),
+    );
+    let cut = json_of(&cut.recall(Parameters(asked())).await.expect("recall ok"));
+    assert_eq!(ids(&cut), ["thing:teapot"], "{cut}");
+
+    let whole = handler_on(
+        memory,
+        Arc::new(SpySearch::answering(hits(CARRIER_CANDIDATES_LIMIT - 1))),
+    );
+    let whole = json_of(&whole.recall(Parameters(asked())).await.expect("recall ok"));
+    assert!(
+        ids(&whole).is_empty(),
+        "a list one short of the ceiling is the whole answer, and it names no carrier: {whole}"
+    );
 }

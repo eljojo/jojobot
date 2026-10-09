@@ -698,6 +698,9 @@ impl Jojobot {
         let query = SearchQuery {
             answers_type: declared,
             fits_type: fits,
+            // The search verb offers no way to ask what a thing holds; only a
+            // recall that filters on a key asks the index that.
+            holding: Vec::new(),
             asked_by: asking.as_ref().map(|c| c.bot.clone()),
             text: args.query,
             kind: args.kind.as_deref().map(parse_kind).transpose()?,

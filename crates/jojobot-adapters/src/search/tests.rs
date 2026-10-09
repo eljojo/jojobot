@@ -70,6 +70,20 @@ async fn the_contract_holds_over_the_fake() {
     .await;
 }
 
+/// **A search holding a key finds exactly the things that hold it**, on its own so
+/// the case can be run and broken without the whole contract around it. The whole
+/// contract runs the same case over the fake and over the real store.
+#[tokio::test]
+async fn a_search_holding_a_key_and_a_value_finds_exactly_the_things_that_hold_them() {
+    let store =
+        Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
+    contract::search_finds_the_things_holding_a_key_and_a_value(
+        store.as_ref(),
+        &Retrieval::new(store.index(), vec![store.clone()]),
+    )
+    .await;
+}
+
 /// **The same, dealt into parts: every case, retrieval included, runs once
 /// across the parts, and each part holds on an index of its own.**
 #[tokio::test]

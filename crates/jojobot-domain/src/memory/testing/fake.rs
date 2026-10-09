@@ -15,6 +15,11 @@ pub struct InMemoryMemory {
     /// that call, so a caller that lists to resolve one handle pays for all of
     /// them; this is how a case sees whether it did.
     listings: std::sync::atomic::AtomicUsize,
+    /// **How many times one thing's records have been read**, through
+    /// [`Memory::recall`]. A walk reads the records of every thing it has to
+    /// choose among, so a lookup that chooses among everything pays for all of
+    /// them; this is how a case sees how many it paid for.
+    record_reads: std::sync::atomic::AtomicUsize,
     /// **How many times the entity rows have been rebuilt.** Every read that
     /// resolves a handle builds the whole list, so a read that does it once per
     /// entity costs the square of the store; this is how a case sees it.
@@ -122,6 +127,12 @@ impl InMemoryMemory {
     /// delta across the call it is checking.
     pub fn listings(&self) -> usize {
         self.listings.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times one thing's records have been read. A caller measures a
+    /// delta across the call it is checking.
+    pub fn record_reads(&self) -> usize {
+        self.record_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many times the entity rows have been rebuilt, by any read. A caller
@@ -2127,6 +2138,8 @@ impl Memory for InMemoryMemory {
     /// The fake cannot produce that disagreement — every capture homes a fact at
     /// its subject — but the two adapters must not differ on the rule.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.record_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // An unknown entity is a miss with its near candidates — never an
         // empty page. Empty-but-real and nonexistent are different answers.
         // A stale-but-renamed handle is not this miss: it resolves through

@@ -1,7 +1,7 @@
 use super::*;
 use crate::memory::graph;
 use crate::memory::mention;
-use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
+use crate::memory::search::{EdgeFilter, HeldField, Hit, Search, SearchQuery};
 use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
 use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, RETRACTS};
 use jiff::civil::{Date, date};

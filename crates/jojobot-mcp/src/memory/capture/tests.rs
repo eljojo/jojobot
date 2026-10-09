@@ -3262,7 +3262,7 @@ async fn a_plain_capture_of_a_day_carrier_keeps_the_callers_word() {
 /// so the refusal is about the key and not about the record.
 #[tokio::test]
 async fn a_capture_that_writes_the_due_moment_by_hand_is_refused() {
-    let jojobot = handler();
+    let jojobot = handler_indexed();
     a_promise(&jojobot, "return-the-wrench").await;
 
     let refused = blocked(
@@ -3331,7 +3331,7 @@ async fn a_capture_that_writes_the_due_moment_by_hand_is_refused() {
 async fn a_promise_the_deployed_code_left_without_its_due_moment_is_healed_by_its_next_carrier_write()
  {
     let memory = std::sync::Arc::new(InMemoryMemory::booted());
-    let jojobot = handler_over(memory.clone());
+    let jojobot = handler_indexed_over(memory.clone());
     a_promise(&jojobot, "return-the-wrench").await;
     a_promise(&jojobot, "return-the-desk").await;
     memory.fields_past_the_guard(

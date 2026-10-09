@@ -11,6 +11,8 @@ use jojobot_domain::attention;
 
 use super::*;
 use crate::session::session_declined;
+use jojobot_domain::memory::search::HeldField;
+use jojobot_domain::memory::types::Compare;
 use jojobot_domain::memory::{entitlement, graph};
 use jojobot_domain::text;
 
@@ -2006,15 +2008,59 @@ impl Jojobot {
         // question never asked and a question answered zero are different
         // claims.
         let mut candidates_capped: Option<bool> = None;
-        if let (Some(declared), None, None) = (
-            &query.select.answers_type,
-            &query.select.subject,
-            query.select.kind,
-        ) {
+        // **A key filter asked of the thing is a lookup, not a scan.** What a
+        // thing holds is in the index as postings, so the things carrying the
+        // key (and the value, when equality is asked) come from it, and the walk
+        // reads those and no other. A walk (`follow`), a subject, a candidate
+        // set already chosen, a filter asked of one record (the index holds what
+        // a thing holds, not what its records say), a filter naming no key, and a
+        // question about runs (which are not in the index as things) all keep the
+        // read of everyone they always had.
+        let holding: Vec<HeldField> = if query.follow.is_none()
+            && query.select.subject.is_none()
+            && query.select.candidates.is_none()
+            && query.select.kind != Some(EntityKind::SESSION)
+        {
+            query
+                .select
+                .fields
+                .iter()
+                .filter(|filter| filter.scope == graph::Scope::Thing)
+                .filter_map(|filter| {
+                    filter.key.as_ref().map(|key| HeldField {
+                        key: key.trim().to_string(),
+                        // The index holds the value as written, which answers
+                        // equality only: an ordering is decided after the few
+                        // carriers are read.
+                        value: (filter.compare == Compare::Equals)
+                            .then(|| filter.value.clone())
+                            .flatten(),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let type_only = matches!(
+            (
+                &query.select.answers_type,
+                &query.select.subject,
+                query.select.kind
+            ),
+            (Some(_), None, None)
+        );
+        if type_only || !holding.is_empty() {
+            let asking_a_type = if type_only {
+                query.select.answers_type.clone()
+            } else {
+                None
+            };
             let candidates = match self
                 .search
                 .search(&SearchQuery {
-                    answers_type: Some(declared.clone()),
+                    answers_type: asking_a_type,
+                    holding,
+                    kind: query.select.kind,
                     limit: CARRIER_CANDIDATES_LIMIT,
                     ..SearchQuery::default()
                 })
@@ -2023,19 +2069,24 @@ impl Jojobot {
                 Ok(hits) => hits,
                 Err(e) => return memory_declined("recall", e),
             };
-            candidates_capped = Some(hit_candidate_ceiling(
-                candidates.len(),
-                CARRIER_CANDIDATES_LIMIT,
-            ));
-            query.select.candidates = Some(
-                candidates
-                    .into_iter()
-                    .filter_map(|hit| match hit {
-                        Hit::Entity { entity, .. } => Some(entity.id),
-                        _ => None,
-                    })
-                    .collect(),
-            );
+            let capped = hit_candidate_ceiling(candidates.len(), CARRIER_CANDIDATES_LIMIT);
+            if type_only {
+                candidates_capped = Some(capped);
+            }
+            // **A key filter's answer does not change with the index's depth**: a
+            // candidate list cut at the ceiling would drop carriers the full read
+            // finds, so a capped one is not used and the read of everyone stands.
+            if type_only || !capped {
+                query.select.candidates = Some(
+                    candidates
+                        .into_iter()
+                        .filter_map(|hit| match hit {
+                            Hit::Entity { entity, .. } => Some(entity.id),
+                            _ => None,
+                        })
+                        .collect(),
+                );
+            }
         }
 
         // **The frame an intake moment is read as a day in**: the server's clock

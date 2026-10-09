@@ -237,6 +237,17 @@ pub struct SearchQuery {
     /// Structural, like everything else here: a thing carrying the keys fits
     /// whether or not anybody declared it anything.
     pub fits_type: Option<types::DeclaredType>,
+    /// **THINGS that hold these keys, and the value when one is named**, asked of
+    /// what each thing holds now (the newest write of each key) and never of one
+    /// record.
+    ///
+    /// A stored key makes a lookup: the question *which things carry this key,
+    /// with this value* is answered by postings and reads no thing. Every entry
+    /// must hold, so the answer is the things carrying all of them. It is a
+    /// superset when the caller's own comparison is richer than equality, so a
+    /// caller that asks for an ordering names the key alone here and decides
+    /// the rest after it has read the few things that carry it.
+    pub holding: Vec<HeldField>,
     /// Whether messages are in the answer. **False by default, and worth
     /// setting true.**
     ///
@@ -284,6 +295,16 @@ pub struct SearchQuery {
     pub rank_clock: RankClock,
 }
 
+/// **One key a thing must hold, and the value when one is named** — see
+/// [`SearchQuery::holding`]. The value is compared whole and trimmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldField {
+    /// The key, spelled as written.
+    pub key: String,
+    /// The value the key must hold. `None` asks only that the key is carried.
+    pub value: Option<String>,
+}
+
 impl Default for SearchQuery {
     fn default() -> Self {
         SearchQuery {
@@ -296,6 +317,7 @@ impl Default for SearchQuery {
             edge: None,
             answers_type: None,
             fits_type: None,
+            holding: Vec::new(),
             asked_by: None,
             include_mail: false,
             include_history: false,
@@ -346,7 +368,7 @@ impl SearchQuery {
     /// after: none of them is a thing, and none of them has fields to answer
     /// with.
     pub fn is_thing_scoped(&self) -> bool {
-        self.answers_type.is_some() || self.fits_type.is_some()
+        self.answers_type.is_some() || self.fits_type.is_some() || !self.holding.is_empty()
     }
 
     /// The type this query narrows by, whichever question it asked — and
@@ -383,6 +405,11 @@ impl SearchQuery {
         }
         if let Some(subject) = &self.subject {
             validate_subject(subject)?;
+        }
+        if self.holding.iter().any(|held| held.key.trim().is_empty()) {
+            return Err(MemoryError::InvalidQuery(
+                "a key to hold names no key".into(),
+            ));
         }
         // The same validator the declaring path uses. A query carrying a
         // declaration no store would have kept is the caller's mistake, and it

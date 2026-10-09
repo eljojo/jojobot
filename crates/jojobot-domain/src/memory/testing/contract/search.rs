@@ -1130,7 +1130,119 @@ macro_rules! retrieval_cases {
         $m!(a_type_query_flags_a_bad_value_and_returns_the_record(
             $store, $search
         ));
+        $m!(search_finds_the_things_holding_a_key_and_a_value(
+            $store, $search
+        ));
     };
+}
+
+/// **A search holding a key finds exactly the things that hold it, and the value
+/// when one is named.** A stored key makes a lookup, so this is the question a
+/// caller asks to read only the few things that carry a key instead of every
+/// thing. It is asked of what each thing holds now, so a key the store has taken
+/// off a thing selects nothing, though a record still says it.
+pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Search>(
+    store: &M,
+    search: &S,
+) {
+    let day = date(2026, 8, 1);
+    let with = |fields: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        fields
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let first = EntityId::person("person:contract-held-first");
+    let second = EntityId::person("person:contract-held-second");
+    let neither = EntityId::person("person:contract-held-neither");
+    let record_only = EntityId::person("person:contract-held-record-only");
+    for (thing, fields, said) in [
+        (
+            &first,
+            with(&[("owner", "amy"), ("status", "open")]),
+            "amy owns it and it is open",
+        ),
+        (
+            &second,
+            with(&[("owner", "bea"), ("status", "open")]),
+            "bea owns it and it is open",
+        ),
+        (&neither, with(&[("mood", "curious")]), "it has no owner"),
+    ] {
+        capture(
+            store,
+            NewFact {
+                fields,
+                ..NewFact::about(thing.clone(), said, day)
+            },
+        )
+        .await;
+    }
+    // A key the store has taken off the thing stops being held, though the
+    // record that carried it still says so.
+    let said = capture(
+        store,
+        NewFact {
+            fields: with(&[("temper", "calm")]),
+            ..NewFact::about(record_only.clone(), "it was calm, once", day)
+        },
+    )
+    .await;
+    edit(
+        store,
+        &said.address(),
+        FactPatch {
+            clear_fields: vec!["temper".to_string()],
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let holding = |held: &[(&str, Option<&str>)]| SearchQuery {
+        holding: held
+            .iter()
+            .map(|(key, value)| HeldField {
+                key: key.to_string(),
+                value: value.map(str::to_string),
+            })
+            .collect(),
+        limit: 50,
+        ..Default::default()
+    };
+    let ids = |hits: &[Hit]| -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Entity { entity, .. } => Some(entity.id.clone()),
+                _ => None,
+            })
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    // The key alone: both things carrying it, and not the one that does not.
+    let owned = ids(&found(search, holding(&[("owner", None)])).await);
+    assert_eq!(owned, [first.clone(), second.clone()], "{owned:?}");
+    // The key and a value: one of the two.
+    let amys = ids(&found(search, holding(&[("owner", Some("amy"))])).await);
+    assert_eq!(amys, std::slice::from_ref(&first), "{amys:?}");
+    // Every entry must hold: both are open, only one is amy's.
+    let both = ids(&found(
+        search,
+        holding(&[("owner", Some("amy")), ("status", Some("open"))]),
+    )
+    .await);
+    assert_eq!(both, std::slice::from_ref(&first), "{both:?}");
+    let all_open = ids(&found(search, holding(&[("status", Some("open"))])).await);
+    assert_eq!(all_open, [first.clone(), second.clone()], "{all_open:?}");
+    // A value nobody holds selects nothing, and so does a key no thing holds.
+    // The store is shared with the other cases, so the key is one only this
+    // case could have written.
+    assert!(ids(&found(search, holding(&[("owner", Some("cy"))])).await).is_empty());
+    assert!(ids(&found(search, holding(&[("never_written_key", None)])).await).is_empty());
+    // A key the store has taken off the thing is not held by it.
+    assert!(ids(&found(search, holding(&[("temper", None)])).await).is_empty());
 }
 
 /// **How many cases the whole contract lists, retrieval included.**

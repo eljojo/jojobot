@@ -172,6 +172,11 @@ struct Fields {
     /// asks which keys are held, never what is in them, and saying HOW a thing
     /// answers is done from the mirror where the values live.
     meta_key: Field,
+    /// **Every key this thing holds together with the value it holds**, as one
+    /// term: the question *which things hold this key with this value* is a
+    /// posting lookup and reads no thing. Entities only, from what the scan says
+    /// the thing holds now, exactly as `meta_key` is.
+    meta_pair: Field,
     /// A session's own id — its own namespace again, for the same reason
     /// `message_id` is not `doc_id`: three stores, three id spaces, and one
     /// shared field would let a page id evict a run.
@@ -224,6 +229,7 @@ impl Fields {
             edge_object: b.add_text_field("edge_object", STRING),
             edge_pair: b.add_text_field("edge_pair", STRING),
             meta_key: b.add_text_field("meta_key", STRING),
+            meta_pair: b.add_text_field("meta_pair", STRING),
             session_id: b.add_text_field("session_id", STRING),
             entry_id: b.add_text_field("entry_id", STRING),
             owner: b.add_text_field("owner", STRING),
@@ -1402,8 +1408,9 @@ impl FullTextIndex {
             // Taken from what the scan says the thing holds, never folded from
             // the rows beside it: a key the store has taken off the thing must
             // stop being a posting, and a row still carrying it does not say so.
-            for key in scan.fields.keys() {
+            for (key, value) in &scan.fields {
                 document.add_text(f.meta_key, key.trim());
+                document.add_text(f.meta_pair, held_pair(key, value));
             }
             if self.should_fail_this_write() {
                 return Err(store_err("test fault: add_document"));
@@ -1743,6 +1750,14 @@ impl FullTextIndex {
         // a message one of my services".
         if let Some((declared, strictly)) = query.typed() {
             clauses.push(self.type_clause(declared, strictly));
+        }
+        // **Holding narrows it the same way**: each key a thing must hold, and
+        // the value when one is named, is a posting. Every entry must hold.
+        for held in &query.holding {
+            clauses.push(match &held.value {
+                None => self.must_term(f.meta_key, held.key.trim()),
+                Some(value) => self.must_term(f.meta_pair, &held_pair(&held.key, value)),
+            });
         }
         clauses
     }
@@ -2293,6 +2308,13 @@ fn ceil_boundary(s: &str, mut at: usize) -> usize {
         at += 1;
     }
     at
+}
+
+/// **The term a thing holding `key` with `value` carries**, the value trimmed as a
+/// comparison trims it. The unit separator cannot appear in a key a caller
+/// writes, so two different pairs never share a term.
+fn held_pair(key: &str, value: &str) -> String {
+    format!("{}\u{1f}{}", key.trim(), value.trim())
 }
 
 fn payload_json(payload: &Payload) -> Result<String, MemoryError> {
