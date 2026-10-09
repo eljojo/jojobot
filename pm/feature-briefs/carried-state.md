@@ -1,6 +1,6 @@
 # Carried state — the few things a bot holds between runs, and why it is always full
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-05
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A bot carries a small, fixed number of thoughts from one run to the next. A new one arriving into a full room forces a choice, and being made to choose is the point of the feature.**
 
@@ -30,9 +30,7 @@
 
 ## Getting in is a decision too
 
-⛔️ **A room that always admits is a room where a busy week evicts a year.** **Thirty things touched once each, each one displacing something long-standing, and the slow important concerns go first because they are the least recently touched.**
-
-⭐ **So admission is refusable.** **A new thought earns its place against what it would displace, or it does not get in.** **The bot chooses; the software only refuses to pretend the room is bigger than it is.**
+**The room admits the way every bounded container does: a new thought earns its place against what it would displace, and the bot chooses what gives.** An always-admitting room lets a busy week evict a year. How a refusal reads, and the one borrow past a full room, are *Containers — a bounded thing refuses what would overfill it*.
 
 ## Threads
 

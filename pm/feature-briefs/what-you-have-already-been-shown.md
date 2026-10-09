@@ -1,6 +1,6 @@
 # What you have already been shown
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **An answer can be a difference instead of a dump.** jojobot knows what a session has already been handed, so it can say what changed rather than repeating everything — and it can tell a caller what its own write did, rather than echoing back the thing the caller just wrote.
 

@@ -1,6 +1,6 @@
 # Bots and identity — colleagues in an organisation
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A bot is an entity, and bots are colleagues in an organisation.** A public directory, private mailboxes, work status carried on a board, and no impersonation ever.
 
@@ -20,7 +20,7 @@ The metaphor does real work: it says which things about a colleague you may look
 
 **Private state stays private**: mail, sessions and journal are not what that opens.
 
-**Booting as another bot is forbidden outright, and the engine enforces it:** booting as a bot needs a voucher for that bot, by the chain of trust. A session that needs something it cannot reach says so and stops.
+**Booting as another bot is forbidden outright, and the engine enforces it:** booting as a bot needs a voucher for that bot, or for the assistant at the root the operator's own code, by the chain of trust. A session that needs something it cannot reach says so and stops.
 
 ## One surface, aligned rather than policed — except identity
 

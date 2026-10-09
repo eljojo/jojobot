@@ -1,6 +1,6 @@
 # The journal — what a bot did, and which run did it
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A bot's journal is what it did, written down as it happened. Each entry is tagged with the run that did it.**
 
@@ -28,7 +28,7 @@
 
 **What a run DID** is the journal.
 
-**What a sitting CHANGED** is the store's own boundary marks. The store marks the start and the end of a session, so a person can see what a sitting changed and undo one by hand. **A boundary that changed nothing leaves no mark** — a run that only read has nothing to undo, and marking it anyway would fill the history with sittings that did nothing. **That grain is far too coarse to be a story.** jojobot never builds the journal out of it.
+**What a sitting CHANGED** is the store's own boundary marks (*The store — where everything lives, and why an agent never hears about it*). **That grain is far too coarse to be a story.** jojobot never builds the journal out of it.
 
 **What a value HAS BEEN** is the events behind a key, per key, for anything a caller looks at.
 

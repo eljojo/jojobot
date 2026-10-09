@@ -1,6 +1,6 @@
 # The status bar — telling a caller what it did not ask about
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **Every answer carries one small uniform block for what the caller should know and did not ask.** The pattern is to front knowledge to the agent and spend fewer calls doing it.
 

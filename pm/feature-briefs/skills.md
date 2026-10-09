@@ -1,6 +1,6 @@
 # Skills — the method, fetched when it applies
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A skill is a procedure: what to do when a particular kind of job is in front of you.** Skills are how the method ships with the software rather than being configured onto it.
 

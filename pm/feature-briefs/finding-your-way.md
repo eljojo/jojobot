@@ -1,6 +1,6 @@
 # Finding your way — the surface teaches itself
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **An agent that has never met jojobot can reach what it needs without already knowing the thing exists.** Every answer, every refusal and every description points at the next move. **The surface is not documented; it teaches.**
 

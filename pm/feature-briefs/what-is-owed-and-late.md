@@ -1,6 +1,6 @@
 # What is owed and late — one read, whatever carries the due moment
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **One question: what has a due moment that has passed, as of the day I name.** Not *which loops are overdue* — **what.** A loop gone quiet and a promise nobody delivered are the same question with two carriers, and they come back in one answer.
 

@@ -1,6 +1,6 @@
 # Finding things — recall and search
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **Getting an answer out of the graph.** The whole product rests on this feature. A graph nothing can interrogate is a pile of pages with extra steps.
 
@@ -53,7 +53,7 @@ A graph gets asked all of the following. A query that stops short of any of it s
 
 **A view is not a shortcut beside a query builder.** The surface *is* views over one graph. That is the stronger form and the intended one.
 
-**Somebody declares a view.** jojobot does not ship a hardcoded list of the questions anybody anticipated. The first real view is a bot consulting who its neighbours are, which is a query over the graph rather than a new capability.
+**A view is data, declared by somebody.** The few that ship arrive as ordinary records, the same shape a caller declares. A bot consulting who its neighbours are is a query over the graph rather than a new capability.
 
 ## What it is not
 

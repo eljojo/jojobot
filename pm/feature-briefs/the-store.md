@@ -1,8 +1,8 @@
 # The store — where everything lives, and why an agent never hears about it
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
-**One versioned SQL store holds what jojobot holds:** entities, events, edges, kinds, mailboxes, messages and sessions. An entity's prose is a field on an object, not a page somewhere else.
+**One versioned SQL store holds what jojobot holds:** the memory's three parts (entities, events and edges), plus kinds, mailboxes, messages and sessions. An entity's prose is a field on an object, not a page somewhere else.
 
 **Only one thing stays outside the store: a page of markdown a person reads as a page.** That is a real capability, not a leftover. The test is the whole scope line. For most of what jojobot holds, the answer is machinery.
 

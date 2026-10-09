@@ -1,6 +1,6 @@
 # Rhythms — a loop in a life, its cadence, and the check-in that records what was found
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A rhythm is a thing that comes round again** — watering a fern, paying a bill each month, changing an air filter. jojobot holds the loop itself, and each turn of it is an event recorded against it.
 
@@ -36,7 +36,7 @@
 
 **Life hands you loops that were running before jojobot heard about them.** The chain was last done in December. The filter was changed in the spring.
 
-**Such a loop is opened the same way an ordinary cycle is closed: check in on it, dated the day it last ran, and jojobot works the schedule out from there.** Nobody types the day the cycle counts from — **it is jojobot's arithmetic on every cycle including the first**, which is what makes the whole schedule rest on something derived rather than on a number somebody chose and nobody can check.
+**Such a loop is opened the same way an ordinary cycle is closed: check in on it, dated the day it last ran, and jojobot works the schedule out from there.** It needs its cadence first: a check-in on a loop that lacks the keys its schedule is computed from is refused, naming the missing key. Nobody types the day the cycle counts from — **it is jojobot's arithmetic on every cycle including the first**, which is what makes the whole schedule rest on something derived rather than on a number somebody chose and nobody can check.
 
 **On that first cycle the late-check-in policy has nothing to choose between**, because no cycle has ever fallen due. The basis is the check-in's own day under either answer.
 
@@ -46,7 +46,7 @@
 
 **The overdue question takes the day it is asked about. It never reads a clock.** So the same question asked twice about the same day gives the same answer, and a session can ask about any day at all.
 
-⚠️ **A loop whose schedule cannot be read comes back OVERDUE, carrying its fields, rather than vanishing.** A loop nobody can schedule is exactly the one somebody needs to see. Silence would be the worst possible answer, because it is indistinguishable from *nothing is due*.
+⚠️ **A loop whose schedule cannot be read comes back OVERDUE, carrying its fields, rather than vanishing.** Why is *What is owed and late — one read, whatever carries the due moment*.
 
 ## What it is not
 

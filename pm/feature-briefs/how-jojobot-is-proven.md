@@ -1,6 +1,6 @@
 # How jojobot is proven — three layers, each answering what the others cannot
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-04
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **Three layers. None of them substitutes for another.** A unit test says a feature works. A user story says an agent can *reach* the feature through the surface it actually holds. The escape room says a real model, meeting that surface cold, *gets there*.
 
@@ -50,7 +50,7 @@
 
 **Choose a goal whose terminal question is one of the three.**
 
-**Hardness comes from the goal, never from the brief.** A room that is hard because it hides something measures puzzle-solving, and that is a worse instrument than the script it replaced.
+**Hardness comes from the goal, never from the brief.** A room that is hard because it hides something measures puzzle-solving, and that is a worse instrument than a script.
 
 * **A known starting state.** This is what makes assertion tractable. The check reads **the state the room is left in**, not the words the agent chose. A real run is non-deterministic, so a tight assertion on prose fails on wording and a loose one passes on nothing. **A paid run proves the agent READ, not only that the store ended up right:** the room plants an answer only the intended read yields, and the sitting must record it in the store, because an answer merely said leaves nothing to check.
 * **Entry through the instance's own surface**, so the agent under test meets jojobot the way any agent does.

@@ -1,6 +1,6 @@
 # Memory — entities, facts and edges
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-15
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **jojobot stores three things: entities, events and edges. It reads back a fourth: the fact.**
 
@@ -32,15 +32,7 @@ Bart eats a donut. Each donut is an event. Ask how many, and the number is the a
 
 ## Who backs a claim, and how sure
 
-**Every claim carries two answers. They are independent.**
-
-**Provenance** says who backs the claim. The operator said it, an agent derived it, or an agent read it out of a system of record — and that third one is refused unless it names what it read, because *who confirmed this, and on what* is the whole question a later reader asks.
-
-**Standing** says how settled the claim is.
-
-One answer does not imply the other. The operator can say something while thinking aloud: that is testimony, and it is still open. An agent can derive something checkable that the operator has never confirmed. **jojobot must show the difference between a decision and a musing.** An inference reads back as a hypothesis until the operator confirms it.
-
-**A value nobody asserted must not read as one somebody did.** Where nobody recorded standing, jojobot says so.
+**Every claim carries two independent answers: who backs it, and how settled it is.** An inference reads back as a hypothesis until the operator confirms it, and a value nobody asserted never reads as one somebody did. Full detail → *Provenance and standing — who backs a claim, and how sure*.
 
 ## Reading, and what you query
 
@@ -58,7 +50,7 @@ One answer does not imply the other. The operator can say something while thinki
 
 **Editing is the surface. Appending is the substrate.** An agent edits a claim and sees it change. Underneath, jojobot writes a new event. The agent reads back the projection.
 
-**A correction takes one of two shapes, and who wrote the claim decides which.** A claim the current session wrote is rewritten in place. A claim an earlier session wrote is archived, and the corrected claim stands beside it, so the correction stays visible — somebody may already have read the old one. **Nothing stores a sentence saying what a thing is not.**
+**A correction takes one of two shapes, and who wrote the claim decides which** → *Provenance and standing*. **Nothing stores a sentence saying what a thing is not.**
 
 **Retracting is a different move.** A correction says the world turned out otherwise. Retracting says nobody should have written this. It is one way. It is not a delete, and the record stays readable. Taking something back is itself something that happened, and a system that hid it would lie about its own past.
 
@@ -70,29 +62,11 @@ One answer does not imply the other. The operator can say something while thinki
 
 **A thing's fields are every event on it, folded.** No single event holds them. Everything recorded about Santa's Little Helper, taken together, is the object that dog presents.
 
-**A kind is what a thing is and the keys it holds. These do not come apart.** The kind is the namespace in the handle, as in `pet:santas-little-helper`. **Changing it is a deliberate act rather than something that happens to a thing** — and the handle is the only thing that changes, because a link underneath holds an opaque id.
-
-Declare `bike`, and a bike has a year, a brand, a colour and a model. Nobody sets these up per bike. Nobody invents a spelling for them. **This is what makes a key mean the same thing everywhere, and it is the whole return on declaring anything.**
+**A kind is what a thing is and the keys it holds**, and it is the namespace in the handle. Declare `bike`, and a bike has a year, a brand, a colour and a model; nobody sets these up per bike or invents a spelling for them. **That is what makes a key mean the same thing everywhere.**
 
 **A thing earns what jojobot can do with it as it accumulates what is known.** It does not fill in a form before it may write anything down.
 
-**The operator declares kinds.** A new kind is based on an existing kind and inherits it. **Each key declares what it holds.** A key that holds a reference names the kind it points at. A bike's brand is a company, and that company must already exist. **jojobot keeps a key no kind mentions exactly as written.**
-
-Full detail → *Kinds — what a thing is, and the keys it carries*.
-
-## Strictness
-
-**Strictness applies to one thing at a time. When it is on, the write path validates and rejects.** That is the point of it.
-
-**jojobot offers strictness. It does not assume it.** When a thing starts to hold every key its kind names, jojobot offers to turn strictness on, and an agent confirms. A thing that holds every key when somebody creates it can be strict from the start. **A half-described thing has nothing to protect, so jojobot refuses it nothing.** This keeps strictness from becoming a gate on the way in.
-
-**A value must hold what its key declared.** Set a bike's brand to a pet, and the write fails. **Holding a key badly is not holding it.**
-
-**A write that would remove a key the kind names also fails.** Adding keys always succeeds. Strictness is a floor, not a ceiling.
-
-**A refusal names the key and what it wanted, so the caller knows the next move.** A refusal never leaves a thing unrepairable, because jojobot checks the shape the write produces and not the change alone.
-
-**Best-effort is the escalation, and it is permanent.** Some things stay loose on purpose. Life arrives in the wrong order, and a lossy record you can correct later beats storing nothing.
+Full detail, strictness included → *Kinds — what a thing is, and the keys it carries*.
 
 ## The tree
 

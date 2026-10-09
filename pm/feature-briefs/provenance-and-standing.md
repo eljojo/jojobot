@@ -1,6 +1,6 @@
 # Provenance and standing — who backs a claim, and how sure
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-21
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **Every claim answers two questions, and they are independent.** Who backs this, and how sure is it. One field each, because collapsing them makes a confident guess indistinguishable from a settled fact.
 

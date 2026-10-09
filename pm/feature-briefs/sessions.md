@@ -1,6 +1,6 @@
 # Sessions — one mortal run of a bot
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A session is one run of one bot**, and it is the key that bot works through. It groups what the bot did, and it is how jojobot knows who is asking.
 

@@ -1,6 +1,6 @@
 # Kinds — what a thing is, and the keys it carries
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-11
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A kind is what a thing is and the schema it carries. These are one thing, not two.**
 

@@ -1,6 +1,6 @@
 # Synthesis — a shape stands for a pile, and the pile stays where it is
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-10
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A shorter record stands for a run of records, says so in a way nobody can forge, and the records it stands for do not move.**
 
@@ -14,7 +14,7 @@
 
 ⛔️ **Nothing is deleted, because what decays is how much a thing should be in the way — never whether it happened.**
 
-## What that costs today
+## What a pile costs
 
 **A life accumulates detail, and the detail is the record.** What somebody said in March is worth keeping exactly as they said it.
 
@@ -22,7 +22,7 @@
 
 **Without a way to move a thing down a level there are two outcomes and both are bad.** Keep everything at the top and drown whoever comes next, or drop things and the record stops being one.
 
-⭐ **The missing piece is not room to store and not a way to serve less.** Both work. **What is missing is a PROCESS: nothing tells a session this is a thing to do, and nothing gives it a way to do it.**
+⭐ **The answer is not more room to store and not a way to serve less.** **It is a PROCESS: a session is told this is a thing to do, and given a way to do it.**
 
 ⚠️ **THE PRINCIPLE IS WIDER THAN WHAT THIS REACHES.** **It holds for anything jojobot accumulates, and what follows reaches records that state something.** **Naming that gap is part of the design rather than an apology for it.**
 
@@ -48,7 +48,7 @@
 
 🚨 **Folding many records into one is exactly where a detail gets invented, or a nuance quietly dropped, and then read back as settled truth.**
 
-**Today a contradiction is caught by CO-PRESENCE: two records disagree about one thing and whoever reads it sees both.** ⭐ **Because the pile stays where it is, on the same page, about the same thing, co-presence survives.** **A settled claim that contradicts a loose shape is still sitting under it.**
+**A contradiction is caught by CO-PRESENCE: two records disagree about one thing and whoever reads it sees both.** ⭐ **Because the pile stays where it is, on the same page, about the same thing, co-presence survives.** **A settled claim that contradicts a loose shape is still sitting under it.**
 
 ⛔️ **And the count is computed, never written.** **A shape cannot claim to stand for records it does not, and cannot quietly stand for more than it says.** ⭐ **Leaving something out is never silent here, and a shape is the largest omission the system can perform.**
 

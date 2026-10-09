@@ -1,8 +1,8 @@
 # Mailboxes — how one bot reaches another
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
-**A place to leave a message for somebody who is not in this conversation.** Bots are colleagues in an organisation: a public directory, private mailboxes, and no impersonation.
+**A place to leave a message for somebody who is not in this conversation.** Bots are colleagues (*Bots and identity — colleagues in an organisation*), and a box is how one reaches another.
 
 ## You address the bot, not the box
 
@@ -38,13 +38,13 @@
 
 **When a bot posts, it receives whatever is waiting for it, in the same call.**
 
-The failure this is aimed at is not a bot that goes quiet. It is two bots corresponding — each posting, each holding a reply it has not seen, neither blocked, both proceeding on a picture the other has already corrected. **The moment a bot posts is precisely when a reply is most likely to be waiting**, because posting is what it does at the end of a piece of work.
+It is aimed at two bots corresponding, each holding a reply it has not seen (*The status bar — telling a caller what it did not ask about* carries why). **The moment a bot posts is precisely when a reply is most likely to be waiting**, because posting is what it does at the end of a piece of work.
 
 ⚠️ **A sender's view has to stay honest about this.** A message that left `new` because its recipient posted something unrelated is not a message somebody picked up, and the two are reported apart.
 
 ## Two sessions, one box
 
-**Where a bot has two live sessions they share its box and sort it out between themselves.** That is something a session lives with rather than something the software resolves — and it is why two workers are two bots rather than two sessions.
+**Where a bot has two live sessions they share its box and sort it out between themselves.** Why two workers are two bots is *Sessions — one mortal run of a bot*.
 
 ## What it is not
 

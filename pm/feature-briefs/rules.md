@@ -1,6 +1,6 @@
 # Rules — what a bot is held to, and how the right one reaches it at the right moment
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-05
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A rule is a standing claim about how a bot, or the build, must behave. The feature is getting each rule in front of a mind at the moment it bears on what that mind is doing, and nothing else in front of it.**
 

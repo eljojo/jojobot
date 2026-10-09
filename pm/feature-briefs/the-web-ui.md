@@ -1,6 +1,6 @@
 # The web UI — a window on your own instance
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A directory listing over the graph, the way a web server indexes a directory.** An entity path is a URL path. A page lists what is at that node and links onward.
 
@@ -42,12 +42,12 @@
 
 **The operator logs in through the issuer jojobot already verifies against.** Authorization code with PKCE, then a session of its own.
 
-**One client, not two.** The browser and the agent surface share an audience. They are revoked together, knowingly. A second registration is not worth it on a personal instance.
+**Two audiences, one check.** The agent surface accepts a token minted for jojobot itself. The page accepts an ID token minted for its own client, because an ID token is addressed to the client that asked for it. Both come from the same issuer, are verified with the same keys, and pass the same allowlist of who may enter.
 
 **No second door, and no development bypass that could ship.** One module checks both audiences. That is what keeps them from becoming two ways in.
 
 ## What it is not
 
-**Not an editor.** Reading is the whole of it. A change goes through the surface, where the guards are.
+**Not an editor.** Beyond the operator's own mail, it changes nothing. A change goes through the surface, where the guards are.
 
 **Not a dashboard.** jojobot summarises nothing here, scores nothing and ranks nothing. The page shows what is there. ⚠️ **A view's page is not the exception it looks like:** a view's content IS its answer, so running the query is showing what is there rather than summarising it.

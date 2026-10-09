@@ -1,6 +1,6 @@
 # Budgets — what is live has a ceiling, and something has to give
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-14
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A life has budgets and jojobot models them: what is live has a ceiling, and something has to give when it is reached.** The mind is a box filled with balloons — each thing takes up room, and the room runs out.
 

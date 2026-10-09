@@ -1,6 +1,6 @@
 # Containers — a bounded thing refuses what would overfill it
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **Any thing can carry a ceiling on how much is live under it. A write that would go over is refused, and the writer has to choose what gives. A thread is the container built for an ongoing line in a life.**
 

@@ -1,6 +1,6 @@
 # Fronting a layer jojobot does not own
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **jojobot stands in front of the services that hold a life, without becoming their owner.** The task board still owns tasks. The calendar still owns time. The wiki still owns its pages. The person whose life it is keeps editing all of them by hand. What jojobot adds is a single doorway with the discipline built into it.
 

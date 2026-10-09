@@ -1,6 +1,6 @@
 # Role claims — one holder per role, and how a role changes hands
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A role is a seat that exactly one session holds at a time** — the PM, a line, a watcher — and jojobot is what enforces that, by a lease the holder keeps renewing.
 

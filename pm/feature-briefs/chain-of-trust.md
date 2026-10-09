@@ -1,6 +1,6 @@
 # The chain of trust — vouchers passed down the org chart
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-09
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A session does a gated act only while it holds a voucher for that act, and every voucher descends down the org chart from a root that only the operator can grant.** The operator grants the root with a one-time code that jojobot sends to them and to nobody else.
 
@@ -54,11 +54,11 @@
 
 **A graceful wrap hands the session's voucher to jojobot, in escrow.** A successor started within 30 minutes takes it up. The two sessions never have to overlap, and jojobot holds the right safely in between.
 
-**A crash is not escrow, because nothing was surrendered.** A live superior voids the dead session's voucher and issues a fresh one from its own. The same stale-beat probe that decides a role is takeable decides the session is dead.
+**A crash is not escrow, because nothing was surrendered.** A live superior voids the dead session's voucher and issues a fresh one from its own. A session counts as dead by the same two steps that replace a role's holder: its lease lapses with no write, then a probe goes unanswered.
 
 **When one of the two watchers dies, the survivor asks the coordinator above them both by mail, and the coordinator re-issues.**
 
-**Three clocks, three jobs.** The 45-minute role lease measures whether a seat's holder is still writing. The 30-minute escrow window bounds the pickup of a surrendered voucher. The 10-minute challenge window is the one expiry in the design, and it applies to a code nobody has redeemed. **A held voucher has no expiry.** The operator asked for none. The design's reason is that an expiry would be a second clock deciding what the lease already decides, and two rules for one question drift apart.
+**Three clocks inside jojobot, three jobs.** The watchers' probe is theirs, not the store's. The 45-minute role lease measures whether a seat's holder is still writing. The 30-minute escrow window bounds the pickup of a surrendered voucher. The 10-minute challenge window is the one expiry in the design, and it applies to a code nobody has redeemed. **A held voucher has no expiry.** The operator asked for none. The design's reason is that an expiry would be a second clock deciding what the lease already decides, and two rules for one question drift apart.
 
 ## The first boot after the upgrade
 

@@ -1,6 +1,6 @@
 # Lines — a bot that is running, and the runtime that runs it
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-10
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **A bot is somebody jojobot knows. A line is that bot, running.** jojobot starts a line, sees whether one is live, and stops it. A runtime somewhere owns the processes — **and no agent using jojobot ever learns that runtime exists.**
 
@@ -34,7 +34,7 @@
 
 ⚠️ **And *working* is narrower than it sounds.** **A runtime distinguishes a session that is thinking from one that is merely open, and a doorway that folds those together answers the wrong question.**
 
-## The question nothing can answer today
+## The question only the runtime can answer
 
 **Is anybody working as** `**bot:dev**` **right now?**
 

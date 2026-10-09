@@ -1,6 +1,6 @@
 # Entitlements — something somebody holds that opens a door
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand
 
 **Somebody HOLDS something, scoped to an event, a place or an organisation, valid over a window, which PERMITS an action that is otherwise closed.** Tickets, passes, memberships, registrations, visas, licences, reservations, insurance, accreditations. One shape underneath all of them.
 
