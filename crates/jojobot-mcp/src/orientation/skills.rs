@@ -442,8 +442,11 @@ date to quiet finished work.
 
 A project may add statuses of its own. Write the whole list on the project, in
 the order you want it, under `columns`. The work filed under that project may
-then take any word on the list. A word outside the list is refused, and the
-refusal names the list.
+then take any word on the list. A project that is not filed under a project
+takes its own list for its own status. A project filed under a project keeps
+that project's list, and a list of its own does not widen it. The list always
+keeps the shipped words. A word outside the list is refused, and the refusal
+names the list and the project that holds it.
 
     capture  subject: "project:atlas"  fields: {"columns": "inbox, someday, next, now, waiting, done"}
 

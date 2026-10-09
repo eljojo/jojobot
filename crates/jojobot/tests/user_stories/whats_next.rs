@@ -365,3 +365,56 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
 
     story.finish().await;
 }
+
+/// "The orientation said no write is ever blocked by a type, and the project
+/// refused my status." The essay a cold session reads says which key a kind holds
+/// to a named set and where that set is extended, and the session that follows
+/// the refusal the essay prepared it for ends with the write landed.
+#[tokio::test]
+async fn a_cold_session_taught_by_the_essay_follows_a_status_refusal_to_a_landed_write() {
+    let story = Story::begin("bot:otto").await;
+
+    // ── the essay, read by a session that was told nothing ──────────────────
+    let (anon, _) = story.call("start_here", json!({})).await;
+    let essay = anon.json()["orientation"]
+        .as_str()
+        .expect("the boot carries the essay")
+        .to_string();
+    let taught = essay
+        .lines()
+        .find(|line| line.contains("Declare a type"))
+        .expect("the essay teaches declaring a type");
+    for token in ["`status`", "`columns`", "someday", "KIND"] {
+        assert!(
+            taught.contains(token),
+            "the paragraph that says what a type refuses does not name {token}: {taught}"
+        );
+    }
+
+    // ── the session writes a status the project does not list ───────────────
+    let s = story.session().await;
+    s.add("project:atlas", "Atlas").await;
+    let write = json!({
+        "subject": "project:atlas", "content": "where it stands",
+        "provenance": "testimony", "fields": {"status": "considering"},
+    });
+    let refused = s.refused("capture", write.clone()).await;
+    // The refusal names the project that holds the list, as the essay said it would.
+    refused.says("project:atlas");
+    refused.says("columns");
+
+    // ── it follows the refusal: columns on that project, then the same write ──
+    s.event_with(
+        "project:atlas",
+        "the board's columns",
+        json!({"columns": "considering, someday, next, now, waiting, done"}),
+        &[],
+    )
+    .await;
+    s.call("capture", write).await;
+    s.recall("project:atlas")
+        .await
+        .says("\"status\":\"considering\"");
+
+    story.finish().await;
+}

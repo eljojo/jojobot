@@ -2237,6 +2237,26 @@ fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
         "…and it has to say what DOES hold a thing to its keys, since a session told only \
          that a type does not will conclude nothing does: {taught}"
     );
+    // **A kind can hold a key to one of a named set, and the paragraph says
+    // which key and which set.** A project's status is refused outside its list,
+    // so a paragraph that said nothing is ever blocked by a type would be false
+    // about the first write a cold session makes on a project. Pinned by the
+    // identifiers a caller sends, never by the sentence around them.
+    for key in [
+        jojobot_domain::memory::kinds::STATUS,
+        jojobot_domain::memory::kinds::COLUMNS,
+    ] {
+        assert!(
+            taught.contains(&format!("`{key}`")),
+            "the paragraph does not name `{key}`, the key a kind holds to a named set: {taught}"
+        );
+    }
+    for word in jojobot_domain::memory::kinds::WORK_STATUSES {
+        assert!(
+            taught.contains(word),
+            "the paragraph does not name the shipped status '{word}': {taught}"
+        );
+    }
 }
 
 /// **Every sentence this crate compiles in**, with the file and line that
