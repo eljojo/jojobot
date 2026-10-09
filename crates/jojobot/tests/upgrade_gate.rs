@@ -393,6 +393,75 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     drop(scratch);
 }
 
+/// **A store the build before the switch filled keeps every key on the build
+/// that switched.** Before the switch a key written as an own field wore the class
+/// `own` and reached its thing. The switch keeps no migration: it reads that class
+/// as it always did, and writes the new class `stays` only for a write made after
+/// it. A boot that read `own` as a key to leave behind would empty every thing the
+/// old build filled.
+///
+/// The recordings predate the class column, so a first boot adds it and gives each
+/// row the class `legacy`. The case then rewrites those rows to `own`, which is
+/// what the build before the switch wrote for an own field, and boots again.
+#[tokio::test]
+async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it() {
+    for (fixture_dir, label) in [
+        (FIXTURE_DIR, "own-class"),
+        (DEPLOY_3_FIXTURE_DIR, "own-class-deploy3"),
+    ] {
+        let Restored {
+            scratch,
+            state_dir,
+            store_port,
+            git_ref,
+            held_before,
+            ..
+        } = restore_a_fixture(fixture_dir, label).await;
+
+        boot_current(&state_dir, store_port, &git_ref)
+            .await
+            .stop()
+            .await;
+        let mut store = open_the_store(&state_dir, store_port).await;
+        let rewritten = sqlx::query("UPDATE field_write SET write_class = 'own'")
+            .execute(store.pool())
+            .await
+            .expect("the rows are classed as the build before the switch classed them")
+            .rows_affected();
+        assert!(
+            rewritten as usize >= held_before.len(),
+            "recorded at {git_ref}: {rewritten} rows were classed own and the store holds {} \
+             values, so the case would leave some in another class",
+            held_before.len()
+        );
+        store.stop().await;
+
+        // The first boot reported the recording's handle and marked the pass, so
+        // this one reports nothing.
+        let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+            .await
+            .expect("connecting to the current binary");
+        assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
+        surface.finish().await;
+        booted.stop().await;
+
+        let mut store = open_the_store(&state_dir, store_port).await;
+        let classes: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT write_class FROM field_write ORDER BY 1")
+                .fetch_all(store.pool())
+                .await
+                .expect("the classes read");
+        assert_eq!(
+            classes,
+            ["own"],
+            "recorded at {git_ref}: a boot rewrote the class of a row it did not write"
+        );
+        store.stop().await;
+        drop(scratch);
+    }
+}
+
 /// **The store of a restored fixture, brought up with no binary over it**, so
 /// the gate can write rows the older build would have written, and read what the
 /// current binary did to them.
