@@ -570,6 +570,83 @@ pub enum Migrated {
     Ran(usize),
     /// It ran and failed partway.
     Failed(String),
+    /// It had finished on this store at an earlier boot, so this boot read
+    /// none of its table.
+    Settled,
+}
+
+/// **The one-time passes over stored rows, by the name each logs under and
+/// each marker carries.** The order is the order they run in.
+///
+/// **A pass runs once on a store, and a marker says it has.** Rule 260 resolves
+/// a mention on the way in; it never rewrites history. So once a pass has
+/// finished, old text that named a handle nothing wore when it was written stays
+/// text: its writer could not have meant a thing that did not exist yet, and
+/// linking it to whatever takes the name later would be a guess. A pass that
+/// read its table on every boot would make exactly that guess, and would also
+/// pay for the whole table at every start. Do not return to a read on every
+/// boot to catch such a row.
+const PASSES: [&str; 4] = [
+    "mail mentions",
+    "session mentions",
+    "session bot column",
+    "message sender column",
+];
+
+/// **Which passes have finished on this store**, read before any table a pass
+/// would read.
+///
+/// A marker that cannot be read is not a finished pass: it reads as none, so
+/// the passes run. They are idempotent, which is what makes that the safe
+/// side, and a store that cannot answer this one small read fails the passes
+/// themselves in the same way and says so there.
+///
+/// Any other one-time pass over stored rows asks here by its own name and
+/// records its own end with [`finish_pass`]; the names in [`PASSES`] are only
+/// the four that [`migrate_permanent_ids`] runs.
+pub(crate) async fn finished_passes(pool: &MySqlPool) -> std::collections::BTreeSet<String> {
+    match sqlx::query_scalar::<_, String>("SELECT name FROM store_pass")
+        .fetch_all(pool)
+        .await
+    {
+        Ok(names) => names.into_iter().collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "store: could not read which passes have finished");
+            Default::default()
+        }
+    }
+}
+
+/// **Record that a pass examined every row of its table and failed on none.**
+/// Written once and never rewritten: a second writer finding the row there has
+/// nothing to add. A marker that cannot be written costs one more run of an
+/// idempotent pass at the next boot, so it is logged and not raised.
+pub(crate) async fn finish_pass(pool: &MySqlPool, name: &str) {
+    if let Err(e) = sqlx::query("INSERT IGNORE INTO store_pass (name, finished_at) VALUES (?, ?)")
+        .bind(name)
+        .bind(jiff::Timestamp::now().to_string())
+        .execute(pool)
+        .await
+    {
+        tracing::warn!(pass = name, error = %e, "store: could not record that a pass finished");
+    }
+}
+
+/// **A pass's outcome, with its marker written when the pass finished.**
+/// `Ran` means every row was examined and none failed; anything else leaves the
+/// pass owed for the next boot.
+async fn settled<E: std::fmt::Display>(
+    pool: &MySqlPool,
+    name: &str,
+    ran: Result<usize, E>,
+) -> Migrated {
+    match ran {
+        Ok(n) => {
+            finish_pass(pool, name).await;
+            Migrated::Ran(n)
+        }
+        Err(e) => Migrated::Failed(e.to_string()),
+    }
 }
 
 /// **Run every one-time permanent-id migration mail and sessions still
@@ -577,54 +654,94 @@ pub enum Migrated {
 /// for each — never a false `Ran(0)` standing in for a read that never
 /// happened.**
 ///
+/// **A pass that has finished on this store reads none of its table.** The
+/// markers are read first, in one small query, and a pass with one is
+/// reported [`Migrated::Settled`]. When all four are settled the entity list
+/// and the rename history are not read either. A pass is marked only after it
+/// examined every row and failed on none, so a skipped or failed pass is owed
+/// again at the next boot, and a store that still holds a row written the old
+/// way is migrated the first time a pass runs over it.
+///
 /// `memory.list_entities` failing is not an empty store: feeding an empty
 /// `Vec` to a migration either way makes it match nothing and report a
-/// completed run over rows it never saw. So every migration needing that
-/// read `Skip`s together when it fails, rather than three separate copies
-/// of the same mistake — this is the one place that decision is made.
+/// completed run over rows it never saw. So every migration still owed that
+/// needs the read `Skip`s together when it fails, rather than three separate
+/// copies of the same mistake — this is the one place that decision is made.
 ///
 /// `former_handles` failing is narrower: only the bot-column and
 /// sender-column migrations need it, so only those two `Skip` when it alone
 /// fails.
 pub async fn migrate_permanent_ids(
+    pool: &MySqlPool,
     memory: &dyn jojobot_domain::memory::Memory,
     mail: &mailboxes::DoltMailboxes,
     sessions: &sessions::DoltSessions,
 ) -> Vec<(&'static str, Migrated)> {
+    let done = finished_passes(pool).await;
+    let owed = |name: &str| !done.contains(name);
+    let settle = |name: &'static str| (name, Migrated::Settled);
+    if PASSES.iter().all(|name| !owed(name)) {
+        return PASSES.iter().copied().map(settle).collect();
+    }
     let known = match memory.list_entities(None).await {
         Ok(known) => known,
         Err(e) => {
             let reason = e.to_string();
-            return vec![
-                ("mail mentions", Migrated::Skipped(reason.clone())),
-                ("session mentions", Migrated::Skipped(reason.clone())),
-                ("session bot column", Migrated::Skipped(reason.clone())),
-                ("message sender column", Migrated::Skipped(reason)),
-            ];
+            return PASSES
+                .iter()
+                .copied()
+                .map(|name| match owed(name) {
+                    true => (name, Migrated::Skipped(reason.clone())),
+                    false => settle(name),
+                })
+                .collect();
         }
     };
-    let mail_mentions = match mail.migrate_mentions(&known).await {
-        Ok(n) => Migrated::Ran(n),
-        Err(e) => Migrated::Failed(e.to_string()),
+    let mail_mentions = match owed("mail mentions") {
+        true => settled(pool, "mail mentions", mail.migrate_mentions(&known).await).await,
+        false => Migrated::Settled,
     };
-    let session_mentions = match sessions.migrate_mentions(&known).await {
-        Ok(n) => Migrated::Ran(n),
-        Err(e) => Migrated::Failed(e.to_string()),
+    let session_mentions = match owed("session mentions") {
+        true => {
+            settled(
+                pool,
+                "session mentions",
+                sessions.migrate_mentions(&known).await,
+            )
+            .await
+        }
+        false => Migrated::Settled,
     };
-    let former = memory.former_handles().await;
-    let bot_column = match &former {
-        Ok(former) => match sessions.migrate_bot_column(&known, former).await {
-            Ok(n) => Migrated::Ran(n),
-            Err(e) => Migrated::Failed(e.to_string()),
-        },
-        Err(e) => Migrated::Skipped(e.to_string()),
+    let columns_owed = owed("session bot column") || owed("message sender column");
+    let former = match columns_owed {
+        true => Some(memory.former_handles().await),
+        false => None,
     };
-    let sender_column = match &former {
-        Ok(former) => match mail.migrate_sender_column(&known, former).await {
-            Ok(n) => Migrated::Ran(n),
-            Err(e) => Migrated::Failed(e.to_string()),
-        },
-        Err(e) => Migrated::Skipped(e.to_string()),
+    let bot_column = match (owed("session bot column"), &former) {
+        (false, _) => Migrated::Settled,
+        (true, Some(Ok(former))) => {
+            settled(
+                pool,
+                "session bot column",
+                sessions.migrate_bot_column(&known, former).await,
+            )
+            .await
+        }
+        (true, Some(Err(e))) => Migrated::Skipped(e.to_string()),
+        (true, None) => unreachable!("an owed column pass read the rename history"),
+    };
+    let sender_column = match (owed("message sender column"), &former) {
+        (false, _) => Migrated::Settled,
+        (true, Some(Ok(former))) => {
+            settled(
+                pool,
+                "message sender column",
+                mail.migrate_sender_column(&known, former).await,
+            )
+            .await
+        }
+        (true, Some(Err(e))) => Migrated::Skipped(e.to_string()),
+        (true, None) => unreachable!("an owed column pass read the rename history"),
     };
     vec![
         ("mail mentions", mail_mentions),
@@ -1180,7 +1297,18 @@ pub(crate) mod tests {
     /// makes no other call on the entity world, and a call to one of these
     /// is this test's own bug, not something to paper over with a fake
     /// implementation.
-    struct FailingEntityRead;
+    struct FailingEntityRead {
+        /// How many times the entity world was asked for its list.
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl FailingEntityRead {
+        fn new() -> Self {
+            FailingEntityRead {
+                reads: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl jojobot_domain::memory::Memory for FailingEntityRead {
@@ -1195,6 +1323,7 @@ pub(crate) mod tests {
             _: Option<jojobot_domain::memory::EntityKind>,
         ) -> Result<Vec<jojobot_domain::memory::Entity>, jojobot_domain::memory::MemoryError>
         {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Err(jojobot_domain::memory::MemoryError::Store(
                 "the entity world is down".into(),
             ))
@@ -1433,7 +1562,8 @@ pub(crate) mod tests {
         .await
         .expect("append should succeed");
 
-        let results = migrate_permanent_ids(&FailingEntityRead, &mail, &sess).await;
+        let results =
+            migrate_permanent_ids(store.pool(), &FailingEntityRead::new(), &mail, &sess).await;
         for (name, outcome) in &results {
             assert!(
                 matches!(outcome, Migrated::Skipped(_)),
@@ -1524,7 +1654,7 @@ pub(crate) mod tests {
         .await
         .expect("append should succeed");
 
-        let results = migrate_permanent_ids(&memory, &mail, &sess).await;
+        let results = migrate_permanent_ids(store.pool(), &memory, &mail, &sess).await;
         let ran: std::collections::HashMap<_, _> = results
             .into_iter()
             .map(|(name, outcome)| match outcome {
@@ -1550,5 +1680,335 @@ pub(crate) mod tests {
         );
 
         store.stop().await;
+    }
+
+    /// The four passes, by the name each logs under and each marker carries.
+    const PASS_NAMES: [&str; 4] = [
+        "mail mentions",
+        "message sender column",
+        "session bot column",
+        "session mentions",
+    ];
+
+    /// The one thing the legacy rows name. Each case has a store of its own, so
+    /// one handle serves them all.
+    const LEGACY_HANDLE: &str = "thing:contract-store-pass";
+
+    /// A real store holding one entity, with the three bare adapters over it.
+    struct LegacyWorld {
+        _scratch: Scratch,
+        store: Dolt,
+        memory: crate::dolt::memory::DoltMemory,
+        mail: mailboxes::DoltMailboxes,
+        sess: sessions::DoltSessions,
+        handle: String,
+    }
+
+    async fn legacy_world(label: &str) -> LegacyWorld {
+        use jojobot_domain::memory::{Memory, NewEntity};
+
+        let scratch = Scratch::new(label);
+        let mut store = Dolt::start(&scratch.0.clone(), free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        let handle = LEGACY_HANDLE.to_string();
+        memory
+            .add_entity(NewEntity::new(
+                jojobot_domain::memory::EntityId(handle.clone()),
+                "was",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block a fresh handle");
+        memory.badge_the_unbadged().await.expect("badges are drawn");
+
+        let owners =
+            std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::default());
+        owners
+            .add_entity(NewEntity::new(
+                jojobot_domain::memory::EntityId("bot:gamma".into()),
+                "gamma",
+                "contract-fixture",
+            ))
+            .await
+            .expect("an owner for the box")
+            .written()
+            .expect("not blocked");
+        let mail = mailboxes::DoltMailboxes::open(
+            store.pool().clone(),
+            std::sync::Arc::new(crate::owners::MemoryOwners::new(owners)),
+        );
+        {
+            use jojobot_domain::mailbox::{MailboxName, Mailboxes};
+            mail.create_mailbox(
+                &MailboxName("inbox".into()),
+                &jojobot_domain::memory::EntityId("bot:gamma".into()),
+                None,
+            )
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        }
+        let sess = sessions::DoltSessions::open(store.pool().clone());
+        let _ = &mut store;
+        LegacyWorld {
+            _scratch: scratch,
+            store,
+            memory,
+            mail,
+            sess,
+            handle,
+        }
+    }
+
+    /// **A message and a run written the way every row was before mentions
+    /// resolved**: through the bare adapters, which keep the handle as typed.
+    /// Returns the message id and the run's id.
+    async fn plant_legacy_rows(
+        world: &LegacyWorld,
+        sid: &str,
+    ) -> (
+        jojobot_domain::mailbox::MessageId,
+        jojobot_domain::session::SessionId,
+    ) {
+        use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
+        use jojobot_domain::session::{NewSession, Sessions, Sid};
+
+        let posted = world
+            .mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: format!("about @{}", world.handle),
+                subject: None,
+                sender: "gamma".into(),
+                sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+        let session = world
+            .sess
+            .begin(NewSession {
+                bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+                sid: Sid(sid.to_string()),
+                focus: format!("about @{}", world.handle),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+        (posted.id, session.id)
+    }
+
+    async fn markers(pool: &MySqlPool) -> Vec<String> {
+        sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .expect("the markers read")
+    }
+
+    async fn message_body(world: &LegacyWorld, id: &jojobot_domain::mailbox::MessageId) -> String {
+        use jojobot_domain::mailbox::Mailboxes;
+        world
+            .mail
+            .scan_messages()
+            .await
+            .expect("scan_messages should succeed")
+            .into_iter()
+            .find(|m| &m.id == id)
+            .expect("the message is still there")
+            .body
+    }
+
+    /// **A pass that finished leaves a marker, and the next boot settles it.**
+    /// Rows written the old way are rewritten on the first run, each of the
+    /// four passes names itself in the store, and the second run reports every
+    /// pass as already done.
+    #[tokio::test]
+    async fn a_finished_pass_leaves_a_marker_and_the_next_run_settles_it() {
+        let mut world = legacy_world("store-pass-finished").await;
+        let (message, session) = plant_legacy_rows(&world, "sp01").await;
+
+        let first =
+            migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess)
+                .await;
+        let ran: std::collections::HashMap<_, _> = first
+            .into_iter()
+            .map(|(name, outcome)| match outcome {
+                Migrated::Ran(n) => (name, n),
+                other => {
+                    panic!("{name}: expected Ran on a store with nothing marked, got {other:?}")
+                }
+            })
+            .collect();
+        assert_eq!(ran["mail mentions"], 1, "the legacy message is rewritten");
+        assert_eq!(ran["session mentions"], 1, "the legacy focus is rewritten");
+        assert!(
+            !message_body(&world, &message).await.contains(&world.handle),
+            "the first run rewrote the message"
+        );
+        let _ = session;
+        assert_eq!(
+            markers(world.store.pool()).await,
+            PASS_NAMES,
+            "one marker for each pass that finished"
+        );
+
+        let second =
+            migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess)
+                .await;
+        assert_eq!(second.len(), PASS_NAMES.len());
+        for (name, outcome) in second {
+            assert!(
+                matches!(outcome, Migrated::Settled),
+                "{name} read its table again on a store that had finished it: {outcome:?}"
+            );
+        }
+        world.store.stop().await;
+    }
+
+    /// **A settled pass does not read its table.** With every marker in place a
+    /// row written the old way is left exactly as written, which is what a read
+    /// of the table would have changed. The control is the store before any
+    /// marker: the same rows are rewritten (the case above).
+    #[tokio::test]
+    async fn a_settled_pass_leaves_a_row_written_after_it_alone() {
+        let mut world = legacy_world("store-pass-settled").await;
+        migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess).await;
+        assert_eq!(markers(world.store.pool()).await, PASS_NAMES);
+
+        let (message, session) = plant_legacy_rows(&world, "sp02").await;
+        let again =
+            migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess)
+                .await;
+        assert!(
+            again
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, Migrated::Settled)),
+            "{again:?}"
+        );
+        assert!(
+            message_body(&world, &message).await.contains(&world.handle),
+            "the message table was read and rewritten by a settled pass"
+        );
+        use jojobot_domain::session::Sessions;
+        assert!(
+            world
+                .sess
+                .read_session(&session)
+                .await
+                .expect("read_session should succeed")
+                .focus
+                .contains(&world.handle),
+            "the session table was read and rewritten by a settled pass"
+        );
+        world.store.stop().await;
+    }
+
+    /// **A pass that failed writes no marker**, and the ones that finished do.
+    /// The message table is dropped, so both passes that read it fail; the two
+    /// session passes finish and are marked.
+    #[tokio::test]
+    async fn a_pass_that_failed_leaves_no_marker() {
+        let mut world = legacy_world("store-pass-failed").await;
+        plant_legacy_rows(&world, "sp03").await;
+        sqlx::query("DROP TABLE message")
+            .execute(world.store.pool())
+            .await
+            .expect("the table drops");
+
+        let results =
+            migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess)
+                .await;
+        for (name, outcome) in &results {
+            match *name {
+                "mail mentions" | "message sender column" => assert!(
+                    matches!(outcome, Migrated::Failed(_)),
+                    "{name}: {outcome:?}"
+                ),
+                _ => assert!(matches!(outcome, Migrated::Ran(_)), "{name}: {outcome:?}"),
+            }
+        }
+        assert_eq!(
+            markers(world.store.pool()).await,
+            ["session bot column", "session mentions"],
+            "only the passes that finished are marked"
+        );
+        world.store.stop().await;
+    }
+
+    /// **A pass skipped for a failed read writes no marker**, and a boot with
+    /// the read back runs it: the skipped boot is not a finished one.
+    #[tokio::test]
+    async fn a_skipped_run_leaves_no_marker_and_the_next_run_does_the_work() {
+        let mut world = legacy_world("store-pass-skipped").await;
+        let (message, _) = plant_legacy_rows(&world, "sp04").await;
+
+        let skipped = migrate_permanent_ids(
+            world.store.pool(),
+            &FailingEntityRead::new(),
+            &world.mail,
+            &world.sess,
+        )
+        .await;
+        assert!(
+            skipped
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, Migrated::Skipped(_))),
+            "{skipped:?}"
+        );
+        assert!(markers(world.store.pool()).await.is_empty());
+
+        let healthy =
+            migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess)
+                .await;
+        assert!(
+            healthy
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, Migrated::Ran(_))),
+            "{healthy:?}"
+        );
+        assert!(!message_body(&world, &message).await.contains(&world.handle));
+        assert_eq!(markers(world.store.pool()).await, PASS_NAMES);
+        world.store.stop().await;
+    }
+
+    /// **With every pass settled the entity world is not read at all.** A read
+    /// that fails would skip every unfinished pass, and a settled pass has none
+    /// to skip.
+    #[tokio::test]
+    async fn every_pass_settled_reads_no_entities() {
+        let mut world = legacy_world("store-pass-no-entities").await;
+        migrate_permanent_ids(world.store.pool(), &world.memory, &world.mail, &world.sess).await;
+
+        let entity_world = FailingEntityRead::new();
+        let results =
+            migrate_permanent_ids(world.store.pool(), &entity_world, &world.mail, &world.sess)
+                .await;
+        assert!(
+            results
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, Migrated::Settled)),
+            "{results:?}"
+        );
+        assert_eq!(
+            entity_world.reads.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the entity list was read for passes that had nothing to do"
+        );
+        world.store.stop().await;
     }
 }

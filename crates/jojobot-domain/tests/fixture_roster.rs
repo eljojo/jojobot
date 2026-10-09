@@ -477,6 +477,7 @@ const ROSTER: &[&str] = &[
     "rhythm:swim",
     "rhythm:weekly-review",
     "rhythm:worming",
+    "thing:contract-store-pass",
     "thing:dinners",
     // A family around the Daredevil Gorge (a gorge, a town council, a stunt show) that
     // stands for no real place, organisation or event. The sibling and distance shapes

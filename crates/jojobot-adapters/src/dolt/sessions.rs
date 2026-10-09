@@ -98,13 +98,16 @@ impl DoltSessions {
     /// badged entity list, which exists only once the memory store has run
     /// its own boot steps, and a SQL migration runs before any of them.
     ///
-    /// **The completion gate is [`mention::resolved`] itself, not a ledger.**
-    /// It is a pure, idempotent rewrite: text already holding a stored mark
-    /// is never read back as a handle to resolve (see
-    /// [`mention`][jojobot_domain::memory::mention]'s own doc), so recomputing
-    /// it a second time reproduces exactly what is stored, a row is written
-    /// only when the recomputed text actually differs, and a second call
-    /// touches none.
+    /// **The pass is idempotent, and a marker says it has finished.**
+    /// [`mention::resolved`] is a pure rewrite: text already holding a stored
+    /// mark is never read back as a handle to resolve (see
+    /// [`mention`][jojobot_domain::memory::mention]'s own doc), so a second
+    /// call reproduces exactly what is stored and touches no row. That is
+    /// what makes a pass that failed partway safe to run again. It is not what
+    /// stops a finished pass from running again: reading every row of a table
+    /// at every boot to find nothing grows with the store, so
+    /// [`crate::dolt::migrate_permanent_ids`] records the end of a finished
+    /// pass in the store and a later boot does not call this at all.
     ///
     /// Returns how many rows were rewritten, across the focus column and the
     /// chronology together.

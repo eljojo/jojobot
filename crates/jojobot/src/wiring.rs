@@ -503,13 +503,17 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
     // badged entity list, which exists only now that the memory store has
     // run its own boot steps. Idempotent by construction — see
     // `DoltSessions::migrate_mentions`'s own doc — so a failed half is not
-    // lost progress and a retried boot converges rather than repeating work.
+    // lost progress. A pass that finished is marked in the store, and a later
+    // boot reads none of its table (old text naming a handle nothing wore then
+    // stays text; see `PASSES` in the adapter). A pass that failed or was
+    // skipped is not marked, and the next boot runs it again.
     //
     // The decision of what a failed read means to each migration —
     // distinct from an empty store, which is what `Migrated::Skipped`
     // exists to say — lives in `migrate_permanent_ids` itself, where it can
     // be tested against a real store; this only renders what came back.
     for (name, outcome) in jojobot_adapters::dolt::migrate_permanent_ids(
+        store.pool(),
         indexed.as_ref(),
         &bare_mail_store,
         &bare_sessions,
@@ -519,6 +523,9 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
         match outcome {
             jojobot_adapters::dolt::Migrated::Ran(n) => {
                 tracing::info!(rewritten = n, migration = name, "permanent ids: migrated")
+            }
+            jojobot_adapters::dolt::Migrated::Settled => {
+                tracing::info!(migration = name, "permanent ids: already done")
             }
             jojobot_adapters::dolt::Migrated::Skipped(reason) => tracing::warn!(
                 error = %reason,

@@ -215,6 +215,171 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     drop(scratch);
 }
 
+/// **The store of a restored fixture, brought up with no binary over it**, so
+/// the gate can write rows the older build would have written, and read what the
+/// current binary did to them.
+async fn open_the_store(state_dir: &std::path::Path, store_port: u16) -> Dolt {
+    Dolt::start(&state_dir.join("db"), store_port)
+        .await
+        .expect("the restored store comes up with no binary over it")
+}
+
+/// The one handle the legacy rows name, and the one that sends the legacy
+/// message and owns the legacy run. Both are in the recording.
+const LEGACY_MENTION: &str = "thing:upgrade-fixture-thing";
+const LEGACY_BOT: &str = "bot:upgrade-fixture-lead";
+
+/// **A message and a run written the way every row was before mentions and
+/// columns held permanent ids**: the handle as typed, in the text and in the
+/// sender and bot columns. Returns the run's id.
+async fn plant_rows_an_older_build_wrote(pool: &sqlx::MySqlPool) -> String {
+    sqlx::query(
+        "INSERT INTO message (id, mailbox, ordinal, body, subject, sender, sent_at, state)
+         VALUES ('lg0001', 'assistant', 9, ?, NULL, ?, '2026-10-08T14:00:00Z', 'new')",
+    )
+    .bind(format!("about @{LEGACY_MENTION}"))
+    .bind(LEGACY_BOT)
+    .execute(pool)
+    .await
+    .expect("the legacy message lands");
+    let run: String = sqlx::query_scalar("SELECT id FROM session ORDER BY id LIMIT 1")
+        .fetch_one(pool)
+        .await
+        .expect("the recording holds a run");
+    sqlx::query("UPDATE session SET focus = CONCAT(focus, ?), bot = ? WHERE id = ?")
+        .bind(format!(" about @{LEGACY_MENTION}"))
+        .bind(LEGACY_BOT)
+        .bind(&run)
+        .execute(pool)
+        .await
+        .expect("the legacy run is written");
+    run
+}
+
+/// What the three columns the passes rewrite hold now, as
+/// `(message body, message sender, run focus, run bot)`.
+async fn what_the_legacy_rows_hold(
+    pool: &sqlx::MySqlPool,
+    run: &str,
+) -> (String, String, String, String) {
+    let (body, sender): (String, String) =
+        sqlx::query_as("SELECT body, sender FROM message WHERE id = 'lg0001'")
+            .fetch_one(pool)
+            .await
+            .expect("the legacy message reads");
+    let (focus, bot): (String, String) =
+        sqlx::query_as("SELECT focus, bot FROM session WHERE id = ?")
+            .bind(run)
+            .fetch_one(pool)
+            .await
+            .expect("the legacy run reads");
+    (body, sender, focus, bot)
+}
+
+/// **A message and a run an older build wrote with the handle as typed are
+/// migrated by the first boot, and the next boot leaves them alone.** The first
+/// boot rewrites the text and both columns onto permanent ids and marks each of
+/// the four passes finished. The second boot reads none of those tables: a
+/// handle written into the same rows afterwards stays as written, and the boot
+/// says each pass is already done and logs no warning of any kind.
+#[tokio::test]
+async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("legacy-rows").await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let run = plant_rows_an_older_build_wrote(store.pool()).await;
+    store.stop().await;
+
+    // ── the first boot owes every pass, and does them ───────────────────────
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let migrated = first
+        .log
+        .iter()
+        .filter(|line| line.contains("permanent ids: migrated"))
+        .count();
+    first.stop().await;
+    assert_eq!(migrated, 4, "the first boot ran each of the four passes");
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (body, sender, focus, bot) = what_the_legacy_rows_hold(store.pool(), &run).await;
+    assert!(
+        body.contains("@#") && !body.contains(LEGACY_MENTION),
+        "the message text is rewritten onto the permanent id: {body}"
+    );
+    assert!(
+        focus.contains("@#") && !focus.contains(LEGACY_MENTION),
+        "the run's focus is rewritten onto the permanent id: {focus}"
+    );
+    assert_ne!(
+        sender, LEGACY_BOT,
+        "the sender column holds the permanent id"
+    );
+    assert_ne!(bot, LEGACY_BOT, "the bot column holds the permanent id");
+    let finished: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+        .fetch_all(store.pool())
+        .await
+        .expect("the markers read");
+    assert_eq!(
+        finished,
+        [
+            "mail mentions",
+            "message sender column",
+            "session bot column",
+            "session mentions"
+        ],
+        "each pass that finished is marked"
+    );
+
+    // ── a handle written into the same rows afterwards is left as written,
+    //    because the second boot reads none of those tables ──────────────────
+    sqlx::query("UPDATE message SET body = CONCAT(body, ?) WHERE id = 'lg0001'")
+        .bind(format!(" and @{LEGACY_MENTION}"))
+        .execute(store.pool())
+        .await
+        .expect("the message is written again");
+    sqlx::query("UPDATE session SET focus = CONCAT(focus, ?) WHERE id = ?")
+        .bind(format!(" and @{LEGACY_MENTION}"))
+        .bind(&run)
+        .execute(store.pool())
+        .await
+        .expect("the run is written again");
+    store.stop().await;
+
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    let done = second
+        .log
+        .iter()
+        .filter(|line| line.contains("permanent ids: already done"))
+        .count();
+    let migrated_again = second
+        .log
+        .iter()
+        .filter(|line| line.contains("permanent ids: migrated"))
+        .count();
+    second.stop().await;
+    assert_eq!(done, 4, "the second boot says each pass is already done");
+    assert_eq!(migrated_again, 0, "and runs none of them");
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (body, _, focus, _) = what_the_legacy_rows_hold(store.pool(), &run).await;
+    assert!(
+        body.ends_with(&format!(" and @{LEGACY_MENTION}")),
+        "a settled pass read the message table: {body}"
+    );
+    assert!(
+        focus.ends_with(&format!(" and @{LEGACY_MENTION}")),
+        "a settled pass read the session table: {focus}"
+    );
+    store.stop().await;
+    drop(scratch);
+}
+
 /// **Every stored record that no answer could carry whole**, found by reading
 /// each thing's records back through the served surface the way a caller does,
 /// one part after another. A record is over when the answer that carries it is
@@ -370,6 +535,8 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
 struct Booted {
     child: tokio::process::Child,
     http_port: u16,
+    /// Every line the binary logged up to its serving line.
+    log: Vec<String>,
 }
 
 impl Booted {
@@ -487,7 +654,11 @@ async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &st
         "the boot of a store recorded at {git_ref} must report the ambiguous handle exactly when \
          the recording holds it as plain text (it does: {holds_it}): {seen:?}"
     );
-    Booted { child, http_port }
+    Booted {
+        child,
+        http_port,
+        log: seen,
+    }
 }
 
 /// **Where the store's own tool keeps its configuration for a run.** The tool
