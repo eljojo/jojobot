@@ -3855,14 +3855,13 @@ pub fn guard_fit(
             });
         }
     }
-    // **A list of columns has to hold every shipped status**, on a project and on
-    // the instance's own record alike. A board that dropped one would leave the
-    // shipped word meaning nothing there, and "what is waiting" would answer
-    // differently from one board to the next. Checked when the list is set, like
-    // every other key a kind declares. The instance is a topic, and the guard
-    // knows a kind rather than a handle, so any topic that lists columns is held
-    // to it.
-    if (kind == EntityKind::PROJECT.as_token() || kind == EntityKind::TOPIC.as_token())
+    // **A project's list of columns has to hold every shipped status.** A board
+    // that dropped one would leave the shipped word meaning nothing there, and
+    // "what is waiting" would answer differently from one board to the next.
+    // Checked when the list is set, like every other key a kind declares. **The
+    // instance's own list is not held to it**: it ADDS words beside the shipped
+    // five and need not repeat them.
+    if kind == EntityKind::PROJECT.as_token()
         && let Some(value) = after.get(kinds::COLUMNS)
         && before.get(kinds::COLUMNS) != Some(value)
     {

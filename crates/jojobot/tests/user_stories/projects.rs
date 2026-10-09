@@ -661,12 +661,14 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
     s.event_with(
         "topic:instance",
         "the operator's words",
-        json!({"columns": "considering, someday, next, now, waiting, done"}),
+        json!({"columns": "considering"}),
         &[],
     )
     .await;
 
-    // The listed word lands with no note: the accepted set holds it.
+    // The listed word lands with no note: the accepted set holds it. The
+    // instance's list names only the operator's word and does not repeat the
+    // shipped five.
     let listed = s
         .call(
             "capture",
@@ -682,11 +684,11 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
         listed.json()
     );
 
-    // A list that drops a shipped word is refused here as on a project.
+    // A project's own list that drops a shipped word is still refused.
     s.refused(
         "capture",
         json!({
-            "subject": "topic:instance", "content": "a shorter list",
+            "subject": "project:atlas", "content": "a shorter list",
             "provenance": "testimony", "fields": {"columns": "someday, next, now, done"},
         }),
     )

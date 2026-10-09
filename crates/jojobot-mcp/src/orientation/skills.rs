@@ -448,8 +448,9 @@ takes its own list for its own status. A project filed under a project keeps
 that project's list, and a list of its own does not widen it. The list always
 keeps the shipped words. A word outside the list lands, counts as not finished,
 and the answer names the list and the project that holds it. The instance's own
-record lists `columns` the same way for every project, and a `status_word/<word>`
-key on it, set to a shipped word, says what one of your own words means.
+record lists `columns` for every project. That list adds words beside the shipped
+five and need not repeat them. A `status_word/<word>` key on it, set to a shipped
+word, says what one of your own words means.
 
     capture  subject: "project:atlas"  fields: {"columns": "inbox, someday, next, now, waiting, done"}
 

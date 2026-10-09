@@ -2722,9 +2722,10 @@ pub async fn referring_to_finds_a_target_named_in_a_list_of_references<M: Memory
 ///
 /// A declared named set never refuses a write: the word lands on a work item or
 /// project under a board that lists it, under one that does not, and under none.
-/// What stays refused is a list of columns that drops a shipped status, on a
-/// project and on the instance alike, and a mapping that gives a shipped word
-/// another meaning.
+/// What stays refused is a project's list of columns that drops a shipped
+/// status, and a mapping that gives a shipped word another meaning. The
+/// instance's own list ADDS words beside the shipped five and need not repeat
+/// them.
 pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: &M) {
     crate::memory::kinds::seed(store)
         .await
@@ -2771,9 +2772,9 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
         ..NewFact::about(holder.clone(), "what a word means", date(2026, 10, 1))
     };
 
-    // ① A list that drops a shipped status is refused on a project and on the
-    // instance, and the refusal names the five. Nothing is stored.
-    for (holder, kind) in [(&board, "project"), (&instance, "topic")] {
+    // ① A project's list that drops a shipped status is refused, and the refusal
+    // names the five. Nothing is stored.
+    for (holder, kind) in [(&board, "project")] {
         let refused = store
             .capture(columns_on(holder, "someday, next, now, done"))
             .await
@@ -2800,6 +2801,20 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
             "the refused list left nothing behind",
         );
     }
+
+    // ①b The instance's list adds words beside the shipped five: a list of
+    // only its own words lands and reads back as written.
+    capture(store, columns_on(&instance, "considering, doing")).await;
+    assert_eq!(
+        store
+            .fields(&instance)
+            .await
+            .expect("the store answers")
+            .get("columns")
+            .map(String::as_str),
+        Some("considering, doing"),
+        "an instance list of only its own words lands",
+    );
 
     // ② A list of its own, in its own order, is accepted and reads back as
     // written, on a project and on the instance.

@@ -293,12 +293,7 @@ async fn the_status_locks_redden_when_the_operators_word_lands_bare_and_is_never
 #[tokio::test]
 async fn the_status_locks_hold_when_the_operators_words_are_bound_by_instance_columns() {
     let (_room, surface, sid) = furnished().await;
-    write_instance(
-        &surface,
-        &sid,
-        json!({"columns": "someday, considering, next, doing, now, waiting, done"}),
-    )
-    .await;
+    write_instance(&surface, &sid, json!({"columns": "considering, doing"})).await;
     the_year_of_the_statuses(&surface, &sid, "considering", "doing").await;
     assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
 }

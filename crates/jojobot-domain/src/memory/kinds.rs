@@ -273,7 +273,8 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         // **The same record lists the instance's own `columns`**, the words its
         // work may hold beside the shipped five, and maps those words onto
         // shipped ones with `status_word/<word>` keys. The `columns` key is
-        // built exactly as a project's is.
+        // built as a project's is. **The instance's list ADDS words and need not
+        // repeat the shipped five**, which a project's list must hold.
         "topic" => vec![
             Field::pointing_at("operator", super::EntityKind::PERSON),
             Field::listing(COLUMNS, ValueType::Text),
