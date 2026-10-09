@@ -23,6 +23,10 @@ tracing.workspace = true
 # written back, and rmcp runs one task per request — so that span is serialized.
 tokio = { workspace = true }
 # The sid is minted here, from OS entropy — see `sid`.
+# A challenge's code is hashed with a keyed hash (HMAC-SHA256) under a key drawn
+# at startup: see `session::challenge`.
+hmac = "0.12"
+sha2 = "0.10"
 
 
 [dev-dependencies]

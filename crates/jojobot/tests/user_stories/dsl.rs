@@ -733,6 +733,35 @@ impl Story {
             })
     }
 
+    /// **What a person's box holds, oldest first, as `(subject, body)`**, read
+    /// from the mail store itself the way the operator's own page reads it. No
+    /// bot has a verb that does this, so the story reaches past the surface, as
+    /// the operator does.
+    pub async fn operators_mail(&self, owner: &str) -> Vec<(String, String)> {
+        use jojobot_domain::mailbox::Mailboxes;
+        let boxes: Vec<_> = self
+            .mail
+            .list_mailboxes()
+            .await
+            .expect("the board reads")
+            .into_iter()
+            .filter(|held| held.owner.as_str() == owner)
+            .map(|held| held.name)
+            .collect();
+        let mut held: Vec<_> = self
+            .mail
+            .scan_messages()
+            .await
+            .expect("the store scans")
+            .into_iter()
+            .filter(|message| boxes.contains(&message.mailbox))
+            .collect();
+        held.sort_by_key(|message| message.sent_at);
+        held.into_iter()
+            .map(|message| (message.subject.unwrap_or_default(), message.body))
+            .collect()
+    }
+
     /// **Give a bot a second box, straight in the store.** No verb on the
     /// served surface does this: a box opens with its bot. It is the damage
     /// every read of a box is entitled to refuse over, planted the only way it
@@ -959,6 +988,23 @@ impl Story {
                 client.cancel().await.unwrap();
                 (answer, None)
             }
+        }
+    }
+
+    /// **A call the door refuses, made before there is a session**: the
+    /// counterpart of [`Story::call`] for a story that expects `blocked`. It
+    /// fails on the day the call starts landing.
+    pub async fn refused_at_the_door(&self, tool: &str, args: Value) -> Answer {
+        let client = self.connect().await;
+        let body = call(&client, tool, args).await;
+        client.cancel().await.unwrap();
+        assert_eq!(
+            body["status"], "blocked",
+            "{tool} was accepted — the gap is closed, so flip this assertion: {body}"
+        );
+        Answer {
+            what: format!("the refusal from {tool}"),
+            body: body.to_string(),
         }
     }
 

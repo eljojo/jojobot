@@ -154,6 +154,9 @@ impl Jojobot {
         // lease is not what a caller telling its story asked for.
         self.release_role_claims(&caller.bot, caller.sid.as_str())
             .await;
+        // **A root lasts one session**: wrapping voids the roots this run holds.
+        self.void_roots_held_by(caller.sid.as_str(), &caller.bot)
+            .await;
         // **The handle outlives the run it named, and stops addressing it.** The
         // registry keeps the mapping — re-issuing a wrapped run's handle would
         // send somebody's next call into an archive — so nothing is removed
@@ -239,6 +242,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -260,6 +266,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -291,6 +300,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -314,6 +326,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -351,6 +366,9 @@ mod tests {
             resume: Some("new".into()),
             sid: None,
             today: None,
+            ask_for_code: None,
+            challenge: None,
+            code: None,
         };
         let claimed = json_of(
             &jojobot

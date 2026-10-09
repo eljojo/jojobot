@@ -8,7 +8,7 @@
 //! towards the root) and a state.
 //!
 //! **Only the engine writes one**, the way [`crate::session`] writes a role's
-//! holder: the caller-facing verbs call [`refuses_voucher_write`] and turn the
+//! holder: the caller-facing verbs call [`refuses_engine_only_write`] and turn the
 //! write back, and the engine path writes through the `Memory` trait directly.
 //! A well-shaped record that a caller captures is never a grant, because a
 //! hand-written grant is a right taken without being given.
@@ -86,9 +86,21 @@ impl VoucherState {
     }
 }
 
-/// **The rights the software ships**, one per gated act: booting a session as a
-/// bot, claiming a role, changing a subordinate's charter and creating a bot.
-pub const SHIPPED_RIGHTS: [&str; 4] = ["boot-as", "claim-role", "change-charter", "create-bot"];
+/// The right of the root voucher: the one the operator's code grants to a
+/// session that boots as the assistant. It names no act. Its presence is what
+/// turns the gate on.
+pub const ROOT: &str = "root";
+
+/// **The rights the software ships**: one per gated act (booting a session as a
+/// bot, claiming a role, changing a subordinate's charter and creating a bot)
+/// and the root, which the operator's code alone grants.
+pub const SHIPPED_RIGHTS: [&str; 5] = [
+    "boot-as",
+    "claim-role",
+    "change-charter",
+    "create-bot",
+    ROOT,
+];
 
 /// **One voucher, whole.** The engine builds it and writes all of it in one
 /// claim, so a stored voucher never lacks a key.
@@ -125,14 +137,20 @@ impl Voucher {
     }
 }
 
-/// **A caller's write to a voucher is refused**, whatever the key: the handle
-/// names the kind, so the answer does not depend on what the write carries. The
-/// engine path writes through the `Memory` trait and never reaches this.
-pub fn refuses_voucher_write(subject: &EntityId) -> Option<MemoryError> {
+/// **A caller's write to a voucher or a challenge is refused**, whatever the
+/// key: the handle names the kind, so the answer does not depend on what the
+/// write carries. The engine path writes through the `Memory` trait and never
+/// reaches this.
+pub fn refuses_engine_only_write(subject: &EntityId) -> Option<MemoryError> {
     // The prefix is read off the handle rather than through `kind()`, which
     // answers from the loaded kind set: a guard must not depend on a load.
     let (kind, _) = subject.as_str().split_once(':')?;
-    (kind == EntityKind::VOUCHER.as_token()).then(|| MemoryError::VoucherIssued {
+    if kind == EntityKind::VOUCHER.as_token() {
+        return Some(MemoryError::VoucherIssued {
+            subject: subject.to_string(),
+        });
+    }
+    (kind == EntityKind::CHALLENGE.as_token()).then(|| MemoryError::ChallengeIssued {
         subject: subject.to_string(),
     })
 }
@@ -165,13 +183,18 @@ mod tests {
     /// kinds that carry the same keys, a role and a bot, are not.
     #[test]
     fn a_write_to_a_voucher_is_refused_and_to_anything_else_is_not() {
-        let refused = refuses_voucher_write(&id("voucher:boot-as-patty"));
+        let refused = refuses_engine_only_write(&id("voucher:boot-as-patty"));
         assert!(
             matches!(&refused, Some(MemoryError::VoucherIssued { subject }) if subject == "voucher:boot-as-patty"),
             "{refused:?}",
         );
+        let refused = refuses_engine_only_write(&id("challenge:abcd"));
+        assert!(
+            matches!(&refused, Some(MemoryError::ChallengeIssued { subject }) if subject == "challenge:abcd"),
+            "{refused:?}",
+        );
         for other in ["role:dev-dispatch", "bot:marge", "topic:widgets"] {
-            assert!(refuses_voucher_write(&id(other)).is_none(), "{other}");
+            assert!(refuses_engine_only_write(&id(other)).is_none(), "{other}");
         }
     }
 
@@ -198,13 +221,19 @@ mod tests {
         }
         assert_eq!(
             SHIPPED_RIGHTS,
-            ["boot-as", "claim-role", "change-charter", "create-bot"],
+            [
+                "boot-as",
+                "claim-role",
+                "change-charter",
+                "create-bot",
+                "root"
+            ],
         );
         let instance = vec!["read-ledger".to_string()];
         assert!(refuses_unknown_right("read-ledger", &instance).is_none());
         let refused = refuses_unknown_right("read-ledger", &[]);
         assert!(
-            matches!(&refused, Some(MemoryError::UnknownRight { right, known }) if right == "read-ledger" && known.len() == 4),
+            matches!(&refused, Some(MemoryError::UnknownRight { right, known }) if right == "read-ledger" && known.len() == 5),
             "{refused:?}",
         );
         let refused = refuses_unknown_right("fly", &instance);

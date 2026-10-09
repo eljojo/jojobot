@@ -430,6 +430,9 @@ pub(crate) async fn boot_on(jojobot: &Jojobot, name: &str, today: &str) -> serde
                 section: None,
                 resume: None,
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -456,6 +459,9 @@ pub(crate) async fn boot_in_zone(
                 section: None,
                 resume: None,
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -475,6 +481,9 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
                 section: None,
                 resume: None,
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -499,6 +508,9 @@ pub(crate) async fn boot_answering(
                 section: None,
                 resume: Some(answer.into()),
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -527,6 +539,9 @@ pub(crate) async fn boot_answering_dated(
                 section: None,
                 resume: Some(answer.into()),
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -566,6 +581,9 @@ pub(crate) async fn booted_in(
                 resume: resume.map(str::to_string),
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),

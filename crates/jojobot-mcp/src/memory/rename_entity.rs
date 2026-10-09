@@ -262,7 +262,7 @@ impl Jojobot {
         };
         let from = EntityId::person(&args.handle);
         // **A voucher is issued, never moved.** Judged on the handle's kind.
-        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&from) {
+        if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&from) {
             return memory_declined("rename_entity", refused);
         }
         // **Any change to a role object hands its name to somebody else**: a new
@@ -288,7 +288,7 @@ impl Jojobot {
         let to = EntityId(args.to.trim().to_string());
         // **Nor is one made by a rename**: a thing retyped to a voucher's kind
         // would be a grant written by hand.
-        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&to) {
+        if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&to) {
             return memory_declined("rename_entity", refused);
         }
         if let Some(refused) = self.rename_would_unseat_the_operator(&from, &to).await {

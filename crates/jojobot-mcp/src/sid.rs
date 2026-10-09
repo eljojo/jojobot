@@ -143,9 +143,44 @@ pub struct SessionRegistry {
     /// session that already read the change is then told once more, which is a
     /// repeat and never a miss.
     charter_told: std::sync::Mutex<HashMap<String, jiff::Timestamp>>,
+    /// **The key a challenge's code is hashed with**, drawn when this registry is
+    /// made and never stored, so a restart voids every outstanding challenge.
+    /// Here because the server builds a handler per connection and this is the
+    /// one thing they share. See [`jojobot_domain::challenge`].
+    challenge_key: ChallengeKey,
+    /// **One code is redeemed at a time.** A coded boot holds it from the check
+    /// of the code to the spending of it, so two boots presenting one code cannot
+    /// both be given a voucher.
+    redeem_lock: tokio::sync::Mutex<()>,
+}
+
+/// The key a code is hashed with. Drawn from OS entropy when made, and its
+/// `Debug` says nothing of it, so a log line holding a registry holds no key.
+struct ChallengeKey(Vec<u8>);
+
+impl Default for ChallengeKey {
+    fn default() -> Self {
+        ChallengeKey(jojobot_domain::handle::draw(32).into_bytes())
+    }
+}
+
+impl std::fmt::Debug for ChallengeKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ChallengeKey(..)")
+    }
 }
 
 impl SessionRegistry {
+    /// The key a code is hashed with — see [`SessionRegistry::challenge_key`]'s field.
+    pub(crate) fn challenge_key(&self) -> &[u8] {
+        &self.challenge_key.0
+    }
+
+    /// The lock a coded boot holds from checking the code to spending it.
+    pub(crate) fn redeem_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.redeem_lock
+    }
+
     /// An empty registry — one per process.
     pub fn new() -> Self {
         Self::default()

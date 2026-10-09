@@ -466,6 +466,19 @@ answer: {
 }
 ```
 
+### Memory refusal `ChallengeIssued`
+
+```text
+reads: 'challenge:abcd' is a challenge: challenges are issued, not written
+answer: {
+  "attempted": "challenge:abcd",
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'challenge:abcd' is a challenge: challenges are issued, not written. A challenge holds the hash of a code jojobot sent to the operator, and only the engine writes it. 'challenge:abcd' stays as it is; a boot asks for a new code with start_here's ask_for_code.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `UnknownRight`
 
 ```text

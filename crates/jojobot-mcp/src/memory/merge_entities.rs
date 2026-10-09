@@ -83,7 +83,7 @@ impl Jojobot {
         // **A voucher is issued, never folded into another thing or made the
         // survivor of one.** Judged on both handles' kinds.
         for side in [&duplicate, &survivor] {
-            if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(side) {
+            if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(side) {
                 return memory_declined("merge_entities", refused);
             }
         }

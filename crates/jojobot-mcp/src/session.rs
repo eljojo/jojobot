@@ -13,6 +13,7 @@ use rmcp::{
 use crate::*;
 
 pub mod amend_journal;
+pub mod challenge;
 pub mod declined;
 pub mod journal;
 pub mod list_runs;

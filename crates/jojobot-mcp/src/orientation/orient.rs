@@ -369,6 +369,10 @@ pub(crate) struct OrientRequest<'a> {
     /// ordinary boot, unchanged. Decided only once this call's own sid is
     /// known — see where `session` is built below.
     pub(crate) claim: Option<&'a str>,
+    /// **A code that was checked and matched**, spent once this call's own sid is
+    /// known: the voucher goes to the session that booted. `None` is the
+    /// ordinary boot, unchanged.
+    pub(crate) redeem: Option<&'a crate::session::challenge::Verified>,
 }
 
 impl Jojobot {
@@ -386,6 +390,7 @@ impl Jojobot {
             today,
             carried,
             claim,
+            redeem,
         } = req;
         // **The zone this call resolves days in:** the one the session sent,
         // else the zone a resumed run already holds, else the instance's, else
@@ -559,6 +564,42 @@ impl Jojobot {
                 if let Some(obj) = session.as_object_mut() {
                     obj.insert("claim".into(), outcome);
                 }
+            }
+        }
+        // **What a named boot says about trust**, beside the session it answers
+        // for: the gate word, and the voucher a presented code was spent for. A
+        // code is spent only once this call has a sid to give the voucher to, so
+        // a boot handed the resume-or-new choice spends nothing and says so.
+        if bot.is_some() {
+            let sid = session
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let mut redeemed = None;
+            if let (Some(verified), Some(sid)) = (redeem, sid.as_deref()) {
+                let day = today.unwrap_or_else(|| self.clock().today_in(&frame_zone()));
+                redeemed = Some(match self.redeem_code(verified, sid, day).await {
+                    Ok(granted) => granted,
+                    Err(e) => {
+                        tracing::warn!(error = %e, sid, "a verified code could not be spent");
+                        serde_json::json!({
+                            "error": "The code was checked but the voucher could not be \
+                                      written. Ask for a new code.",
+                        })
+                    }
+                });
+            }
+            let mut trust = self.trust_of_a_boot(redeemed).await;
+            if let (Some(_), None, Some(obj)) = (redeem, sid.as_deref(), trust.as_object_mut()) {
+                obj.insert(
+                    "code".into(),
+                    "not spent: this boot was handed a choice and no handle. Answer it with \
+                     `resume` and send the same challenge and code."
+                        .into(),
+                );
+            }
+            if let Some(obj) = session.as_object_mut() {
+                obj.insert("trust".into(), trust);
             }
         }
         // **Which zone this boot used, and where it came from**, read from the
@@ -1078,6 +1119,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1121,6 +1165,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1158,6 +1205,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1268,6 +1318,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1387,6 +1440,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1480,6 +1536,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1563,6 +1622,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1683,6 +1745,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await;
 
@@ -1742,6 +1807,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1795,6 +1863,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1843,6 +1914,9 @@ mod tests {
                         resume: None,
                         sid: None,
                         today: None,
+                        ask_for_code: None,
+                        challenge: None,
+                        code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -1946,6 +2020,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2544,6 +2621,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2615,6 +2695,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2683,6 +2766,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2745,6 +2831,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2916,6 +3005,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -3023,6 +3115,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -3168,6 +3263,9 @@ mod skills_are_indexed_not_shipped {
                     section: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -3227,6 +3325,9 @@ mod skills_are_indexed_not_shipped {
                     section: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -3264,6 +3365,9 @@ mod skills_are_indexed_not_shipped {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -3307,6 +3411,9 @@ mod skills_are_indexed_not_shipped {
                     section: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here answers"),

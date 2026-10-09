@@ -203,10 +203,19 @@ impl EntityKind {
     /// are not about a seat at all.
     pub const VOUCHER: EntityKind = EntityKind("voucher");
 
+    /// **A code the operator holds, waiting to be presented on a boot**: the bot
+    /// it is for, a keyed hash of the code, when it was issued, where it stands
+    /// and how many wrong codes were presented. Only the engine writes one — see
+    /// [`crate::challenge`].
+    ///
+    /// **Not a voucher.** A challenge grants nothing; a boot that presents its
+    /// code is given a voucher.
+    pub const CHALLENGE: EntityKind = EntityKind("challenge");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 19] = [
+    pub const ALL: [EntityKind; 20] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -226,6 +235,7 @@ impl EntityKind {
         EntityKind::DECISION,
         EntityKind::ROLE,
         EntityKind::VOUCHER,
+        EntityKind::CHALLENGE,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -5569,10 +5579,18 @@ pub enum MemoryError {
         /// The exact key that was named.
         key: String,
     },
+    /// **A challenge named on the ordinary caller-facing surface.** The same
+    /// refusal as [`MemoryError::VoucherIssued`], for the other engine-only kind
+    /// — see [`crate::voucher::refuses_engine_only_write`].
+    #[error("'{subject}' is a challenge: challenges are issued, not written")]
+    ChallengeIssued {
+        /// The challenge that was named.
+        subject: String,
+    },
     /// **A voucher named on the ordinary caller-facing surface.** Never a
     /// question of who is asking: the engine is the only writer of a voucher, and
     /// it writes through the `Memory` trait rather than through a verb this guard
-    /// sits in front of — see [`crate::voucher::refuses_voucher_write`].
+    /// sits in front of — see [`crate::voucher::refuses_engine_only_write`].
     #[error("'{subject}' is a voucher: vouchers are issued, not written")]
     VoucherIssued {
         /// The voucher that was named.

@@ -769,7 +769,7 @@ impl Jojobot {
         let subject = EntityId::person(&args.subject);
         // **A voucher is issued, never written.** Judged on the subject's kind,
         // ahead of everything the call carries.
-        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&subject) {
+        if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&subject) {
             return memory_declined("capture", refused);
         }
         let provenance = parse_provenance(args.provenance.as_deref())?;

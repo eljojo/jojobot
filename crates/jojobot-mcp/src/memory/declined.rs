@@ -263,6 +263,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::MergeThoughtTooLong { .. }
         | MemoryError::RoleFieldGuarded { .. }
         | MemoryError::VoucherIssued { .. }
+        | MemoryError::ChallengeIssued { .. }
         | MemoryError::UnknownRight { .. }
         | MemoryError::RoleNotHeld { .. }
         | MemoryError::UnknownEntity { .. }
@@ -1272,6 +1273,23 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 body.to_string(),
             )]))
         }
+        // **A challenge is issued, never written**, for the reason a voucher is.
+        MemoryError::ChallengeIssued { ref subject } => {
+            let how_to_proceed = WayForward::from(format!(
+                "Nothing was written: {e}. A challenge holds the hash of a code jojobot sent to \
+                 the operator, and only the engine writes it. '{subject}' stays as it is; a boot \
+                 asks for a new code with start_here's ask_for_code."
+            ));
+            let mut body = serde_json::json!({
+                "status": "blocked",
+                "attempted": subject,
+                "wrote": false,
+            });
+            how_to_proceed.write_into(&mut body);
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         // **A right no code knows.** Names the words that are known, so the way
         // forward is in the refusal.
         MemoryError::UnknownRight {
@@ -1414,6 +1432,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::MergeThoughtTooLong { .. }
         | MemoryError::RoleFieldGuarded { .. }
         | MemoryError::VoucherIssued { .. }
+        | MemoryError::ChallengeIssued { .. }
         | MemoryError::UnknownRight { .. }
         | MemoryError::RoleTaken { .. }
         | MemoryError::TestimonyRewritten { .. }
@@ -2017,6 +2036,13 @@ pub(crate) mod tests {
                 "VoucherIssued",
                 MemoryError::VoucherIssued {
                     subject: s("voucher:boot-as-patty"),
+                },
+                Some("change"),
+            ),
+            (
+                "ChallengeIssued",
+                MemoryError::ChallengeIssued {
+                    subject: s("challenge:abcd"),
                 },
                 Some("change"),
             ),

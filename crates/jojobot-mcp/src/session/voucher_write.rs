@@ -2,13 +2,13 @@
 //!
 //! A voucher is its own shipped kind and only the engine writes one: the
 //! caller-facing verbs turn the write back (see
-//! [`jojobot_domain::voucher::refuses_voucher_write`]), and this function writes
+//! [`jojobot_domain::voucher::refuses_engine_only_write`]), and this function writes
 //! through the `Memory` trait directly, the way [`super::role_write`] writes a
 //! role. The object and its one claim are made in one act, so a voucher is never
 //! stored without its keys.
 //!
-//! Nothing calls this yet. The operator's code and the presenting path land in
-//! later slices and write through it.
+//! The operator's code writes the voucher a boot is given through it (see
+//! [`super::challenge`]).
 
 use jiff::civil::Date;
 use jojobot_domain::memory::{
@@ -29,35 +29,46 @@ const DRAWS: usize = 8;
 impl Jojobot {
     /// **Write one voucher, whole, and return its handle.** The handle is
     /// `voucher:` and a drawn slug, so it says nothing about what it grants.
-    ///
-    /// The creation is jojobot's own, so a near miss against another voucher is
-    /// not a question for a caller: the token the guard minted answers it. A
-    /// slug that is already taken cannot be forced, so it is drawn again.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn issue_voucher(
         &self,
         voucher: &Voucher,
         today: Date,
     ) -> Result<EntityId, MemoryError> {
+        self.issue_engine_record(
+            EntityKind::VOUCHER,
+            voucher.fields(),
+            format!(
+                "a voucher for {} on {}",
+                voucher.right.as_str(),
+                voucher.target.as_str()
+            ),
+            today,
+        )
+        .await
+    }
+
+    /// **Make an engine-only object and its one claim in one act.** The handle
+    /// is the kind and a drawn slug. The creation is jojobot's own, so a near
+    /// miss against another object of the kind is not a question for a caller:
+    /// the token the guard minted answers it. A slug that is already taken
+    /// cannot be forced, so it is drawn again.
+    pub(crate) async fn issue_engine_record(
+        &self,
+        kind: EntityKind,
+        fields: std::collections::BTreeMap<String, String>,
+        content: String,
+        today: Date,
+    ) -> Result<EntityId, MemoryError> {
         for _ in 0..DRAWS {
             let slug = jojobot_domain::handle::draw(SLUG_LEN);
-            let id = EntityId::new(EntityKind::VOUCHER, &slug);
-            let new = NewEntity::new(id.clone(), format!("Voucher {slug}"), "jojobot");
-            // **A voucher's keys are the voucher's own state**, so every one of
-            // them is a setting that reaches the thing.
-            let fields = voucher.fields();
+            let id = EntityId::new(kind, &slug);
+            let new = NewEntity::new(id.clone(), format!("{kind} {slug}"), "jojobot");
+            // **The record's keys are the engine record's own state**, so every one
+            // of them is a setting that reaches the thing.
             let first = NewFact {
                 sets: fields.keys().cloned().collect(),
-                fields,
-                ..NewFact::about(
-                    id.clone(),
-                    format!(
-                        "a voucher for {} on {}",
-                        voucher.right.as_str(),
-                        voucher.target.as_str()
-                    ),
-                    today,
-                )
+                fields: fields.clone(),
+                ..NewFact::about(id.clone(), content.clone(), today)
             };
             match self
                 .memory
@@ -69,12 +80,12 @@ impl Jojobot {
                     attempted,
                     candidates,
                 } => {
-                    // **A block on another handle is a pointer at nothing**: the
-                    // target or the parent does not exist. Drawing again cannot
+                    // **A block on another handle is a pointer at nothing**: a
+                    // target or a parent does not exist. Drawing again cannot
                     // change that, so it is the answer.
                     if attempted != id {
                         return Err(MemoryError::InvalidFact(format!(
-                            "a voucher points at '{attempted}', which jojobot does not know"
+                            "a {kind} points at '{attempted}', which jojobot does not know"
                         )));
                     }
                     let token = guard::override_token(&attempted, &candidates);
@@ -90,9 +101,9 @@ impl Jojobot {
                 }
             }
         }
-        Err(MemoryError::InvalidFact(
-            "no free handle could be drawn for a voucher".into(),
-        ))
+        Err(MemoryError::InvalidFact(format!(
+            "no free handle could be drawn for a {kind}"
+        )))
     }
 }
 

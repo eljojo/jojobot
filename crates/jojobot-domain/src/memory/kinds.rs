@@ -28,9 +28,27 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 19] = [
-    "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
-    "promise", "machine", "view", "session", "thread", "decision", "role", "voucher",
+pub const SHIPPED: [&str; 20] = [
+    "person",
+    "project",
+    "place",
+    "event",
+    "work",
+    "thing",
+    "org",
+    "topic",
+    "bot",
+    "pet",
+    "rhythm",
+    "promise",
+    "machine",
+    "view",
+    "session",
+    "thread",
+    "decision",
+    "role",
+    "voucher",
+    "challenge",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -323,6 +341,22 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
                 crate::voucher::STATE,
                 crate::voucher::VoucherState::ALL.map(crate::voucher::VoucherState::as_token),
             ),
+        ],
+        // **A code waiting to be presented**, every key optional for the reason a
+        // voucher's are: only the engine writes one, whole. `bot` names the bot
+        // the code is for and is a link. `issued_at` holds a MOMENT, to the
+        // second, so it is text; a window is ten minutes and the date type holds
+        // a day.
+        "challenge" => vec![
+            Field::pointing_at(crate::challenge::BOT, super::EntityKind::BOT),
+            Field::new(crate::challenge::CODE_HASH, ValueType::Text),
+            Field::one_of(
+                crate::challenge::STATE,
+                crate::challenge::ChallengeState::ALL
+                    .map(crate::challenge::ChallengeState::as_token),
+            ),
+            Field::new(crate::challenge::ISSUED_AT, ValueType::Text),
+            Field::new(crate::challenge::WRONG_TRIES, ValueType::Number),
         ],
         _ => Vec::new(),
     }

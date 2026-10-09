@@ -808,6 +808,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1648,6 +1651,9 @@ mod tests {
                     resume: Some(handle.clone()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("a dead handle is an answer, not a protocol failure"),
@@ -1672,6 +1678,9 @@ mod tests {
                     resume: Some("k3fo".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("an unreadable handle is an answer too"),
@@ -1702,6 +1711,9 @@ mod tests {
                     resume: Some(gammas.clone()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("somebody else's handle is an answer, not a protocol failure"),
@@ -1959,6 +1971,9 @@ mod tests {
                     resume: Some(held.as_str().into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("a wrapped run is an answer, not a protocol failure"),
@@ -2089,6 +2104,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("the boot call is ok"),
@@ -2129,6 +2147,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2150,6 +2171,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2281,6 +2305,9 @@ mod tests {
                     section: None,
                     resume: Some(code.clone()),
                     sid: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2815,6 +2842,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
@@ -2896,6 +2926,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat, which is what mints the card".into(),

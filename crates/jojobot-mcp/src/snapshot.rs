@@ -234,6 +234,9 @@ async fn boot(doc: &mut Doc, label: &str, bot: Option<&str>) {
             resume: None,
             sid: None,
             today: Some("2026-01-01".into()),
+            ask_for_code: None,
+            challenge: None,
+            code: None,
         }))
         .await
         .expect("start_here answers");

@@ -515,6 +515,9 @@ mod tests {
             resume: Some("new".into()),
             sid: None,
             today: None,
+            ask_for_code: None,
+            challenge: None,
+            code: None,
         }
     }
 

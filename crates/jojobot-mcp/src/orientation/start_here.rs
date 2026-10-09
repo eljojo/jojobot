@@ -140,6 +140,27 @@ pub struct OrientArgs {
     /// once.
     #[serde(default)]
     pub(crate) claim: Option<String>,
+    /// **Ask for a code to boot as the bot `bot` names.** A session the operator
+    /// started by hand has no voucher, and this is how it gets one. jojobot
+    /// writes a fresh code into the operator's own mailbox, where the phone and
+    /// the web page show it, and answers with a reference to the challenge and
+    /// never the code. The call starts no session. One challenge stands per bot:
+    /// a new request voids the old one, and a code is good for ten minutes.
+    ///
+    /// The operator types the code into this session. Boot again with `bot`,
+    /// `challenge` and `code` to present it.
+    #[serde(default)]
+    pub(crate) ask_for_code: Option<bool>,
+    /// **The reference to a challenge**, as the answer to `ask_for_code` named
+    /// it. Sent with `code` and `bot` on a boot.
+    #[serde(default)]
+    pub(crate) challenge: Option<String>,
+    /// **The code the operator typed in.** A boot that presents the right code
+    /// for its bot is given a voucher: the root when the bot is the assistant,
+    /// that bot's ordinary voucher otherwise. The code is spent on first use,
+    /// and the third wrong code voids the challenge.
+    #[serde(default)]
+    pub(crate) code: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model
@@ -334,7 +355,63 @@ impl Jojobot {
             .map(str::trim)
             .filter(|c| !c.is_empty());
         let instance_zone = self.instance_zone().await;
+        // **The operator's code**: asked for on one call, which starts no
+        // session, and presented on the boot that follows. See
+        // [`crate::session::challenge`].
+        let asking = args.ask_for_code.unwrap_or(false);
+        let reference = args
+            .challenge
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+        let presented = args
+            .code
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+        if asking && (reference.is_some() || presented.is_some() || resume.is_some()) {
+            return Ok(misused(
+                "asking for a code and presenting one are two calls: ask_for_code starts no \
+                 session, so it cannot also boot one. Call with bot and ask_for_code alone to \
+                 get a challenge, then again with bot, challenge and code to boot."
+                    .to_string(),
+            ));
+        }
+        if (asking || reference.is_some() || presented.is_some()) && bot.is_none() {
+            return Ok(misused(
+                "a code is for a bot: pass `bot`, the one the code boots as, with ask_for_code \
+                 to ask for it or with challenge and code to present it"
+                    .to_string(),
+            ));
+        }
+        if reference.is_some() != presented.is_some() {
+            return Ok(misused(
+                "a code is presented with both halves: `challenge`, the reference the ask \
+                 answered with, and `code`, what the operator typed. Send both with `bot`."
+                    .to_string(),
+            ));
+        }
+        if asking && let Some(bot) = bot.as_ref() {
+            let day = today.unwrap_or_else(|| self.clock().today_in(&jiff::tz::TimeZone::UTC));
+            return self.ask_for_code(bot, day).await;
+        }
+        // **Held from the check of the code to the spending of it**, so two boots
+        // presenting one code cannot both be given a voucher.
+        let _redeeming = match presented {
+            Some(_) => Some(self.registry.redeem_lock().lock().await),
+            None => None,
+        };
+        let verified = match (bot.as_ref(), reference, presented) {
+            (Some(bot), Some(reference), Some(code)) => {
+                match self.verify_code(bot, reference, code).await {
+                    Ok(verified) => Some(verified),
+                    Err(refused) => return Ok(refused),
+                }
+            }
+            _ => None,
+        };
         self.orient(orient::OrientRequest {
+            redeem: verified.as_ref(),
             bot: bot.as_ref(),
             brief: args.brief.unwrap_or(false),
             resume,
@@ -382,6 +459,9 @@ mod tests {
                 resume: Some("jm7z".into()),
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("start_here ok");
@@ -408,6 +488,9 @@ mod tests {
                 resume: Some("jm7z".into()),
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("start_here ok");
@@ -450,6 +533,9 @@ mod tests {
                     resume: None,
                     sid: Some(live.clone()),
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -505,6 +591,9 @@ mod tests {
                         resume: None,
                         sid,
                         today: None,
+                        ask_for_code: None,
+                        challenge: None,
+                        code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -580,6 +669,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("start_here ok");
@@ -662,6 +754,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -681,6 +776,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -749,6 +847,9 @@ mod tests {
                         resume: None,
                         sid: None,
                         today: None,
+                        ask_for_code: None,
+                        challenge: None,
+                        code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -765,6 +866,9 @@ mod tests {
                         resume: None,
                         sid: None,
                         today: None,
+                        ask_for_code: None,
+                        challenge: None,
+                        code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -815,6 +919,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("boot ok"),
@@ -841,6 +948,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("orientation still lands");
@@ -873,6 +983,9 @@ mod tests {
                 resume: Some("new".into()),
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("a misuse is an answer, not a protocol failure");
@@ -919,6 +1032,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect_err("another kind must be refused");
@@ -959,6 +1075,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -980,6 +1099,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -1050,6 +1172,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -1080,6 +1205,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1110,6 +1238,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1130,6 +1261,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1186,6 +1320,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1205,6 +1342,9 @@ mod tests {
                     resume: Some(holder_sid.clone()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1228,6 +1368,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1293,6 +1436,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("start_here ok"),
@@ -1319,6 +1465,9 @@ mod tests {
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1391,6 +1540,9 @@ mod tests {
             resume: Some("new".into()),
             sid: None,
             today: None,
+            ask_for_code: None,
+            challenge: None,
+            code: None,
         };
         let poll = |sid: &str, counts_only: bool| ReadMailboxArgs {
             counts_only: Some(counts_only),
@@ -1519,6 +1671,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1561,6 +1716,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1594,6 +1752,9 @@ mod tests {
                     resume: None,
                     sid: None,
                     today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
                 }))
                 .await
                 .expect("an unknown section is an answer, not a protocol failure"),
@@ -1625,6 +1786,9 @@ mod tests {
                 resume: None,
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("start_here ok");

@@ -456,7 +456,7 @@ impl Jojobot {
         }
         // **A voucher is issued, never edited**: its state and its other keys are
         // the engine's, so any edit to the claim of one is turned back.
-        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&address.home) {
+        if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&address.home) {
             return memory_declined("update_fact", refused);
         }
         // **A role's own two fields are the boot door's, whoever is asking.**

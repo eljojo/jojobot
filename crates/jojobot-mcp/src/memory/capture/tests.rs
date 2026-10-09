@@ -1968,6 +1968,9 @@ async fn a_run_that_stated_its_day_writes_under_it() {
                 skill: None,
                 section: None,
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -2006,6 +2009,9 @@ async fn a_run_that_stated_its_day_writes_under_it() {
                 skill: None,
                 section: None,
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -2059,6 +2065,9 @@ async fn the_receipt_names_a_recorded_at_that_differs_from_the_runs_day() {
                 skill: None,
                 section: None,
                 sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("the boot call is ok"),

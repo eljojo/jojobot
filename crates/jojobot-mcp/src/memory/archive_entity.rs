@@ -73,7 +73,7 @@ impl Jojobot {
         let handle = EntityId::person(&args.handle);
         // **A voucher is voided by the engine**, never archived or restored by a
         // caller. Judged on the handle's kind, ahead of the restore branch.
-        if let Some(refused) = jojobot_domain::voucher::refuses_voucher_write(&handle) {
+        if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&handle) {
             return memory_declined("archive_entity", refused);
         }
         if let Some(refused) = self

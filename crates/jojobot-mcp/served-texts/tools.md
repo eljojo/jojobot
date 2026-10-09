@@ -148,7 +148,7 @@ care.
 
 ```text
 One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`.
+`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`.
 
 **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
 a bike, a hand tool — and a companion animal is not one.
@@ -196,8 +196,9 @@ that holds it: `holder`, `claimed_at` and `agent` say who has it, since
 when and in which runtime agent. jojobot makes one the first time a role is
 claimed, and only a claim writes its `holder` and `claimed_at`.
 
-**A `voucher` is a grant to do one gated act, and it is issued, never
-created here**: a call that names one is refused with nothing written.
+**A `voucher` is a grant to do one gated act, and a `challenge` is a code
+waiting to be presented on a boot. Both are issued, never created here**:
+a call that names one is refused with nothing written.
 ```
 
 #### `add_entity` — argument `/inputSchema.name`
@@ -3851,6 +3852,13 @@ Each argument's own description holds the rest.
   "inputSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
+      "ask_for_code": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "bot": {
         "default": null,
         "type": [
@@ -3865,7 +3873,21 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "challenge": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "claim": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "code": {
         "default": null,
         "type": [
           "string",
@@ -3921,6 +3943,20 @@ Each argument's own description holds the rest.
 }
 ```
 
+#### `start_here` — argument `/inputSchema.ask_for_code`
+
+```text
+**Ask for a code to boot as the bot `bot` names.** A session the operator
+started by hand has no voucher, and this is how it gets one. jojobot
+writes a fresh code into the operator's own mailbox, where the phone and
+the web page show it, and answers with a reference to the challenge and
+never the code. The call starts no session. One challenge stands per bot:
+a new request voids the old one, and a code is good for ten minutes.
+
+The operator types the code into this session. Boot again with `bot`,
+`challenge` and `code` to present it.
+```
+
 #### `start_here` — argument `/inputSchema.bot`
 
 ```text
@@ -3948,6 +3984,13 @@ An anonymous boot whose essay did not fit whole names every section it left
 out; `section` fetches one.
 ```
 
+#### `start_here` — argument `/inputSchema.challenge`
+
+```text
+**The reference to a challenge**, as the answer to `ask_for_code` named
+it. Sent with `code` and `bot` on a boot.
+```
+
 #### `start_here` — argument `/inputSchema.claim`
 
 ```text
@@ -3973,6 +4016,15 @@ only a journal beat — capture, add_entity, post_message and the
 rest all count — and the lease is 45 minutes. **Wrapping releases
 whatever you held**, so a fresh session may claim the same role at
 once.
+```
+
+#### `start_here` — argument `/inputSchema.code`
+
+```text
+**The code the operator typed in.** A boot that presents the right code
+for its bot is given a voucher: the root when the bot is the assistant,
+that bot's ordinary voucher otherwise. The code is spent on first use,
+and the third wrong code voids the challenge.
 ```
 
 #### `start_here` — argument `/inputSchema.resume`
