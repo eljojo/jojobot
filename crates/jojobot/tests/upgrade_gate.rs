@@ -110,6 +110,41 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
         .execute(restoring.pool())
         .await
         .expect("the recorded claim's moment is moved to now");
+    // **The holder's run is moved to ten minutes ago too, so the sweep that runs
+    // when the binary boots does not find it silent for a day.** A session with
+    // no entry has nothing to measure but its own start, and the recording's
+    // holder wrote none. The recording is a day old once the date moves on, and
+    // the sweep then marks the run abandoned and refuses its write: the cases
+    // below passed on the day they were recorded and failed on the next. Like the
+    // claim, it is one edit to a moment and changes no shape.
+    let holder_sid = std::fs::read_to_string(format!("{fixture_dir}/role_holder.txt"))
+        .unwrap_or_else(|e| panic!("reading {fixture_dir}/role_holder.txt: {e}"))
+        .trim()
+        .to_string();
+    sqlx::query("UPDATE session SET started_at = ? WHERE sid = ?")
+        .bind((jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string())
+        .bind(&holder_sid)
+        .execute(restoring.pool())
+        .await
+        .expect("the holder run's moment is moved to now");
+    // **Stated here so the fixture's age cannot hide.** The sweep measures a run
+    // by its newest entry, or its start when it has none; the holder must read as
+    // recent whatever day the gate runs on.
+    let last_beat: String = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
+         FROM session s LEFT JOIN journal_entry j ON j.session = s.id
+         WHERE s.sid = ? GROUP BY s.id, s.started_at",
+    )
+    .bind(&holder_sid)
+    .fetch_one(restoring.pool())
+    .await
+    .expect("the holder run's last moment reads");
+    let last_beat: jiff::Timestamp = last_beat.parse().expect("a moment");
+    assert!(
+        jiff::Timestamp::now().duration_since(last_beat) < jiff::SignedDuration::from_hours(1),
+        "the holder run in the fixture recorded at {git_ref} was last active at {last_beat}, \
+         which the sweep reads as a run gone quiet"
+    );
     // **What every thing holds, read off the old store with plain SQL before the
     // current binary touches it.** Independent of any fold in this build, so a
     // migration or a filter that changed what a thing holds cannot move this side
