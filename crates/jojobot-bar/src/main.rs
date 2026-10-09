@@ -25,9 +25,9 @@ use std::process::{Command, ExitCode, Stdio};
 use jojobot_bar::{
     CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
     TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision, is_slow,
-    iso_utc, jobs_limit, load_known_reds, oversized_files, parse_call, parse_job, read_history,
-    render_size_report, report_line, report_plan, run_id, summarize_test_output, test_healthy,
-    test_jobs, write_call,
+    iso_utc, job_args, jobs_limit, load_known_reds, oversized_files, parse_call, parse_job,
+    read_history, render_size_report, report_line, report_plan, run_id, summarize_test_output,
+    test_healthy, test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -219,8 +219,7 @@ fn run_test_jobs(
                         let err = out.try_clone()?;
                         let status = in_the_run_root(&mut Command::new(cargo))
                             .arg("test")
-                            .args(prefix)
-                            .args(job)
+                            .args(job_args(prefix, job))
                             .args(["--no-fail-fast", "--locked"])
                             .stdout(Stdio::from(out))
                             .stderr(Stdio::from(err))
@@ -248,9 +247,8 @@ fn run_test_jobs(
         all_ok &= ok;
         writeln!(
             log,
-            "\n$ cargo test {} {} --no-fail-fast --locked",
-            prefix.join(" "),
-            job.join(" ")
+            "\n$ cargo test {} --no-fail-fast --locked",
+            job_args(prefix, job).join(" ")
         )?;
         log.write_all(text.as_bytes())?;
         all_text.push_str(&text);

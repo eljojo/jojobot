@@ -17,7 +17,7 @@ fn write_cargo(dir: &Path) -> PathBuf {
     let script = r#"#!/bin/sh
 case " $* " in
   *" --no-run "*)
-    echo '  Executable unittests src/lib.rs (/x/deps/lib-1)'
+    echo '  Executable unittests src/lib.rs (/x/deps/jojobot_domain-1)'
     echo '  Executable tests/alpha.rs (/x/deps/alpha-2)'
     echo '  Executable tests/beta.rs (/x/deps/beta-3)'
     exit 0 ;;
@@ -110,7 +110,7 @@ fn a_finished_check_leaves_a_header_and_a_file_per_job() {
         file_names(&run),
         [
             "doc.jsonl",
-            "lib.jsonl",
+            "lib-jojobot-domain.jsonl",
             "run.json",
             "test-alpha.jsonl",
             "test-beta.jsonl"

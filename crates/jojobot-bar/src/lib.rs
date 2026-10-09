@@ -150,11 +150,15 @@ pub fn jobs_limit(value: Option<&str>) -> Result<usize, String> {
 /// Read off `cargo test --workspace --no-run`, which prints one `Executable`
 /// line per test binary it built. Each integration-test file is a job of its
 /// own, named so a package is not needed: `--workspace --test <name>` selects
-/// that file wherever it lives. The unit tests of every library, the unit tests
-/// of every binary and the doc-tests are one job each. Nothing is skipped: a
+/// that file wherever it lives. The unit tests of each library are a job of
+/// their own, named for the package (`-p <package> --lib`); the unit tests of
+/// every binary and the doc-tests are one job each. Nothing is skipped: a
 /// binary the plain run would execute is in exactly one of these.
 pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
-    let mut libs = false;
+    let mut libs: Vec<String> = Vec::new();
+    // A library whose package the listing does not name still runs, with the
+    // libraries of the others, so that nothing the plain run executes is lost.
+    let mut unnamed_lib = false;
     let mut bins = false;
     let mut files: Vec<String> = Vec::new();
     for line in listing.lines() {
@@ -163,7 +167,11 @@ pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
         };
         if let Some(source) = executable.strip_prefix("unittests ") {
             if source.starts_with("src/lib.rs") {
-                libs = true;
+                match package_of(source) {
+                    Some(package) if !libs.contains(&package) => libs.push(package),
+                    Some(_) => {}
+                    None => unnamed_lib = true,
+                }
             } else {
                 bins = true;
             }
@@ -175,7 +183,11 @@ pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
         }
     }
     let mut jobs: Vec<Vec<String>> = Vec::new();
-    if libs {
+    jobs.extend(
+        libs.into_iter()
+            .map(|package| vec!["-p".to_string(), package, "--lib".to_string()]),
+    );
+    if unnamed_lib {
         jobs.push(vec!["--lib".to_string()]);
     }
     if bins {
@@ -186,6 +198,30 @@ pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
     // the listing to name them.
     jobs.push(vec!["--doc".to_string()]);
     jobs
+}
+
+/// **The package a library unit-test binary belongs to**, from the path in its
+/// listing line: `(/tmp/target/debug/deps/jojobot_domain-1f27…)` is
+/// `jojobot-domain`. The binary is named for the package with each hyphen
+/// written as an underscore, then a hash.
+fn package_of(source: &str) -> Option<String> {
+    let path = source.rsplit_once('(')?.1.strip_suffix(')')?;
+    let file = path.rsplit('/').next()?;
+    let (name, _hash) = file.rsplit_once('-')?;
+    (!name.is_empty()).then(|| name.replace('_', "-"))
+}
+
+/// **The arguments `cargo test` gets for one job.** A job that names its own
+/// package (`-p <package> ...`) gets no scope: `--workspace` beside `-p` would
+/// select every package again.
+pub fn job_args(scope: &[&str], job: &[String]) -> Vec<String> {
+    let own_package = job.first().is_some_and(|a| a == "-p");
+    let scope: &[&str] = if own_package { &[] } else { scope };
+    scope
+        .iter()
+        .map(|a| a.to_string())
+        .chain(job.iter().cloned())
+        .collect()
 }
 
 /// **`ok. 58 passed; 0 failed; ...` → `(58, 0)`.** Reads the number sitting
@@ -550,16 +586,98 @@ mod tests {
                 .collect();
             assert_eq!(named.len(), 1, "{file} must be exactly one job: {jobs:?}");
         }
-        for group in ["--lib", "--bins", "--doc"] {
+        for group in ["--bins", "--doc"] {
             assert!(
                 jobs.contains(&vec![group.to_string()]),
                 "the {group} job is missing: {jobs:?}"
             );
         }
+        let libs = NO_RUN_LISTING
+            .lines()
+            .filter(|l| l.contains("Executable unittests src/lib.rs"))
+            .count();
         assert_eq!(
             jobs.len(),
-            files.len() + 3,
+            files.len() + libs + 2,
             "a job that names no binary in the listing: {jobs:?}"
+        );
+    }
+
+    /// **Each library's unit tests are a job of their own, named for the
+    /// package.** The unit-test binary of a library is named for its package
+    /// with the hyphens written as underscores, so the job gives the hyphens
+    /// back. A crate whose listing has no library unit-test binary has no job,
+    /// and no job runs every library at once.
+    #[test]
+    fn each_library_with_unit_tests_is_a_job_of_its_own() {
+        let jobs = test_jobs(NO_RUN_LISTING);
+        let libs: Vec<&str> = jobs
+            .iter()
+            .filter(|j| j.last().map(String::as_str) == Some("--lib"))
+            .map(|j| {
+                assert_eq!(j[0], "-p", "a library job names its package: {j:?}");
+                j[1].as_str()
+            })
+            .collect();
+        assert_eq!(
+            libs,
+            [
+                "jojobot",
+                "jojobot-adapters",
+                "jojobot-bar",
+                "jojobot-domain",
+                "jojobot-exercise",
+                "jojobot-mcp",
+            ],
+            "{jobs:?}"
+        );
+        assert!(
+            !jobs.contains(&vec!["--lib".to_string()]),
+            "the workspace-wide library job must be gone: {jobs:?}"
+        );
+    }
+
+    /// **A library line that names no package still runs**, in a job of its
+    /// own for the libraries the listing could not place, so a listing in a
+    /// shape this reader does not know drops no test. The line is a real one
+    /// with its path taken off.
+    #[test]
+    fn a_library_line_that_names_no_package_still_runs() {
+        let listing = "  Executable unittests src/lib.rs\n\
+                       Executable unittests src/lib.rs (/tmp/target/debug/deps/jojobot_mcp-56f677a719b95209)\n";
+        assert_eq!(
+            test_jobs(listing),
+            [
+                vec!["-p", "jojobot-mcp", "--lib"],
+                vec!["--lib"],
+                vec!["--doc"]
+            ]
+        );
+    }
+
+    /// **A job that names its own package runs without the workspace scope**,
+    /// because `--workspace` beside `-p` would select every package again. A
+    /// job that names none keeps the scope.
+    #[test]
+    fn a_job_that_names_its_package_drops_the_workspace_scope() {
+        let own: Vec<String> = ["-p", "jojobot-domain", "--lib"].map(String::from).to_vec();
+        assert_eq!(job_args(&["--workspace"], &own), own);
+        let file: Vec<String> = ["--test", "server"].map(String::from).to_vec();
+        assert_eq!(
+            job_args(&["--workspace"], &file),
+            ["--workspace", "--test", "server"]
+        );
+        let room_scope = ["-p", "jojobot-exercise", "--features", "rooms"];
+        assert_eq!(
+            job_args(&room_scope, &file),
+            [
+                "-p",
+                "jojobot-exercise",
+                "--features",
+                "rooms",
+                "--test",
+                "server"
+            ]
         );
     }
 

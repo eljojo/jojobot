@@ -140,9 +140,14 @@ impl Run {
 }
 
 /// **A job's name in a file name**: `--lib` is `lib`, `--test alpha` is
-/// `test-alpha`.
+/// `test-alpha`, and `-p alpha --lib` is `lib-alpha`: the package comes last.
 pub fn job_name(job: &[String]) -> String {
-    job.iter()
+    let (package, rest) = match job {
+        [flag, package, rest @ ..] if flag == "-p" => (Some(package), rest),
+        _ => (None, job),
+    };
+    rest.iter()
+        .chain(package)
         .map(|part| part.trim_start_matches('-'))
         .collect::<Vec<_>>()
         .join("-")
@@ -311,6 +316,10 @@ mod tests {
     fn the_names_that_reach_the_disk_are_pinned() {
         assert_eq!(job_name(&["--lib".into()]), "lib");
         assert_eq!(job_name(&["--test".into(), "alpha".into()]), "test-alpha");
+        assert_eq!(
+            job_name(&["-p".into(), "jojobot-domain".into(), "--lib".into()]),
+            "lib-jojobot-domain"
+        );
         assert_eq!(
             run_id("2023-11-14T22:13:20Z", "jojobot 6/x", 42),
             "20231114221320-jojobot_6_x-42"

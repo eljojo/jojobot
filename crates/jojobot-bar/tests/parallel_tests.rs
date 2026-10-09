@@ -23,7 +23,7 @@ echo "$*" >> "$(dirname "$0")/argv.log"
 case " $* " in
   *" --no-run "*)
     echo '    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s'
-    echo '  Executable unittests src/lib.rs (/x/deps/lib-1)'
+    echo '  Executable unittests src/lib.rs (/x/deps/jojobot_domain-1)'
     if [ -n "$FAKE_FILES" ]; then
       i=1
       while [ "$i" -le "$FAKE_FILES" ]; do
@@ -185,7 +185,7 @@ fn every_listed_job_runs_once_and_a_red_job_stops_none_of_the_others() {
         .filter(|c| c.starts_with("test ") && !c.contains("--no-run"))
         .collect();
     for wanted in [
-        "--lib",
+        "-p jojobot-domain --lib",
         "--test alpha",
         "--test beta",
         "--test gamma",
@@ -193,13 +193,18 @@ fn every_listed_job_runs_once_and_a_red_job_stops_none_of_the_others() {
     ] {
         let hits: Vec<&&String> = jobs.iter().filter(|j| j.contains(wanted)).collect();
         assert_eq!(hits.len(), 1, "{wanted} must run exactly once: {jobs:?}");
-        for flag in ["--workspace", "--no-fail-fast", "--locked"] {
-            assert!(
-                hits[0].split_whitespace().any(|a| a == flag),
-                "{wanted} lost {flag}: {}",
-                hits[0]
-            );
+        let args: Vec<&str> = hits[0].split_whitespace().collect();
+        for flag in ["--no-fail-fast", "--locked"] {
+            assert!(args.contains(&flag), "{wanted} lost {flag}: {}", hits[0]);
         }
+        // A job that names its own package runs without the workspace scope,
+        // and every other job keeps it.
+        assert_eq!(
+            args.contains(&"--workspace"),
+            !wanted.starts_with("-p "),
+            "{wanted} has the wrong scope: {}",
+            hits[0]
+        );
     }
     assert_eq!(jobs.len(), 5, "a job nobody listed ran: {jobs:?}");
     assert!(
@@ -248,16 +253,16 @@ fn the_jobs_run_side_by_side() {
 fn the_log_carries_every_jobs_output_in_listing_order() {
     let ran = run_check(&[]);
     let positions: Vec<usize> = [
-        "--lib",
-        "--test alpha",
-        "--test beta",
-        "--test gamma",
-        "--doc",
+        "-p jojobot-domain --lib",
+        "--workspace --test alpha",
+        "--workspace --test beta",
+        "--workspace --test gamma",
+        "--workspace --doc",
     ]
     .iter()
     .map(|job| {
         ran.log
-            .find(&format!("$ cargo test --workspace {job}"))
+            .find(&format!("$ cargo test {job}"))
             .unwrap_or_else(|| panic!("the log has no section for {job}: {}", ran.log))
     })
     .collect();
