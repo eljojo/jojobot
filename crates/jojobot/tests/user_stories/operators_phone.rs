@@ -34,15 +34,21 @@ const QUICK: Policy = Policy {
     window: Duration::from_secs(20),
 };
 
+/// The sender the instance builds for `ntfy`.
+fn notifier_for(ntfy: &FakeNtfy) -> Arc<dyn jojobot_domain::push::Notifier> {
+    Arc::new(
+        Ntfy::new(NtfyConfig {
+            url: ntfy.url.clone(),
+            topic: "phone".into(),
+            token: Some(TOKEN.into()),
+        })
+        .expect("a client"),
+    )
+}
+
 /// A jojobot set up to push to `ntfy`, with `lisa` named as its operator.
 async fn pushing_to(ntfy: &FakeNtfy, policy: Policy) -> (Story, Session) {
-    let notifier = Ntfy::new(NtfyConfig {
-        url: ntfy.url.clone(),
-        topic: "phone".into(),
-        token: Some(TOKEN.into()),
-    })
-    .expect("a client");
-    let story = Story::begin_pushing("bot:otto", Arc::new(notifier), policy).await;
+    let story = Story::begin_pushing("bot:otto", notifier_for(ntfy), policy).await;
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:sigma", "Sigma").await;
@@ -446,4 +452,116 @@ async fn the_last_body_that_fits_goes_as_text_and_one_byte_more_goes_as_a_file()
     let over = &published[1].body;
     assert_eq!(over["title"], "the first that does not");
     assert_eq!(over["attachment"], true, "{over}");
+}
+
+#[tokio::test]
+async fn a_push_that_failed_goes_out_by_itself_when_the_server_is_back_with_no_second_post() {
+    let ntfy = FakeNtfy::start().await;
+    ntfy.go_down();
+    let (_story, s) = pushing_to(&ntfy, QUICK).await;
+    s.call(
+        "post_message",
+        json!({"to": "person:lisa", "subject": "the lease", "body": "it is signed"}),
+    )
+    .await;
+    eventually("the push was tried and refused", || ntfy.attempts() >= 2).await;
+    assert!(ntfy.published().is_empty());
+
+    // Nothing else is posted. The task retries on its own timer.
+    ntfy.come_up();
+    eventually("the push went out with no further post", || {
+        !ntfy.published().is_empty()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(ntfy.published().len(), 1, "once");
+}
+
+#[tokio::test]
+async fn a_restart_with_a_push_pending_inside_its_window_delivers_it_once() {
+    let ntfy = FakeNtfy::start().await;
+    ntfy.go_down();
+    let (story, s) = pushing_to(&ntfy, QUICK).await;
+    s.call(
+        "post_message",
+        json!({"to": "person:lisa", "subject": "the lease", "body": "it is signed"}),
+    )
+    .await;
+    eventually("the push was tried and refused", || ntfy.attempts() >= 1).await;
+
+    // The process stops with the push still pending, and the first task tries
+    // nothing more: a second task trying as well would be a second delivery.
+    story.stop_pushing();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let stopped_at = ntfy.attempts();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(ntfy.attempts(), stopped_at, "the stopped task tried again");
+    assert!(ntfy.published().is_empty());
+
+    // The server comes back and the instance starts again over the same stores.
+    ntfy.come_up();
+    let restarted = story.restarted_pushing(notifier_for(&ntfy), QUICK).await;
+    eventually("the restart delivered the pending push", || {
+        !ntfy.published().is_empty()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(ntfy.published().len(), 1, "once");
+    assert_eq!(ntfy.published()[0].body["title"], "the lease");
+
+    // A third start finds nothing pending: a sent push is not sent again.
+    restarted.stop_pushing();
+    let again = restarted
+        .restarted_pushing(notifier_for(&ntfy), QUICK)
+        .await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(ntfy.published().len(), 1, "never twice across restarts");
+    again.stop_pushing();
+}
+
+#[tokio::test]
+async fn a_restart_past_a_pushs_window_gives_it_up_aloud_and_the_message_stays() {
+    let (logged, _guard) = capture_logs();
+    let ntfy = FakeNtfy::start().await;
+    ntfy.go_down();
+    let short = Policy {
+        window: Duration::from_millis(300),
+        ..QUICK
+    };
+    let (story, s) = pushing_to(&ntfy, short).await;
+    let posted = s
+        .call(
+            "post_message",
+            json!({"to": "person:lisa", "subject": "the lease", "body": "it is signed"}),
+        )
+        .await
+        .json();
+    let id = posted["id"]
+        .as_str()
+        .expect("a post hands back its id")
+        .to_string();
+    eventually("the push was tried and refused", || ntfy.attempts() >= 1).await;
+    story.stop_pushing();
+    // Long enough for the window to end while nothing is running.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(
+        !logged.text().contains("A PUSH NEVER WENT OUT"),
+        "nothing was running to say it"
+    );
+
+    // The server is back, and the restart finds the push past its hour: it is
+    // given up on aloud and not delivered late.
+    ntfy.come_up();
+    let restarted = story.restarted_pushing(notifier_for(&ntfy), short).await;
+    eventually("the restart gave the push up", || {
+        logged.text().contains("A PUSH NEVER WENT OUT")
+    })
+    .await;
+    assert!(logged.text().contains(&id), "the warning names the message");
+    assert!(
+        ntfy.published().is_empty(),
+        "a push past its window is not sent late"
+    );
+    assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
+    restarted.stop_pushing();
 }

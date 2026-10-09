@@ -196,6 +196,23 @@ impl Pushing<'_> {
     pub async fn drain(&self, now: Timestamp) -> Result<Drained, PushError> {
         let mut drained = Drained::default();
         for push in self.outbox.due(now).await? {
+            // **Past its window a push is owed no longer.** The last try is made
+            // on the end of the window itself, and a row found after that, as on
+            // a restart, is given up on without being sent late.
+            let deadline = push
+                .enqueued_at
+                .checked_add(self.policy.window)
+                .unwrap_or(Timestamp::MAX);
+            if now > deadline {
+                self.give_up(
+                    &push,
+                    now,
+                    "the window for this push ran out before it was sent",
+                    &mut drained,
+                )
+                .await?;
+                continue;
+            }
             let message = match self.mailboxes.message_by_id(&push.message).await {
                 Ok(Some(message)) => message,
                 Ok(None) => {
@@ -542,6 +559,28 @@ mod tests {
             .drain(start.checked_add(Duration::from_secs(10_000)).unwrap())
             .await
             .unwrap();
+        assert_eq!(drained.abandoned.len(), 1);
+        assert_eq!(outbox.rows()[0].standing, Standing::Abandoned);
+    }
+
+    /// **A row found past its window is not sent late, even when the server is
+    /// up.** The window is how long a push is owed; a message that arrives after
+    /// it is a surprise and not a notification. The row is abandoned and named.
+    #[tokio::test]
+    async fn a_row_found_past_its_window_is_not_delivered_late_when_the_server_is_up() {
+        let boxes = store().await;
+        let outbox = boxes.outbox();
+        let notifier = FakeNotifier::new();
+        post(&boxes, "person-ned-flanders", None, "left for a while").await;
+        let start = outbox.rows()[0].push.enqueued_at;
+        let drained = pushing(&outbox, &boxes, &notifier)
+            .drain(start.checked_add(Duration::from_secs(10_000)).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            notifier.delivered().is_empty(),
+            "nothing is sent past the window"
+        );
         assert_eq!(drained.abandoned.len(), 1);
         assert_eq!(outbox.rows()[0].standing, Standing::Abandoned);
     }

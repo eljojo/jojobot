@@ -200,13 +200,20 @@ impl Ntfy {
 
 /// **The task that delivers pushes.** Started once, when the instance is set up
 /// to push, and stopped when this is dropped.
+///
+/// **It drains once as it starts**, so a push left pending by an earlier run is
+/// tried again as soon as the instance is up, and one past its window is given
+/// up on aloud. A push that fails is retried by this task on its own timer, to
+/// the end of its window, whether or not another message ever arrives.
 pub struct Runner {
     wake: Arc<Notify>,
-    _stop: DropGuard,
+    stop: CancellationToken,
+    _stop_on_drop: DropGuard,
 }
 
 impl Runner {
-    /// Start the task. It does nothing until a post nudges it.
+    /// Start the task. Its first pass is the drain of whatever an earlier run
+    /// left pending.
     pub fn start(
         outbox: Arc<dyn Outbox>,
         mailboxes: Arc<dyn Mailboxes>,
@@ -214,6 +221,8 @@ impl Runner {
         policy: Policy,
     ) -> Self {
         let wake = Arc::new(Notify::new());
+        // A stored permit: the task's first wait ends at once.
+        wake.notify_one();
         let stop = CancellationToken::new();
         tokio::spawn(run(
             outbox,
@@ -225,8 +234,15 @@ impl Runner {
         ));
         Runner {
             wake,
-            _stop: stop.drop_guard(),
+            stop: stop.clone(),
+            _stop_on_drop: stop.drop_guard(),
         }
+    }
+
+    /// Stop the task now. A push still pending stays pending in the outbox for
+    /// whichever run starts next.
+    pub fn stop(&self) {
+        self.stop.cancel();
     }
 }
 

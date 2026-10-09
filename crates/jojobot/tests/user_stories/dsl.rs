@@ -35,6 +35,9 @@ pub struct Story {
     store: Arc<dyn jojobot_domain::memory::Memory>,
     mail: Arc<InMemoryMailboxes>,
     runs: Arc<InMemorySessions>,
+    /// **The task that pushes the operator's mail**, when this server was set
+    /// up to push. Kept so a story can stop it, as stopping the process would.
+    runner: Option<Arc<jojobot::push::Runner>>,
 }
 
 /// The subject the operator's browser logs in as. One reader, because the
@@ -334,6 +337,35 @@ impl Story {
         story
     }
 
+    /// **Stop pushing, as stopping the process would.** A push still pending
+    /// stays in the outbox for whichever server starts next over these stores.
+    pub fn stop_pushing(&self) {
+        self.runner
+            .as_ref()
+            .expect("this story was not set up to push")
+            .stop();
+    }
+
+    /// **A second server over the same stores, set up to push** — a restart of an
+    /// instance that has a push service. It drains whatever the first one left
+    /// pending as it starts.
+    pub async fn restarted_pushing(
+        &self,
+        notifier: Arc<dyn jojobot_domain::push::Notifier>,
+        policy: jojobot_domain::push::Policy,
+    ) -> Self {
+        Self::spawn(
+            &self.bot,
+            self.store.clone(),
+            self.mail.clone(),
+            self.runs.clone(),
+            jojobot_domain::clock::Clock::default(),
+            true,
+            Some((notifier, policy)),
+        )
+        .await
+    }
+
     /// **A fresh jojobot nobody has written to**, served for the identity every
     /// instance arrives holding. [`begin`](Story::begin) stands its bot up by
     /// writing as that identity, which leaves a run behind in every story; this
@@ -561,14 +593,17 @@ impl Story {
             idp.validator_for(UI_CLIENT, &[READER]),
             reqwest::Client::new(),
         );
-        let push: Option<Arc<dyn jojobot_domain::push::Nudge>> = push.map(|(notifier, policy)| {
+        let runner = push.map(|(notifier, policy)| {
             Arc::new(jojobot::push::Runner::start(
                 mail_store.outbox(),
                 boxes.clone(),
                 notifier,
                 policy,
-            )) as Arc<dyn jojobot_domain::push::Nudge>
+            ))
         });
+        let push: Option<Arc<dyn jojobot_domain::push::Nudge>> = runner
+            .clone()
+            .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
         let state = AppState {
             resource: format!("http://{addr}/mcp"),
             issuer: Some(crate::support::ISS.to_string()),
@@ -614,6 +649,7 @@ impl Story {
             store: store_for_restart,
             mail: mail_store,
             runs,
+            runner,
         }
     }
 
