@@ -19,7 +19,23 @@
 
 *Which friends have eaten three or more donuts* asks about the folded total. A query that read raw events would return a different set, and nothing about the answer would say so.
 
-**A key's declared value type licenses the comparison.** Dates compare as before and after. Numbers compare as less and greater. *Expired* and *overdue* are orderings, not matches.
+## Saying which — one expression over keys
+
+**A caller says which things it wants in one short expression over keys**, the way a filter on a task board reads: `status != done && owner = bot:gamma`, `due <= today+7d`, `tags contains kitchen`. The words are `=`, `!=`, `<`, `<=`, `>`, `>=`, `in` (any of), `contains` (a list holds an item), `&&`, `||`, `!` and parentheses. There are no wildcards.
+
+**The expression reaches keys only.** Subject, kind, parent, type and the walk stay arguments beside it, so an expression never has to say where to look.
+
+**One scope covers the whole expression**: what a thing holds now, by default, or what one record says, when asked. A term can never pick its own, because an answer that mixed the two could not be read back as one question.
+
+**A declaration licenses the comparisons that need a type.** Before, after, less and more need a key declared a date or a number. `contains` needs a key declared a list. Equality, any-of, exists and their negations need nothing declared. A comparison used without its licence is refused, naming the declaration it needs. When the call names a kind, that kind's declaration governs.
+
+**A negation keeps only things that hold the key.** `status != done` is the things holding some other status. A thing with no status is not among them, because *has none* and *has another* are different answers. `!` is the complement within what the call selected, never the whole store.
+
+**A date can be relative to the asker's day**: `today`, `today+3d`, `today-2w`, resolved when the question is asked, in that session's zone.
+
+**Order is one key and a direction**, applied before the answer is cut to size. Things lacking the key come last.
+
+**A mistake says where it is.** An expression that does not parse is refused, naming the token, its position and the words it accepts. A term on a key that nothing holds says so, rather than returning an empty answer that reads as *there is none*.
 
 ## What a bot may reach
 
@@ -36,7 +52,7 @@
 A graph gets asked all of the following. A query that stops short of any of it sends somebody back to reading pages.
 
 * **Traversal past one hop**, so a walk reaches a thing through a thing.
-* **Relations the caller names**, declared by a kind's reference keys. The caller does not assemble them. Asking for a camera's lenses is vocabulary. Describing how two records meet is a query language.
+* **Relations the caller names**, declared by a kind's reference keys. The caller does not assemble them. Asking for a camera's lenses is vocabulary. The caller never describes how two records meet; the declared relation does.
 * **Filters that combine**, and ordering, on the folded values a kind's declared keys produce.
 * **Values inside records.** A declared kind is what makes this possible: a key means the same thing across things only once a kind declares it.
 * **Which of the two questions you are asking**, on either door. *Which of these are described like a pet* keeps the partial ones and names the keys each lacks. *Which of these ARE pets* keeps only the complete ones. **Both are true of the same thing at once.** A pet with no name belongs in one answer and not the other. **The reader chooses. It is never a property the thing carries.** A caller who names neither gets the tolerant one, because a thing that vanishes from an answer is worse than a thing that arrives with its gaps stated.
