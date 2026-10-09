@@ -1721,13 +1721,16 @@ impl DoltMemory {
         // its own kind, and nothing else — `subject_kind`, computed once
         // above, ahead of the cap check that also needs it.
         let governs = Self::kind_keys_in(tx, subject_kind.as_token()).await?;
-        let columns = self.project_columns_of(tx, &index, &subject_handle).await?;
+        let after = stood_after_capture(&held, &stored, &declared);
+        let columns = self
+            .project_columns_of(tx, &index, &subject_handle, &after)
+            .await?;
         guard_fit_in(
             subject_kind.as_token(),
             &folded_fields(&held, &declared),
-            &stood_after_capture(&held, &stored, &declared),
+            &after,
             &governs,
-            columns.as_deref(),
+            columns.as_ref(),
         )?;
         Self::write_fact(tx, &stored, &self.clock, fact.session.as_deref()).await?;
         // Every key this record carries is a write of its own, appended to the
@@ -2373,36 +2376,48 @@ impl DoltMemory {
 
     /// **The columns of the project a work item or project is filed under**, read inside
     /// the write's own transaction off the project's folded fields. `None` is a
-    /// thing that is not work, one under no project, or one whose project lists
-    /// none — each is held to the shipped five. `index` serves handles, so the
-    /// parent is found by the handle the entity wears today.
+    /// thing that is not work or a work item under no project, each held to the
+    /// shipped five. A governing project that lists none is still named, with no
+    /// columns, so the refusal can say where to write them. `index` serves
+    /// handles, so the parent is found by the handle the entity wears today.
+    ///
+    /// **A project under no project is governed by its own list**, as this
+    /// write leaves it (`own_after`), so the route a refusal names, writing
+    /// `columns` on the project, works for a project that has nowhere else to
+    /// write them. One under a project keeps that project's list.
     async fn project_columns_of(
         &self,
         tx: &mut Transaction<'_, MySql>,
         index: &[Entity],
         thing: &EntityId,
-    ) -> Result<Option<Vec<String>>, MemoryError> {
+        own_after: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Option<jojobot_domain::memory::GoverningColumns>, MemoryError> {
         let Some(entity) = index.iter().find(|e| &e.id == thing) else {
             return Ok(None);
         };
         if !kinds::holds_columns(entity.kind.as_token()) {
             return Ok(None);
         }
-        let Some(parent) = &entity.parent else {
-            return Ok(None);
+        let parent = entity.parent.as_ref().filter(|parent| {
+            index
+                .iter()
+                .any(|e| &e.id == *parent && e.kind == EntityKind::PROJECT)
+        });
+        let Some(parent) = parent else {
+            return Ok((entity.kind == EntityKind::PROJECT).then(|| {
+                jojobot_domain::memory::GoverningColumns {
+                    project: entity.id.clone(),
+                    columns: jojobot_domain::memory::kinds::columns_of(own_after),
+                }
+            }));
         };
-        let is_project = index
-            .iter()
-            .any(|e| &e.id == parent && e.kind == EntityKind::PROJECT);
-        if !is_project {
-            return Ok(None);
-        }
         let Some((key, _)) = self.resolve(tx, parent).await? else {
             return Ok(None);
         };
-        Ok(jojobot_domain::memory::kinds::columns_of(
-            &Self::held_by(tx, &key).await?,
-        ))
+        Ok(Some(jojobot_domain::memory::GoverningColumns {
+            project: parent.clone(),
+            columns: jojobot_domain::memory::kinds::columns_of(&Self::held_by(tx, &key).await?),
+        }))
     }
 
     /// **Append what a write said about a record's keys**, each row taking the
@@ -4328,7 +4343,8 @@ impl Memory for DoltMemory {
         let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);
         let columns = if kinds::holds_columns(kind.as_token()) {
             let index = self.index(&mut tx).await?;
-            self.project_columns_of(&mut tx, &index, &handle).await?
+            self.project_columns_of(&mut tx, &index, &handle, &after_fold)
+                .await?
         } else {
             None
         };
@@ -4348,7 +4364,7 @@ impl Memory for DoltMemory {
             &served_before,
             &served_after,
             &governs,
-            columns.as_deref(),
+            columns.as_ref(),
         )?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind, atomically with the write that would leave it.** See

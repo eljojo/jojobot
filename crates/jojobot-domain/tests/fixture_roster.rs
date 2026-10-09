@@ -814,6 +814,7 @@ const ROSTER: &[&str] = &[
     "project:contract-away-project",
     "project:contract-bad-parent",
     "project:contract-columns-board",
+    "project:contract-columns-fresh",
     "project:contract-columns-plain",
     "project:contract-columns-sub",
     "project:contract-ghost-parent",

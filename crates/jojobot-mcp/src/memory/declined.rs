@@ -682,6 +682,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref name,
             ref key,
             ref wanted,
+            ref governed_by,
             ..
         } => Ok(blocked_body(
             &EntityId(String::new()),
@@ -693,13 +694,22 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  own: adding keys is never refused, and only the keys a type names are held to \
                  what it declared.{}",
                 // **The allowed list is a project's columns**, so a caller who
-                // wants a word outside it is told the list can be extended.
-                match (name.as_str(), key.as_str()) {
-                    ("work" | "project", "status") => {
-                        " The allowed words are the project's columns: write columns on the \
-                         project to add a word of your own."
-                    }
-                    _ => "",
+                // wants a word outside it is told which project holds the
+                // list, and that writing `columns` there extends the shipped
+                // five and never replaces them.
+                match (name.as_str(), key.as_str(), governed_by) {
+                    ("work" | "project", "status", Some(project)) => format!(
+                        " The allowed words are the columns of {project}, and they always keep \
+                         every shipped word: a project's columns extend the shipped five and \
+                         never replace them. Write columns on {project} to add a word of your \
+                         own, then send the status again."
+                    ),
+                    ("work" | "project", "status", None) => " This is filed under no project, so \
+                         it holds the shipped five. A work item takes the columns of the project \
+                         it is filed under, and a project's columns extend the shipped five \
+                         and never replace them."
+                        .to_string(),
+                    _ => String::new(),
                 }
             ),
         )),
@@ -1884,6 +1894,7 @@ mod tests {
                     key: s("starts"),
                     wanted: s("date"),
                     value: s("soon"),
+                    governed_by: None,
                 },
                 Some("change"),
             ),

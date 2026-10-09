@@ -2823,13 +2823,24 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
         .capture(status_on(&in_board, "backlog"))
         .await
         .expect_err("'backlog' is not one of the board's columns");
-    let MemoryError::BreaksType { wanted, value, .. } = &refused else {
+    let MemoryError::BreaksType {
+        wanted,
+        value,
+        governed_by,
+        ..
+    } = &refused
+    else {
         panic!("expected BreaksType, got {refused:?}");
     };
     assert_eq!(value, "backlog");
     assert!(
         wanted.contains("next release") && wanted.contains("inbox"),
         "the refusal names the project's own list: {wanted}",
+    );
+    assert_eq!(
+        governed_by.as_deref(),
+        Some(board.as_str()),
+        "the refusal names the project whose columns hold the work item",
     );
 
     // ④ The same column on a work item under a project with no list is
@@ -2839,12 +2850,22 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
         .capture(status_on(&in_plain, "this release"))
         .await
         .expect_err("a project with no columns holds its work to the shipped five");
-    let MemoryError::BreaksType { wanted, .. } = &refused else {
+    let MemoryError::BreaksType {
+        wanted,
+        governed_by,
+        ..
+    } = &refused
+    else {
         panic!("expected BreaksType, got {refused:?}");
     };
     assert!(
         wanted.contains("waiting") && !wanted.contains("inbox"),
         "the shipped five and no other: {wanted}",
+    );
+    assert_eq!(
+        governed_by.as_deref(),
+        Some(plain.as_str()),
+        "a project that lists none is still the one the refusal names",
     );
     capture(store, status_on(&in_plain, "waiting")).await;
 
@@ -2853,15 +2874,20 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
         .capture(status_on(&loose, "this release"))
         .await
         .expect_err("a work item with no project is held to the shipped five");
-    assert!(
-        matches!(refused, MemoryError::BreaksType { .. }),
-        "{refused:?}"
+    let MemoryError::BreaksType { governed_by, .. } = &refused else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
+    assert_eq!(
+        governed_by, &None,
+        "a work item under no project has no project to name"
     );
     capture(store, status_on(&loose, "next")).await;
 
-    // ⑥ A project's own status follows the same rule one level up: held to the
-    // columns of the project it is filed under, and to the shipped five when it
-    // is filed under none.
+    // ⑥ A project's own status follows the same rule one level up: a project
+    // filed under a project is held to that project's columns, and the refusal
+    // names that project. A project filed under NONE is governed by itself: the
+    // shipped five when it lists no columns, and the refusal names the project
+    // itself, because it is where the columns are written.
     let sub = EntityId("project:contract-columns-sub".into());
     add(
         store,
@@ -2876,19 +2902,121 @@ pub async fn a_work_items_status_is_held_to_its_projects_columns<M: Memory>(stor
         .capture(status_on(&sub, "backlog"))
         .await
         .expect_err("a sub-project is held to its parent project's columns");
-    assert!(
-        matches!(refused, MemoryError::BreaksType { .. }),
-        "{refused:?}"
+    let MemoryError::BreaksType { governed_by, .. } = &refused else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
+    assert_eq!(
+        governed_by.as_deref(),
+        Some(board.as_str()),
+        "the refusal names the parent, whose columns govern the sub-project",
     );
     let refused = store
         .capture(status_on(&plain, "this release"))
         .await
-        .expect_err("a project under no project is held to the shipped five");
+        .expect_err("a project under no project that lists none is held to the shipped five");
+    let MemoryError::BreaksType {
+        wanted,
+        governed_by,
+        ..
+    } = &refused
+    else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
     assert!(
-        matches!(refused, MemoryError::BreaksType { .. }),
-        "{refused:?}"
+        wanted.contains("waiting") && !wanted.contains("inbox"),
+        "the shipped five and no other: {wanted}",
+    );
+    assert_eq!(
+        governed_by.as_deref(),
+        Some(plain.as_str()),
+        "a project under no project is governed by itself, and the refusal says so",
     );
     capture(store, status_on(&plain, "now")).await;
+
+    // ⑦ A project filed under no project takes its OWN columns as the words its
+    // status may hold. The route the refusal names has to work: the list the
+    // project wrote is the list that governs it, and the refusal names that list.
+    capture(store, status_on(&board, "this release")).await;
+    assert_eq!(
+        store.fields(&board).await.expect("reads")["status"],
+        "this release",
+        "a project under no project holds a word its own list added",
+    );
+    let refused = store
+        .capture(status_on(&board, "backlog"))
+        .await
+        .expect_err("'backlog' is not one of the board's own columns");
+    let MemoryError::BreaksType {
+        wanted,
+        value,
+        governed_by,
+        ..
+    } = &refused
+    else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
+    assert_eq!(value, "backlog");
+    assert!(
+        wanted.contains("next release") && wanted.contains("inbox"),
+        "the refusal names the project's own list: {wanted}",
+    );
+    assert_eq!(
+        governed_by.as_deref(),
+        Some(board.as_str()),
+        "a project under no project names itself",
+    );
+
+    // …and one write may carry the list and the word that list adds.
+    let fresh = EntityId("project:contract-columns-fresh".into());
+    add(
+        store,
+        NewEntity::new(fresh.clone(), "Contract Columns Fresh", "contract-fixture"),
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            fields: [
+                (
+                    "columns".to_string(),
+                    "considering, someday, next, now, waiting, done".to_string(),
+                ),
+                ("status".to_string(), "considering".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                fresh.clone(),
+                "the board and where it stands",
+                date(2026, 10, 1),
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        store.fields(&fresh).await.expect("reads")["status"],
+        "considering",
+    );
+
+    // A project under a project keeps its parent's list: a list of its own does
+    // not widen it, and the refusal names the parent's.
+    capture(
+        store,
+        columns_on(&sub, "backlog, someday, next, now, waiting, done"),
+    )
+    .await;
+    let refused = store
+        .capture(status_on(&sub, "backlog"))
+        .await
+        .expect_err("a sub-project's own list does not widen its parent's");
+    let MemoryError::BreaksType { wanted, .. } = &refused else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
+    assert!(
+        wanted.contains("inbox") && !wanted.contains("backlog"),
+        "the refusal names the parent's list and not the sub-project's: {wanted}",
+    );
+    capture(store, status_on(&sub, "this release")).await;
 }
 
 pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
@@ -11201,6 +11329,7 @@ pub async fn a_write_cannot_put_a_value_the_type_refuses<M: Memory>(store: &M) {
         key,
         wanted,
         value,
+        ..
     }) = &refused
     else {
         panic!("a handle of the wrong kind must be refused, got {refused:?}");
@@ -11391,6 +11520,7 @@ pub async fn a_closed_set_refuses_a_write_outside_it<M: Memory>(store: &M) {
         key,
         wanted,
         value,
+        ..
     }) = &refused
     else {
         panic!("a value outside the set must be refused, got {refused:?}");

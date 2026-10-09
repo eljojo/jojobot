@@ -258,3 +258,110 @@ async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
         .await;
     story.finish().await;
 }
+
+/// "The refusal told me to write columns on the project, I did, and it refused
+/// the word again." A project filed under no project has nowhere else to write
+/// its columns, so its own list governs its own status, and the route the
+/// refusal names works. One filed under a project keeps that project's list,
+/// and a list of its own does not widen it.
+#[tokio::test]
+async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_project_to_its_parents()
+ {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("project:visa", "Visa").await;
+    s.add("project:the-shed", "The Shed").await;
+    s.add("project:kitchen-floor", "Kitchen Floor").await;
+    s.add_under(
+        "project:kitchen-floor",
+        "project:jojobot-server",
+        "Jojobot server",
+    )
+    .await;
+
+    // ── under no project: the refusal is followed to the end ─────────────────
+    let status = |subject: &str, word: &str| {
+        json!({
+            "subject": subject, "content": "where it stands",
+            "provenance": "testimony", "fields": {"status": word},
+        })
+    };
+    let write = status("project:visa", "considering");
+    // ① The word is refused. The refusal names the project whose columns
+    // govern, which is this one, and the shipped words it always keeps.
+    let refused = s.refused("capture", write.clone()).await;
+    refused.says("project:visa");
+    for word in ["someday", "next", "now", "waiting", "done"] {
+        refused.says(word);
+    }
+    // ② The columns are written where the refusal says.
+    s.event_with(
+        "project:visa",
+        "the board's columns",
+        json!({"columns": "considering, someday, next, now, waiting, done"}),
+        &[],
+    )
+    .await;
+    // ③ The same write now lands, and ④ the status reads back.
+    s.call("capture", write).await;
+    s.recall("project:visa")
+        .await
+        .says("\"status\":\"considering\"");
+    // The list that governs is the one the refusal now names, in full.
+    let again = s
+        .refused("capture", status("project:visa", "pondering"))
+        .await;
+    again.says("considering");
+    again.says("project:visa");
+
+    // The list and the word it adds may arrive in one write.
+    s.event_with(
+        "project:the-shed",
+        "the board and where it stands",
+        json!({
+            "columns": "drafting, someday, next, now, waiting, done",
+            "status": "drafting",
+        }),
+        &[],
+    )
+    .await;
+    s.recall("project:the-shed")
+        .await
+        .says("\"status\":\"drafting\"");
+
+    // ── under a project: the parent's list governs, and the child's own does
+    // not widen it ───────────────────────────────────────────────────────────
+    s.event_with(
+        "project:kitchen-floor",
+        "the board's columns",
+        json!({"columns": "inbox, someday, next, now, waiting, done"}),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "project:jojobot-server",
+        "the child's own columns",
+        json!({"columns": "backlog, someday, next, now, waiting, done"}),
+        &[],
+    )
+    .await;
+    // The refusal names the parent, whose columns govern, and its words.
+    let child = s
+        .refused("capture", status("project:jojobot-server", "backlog"))
+        .await;
+    child.says("project:kitchen-floor");
+    child.says("inbox");
+    s.event_with(
+        "project:jojobot-server",
+        "where it stands",
+        json!({"status": "inbox"}),
+        &[],
+    )
+    .await;
+    s.recall("project:jojobot-server")
+        .await
+        .says("\"status\":\"inbox\"");
+
+    story.finish().await;
+}

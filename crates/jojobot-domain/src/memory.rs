@@ -3770,6 +3770,22 @@ pub fn guard_fit(
     guard_fit_in(kind, before, after, declared, None)
 }
 
+/// **The project whose columns govern a work item's or a project's status**, and
+/// the list it holds.
+///
+/// A work item is governed by the project it is filed under. A project filed
+/// under a project is governed by that one, and a project filed under none is
+/// governed by itself. `columns` is `None` when the governing project lists
+/// none, so the shipped five hold; the project is named all the same, because
+/// it is where a word of the caller's own is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoverningColumns {
+    /// The project whose columns these are, as its handle reads today.
+    pub project: EntityId,
+    /// The columns it lists, in its own order. They extend the shipped five.
+    pub columns: Option<Vec<String>>,
+}
+
 /// **[`guard_fit`], for a thing filed under a project that lists its own
 /// columns.**
 ///
@@ -3787,7 +3803,7 @@ pub fn guard_fit_in(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
-    project_columns: Option<&[String]>,
+    project_columns: Option<&GoverningColumns>,
 ) -> Result<(), MemoryError> {
     // **The prefix as written, never the parsed kind.** A handle whose kind the
     // set never loaded still names one, and a guard that went quiet on an
@@ -3811,14 +3827,15 @@ pub fn guard_fit_in(
             if before.get(&field.key) == Some(value) {
                 continue;
             }
-            let governing = match project_columns {
-                Some(columns) if kinds::holds_columns(kind) && field.key == kinds::STATUS => {
+            let (governing, governed_by) = match project_columns {
+                Some(governs) if kinds::holds_columns(kind) && field.key == kinds::STATUS => (
                     types::Field {
-                        one_of: Some(columns.to_vec()),
+                        one_of: governs.columns.clone().or_else(|| field.one_of.clone()),
                         ..field.clone()
-                    }
-                }
-                _ => field.clone(),
+                    },
+                    Some(governs.project.as_str().into()),
+                ),
+                _ => (field.clone(), None),
             };
             let field = &governing;
             if !field.accepts(value) {
@@ -3835,6 +3852,7 @@ pub fn guard_fit_in(
                     key: bad.key.clone(),
                     wanted: bad.wanted(),
                     value: bad.value,
+                    governed_by,
                 });
             }
         }
@@ -3884,6 +3902,7 @@ pub fn guard_fit_in(
                     kinds::WORK_STATUSES.join(", ")
                 ),
                 value: value.clone(),
+                governed_by: None,
             });
         }
     }
@@ -5236,6 +5255,10 @@ pub enum MemoryError {
         /// What the write would have put there, so the caller sees what it
         /// sent rather than being told it was wrong.
         value: String,
+        /// **The project whose columns held this status**, when the key is a
+        /// status. It is where the caller writes `columns` to add a word, so
+        /// the refusal can name it rather than say "the project".
+        governed_by: Option<Box<str>>,
     },
     /// The addressed fact doesn't exist, in an entity that does. Never
     /// auto-created, never guessed at — the live addresses come back so the
