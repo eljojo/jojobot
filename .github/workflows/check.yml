@@ -20,11 +20,18 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # The whole history, not the default depth of one commit. The fixture
+      # roster test reads the commit messages since a fixed boundary and fails
+      # when it cannot read the range, so a one-commit checkout is red on every
+      # push.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # The flake is the toolchain. Running the bar outside it picks up
-      # whatever the runner happens to carry, and the shellHook that sets the
-      # load-bearing environment never runs.
+      # The flake is the toolchain: the Rust toolchain, make, and the dolt
+      # binary the store tests spawn. Running the bar outside it picks up
+      # whatever the runner happens to carry, and a missing dolt fails a suite
+      # that is meant to run.
       - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |

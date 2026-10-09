@@ -75,6 +75,29 @@ fn the_bar_runs_on_every_branch_and_not_only_on_the_mainline() {
     );
 }
 
+/// **The checkout carries the whole history, because a test of the bar reads it.**
+///
+/// The fixture roster test reads the commit messages since a fixed boundary and
+/// fails when it cannot read the range. The checkout action takes one commit by
+/// default, so a workflow that leaves the depth alone is red on every push for a
+/// reason no change to the code fixes.
+///
+/// **The positive is in the same case.** Asserting that no depth of one is set
+/// passes against a file with no checkout at all.
+#[test]
+fn the_checkout_carries_the_whole_history() {
+    let yaml = workflow();
+    assert!(
+        yaml.contains("actions/checkout"),
+        "the workflow has no checkout, so it builds nothing:\n{yaml}",
+    );
+    assert!(
+        yaml.contains("fetch-depth: 0"),
+        "the checkout takes one commit, so the commit range the roster test reads is missing \
+         and the bar is red on every push:\n{yaml}",
+    );
+}
+
 /// 🚨 **A red bar reports every target, not only the ones before the first
 /// failure.**
 ///
