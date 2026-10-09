@@ -6240,7 +6240,7 @@ async fn a_subject_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of
                 .await
                 .expect("recall ok"),
         );
-        let size = body.to_string().chars().count();
+        let size = crate::answer::served_len(&body);
         assert!(
             size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
             "facts of {content_len}: the answer is {size} characters"
@@ -6300,7 +6300,7 @@ async fn a_kind_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of_ob
                 .await
                 .expect("recall ok"),
         );
-        let size = body.to_string().chars().count();
+        let size = crate::answer::served_len(&body);
         assert!(
             size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
             "names of {name_len}: the answer is {size} characters"
@@ -6309,5 +6309,151 @@ async fn a_kind_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of_ob
         let left = body["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
         assert_eq!(carried + left, held, "names of {name_len}: {body}");
         assert!(left > 0, "names of {name_len} did not make the fill cut");
+    }
+}
+
+/// **The characters a recall page may differ from the sum of its parts by**:
+/// the digits of `count` and the brackets of the list the fill did not render.
+const PAGE_EDGE_SLACK: usize = 4;
+
+/// **The block a fill reserved for naming what it left out, at its widest, less
+/// the block the page really carries**: the room the fill keeps that the page
+/// does not spend.
+fn reserved_beyond(page: &serde_json::Value) -> usize {
+    crate::answer::widest_not_shown("objects")
+        - serde_json::json!({"not_shown": page["not_shown"]})
+            .to_string()
+            .chars()
+            .count()
+}
+
+/// **A recall of one subject carries every fact that fits under the ceiling as
+/// the answer is served.** The surface drops null keys from what it ships, so a
+/// page filled against each fact with its nulls in stops short by the length of
+/// those keys on every fact it carries. This reads the page as served and the
+/// fact that begins the next page the same way, and holds that the page was
+/// under the ceiling and full to within that one fact, at every size of fact.
+#[tokio::test]
+async fn a_subject_recall_is_full_to_within_one_fact_as_the_answer_is_served() {
+    let held = 300;
+    for content_len in (20..=140).step_by(2) {
+        let memory = shared_memory();
+        let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        let subject = EntityId::new(EntityKind::THING, spread_slug(0));
+        memory
+            .add_entity(NewEntity::new(subject.clone(), "Gizmo", "user-named"))
+            .await
+            .expect("a thing lands");
+        for i in 0..held {
+            let fact = NewFact::about(
+                subject.clone(),
+                format!("{i:04} {}", "x".repeat(content_len)),
+                "2026-10-01".parse().expect("a day"),
+            );
+            memory.capture(fact).await.expect("a fact lands");
+        }
+        let mut page = json_of(
+            &jojobot
+                .recall(Parameters(of(subject.as_str())))
+                .await
+                .expect("recall ok"),
+        );
+        let shown = page["objects"][0]["facts"].as_array().expect("facts").len();
+        let mut after = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    offset: Some(shown as u32),
+                    ..of(subject.as_str())
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let reserved = reserved_beyond(&page);
+        crate::answer::strip_nulls(&mut page);
+        crate::answer::strip_nulls(&mut after);
+        let served = page.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+        let next = after["objects"][0]["facts"][0].to_string().chars().count() + 1;
+        assert!(
+            shown > 1 && shown < held,
+            "{content_len}: not a page: {shown}"
+        );
+        assert!(
+            served <= jojobot_domain::text::ANSWER_CEILING,
+            "{content_len}: the page is {served} characters as served"
+        );
+        assert!(
+            served + next + reserved + PAGE_EDGE_SLACK > jojobot_domain::text::ANSWER_CEILING,
+            "{content_len}: another fact of {next} characters would have fit: the page is \
+             {served} of {} as served, with {shown} facts",
+            jojobot_domain::text::ANSWER_CEILING
+        );
+    }
+}
+
+/// **A recall of a kind carries every object that fits under the ceiling as the
+/// answer is served.** The same hold for the fill that chooses whole objects:
+/// the page was under the ceiling as served and full to within the object that
+/// begins the next page. The size of an object is swept, because the edge of the
+/// page has to land inside the few characters an object's null keys take.
+#[tokio::test]
+async fn a_kind_recall_is_full_to_within_one_object_as_the_answer_is_served() {
+    let held = 9;
+    for name_len in (2_700..=3_300).step_by(2) {
+        let memory = shared_memory();
+        let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        for i in 0..held {
+            let id = EntityId::new(EntityKind::THING, spread_slug(i));
+            memory
+                .add_entity(NewEntity::new(
+                    id.clone(),
+                    format!("Gizmo {}", spread_slug(i)),
+                    "user-named",
+                ))
+                .await
+                .expect("a thing lands");
+            let mut fact = NewFact::about(
+                id,
+                "a note".to_string(),
+                "2026-10-01".parse().expect("a day"),
+            );
+            fact.fields = [("note".to_string(), "x".repeat(name_len))]
+                .into_iter()
+                .collect();
+            memory.capture(fact).await.expect("a note lands");
+        }
+        let recalled = |offset: Option<u32>| RecallArgs {
+            kind: Some("thing".into()),
+            offset,
+            ..of_nothing()
+        };
+        let mut page = json_of(
+            &jojobot
+                .recall(Parameters(recalled(None)))
+                .await
+                .expect("recall ok"),
+        );
+        let shown = page["objects"].as_array().expect("objects").len();
+        let mut after = json_of(
+            &jojobot
+                .recall(Parameters(recalled(Some(shown as u32))))
+                .await
+                .expect("recall ok"),
+        );
+        let reserved = reserved_beyond(&page);
+        crate::answer::strip_nulls(&mut page);
+        crate::answer::strip_nulls(&mut after);
+        let served = page.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+        let next = after["objects"][0].to_string().chars().count() + 1;
+        assert!(shown > 1 && shown < held, "{name_len}: not a page: {shown}");
+        assert!(
+            served <= jojobot_domain::text::ANSWER_CEILING,
+            "{name_len}: the page is {served} characters as served"
+        );
+        assert!(
+            served + next + reserved + PAGE_EDGE_SLACK > jojobot_domain::text::ANSWER_CEILING,
+            "{name_len}: another object of {next} characters would have fit: the page is \
+             {served} of {} as served, with {shown} objects",
+            jojobot_domain::text::ANSWER_CEILING
+        );
     }
 }
