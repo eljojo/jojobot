@@ -147,7 +147,12 @@ pub fn touched(changed: &[String], workspace: &Workspace) -> Touched {
     for path in changed {
         if matches!(
             path.as_str(),
-            "Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml" | "flake.nix"
+            "Cargo.toml"
+                | "Cargo.lock"
+                | "rust-toolchain"
+                | "rust-toolchain.toml"
+                | "flake.nix"
+                | "flake.lock"
         ) {
             hit.whole_workspace = true;
         } else if let Some(package) = workspace.packages.iter().find(|p| {
@@ -408,6 +413,7 @@ mod tests {
             "Cargo.lock",
             "rust-toolchain.toml",
             "flake.nix",
+            "flake.lock",
         ] {
             let hit = touched(&paths(&[file]), &chain());
             assert!(hit.whole_workspace, "{file}");
