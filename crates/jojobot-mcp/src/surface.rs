@@ -475,6 +475,34 @@ fn the_claim_argument_names_its_three_outcomes() {
     );
 }
 
+/// **The `timezone` argument tells a boot to omit it and offers no city.** The
+/// instance holds the operator's zone, and a zone a model picks silently moves
+/// what today means for its run. An example zone is the thing a model copies, so
+/// the description carries none: no word of the form `Area/City`.
+#[test]
+fn the_timezone_argument_says_to_omit_it_and_names_no_city() {
+    let tools = Jojobot::tool_router().list_all();
+    let start_here = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "start_here")
+        .expect("the surface offers start_here");
+    let schema = serde_json::to_value(&start_here.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["timezone"]["description"]
+        .as_str()
+        .expect("the timezone argument carries its own description");
+    assert!(
+        described.to_lowercase().contains("omit"),
+        "the timezone argument does not say to omit it: {described}"
+    );
+    let chars: Vec<char> = described.chars().collect();
+    assert!(
+        !chars
+            .windows(3)
+            .any(|w| w[0].is_alphabetic() && w[1] == '/' && w[2].is_alphabetic()),
+        "the timezone argument names a zone, which a model copies: {described}"
+    );
+}
+
 /// **The `claim` argument names how a lease is kept and given up**: every
 /// write renews it, not only a journal beat, the lease is 45 minutes, and
 /// wrapping releases it. A caller deciding whether it is safe to stay quiet

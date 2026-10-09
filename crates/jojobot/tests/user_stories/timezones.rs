@@ -277,3 +277,84 @@ async fn an_instance_that_holds_its_operators_zone_answers_a_run_that_sends_none
     );
     story.finish().await;
 }
+
+/// **"Nothing told it that zone. The model picked one."**
+///
+/// A zone a boot sends wins over the instance's, so a guessed zone silently
+/// moves what today means for the whole run. The boot answers a run that sends
+/// none in the instance's zone and says nothing more. A run that sends a
+/// different zone is answered in it and told, in one line that names both
+/// zones, that the instance holds another. A run that sends the instance's own
+/// zone has nothing to be told.
+#[tokio::test]
+async fn a_boot_that_sends_a_zone_other_than_the_instances_is_told_which_two() {
+    let (operators, other) = ("Etc/GMT+12", "Pacific/Kiritimati");
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    first.add("topic:instance", "This instance").await;
+    first
+        .event_with(
+            "topic:instance",
+            "where the operator lives",
+            json!({ "timezone": operators }),
+            &[],
+        )
+        .await;
+
+    // ── no zone sent: the instance's answers, with nothing to add ───────────
+    let (none, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let none = none.json();
+    assert_eq!(none["timezone"]["zone"], operators, "{none}");
+    assert_eq!(none["timezone"]["from"], "instance", "{none}");
+    assert!(none["timezone"].get("note").is_none(), "{none}");
+
+    // ── a different zone sent: it wins, and the answer names both ───────────
+    let (differs, sending) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new", "timezone": other}),
+        )
+        .await;
+    let differs = differs.json();
+    assert_eq!(differs["timezone"]["zone"], other, "{differs}");
+    assert_eq!(differs["timezone"]["from"], "session", "{differs}");
+    let note = differs["timezone"]["note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a differing zone is told: {differs}"));
+    assert!(
+        note.contains(operators) && note.contains(other),
+        "the notice names both zones: {note}"
+    );
+    assert!(!note.contains('\n'), "one line: {note:?}");
+
+    // ── a resume that sends none keeps the run's zone and has nothing to add ─
+    let sending = sending.expect("the boot handed back a session");
+    sending.add("person:milhouse", "Milhouse").await;
+    let (resumed, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": sending.sid()}),
+        )
+        .await;
+    let resumed = resumed.json();
+    assert_eq!(resumed["timezone"]["zone"], other, "{resumed}");
+    assert_eq!(resumed["timezone"]["from"], "run", "{resumed}");
+    assert!(resumed["timezone"].get("note").is_none(), "{resumed}");
+
+    // ── the instance's own zone sent back: nothing differs ──────────────────
+    let (same, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new", "timezone": operators}),
+        )
+        .await;
+    let same = same.json();
+    assert_eq!(same["timezone"]["from"], "session", "{same}");
+    assert!(same["timezone"].get("note").is_none(), "{same}");
+    story.finish().await;
+}

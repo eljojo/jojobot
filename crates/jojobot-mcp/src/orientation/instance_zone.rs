@@ -177,6 +177,22 @@ pub(crate) fn zone_answer(
         "zone": zone.unwrap_or(crate::memory::parse::FALLBACK_ZONE),
         "from": from.token(),
     });
+    // **A zone the session sent that is not the instance's is said once, naming
+    // both.** A sent zone wins, so a guessed one moves what today means for the
+    // whole run and nothing else would show it. The boot is not refused for it.
+    if let (ZoneFrom::Session, Some(sent), Some(held), Some(object)) =
+        (from, zone, instance.name(), answer.as_object_mut())
+        && sent != held
+    {
+        object.insert(
+            "note".into(),
+            format!(
+                "this run sent {sent} and the instance holds {held}; the sent zone decides this \
+                 run's days. Omit timezone to be answered in {held}."
+            )
+            .into(),
+        );
+    }
     if let (ZoneFrom::Default, InstanceZone::Unresolvable(raw), Some(object)) =
         (from, instance, answer.as_object_mut())
     {
