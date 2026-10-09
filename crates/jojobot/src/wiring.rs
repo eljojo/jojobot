@@ -268,6 +268,49 @@ pub struct Booted {
     pub registry: Arc<jojobot_mcp::sid::SessionRegistry>,
 }
 
+/// **Name the records the store already holds over the ceiling**, from the scan
+/// the boot just indexed: no second read of the store. The write refusal keeps a
+/// new record from exceeding one answer and nothing else finds the ones that
+/// were written before it, so this is where a person learns they are there.
+///
+/// One warning per record, naming the thing, the record's address, its size and
+/// the overage; one warning per thing whose own name, aliases and keys do not
+/// fit, since no record on it can. When there are none, one line with the number
+/// of records measured, so that silence is never read as a pass that did not run.
+/// The measure is the write refusal's own.
+fn report_stored_records_over_the_ceiling(scan: &[jojobot_domain::memory::search::DocScan]) {
+    let found = jojobot_mcp::memory::claim_room::stored_records_over_the_ceiling(
+        scan,
+        jiff::Timestamp::now(),
+    );
+    for record in &found.over {
+        tracing::warn!(
+            thing = %record.thing,
+            address = %record.address,
+            size = record.size,
+            over = record.size - record.room,
+            "STORED RECORD OVER THE CEILING — a read of this thing cannot serve this record \
+             whole in one answer. It was written before the write refusal existed. Nothing is \
+             lost; a person decides whether it is shortened or kept as a page behind a pointer."
+        );
+    }
+    for (thing, size, room) in &found.things_over {
+        tracing::warn!(
+            thing = %thing,
+            size,
+            over = size - room,
+            "STORED THING OVER THE CEILING — its own name, aliases and keys do not fit one \
+             answer, so no record on it can be served. Nothing is lost; a person shortens them."
+        );
+    }
+    if found.over.is_empty() && found.things_over.is_empty() {
+        tracing::info!(
+            records = found.measured,
+            "stored records: none is over the ceiling"
+        );
+    }
+}
+
 /// **Bring the store up, migrate it, and assemble everything `AppState`
 /// needs from it** — the sequence a restart runs before it can serve
 /// anything, moved here so a test can run it against a real store rather
@@ -473,8 +516,11 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
              wrong; every read stays correct and only slower until then."
         ),
     }
-    match indexed.rebuild().await {
-        Ok(docs) => tracing::info!(docs, "search: index built from a full scan"),
+    match indexed.rebuild_scanned().await {
+        Ok(scan) => {
+            tracing::info!(docs = scan.len(), "search: index built from a full scan");
+            report_stored_records_over_the_ceiling(&scan);
+        }
         Err(e) => tracing::warn!(
             error = %e,
             "SEARCH INDEX EMPTY — the boot scan failed, so `search` sees only what this process \

@@ -139,35 +139,8 @@ impl Jojobot {
 
     /// **The record measured beside a thing the caller supplies**, as the thing
     /// will read once the write has landed.
-    fn measured_beside(&self, fact: &Fact, entity: &Entity, mut folded: Fold) -> Measured {
-        // Stamped as the widest the store can stamp it, whatever the record
-        // carries now: a stamp prints from 20 to 30 characters, and a record
-        // that fits only with a short one would stop fitting on the next edit.
-        let mut stamped = fact.clone();
-        stamped.inserted_at = Some(widest_stamp(self.clock().now()));
-        // The same reasoning for the three words an edit can change: a record
-        // measured in its longest spelling of each does not grow when an edit
-        // archives it, settles it or restates how it is known, so a record that
-        // fits stays editable and a record already over stays repairable.
-        stamped.status = FactStatus::Archived;
-        stamped.standing = Standing::Settled;
-        stamped.provenance = Provenance::Observation;
-        let fact = &stamped;
-        // The describing keys stay on their claim and never reach the thing.
-        let describing = crate::seed::describing_keys();
-        for (key, value) in &fact.fields {
-            if !describing.contains(key) {
-                folded.insert(key.clone(), value.clone());
-            }
-        }
-        let record = crate::memory::wire::fact_json(fact, last_day(), Some(WIDEST_REVISION_COUNT));
-        let (skeleton, rest, widest) = read_of_a_thing(entity, &folded);
-        let row_room = record_room(rest, 0, widest);
-        Measured {
-            size: record.to_string().chars().count() + 1,
-            room: record_room(rest, skeleton, widest),
-            row_over: (skeleton > row_room).then_some((skeleton, row_room)),
-        }
+    fn measured_beside(&self, fact: &Fact, entity: &Entity, folded: Fold) -> Measured {
+        measure_record(fact, entity, folded, self.clock().now(), true)
     }
 
     /// **The thing as a read serves it: its row and its folded fields**, in one
@@ -316,4 +289,120 @@ fn read_of_a_thing(entity: &Entity, folded: &Fold) -> (usize, usize, usize) {
         .chars()
         .count();
     (skeleton, rest, widest)
+}
+
+/// **A record measured as a read of its thing would serve it**, and the room one
+/// part has for it. The one measure: the write refusal asks it of a record about
+/// to land, and the boot asks it of every record already held, so the two cannot
+/// come to disagree about what fits.
+///
+/// `fold_in` says whether the record's own fields still have to be folded onto
+/// the thing: a record about to land has not been, and a stored one has.
+fn measure_record(
+    fact: &Fact,
+    entity: &Entity,
+    mut folded: Fold,
+    now: jiff::Timestamp,
+    fold_in: bool,
+) -> Measured {
+    // Stamped as the widest the store can stamp it, whatever the record
+    // carries now: a stamp prints from 20 to 30 characters, and a record
+    // that fits only with a short one would stop fitting on the next edit.
+    let mut stamped = fact.clone();
+    stamped.inserted_at = Some(widest_stamp(now));
+    // The same reasoning for the three words an edit can change: a record
+    // measured in its longest spelling of each does not grow when an edit
+    // archives it, settles it or restates how it is known, so a record that
+    // fits stays editable and a record already over stays repairable.
+    stamped.status = FactStatus::Archived;
+    stamped.standing = Standing::Settled;
+    stamped.provenance = Provenance::Observation;
+    let fact = &stamped;
+    if fold_in {
+        // The describing keys stay on their claim and never reach the thing.
+        let describing = crate::seed::describing_keys();
+        for (key, value) in &fact.fields {
+            if !describing.contains(key) {
+                folded.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    let record = crate::memory::wire::fact_json(fact, last_day(), Some(WIDEST_REVISION_COUNT));
+    let (skeleton, rest, widest) = read_of_a_thing(entity, &folded);
+    let row_room = record_room(rest, 0, widest);
+    Measured {
+        size: record.to_string().chars().count() + 1,
+        room: record_room(rest, skeleton, widest),
+        row_over: (skeleton > row_room).then_some((skeleton, row_room)),
+    }
+}
+
+/// **A stored record no answer could carry whole**, as the write refusal
+/// measures it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredOver {
+    /// The thing the record is on.
+    pub thing: String,
+    /// The record's address, which an edit reaches it through.
+    pub address: String,
+    /// The record as a read serves it, in characters.
+    pub size: usize,
+    /// The most characters of one record the same read can carry.
+    pub room: usize,
+}
+
+/// **What a pass over the stored records found.**
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StoredScan {
+    /// How many records were measured.
+    pub measured: usize,
+    /// The records that do not fit, in the order the scan held them.
+    pub over: Vec<StoredOver>,
+    /// The things whose own name, aliases and keys do not fit, so that no record
+    /// on them can. Each is named once, and its records are not repeated above.
+    pub things_over: Vec<(String, usize, usize)>,
+}
+
+/// **Every stored record that no answer could carry whole**, found in a scan the
+/// caller already holds. The measure is the one the write refusal uses.
+pub fn stored_records_over_the_ceiling(
+    scan: &[jojobot_domain::memory::search::DocScan],
+    now: jiff::Timestamp,
+) -> StoredScan {
+    let mut found = StoredScan::default();
+    for doc in scan {
+        let Some(entity) = &doc.entity else {
+            continue;
+        };
+        // A folded handle holds nothing of its own, and a read of it serves no
+        // records.
+        if entity.merged_into.is_some() {
+            continue;
+        }
+        // **The thing's own name, aliases and keys are asked once**, because when
+        // they do not fit no record on the thing can, and naming every record
+        // for it would be a hundred lines for one cause.
+        let (skeleton, rest, widest) = read_of_a_thing(entity, &doc.fields);
+        let row_room = record_room(rest, 0, widest);
+        if skeleton > row_room {
+            found.measured += doc.facts.len();
+            found
+                .things_over
+                .push((entity.id.to_string(), skeleton, row_room));
+            continue;
+        }
+        for fact in &doc.facts {
+            found.measured += 1;
+            let measured = measure_record(fact, entity, doc.fields.clone(), now, false);
+            if measured.size > measured.room {
+                found.over.push(StoredOver {
+                    thing: entity.id.to_string(),
+                    address: fact.address().to_string(),
+                    size: measured.size,
+                    room: measured.room,
+                });
+            }
+        }
+    }
+    found
 }

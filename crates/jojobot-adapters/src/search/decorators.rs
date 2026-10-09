@@ -37,12 +37,19 @@ impl IndexedMemory {
     /// and not one per answer. Every read re-scans now, and repeating the report
     /// on each would bury the reading that is worth having.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
+        self.rebuild_scanned().await.map(|scan| scan.len())
+    }
+
+    /// [`rebuild`](IndexedMemory::rebuild), handing back the scan it indexed, so
+    /// the boot can ask more of the corpus it already holds in memory without
+    /// reading the store again.
+    pub async fn rebuild_scanned(&self) -> Result<Vec<DocScan>, MemoryError> {
         let scan = self.rescan().await?;
         let known = search::known_entities(&scan);
         for doc in &scan {
             report_consistency(doc, &known);
         }
-        Ok(scan.len())
+        Ok(scan)
     }
 
     /// Replace the projection from a full scan of the store, and hand back what

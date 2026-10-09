@@ -187,6 +187,16 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
 
     // The third boot is the one every read below goes through.
     let third = boot_current(&state_dir, store_port, &git_ref).await;
+    // **The boot measured the stored records and found none over the ceiling**, and
+    // said so: a boot that logged nothing here would be a pass that did not run.
+    assert!(
+        third
+            .log
+            .iter()
+            .any(|line| line.contains("stored records: none is over the ceiling")),
+        "the boot of a store recorded at {git_ref} did not say it measured the stored records: {:?}",
+        third.log
+    );
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
         .await
         .expect("connecting to the current binary");
@@ -479,7 +489,33 @@ async fn the_scan_for_oversized_records_finds_one_stored_over_the_ceiling() {
     }
     editing.stop().await;
 
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let booted = boot_current_allowing(&state_dir, store_port, &git_ref, true).await;
+    // **The boot names the record**: its address, which carries the thing's handle,
+    // once, as a warning.
+    let named: Vec<&String> = booted
+        .log
+        .iter()
+        .filter(|line| line.contains("STORED RECORD OVER THE CEILING"))
+        .collect();
+    assert_eq!(
+        named.len(),
+        1,
+        "one record, one warning: {:?}",
+        booted.log
+    );
+    assert!(
+        named[0].contains(&format!("{handle}#{local}")),
+        "the warning names the record's address {handle}#{local}: {}",
+        named[0]
+    );
+    assert!(
+        !booted
+            .log
+            .iter()
+            .any(|line| line.contains("none is over the ceiling")),
+        "a store that holds one does not say it holds none: {:?}",
+        booted.log
+    );
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
@@ -553,6 +589,18 @@ impl Booted {
 /// boot's own account of itself: it reaches its serving line, and it says no
 /// part of its own boot failed.
 async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &str) -> Booted {
+    boot_current_allowing(state_dir, store_port, git_ref, false).await
+}
+
+/// **The same boot, for a store that holds a record over the ceiling on purpose.**
+/// The boot names each one in a warning, which is its job, so that warning is the
+/// one more the gate does not count as a degradation.
+async fn boot_current_allowing(
+    state_dir: &std::path::Path,
+    store_port: u16,
+    git_ref: &str,
+    stored_over_the_ceiling: bool,
+) -> Booted {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
@@ -622,10 +670,10 @@ async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &st
     let warned: Vec<&String> = seen
         .iter()
         .filter(|line| {
-            line.contains("ERROR")
-                || (line.contains("WARN")
-                    && !line.contains(WARNING_THE_GATE_CAUSES)
-                    && !is_the_recorded_ambiguous_handle(line))
+            let expected = line.contains(WARNING_THE_GATE_CAUSES)
+                || is_the_recorded_ambiguous_handle(line)
+                || (stored_over_the_ceiling && line.contains("OVER THE CEILING"));
+            line.contains("ERROR") || (line.contains("WARN") && !expected)
         })
         .collect();
     assert!(
