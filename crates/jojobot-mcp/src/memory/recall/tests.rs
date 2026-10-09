@@ -5496,6 +5496,96 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
     );
 }
 
+/// **Naming a run tells the caller nothing about how many runs other bots have.**
+/// A browse of runs counts the rest as `withheld`, because the caller asked for
+/// the runs and is owed the number it was not shown. A subject names one thing:
+/// the caller's own run comes back with nothing withheld, and another bot's run
+/// is refused as theirs and nothing else is said of the bots that hold runs.
+///
+/// Three bots hold runs so the count means something: gamma, delta with two and
+/// epsilon with one. Paired in one case: the browse still counts delta's and
+/// epsilon's runs, so a count that is gone altogether fails here, and a subject
+/// read that still reports it fails above.
+#[tokio::test]
+async fn naming_a_run_withholds_nothing_and_a_browse_of_runs_still_counts_the_rest() {
+    let jojobot = crate::harness::handler();
+    let gamma = as_bot(&jojobot, "gamma");
+    let own = journal_entry(&jojobot, &gamma, "gamma's own beat").await["session"]
+        .as_str()
+        .expect("journal answers with the session it landed in")
+        .to_string();
+    let mut delta_runs = Vec::new();
+    for _ in 0..2 {
+        let delta = as_bot(&jojobot, "delta");
+        let receipt = journal_entry(&jojobot, &delta, "delta's own beat").await;
+        delta_runs.push(format!(
+            "session:{}",
+            receipt["session"].as_str().expect("the run it landed in")
+        ));
+    }
+    let epsilon = as_bot(&jojobot, "epsilon");
+    journal_entry(&jojobot, &epsilon, "epsilon's own beat").await;
+    let own_handle = format!("session:{own}");
+
+    let named = |subject: &str| RecallArgs {
+        sid: Some(gamma.clone()),
+        ..of(subject)
+    };
+
+    // Its own run: shown, and nothing is withheld.
+    let mine = json_of(
+        &jojobot
+            .recall(Parameters(named(&own_handle)))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(mine["objects"][0]["id"], own_handle, "{mine}");
+    assert_eq!(
+        mine["withheld"], 0,
+        "naming the caller's own run withholds nothing: {mine}"
+    );
+
+    // Another bot's run: refused as theirs, and the answer carries no count of
+    // anybody's runs.
+    let refused = blocked(
+        &jojobot
+            .recall(Parameters(named(&delta_runs[0])))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(refused["attempted"], delta_runs[0], "{refused}");
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains("not yours")),
+        "another bot's run is refused as theirs: {refused}"
+    );
+    assert!(
+        refused.get("withheld").is_none(),
+        "a refusal carries no count of other runs: {refused}"
+    );
+
+    // A browse is unchanged: the caller's own, and delta's two and epsilon's one
+    // counted.
+    let browse = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("session".into()),
+                subject: None,
+                sid: Some(gamma.clone()),
+                ..of("unused")
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(
+        browse["objects"].as_array().map(Vec::len),
+        Some(1),
+        "{browse}"
+    );
+    assert_eq!(browse["withheld"], 3, "{browse}");
+}
+
 /// **A read of runs asks the board for the caller's own and counts the rest.**
 /// Every run on the board used to be read as summaries to find the caller's own
 /// and to count the others, so the read grew with every run any bot ever had.

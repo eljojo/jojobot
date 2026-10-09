@@ -2113,23 +2113,31 @@ impl Jojobot {
         // of the answer; it is the ONLY guard now, not a redundant second one,
         // because nothing upstream of it scopes by bot any more.
         // **The count is the walk's own `withheld`, taken without loading the
-        // runs**: the runs of other bots that answer the selection's parent. The
-        // one run a subject names may be another bot's, and is then refused as
-        // theirs, so an answer that shows a count never holds a run that the walk
-        // would count twice.
+        // runs**: the runs of other bots that answer the selection's parent. It is
+        // owed to a caller that BROWSES runs, who asked for all of them and was
+        // shown its own. A subject names one thing, so naming a run says nothing of
+        // how many other runs there are: the caller's own comes back with nothing
+        // withheld, and another bot's is refused as theirs.
         let wants_sessions = query.select.kind == Some(EntityKind::SESSION)
             || query
                 .select
                 .subject
                 .as_ref()
                 .is_some_and(|s| s.kind() == Some(EntityKind::SESSION));
+        let browses_runs =
+            query.select.subject.is_none() && query.select.kind == Some(EntityKind::SESSION);
         // **How many runs the walk was not shown and must still be told exist.**
         // For a caller with no identity that is every run, and it owns none; for
-        // one with an identity it is the other bots' runs.
+        // one with an identity it is the other bots' runs. Read for a browse of
+        // runs only.
         let mut runs_counted_not_shown = 0usize;
         let session_docs: Vec<jojobot_domain::memory::search::DocScan> = if wants_sessions {
             let read = async {
-                let counts = self.sessions.run_counts().await?;
+                let counts = if browses_runs {
+                    self.sessions.run_counts().await?
+                } else {
+                    Default::default()
+                };
                 let Some(caller) = caller.as_ref() else {
                     return Ok((Vec::new(), counts.values().sum::<usize>()));
                 };
@@ -2215,11 +2223,9 @@ impl Jojobot {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
         };
-        // The runs the walk was not shown, counted with the ones it withheld. A
-        // caller with an identity is told of every other bot's run, named by a
-        // subject or not; one with none is told only on a browse of every run,
-        // because a named subject that is a run never reaches an answer for it.
-        let withheld = if caller.is_some() || query.select.kind == Some(EntityKind::SESSION) {
+        // The runs the walk was not shown, counted with the ones it withheld, on a
+        // browse of runs and never when a subject is named.
+        let withheld = if browses_runs {
             withheld + runs_counted_not_shown
         } else {
             withheld
