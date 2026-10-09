@@ -15,6 +15,8 @@ use std::process::Command;
 /// `FAKE_BETA=ok` makes it pass. `FAKE_CRASH=<file>` kills that job with
 /// SIGKILL before it prints anything, as a crashed suite is.
 fn write_cargo(dir: &Path) -> PathBuf {
+    // Held until the file is closed and executable: see [`FORK_FENCE`].
+    let _fence = FORK_FENCE.write().unwrap_or_else(|e| e.into_inner());
     let path = dir.join("cargo");
     let script = r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
@@ -90,6 +92,37 @@ esac
     path
 }
 
+/// **No child starts while a stub's write handle is open.**
+///
+/// The cases here run on threads released together, and each writes an
+/// executable `cargo` stub and has a child run it. A child started on another
+/// thread while a stub is still open for writing carries a copy of that handle
+/// until it execs, and an exec of the stub in that window fails with "Text file
+/// busy". The stub is not at fault and the bar under test is not either, so the
+/// run reads as a bar that stopped after one phase, or never ran one.
+///
+/// Writing a stub takes the write side; starting a child takes the read side
+/// from the fork until the exec has happened, and releases it before waiting,
+/// so children still run side by side. A rename would not do instead: the copy
+/// of the handle belongs to the file, not to its name.
+static FORK_FENCE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// **Start a child, from the fork to the exec.** Every child these cases start
+/// goes through here, so this is the one place that decides how they start.
+fn fenced_spawn(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    let _fence = FORK_FENCE.read().unwrap_or_else(|e| e.into_inner());
+    cmd.spawn()
+}
+
+/// **Run a child to its end and take what it printed**, started through the
+/// fence.
+fn output_fenced(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    fenced_spawn(cmd)?.wait_with_output()
+}
+
 struct Ran {
     stdout: String,
     success: bool,
@@ -140,17 +173,18 @@ fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
     let dir = a_directory_of_this_runs_own();
     fs::create_dir_all(&dir).expect("scratch dir");
     let cargo = write_cargo(&dir);
-    let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .args(args)
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        // The caller's own limit must not decide what a case measures.
-        .env_remove("BAR_JOBS")
-        .envs(env.iter().copied())
-        .output()
-        .expect("run bar");
+    let out = output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(args)
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            // The caller's own limit must not decide what a case measures.
+            .env_remove("BAR_JOBS")
+            .envs(env.iter().copied()),
+    )
+    .expect("run bar");
     let calls = fs::read_to_string(dir.join("argv.log"))
         .unwrap_or_default()
         .lines()
@@ -483,15 +517,16 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
     let dir = std::env::temp_dir().join(format!("run-root-case-{}-{nanos}", std::process::id()));
     fs::create_dir_all(&dir).expect("scratch dir");
     let cargo = write_cargo(&dir);
-    let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("check")
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .env_remove("BAR_JOBS")
-        .output()
-        .expect("run bar");
+    let out = output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env_remove("BAR_JOBS"),
+    )
+    .expect("run bar");
     let told: Vec<String> = fs::read_to_string(dir.join("tmpdir.log"))
         .unwrap_or_default()
         .lines()
@@ -547,4 +582,64 @@ fn two_runs_that_read_one_clock_value_get_two_directories() {
             .collect()
     });
     assert_eq!(names.len(), 32, "two callers were given one directory");
+}
+
+/// **A stub written while other runs start children still executes.** The cases
+/// above run on threads released together, and each writes its own stub `cargo`
+/// and has the bar run it. A child started on another thread between the
+/// stub's creation and the close of its write handle carries a copy of that
+/// handle until it execs, and an exec of the stub in that window fails with
+/// "Text file busy". The run then reads as a bar that stopped after one phase,
+/// or never ran one.
+///
+/// So this writes stubs one after another while other threads start children
+/// without pause, and executes each one. Every exec has to succeed.
+#[test]
+fn a_stub_written_while_other_runs_start_children_still_executes() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    let mut child = fenced_spawn(
+                        Command::new("true")
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null()),
+                    )
+                    .expect("an ordinary child starts");
+                    child.wait().expect("an ordinary child ends");
+                }
+            });
+        }
+        let mut refused = Vec::new();
+        for _ in 0..400 {
+            let dir = a_directory_of_this_runs_own();
+            fs::create_dir_all(&dir).expect("scratch dir");
+            let cargo = write_cargo(&dir);
+            let started = fenced_spawn(
+                Command::new(&cargo)
+                    .arg("fmt")
+                    .env("TMPDIR", &dir)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null()),
+            );
+            match started {
+                Ok(mut child) => {
+                    child.wait().expect("the stub ends");
+                }
+                Err(e) => refused.push(e.to_string()),
+            }
+            let _ = fs::remove_dir_all(&dir);
+        }
+        stop.store(true, Ordering::Relaxed);
+        assert!(
+            refused.is_empty(),
+            "{} of 400 stubs could not be executed: {:?}",
+            refused.len(),
+            refused.first()
+        );
+    });
 }
