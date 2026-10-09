@@ -16,7 +16,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check report narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried
+.PHONY: help check dev report narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -72,6 +72,21 @@ report: ## The report bar: check less the slow jobs the history lets go
 # is accepted by name. It rewrites the files and judges nothing.
 snapshot: ## Rewrite the checked-in files of every text a model reads
 	SNAPSHOT_UPDATE=1 $(MAKE) narrow CRATE=jojobot-mcp FILTER=every_text_a_model_reads_matches_the_snapshot
+
+# **The dev bar.** The everyday loop, a level below the report: the format check,
+# a build, then the unit tests and the fast test files of the packages the
+# branch touches and of the packages that depend on them. The touched packages
+# are the ones holding a path that differs from the merge base with `main`
+# (committed, uncommitted or untracked); the dependents come from `cargo
+# metadata`. A test file counts as slow on the history's word, as in the report
+# level, and a file with no history runs. It runs no lint, no room and no
+# doc-test, and its verdict names every file and package it left out.
+#
+# 🚨 **It is not a boundary run.** A defect that exists only where two packages
+# meet, or in a file it skipped, is invisible to it. `make check` is the bar
+# before a report or a carry. A diff that touches no package is refused.
+dev: ## The dev bar: format, build, and the tests of what the branch touched
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #

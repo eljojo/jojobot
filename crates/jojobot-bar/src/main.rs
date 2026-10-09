@@ -22,6 +22,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+use jojobot_bar::dev;
 use jojobot_bar::{
     CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
     TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision, is_slow,
@@ -55,7 +56,10 @@ fn main() -> ExitCode {
     };
     // **Held until the run ends**, so the directory its children work in goes
     // with it, whatever those children left.
-    let _run_root = if matches!(args.first().map(String::as_str), Some("check" | "rooms")) {
+    let _run_root = if matches!(
+        args.first().map(String::as_str),
+        Some("check" | "rooms" | "dev")
+    ) {
         sweep_orphaned_scratch();
         RunRoot::make()
     } else {
@@ -65,11 +69,12 @@ fn main() -> ExitCode {
         Some("check") => run_check(&known, Level::Boundary),
         Some("report") => run_check(&known, Level::Report),
         Some("narrow") => run_narrow(&args[1..], &known),
+        Some("dev") => run_dev(&args[1..], &known),
         Some("rooms") => run_rooms(&args[1..], &known),
         Some("call") => run_call(&args[1..]),
         _ => {
             eprintln!(
-                "usage: bar check | bar report | bar narrow --crate <name> [--filter <substring>] \
+                "usage: bar check | bar report | bar dev | bar narrow --crate <name> [--filter <substring>] \
                  | bar rooms --test <name> [--test <name> ...] | bar call ..."
             );
             return ExitCode::from(2);
@@ -327,6 +332,195 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     summary.test_phase(ok, &verdict, known);
     finish(&mut summary, &log_path);
     Ok(if test_healthy(ok, &verdict) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+/// **The paths the branch changed**, for `bar dev`: everything that differs
+/// from the merge base with `main`, committed or not, and the files git does
+/// not track yet. `None` when there is no merge base to take.
+fn changed_paths() -> Option<Vec<String>> {
+    let base = git_stdout(&["merge-base", "main", "HEAD"]);
+    let base = base.trim();
+    if base.is_empty() {
+        return None;
+    }
+    let mut paths: Vec<String> = git_stdout(&["diff", "--name-only", base])
+        .lines()
+        .chain(git_stdout(&["ls-files", "--others", "--exclude-standard"]).lines())
+        .map(str::to_string)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Some(paths)
+}
+
+/// **`bar dev`: the everyday loop, a level below the report.** It checks the
+/// format, builds the workspace, then runs the unit tests and the fast test
+/// files of the packages the branch touches and of those that depend on them.
+/// It runs no lint, no room and no doc-test, and the verdict names what it left
+/// out and says it is not a boundary run.
+///
+/// **Nothing touched is refused**, as a selection that matched no test is: a
+/// green over nothing is the answer this guard exists to end.
+fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
+    if let Some(other) = args.first() {
+        eprintln!("bar dev: unrecognised argument '{other}'");
+        return Ok(ExitCode::from(2));
+    }
+    let cargo = cargo_bin();
+    let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
+        Ok(limit) => limit,
+        Err(refusal) => {
+            eprintln!("bar: {refusal}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+    let log_path = PathBuf::from("target/bar/dev.log");
+    fresh_log(&log_path)?;
+    let mut summary = Summary::new();
+
+    let (ok, _) = run_phase(
+        &log_path,
+        "cargo fmt --all --check",
+        &cargo,
+        &["fmt", "--all", "--check"],
+    )?;
+    if !ok {
+        summary.phase_failed("fmt-check", "not formatted — see log");
+        summary.phase_skipped("build");
+        summary.phase_skipped("test");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("fmt-check", "formatted");
+
+    // **Only stdout is read as metadata**: a warning on stderr is not JSON. The
+    // capture is large, so the log gets the command and any stderr, not the
+    // capture.
+    let metadata = in_the_run_root(&mut Command::new(&cargo))
+        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
+        .output()?;
+    {
+        let mut f = OpenOptions::new().append(true).open(&log_path)?;
+        writeln!(
+            f,
+            "\n$ cargo metadata --no-deps --format-version 1 --locked"
+        )?;
+        f.write_all(&metadata.stderr)?;
+    }
+    let workspace = if metadata.status.success() {
+        dev::parse_metadata(&String::from_utf8_lossy(&metadata.stdout))
+    } else {
+        Err("cargo metadata failed — see log".to_string())
+    };
+    let workspace = match workspace {
+        Ok(workspace) => workspace,
+        Err(reason) => {
+            summary.phase_failed(
+                "scope",
+                &format!("the packages could not be read: {reason}"),
+            );
+            summary.phase_skipped("build");
+            summary.phase_skipped("test");
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    // **The scope.** With no merge base to take, every package runs: the bar
+    // errs toward running more, and the line says why.
+    let (touched, why) = match changed_paths() {
+        Some(paths) => (dev::touched(&paths, &workspace), None),
+        None => (
+            dev::Touched {
+                whole_workspace: true,
+                ..dev::Touched::default()
+            },
+            Some("there is no merge base with main, so every package is selected"),
+        ),
+    };
+    let selected = dev::with_dependents(&touched, &workspace);
+    if selected.is_empty() {
+        summary.phase_failed(
+            "scope",
+            &format!(
+                "the diff touches no package ({}) — nothing would run",
+                dev::outside_line(&touched.outside)
+            ),
+        );
+        summary.phase_skipped("build");
+        summary.phase_skipped("test");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::from(2));
+    }
+    let named = |set: &std::collections::BTreeSet<String>| {
+        set.iter().cloned().collect::<Vec<_>>().join(", ")
+    };
+    summary.phase_ok(
+        "scope",
+        &format!(
+            "touched {}{}; selected {} of {}: {}; {}",
+            if touched.whole_workspace {
+                "the whole workspace".to_string()
+            } else {
+                named(&touched.crates)
+            },
+            why.map_or(String::new(), |w| format!(" ({w})")),
+            selected.len(),
+            workspace.packages.len(),
+            named(&selected),
+            dev::outside_line(&touched.outside),
+        ),
+    );
+
+    let (ok, text) = run_phase(
+        &log_path,
+        "cargo build --workspace --locked",
+        &cargo,
+        &["build", "--workspace", "--locked"],
+    )?;
+    if !ok {
+        let verdict = summarize_test_output(&text);
+        if verdict.compiled {
+            summary.phase_failed("build", "see log");
+        } else {
+            summary.phase_failed("build", "DID NOT COMPILE — see log");
+        }
+        summary.phase_skipped("test");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("build", "compiled");
+
+    let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
+    let home = std::env::var("HOME").ok();
+    let history = history_root(variable.as_deref(), home.as_deref())
+        .map(|root| read_history(&root, &["check", "report"]))
+        .unwrap_or_default();
+    let plan = dev::plan(&selected, &workspace, &history, &is_slow);
+    summary.phase_ok(
+        "level",
+        &format!(
+            "dev, {} jobs; {} test files ran with no recorded history",
+            plan.run.len(),
+            plan.unmeasured
+        ),
+    );
+    summary.phase_ok("skipped", &dev::skipped_line(&plan, &selected, &workspace));
+    summary.phase_ok(
+        "boundary",
+        "NOT a boundary run: no real store guaranteed absent; make check is the bar before a \
+         report or a carry",
+    );
+
+    let (ok, text) = run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None)?;
+    let verdict = summarize_test_output(&text);
+    summary.test_phase(ok, &verdict, known);
+    finish(&mut summary, &log_path);
+    Ok(if test_healthy(ok, &verdict) && summary.green {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
