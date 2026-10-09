@@ -3678,3 +3678,199 @@ fn a_fact_belongs_to_its_subject_and_to_the_page_it_sits_on() {
     assert!(says("person:ralph"), "it is about her");
     assert!(says("event:birthday-party"), "and it sits on the party");
 }
+
+/// A thing with one record on it that points at `target`.
+fn a_thing_pointing_at(handle: &str, name: &str, target: &str) -> DocScan {
+    doc(
+        entity(handle, name),
+        "",
+        vec![Fact {
+            edge: Some(crate::memory::Edge {
+                shape: EdgeShape::Connection,
+                object: EntityId(target.into()),
+            }),
+            ..fact(
+                handle,
+                "f1",
+                "the wrench was last used on the day of the run",
+            )
+        }],
+    )
+}
+
+/// A walk out of `handle`, as `asking` and `depth` hops deep, prose on.
+fn walking_out_of(handle: &str, asking: &str, depth: usize) -> GraphQuery {
+    GraphQuery {
+        select: Selection {
+            subject: Some(EntityId(handle.into())),
+            asked_by: Some(EntityId(asking.into())),
+            ..Selection::default()
+        },
+        include: Include {
+            facts: true,
+            prose: true,
+            stood_for: false,
+        },
+        follow: Some(Follow {
+            depth,
+            ..Follow::hop()
+        }),
+        history: None,
+    }
+}
+
+/// 🚨 **A walk never lands in another identity's object, at any hop.**
+///
+/// The owner check guards where a walk starts; the objects it reaches by an
+/// edge, a mention, a ref or a field link are served by the same walk, and an
+/// owned object reached that way was served whatever its owner. A run is such
+/// an object: owned by its bot, named for its focus, holding its beats as
+/// prose. A record that points at a run therefore handed the run to whoever
+/// walked out from the record.
+///
+/// Both halves in one read, and the owner's own walk as the control: the
+/// owner reaches the run from the thing, so a walk that reached nothing would
+/// pass the negative on a build that never follows an edge.
+#[test]
+fn a_walk_does_not_land_in_another_identitys_object() {
+    let scanned = vec![
+        a_thing_pointing_at(
+            "thing:torque-wrench",
+            "The Torque Wrench",
+            "session:bart-run",
+        ),
+        a_run(
+            "bot:bart",
+            "bart-run",
+            "the donut heist",
+            "bart's secret beat",
+        ),
+    ];
+
+    let owner = resolved(
+        &scanned,
+        &[],
+        &walking_out_of("thing:torque-wrench", "bot:bart", 1),
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&owner[0].connected),
+        vec!["session:bart-run"],
+        "the owner reaches his own run from the thing"
+    );
+    assert!(
+        format!("{owner:?}").contains("secret beat"),
+        "and reads it whole: {owner:?}"
+    );
+
+    let other = resolved(
+        &scanned,
+        &[],
+        &walking_out_of("thing:torque-wrench", "bot:lisa", 1),
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&other),
+        vec!["thing:torque-wrench"],
+        "lisa reaches the thing"
+    );
+    assert!(
+        other[0].connected.is_empty(),
+        "and no run comes back with it: {other:?}"
+    );
+    assert!(
+        other[0].unwalked,
+        "the thing says an edge of its own was not followed: {other:?}"
+    );
+    let everything = format!("{other:?}");
+    assert!(
+        !everything.contains("donut heist") && !everything.contains("secret beat"),
+        "the words of another bot's run reached lisa: {everything}"
+    );
+}
+
+/// **The check holds at every hop, not only the first.** The run is two hops
+/// from the root, behind a thing the caller may read, so a check that guarded
+/// only the first step would pass the case above and fail this one.
+#[test]
+fn a_walk_checks_the_owner_at_every_hop() {
+    let scanned = vec![
+        a_thing_pointing_at(
+            "thing:marge-wrench",
+            "The Marge Wrench",
+            "thing:torque-wrench",
+        ),
+        a_thing_pointing_at(
+            "thing:torque-wrench",
+            "The Torque Wrench",
+            "session:bart-run",
+        ),
+        a_run(
+            "bot:bart",
+            "bart-run",
+            "the donut heist",
+            "bart's secret beat",
+        ),
+    ];
+    let other = resolved(
+        &scanned,
+        &[],
+        &walking_out_of("thing:marge-wrench", "bot:lisa", 2),
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&other[0].connected),
+        vec!["thing:torque-wrench"],
+        "the second thing is reached: the walk went past the first hop"
+    );
+    assert!(
+        other[0].connected[0].connected.is_empty(),
+        "and the run behind it is not: {other:?}"
+    );
+    let everything = format!("{other:?}");
+    assert!(
+        !everything.contains("donut heist") && !everything.contains("secret beat"),
+        "the words of another bot's run reached lisa two hops out: {everything}"
+    );
+}
+
+/// **What the walk did not follow is counted.** A walk from a kind starts in no
+/// run, so the count a selection keeps for its own roots says nothing about a
+/// run the walk left out at a hop; the answer's count has to include it, once
+/// however many hops pointed at it.
+#[test]
+fn a_walk_counts_the_objects_it_did_not_follow() {
+    let scanned = vec![
+        a_thing_pointing_at(
+            "thing:torque-wrench",
+            "The Torque Wrench",
+            "session:bart-run",
+        ),
+        a_thing_pointing_at("thing:marge-wrench", "The Marge Wrench", "session:bart-run"),
+        a_run(
+            "bot:bart",
+            "bart-run",
+            "the donut heist",
+            "bart's secret beat",
+        ),
+    ];
+    let query = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::THING),
+            asked_by: Some(EntityId("bot:lisa".into())),
+            ..Selection::default()
+        },
+        follow: Some(Follow::hop()),
+        ..GraphQuery::default()
+    };
+    let answer = resolve(&scanned, &[], &query).expect("a kind selects");
+    assert_eq!(
+        handles(&answer.objects),
+        vec!["thing:marge-wrench", "thing:torque-wrench"],
+        "lisa reaches both things"
+    );
+    assert_eq!(
+        answer.withheld, 1,
+        "the one run two things point at is counted once: {answer:?}"
+    );
+}

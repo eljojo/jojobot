@@ -16,7 +16,7 @@
 //! own documents and returns objects; nothing here does I/O, so the walk is
 //! testable without a store and identical whichever store answers.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FactStatus,
@@ -1406,6 +1406,10 @@ struct Ctx<'a> {
     /// **Who each owned object belongs to.** Absent for everything the whole
     /// instance can read, which is every stored row.
     owners: BTreeMap<&'a EntityId, &'a EntityId>,
+    /// **The owned objects the walk reached and did not follow into**, once each
+    /// however many links pointed at them. Filled while the answer is built and
+    /// read after, so the answer can count what it left out at a hop.
+    hops_withheld: std::cell::RefCell<BTreeSet<EntityId>>,
     /// Every entity, in handle order — what the near-miss screen reads.
     index: Vec<Entity>,
     /// Each entity's prose.
@@ -1554,6 +1558,7 @@ impl<'a> Ctx<'a> {
         Ctx {
             entities,
             owners,
+            hops_withheld: Default::default(),
             index,
             prose,
             fields,
@@ -1688,14 +1693,33 @@ impl<'a> Ctx<'a> {
     fn withheld(&self, select: &Selection) -> usize {
         self.entities
             .values()
-            .filter(|e| select.kind.is_none_or(|k| e.kind == k))
-            .filter(|e| {
-                select
-                    .parent
-                    .as_ref()
-                    .is_none_or(|p| e.parent.as_ref() == Some(p))
-            })
+            .filter(|e| self.matches_kind_and_parent(e, select))
             .filter(|e| !self.readable_by(&e.id, select))
+            .count()
+            + self.hops_withheld_beyond(select)
+    }
+
+    /// Does this entity answer the selection's kind and parent, the two
+    /// narrowings the withheld count is taken over.
+    fn matches_kind_and_parent(&self, entity: &Entity, select: &Selection) -> bool {
+        select.kind.is_none_or(|k| entity.kind == k)
+            && select
+                .parent
+                .as_ref()
+                .is_none_or(|p| entity.parent.as_ref() == Some(p))
+    }
+
+    /// **The objects the walk left out at a hop that the count above did not
+    /// already take.** That count is over the objects the selection matched;
+    /// an owned object reached by a link is not one of them unless it also
+    /// answers the selection's kind and parent. Counted once each, and only
+    /// after the answer is built, because the walk is what fills the set.
+    fn hops_withheld_beyond(&self, select: &Selection) -> usize {
+        self.hops_withheld
+            .borrow()
+            .iter()
+            .filter_map(|id| self.entities.get(id))
+            .filter(|e| !self.matches_kind_and_parent(e, select))
             .count()
     }
 
@@ -1821,6 +1845,17 @@ impl<'a> Ctx<'a> {
                     ..follow.clone()
                 };
                 for (via, reached) in reachable {
+                    // **The owner is checked at every hop**, as it is where the
+                    // walk starts. An owned object answers its owner alone, and a
+                    // link to it is no reason to hand it to somebody else: it is
+                    // left out, the object that pointed at it says an edge went
+                    // unfollowed, and the answer counts it. Nothing of it is
+                    // read first, so nothing of it can leak.
+                    if !self.readable_by(&reached, &query.select) {
+                        self.hops_withheld.borrow_mut().insert(reached);
+                        unwalked = true;
+                        continue;
+                    }
                     // An object the walk's filters do not keep is one this
                     // answer does not carry, so the object that pointed at it
                     // says an edge of its own went unfollowed — the same claim
