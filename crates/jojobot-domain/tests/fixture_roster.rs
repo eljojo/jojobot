@@ -1118,6 +1118,10 @@ const ORDINARY: &[&str] = &[
     "work:sigmo",
     "work:contract-blocks-nobody",
     "thing:contract-blocks-ledger",
+    "thing:contract-filter-gamma",
+    "thing:contract-filter-delta",
+    "thing:contract-filter-epsilon",
+    "thing:contract-filter-statusless",
 ];
 
 /// **The kinds whose handle names somebody**: a person, a pet, a place or an

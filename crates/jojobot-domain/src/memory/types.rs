@@ -164,12 +164,39 @@ pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
     }
 }
 
-/// **How a filter compares a record's value with the one it is looking for.**
+/// **The items a list value carries**, trimmed, with empty ones left out.
 ///
-/// Not an expression language and not an operator set a caller composes: each
-/// of these is licensed by what a key was DECLARED to hold, and a key with no
-/// declaration behind it has equality and nothing else. That is the whole
-/// mechanism keeping this from growing into a predicate builder.
+/// **This is the one place a list value is read apart.** How a list is stored is
+/// the store's business: today a list is one comma-separated value, and a store
+/// may come to keep one row or one index term per item. Everything that asks
+/// whether a list holds an item asks [`list_holds`], so a change in the shape of
+/// a list changes this and the store behind it, and no query built on it.
+pub fn list_items(value: &str) -> Vec<&str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// **Does this list value hold this item.** Whole items only: `skills` is not in
+/// `essay.rs, skills.rs`. The question a `contains` leaf asks, through the seam
+/// [`list_items`] names.
+pub fn list_holds(value: &str, item: &str) -> bool {
+    let item = item.trim();
+    !item.is_empty() && list_items(value).contains(&item)
+}
+
+/// **How a leaf of a filter compares a value with the one it is looking for.**
+///
+/// A filter is a tree ([`super::filter::Filter`]): `All`, `Any` and `Not` combine
+/// leaves, and each leaf asks one key one question. This enum is the relation a
+/// leaf can compare with, and it is not an operator a caller invents. Equality
+/// needs nothing. Each of the others is licensed by what a key was DECLARED to
+/// hold, and a leaf asking one of them of a key with no declaration behind it is
+/// refused by name rather than answered as equality. The declaration is what
+/// gives a comparison its meaning, which is the rule that keeps the tree a query
+/// language over typed things and not a predicate builder over strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compare {
     /// The value is that value. Whole and trimmed, never a substring.
@@ -488,11 +515,7 @@ impl Field {
         if !self.list {
             return vec![value];
         }
-        value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .collect()
+        list_items(value)
     }
 
     /// **A label on one record**, which never folds onto the thing. It holds

@@ -18,6 +18,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+use super::filter::{Filter, Test};
+
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FactStatus,
     MemoryError, guard, mention, search::DocScan, types, validate_subject,
@@ -158,25 +160,31 @@ impl FieldFilter {
         }
     }
 
-    /// Does this bag of fields satisfy the filter. It is handed the thing's
-    /// folded fields or one record's, and does not know which.
-    fn satisfied_by(&self, fields: &BTreeMap<String, String>) -> bool {
+    /// **This filter as a leaf of the filter tree**, the one thing a key filter
+    /// is evaluated by. A key with no value asks only that the key is carried;
+    /// a key with a value asks the comparison; no key asks about the value under
+    /// any key at all.
+    pub fn as_filter(&self) -> Filter {
         match (&self.key, &self.value) {
-            (Some(key), None) => fields.contains_key(key),
-            (Some(key), Some(wanted)) => fields
-                .get(key)
-                .is_some_and(|held| self.compare.holds_between(held, wanted)),
-            // **Any key at all.** The bag is the thing's folded fields or one
-            // record's, and never its prose — so this answers *held as a
-            // value* rather than *written down somewhere*.
-            (None, Some(wanted)) => fields
-                .values()
-                .any(|held| self.compare.holds_between(held, wanted)),
+            (Some(key), None) => Filter::exists(key),
+            (Some(key), Some(wanted)) => Filter::comparing(key, self.compare, wanted),
+            (None, Some(wanted)) => Filter::anywhere(Test::of(self.compare, wanted)),
             // Refused before it reaches here; false rather than true so a
             // filter that asked nothing cannot select everything.
-            (None, None) => false,
+            (None, None) => Filter::Any(Vec::new()),
         }
     }
+}
+
+/// **Every filter of one scope, as one tree.** An AND of leaves, which is how a
+/// list of key filters has always combined.
+fn all_of_scope<'f>(filters: impl Iterator<Item = &'f FieldFilter>, scope: Scope) -> Filter {
+    Filter::All(
+        filters
+            .filter(|f| f.scope == scope)
+            .map(FieldFilter::as_filter)
+            .collect(),
+    )
 }
 
 /// **A filter has to ask something.**
@@ -208,9 +216,9 @@ fn holds_all<'f>(
     held: Option<&BTreeMap<String, String>>,
     filters: impl Iterator<Item = &'f FieldFilter>,
 ) -> bool {
-    filters
-        .filter(|f| f.scope == Scope::Thing)
-        .all(|f| held.is_some_and(|fields| f.satisfied_by(fields)))
+    let tree = all_of_scope(filters, Scope::Thing);
+    matches!(&tree, Filter::All(leaves) if leaves.is_empty())
+        || held.is_some_and(|fields| tree.holds(fields))
 }
 
 /// **Which objects the answer is about.** Every field narrows, and they
@@ -314,10 +322,7 @@ impl Selection {
     /// Does this fact answer every filter asked of a record. A fact carrying no
     /// field answers none of them.
     fn keeps(&self, fact: &Fact) -> bool {
-        self.fields
-            .iter()
-            .filter(|f| f.scope == Scope::Record)
-            .all(|f| f.satisfied_by(&fact.fields))
+        all_of_scope(self.fields.iter(), Scope::Record).holds(&fact.fields)
             && self.near.is_none_or(|near| near.holds(fact))
     }
 }
@@ -970,49 +975,18 @@ fn check_declared(
         .iter()
         .chain(query.follow.iter().flat_map(|f| &f.keeping));
     for field in filters {
-        let Some(holds) = field.compare.licensed_by() else {
-            continue;
-        };
-        let Some(wanted) = field.value.as_deref() else {
+        // A comparison against no value asks nothing the tree can read: the
+        // leaf of a key with no value is only "is it carried".
+        if field.compare.licensed_by().is_some() && field.value.is_none() {
             return Err(MemoryError::InvalidQuery(format!(
                 "'{}' compares against a value and none was given",
                 field.compare.as_token(),
             )));
-        };
-        if !field.compare.can_ask_for(wanted) {
-            return Err(MemoryError::InvalidQuery(format!(
-                "'{}' asks about {}s and '{wanted}' is not one",
-                field.compare.as_token(),
-                holds.as_token(),
-            )));
         }
-        // **The declaration is what licenses the operator.** A key nobody
-        // declared keeps equality, which is why this is refused rather than
-        // quietly answered: a caller who asked for an ordering and got equality
-        // would read the answer as an ordering.
-        // **An ordering needs a key to license it.** A filter asking about the
-        // value under any key at all has no declaration to read, so there is
-        // nothing that could permit a comparison other than equality.
-        let Some(key) = field.key.as_deref() else {
-            return Err(MemoryError::InvalidQuery(format!(
-                "'{}' needs a key: an ordering is licensed by what that key was declared to \
-                 hold, and a filter naming no key has no declaration to read. Name the key, or \
-                 ask for the value itself",
-                field.compare.as_token(),
-            )));
-        };
-        if !declarations
-            .iter()
-            .any(|d| d.field(key).is_some_and(|f| f.holds == holds))
-        {
-            return Err(MemoryError::InvalidQuery(format!(
-                "'{}' needs a type declaring '{}' to hold a {}. Declare one, or ask for the value \
-                 itself",
-                field.compare.as_token(),
-                key,
-                holds.as_token(),
-            )));
-        }
+        // **The declaration is what licenses the operator**, and the tree judges
+        // it: a comparison on a key nobody declared is refused, naming the
+        // declaration that would license it.
+        field.as_filter().validate(declarations, None)?;
     }
     if let Some(Along::Relation(name)) = query.follow.as_ref().map(|f| &f.along)
         && relation_key(name, declarations).is_none()
@@ -2065,13 +2039,8 @@ impl<'a> Ctx<'a> {
             return mine.collect();
         }
         let keeping = follow.map(|f| f.keeping.as_slice()).unwrap_or_default();
-        mine.filter(|f| {
-            keeping
-                .iter()
-                .filter(|k| k.scope == Scope::Record)
-                .all(|k| k.satisfied_by(&f.fields))
-        })
-        .collect()
+        let kept = all_of_scope(keeping.iter(), Scope::Record);
+        mine.filter(|f| kept.holds(&f.fields)).collect()
     }
 
     /// The entities one hop from `id`, in handle order, each with the link the

@@ -12397,6 +12397,154 @@ pub async fn a_declared_type_governs_no_write<M: Memory>(store: &M) {
     );
 }
 
+/// The slugs of the things whose stored fields satisfy `keep`, in the order given.
+async fn kept_by<M: Memory>(
+    store: &M,
+    things: &[(EntityId, Vec<(&str, &str)>)],
+    keep: impl Fn(&std::collections::BTreeMap<String, String>) -> bool,
+) -> Vec<String> {
+    let mut kept = Vec::new();
+    for (id, _) in things {
+        let held = store.fields(id).await.expect("the store answers");
+        if keep(&held) {
+            kept.push(id.slug().to_string());
+        }
+    }
+    kept
+}
+
+/// **A filter tree gives the same answer from every store.** Three things hold a
+/// status, and one of them a comma-list and a number. The tree is evaluated on
+/// what the store says each holds, and on what its records say, and the walk
+/// that recall uses answers the same filters through the same tree. A fake and a
+/// real store that folded differently would give different answers here.
+pub async fn a_filter_tree_gives_the_same_answer_from_every_store<M: Memory>(store: &M) {
+    use crate::memory::filter::Filter;
+    use crate::memory::types::Compare;
+
+    let things = [
+        (
+            EntityId("thing:contract-filter-gamma".into()),
+            vec![
+                ("status", "now"),
+                ("touches", "essay.rs, skills.rs"),
+                ("size", "10"),
+            ],
+        ),
+        (
+            EntityId("thing:contract-filter-delta".into()),
+            vec![("status", "next"), ("size", "2")],
+        ),
+        (
+            EntityId("thing:contract-filter-epsilon".into()),
+            vec![("status", "done")],
+        ),
+        // A thing that holds no status at all.
+        (
+            EntityId("thing:contract-filter-statusless".into()),
+            vec![("filtered_note", "holds no status")],
+        ),
+    ];
+    for (id, fields) in &things {
+        capture(
+            store,
+            NewFact {
+                fields: fields
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                ..NewFact::about(id.clone(), "where it stands", date(2026, 10, 1))
+            },
+        )
+        .await;
+    }
+    let any = Filter::Any(vec![
+        Filter::equals("status", "now"),
+        Filter::equals("status", "next"),
+    ]);
+    assert_eq!(
+        kept_by(store, &things, |held| any.holds(held)).await,
+        ["contract-filter-gamma", "contract-filter-delta"]
+    );
+    // Not is the complement, so it keeps the thing with no status; != asks that
+    // the key is held, so it does not.
+    let not_done = Filter::negated(Filter::equals("status", "done"));
+    assert_eq!(
+        kept_by(store, &things, |held| not_done.holds(held)).await,
+        [
+            "contract-filter-gamma",
+            "contract-filter-delta",
+            "contract-filter-statusless"
+        ]
+    );
+    let differs = Filter::not_equals("status", "done");
+    assert_eq!(
+        kept_by(store, &things, |held| differs.holds(held)).await,
+        ["contract-filter-gamma", "contract-filter-delta"]
+    );
+    let skills = Filter::contains("touches", "skills.rs");
+    assert_eq!(
+        kept_by(store, &things, |held| skills.holds(held)).await,
+        ["contract-filter-gamma"]
+    );
+    let piece = Filter::contains("touches", "skills");
+    assert!(
+        kept_by(store, &things, |held| piece.holds(held))
+            .await
+            .is_empty(),
+        "a piece of an item is not an item"
+    );
+    let larger = Filter::comparing("size", Compare::Greater, "5");
+    assert_eq!(
+        kept_by(store, &things, |held| larger.holds(held)).await,
+        ["contract-filter-gamma"],
+        "ten is greater than five and two is not, however the strings sort"
+    );
+
+    // Asked of records, the tree is answered by one record.
+    let record = Filter::All(vec![
+        Filter::equals("status", "now"),
+        Filter::contains("touches", "essay.rs"),
+    ]);
+    let mut by_record = Vec::new();
+    for (id, _) in &things {
+        let facts = store.recall(id).await.expect("the store answers");
+        if record.held_by_a_record(facts.iter().map(|fact| &fact.fields)) {
+            by_record.push(id.slug().to_string());
+        }
+    }
+    assert_eq!(by_record, ["contract-filter-gamma"]);
+
+    // The walk recall uses evaluates its key filters through the same tree.
+    let walked = graph::walk(
+        store,
+        &[],
+        &graph::GraphQuery {
+            select: graph::Selection {
+                kind: Some(EntityKind::THING),
+                fields: vec![graph::FieldFilter::holding("status", "now")],
+                ..graph::Selection::default()
+            },
+            include: graph::Include {
+                facts: false,
+                prose: false,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        },
+    )
+    .await
+    .expect("a kind and a key is a selection");
+    let ours: Vec<&str> = walked
+        .objects
+        .iter()
+        .map(|object| object.entity.id.slug())
+        .filter(|slug| slug.starts_with("contract-filter-"))
+        .collect();
+    assert_eq!(ours, ["contract-filter-gamma"]);
+}
+
 /// **A thing reads back as one dense row: every write on it, folded, the
 /// newest write of each key winning.**
 ///
@@ -15677,6 +15825,7 @@ macro_rules! all_cases {
         $m!(a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in($store));
         $m!(a_bots_own_boot_seats_are_not_its_own_to_set($store));
         $m!(a_thing_reads_back_as_its_fields_folded($store));
+        $m!(a_filter_tree_gives_the_same_answer_from_every_store($store));
         $m!(the_newest_write_wins_however_old_the_record_it_landed_in($store));
         $m!(a_cleared_key_is_not_resurrected_by_an_older_record($store));
         $m!(clearing_a_key_the_record_never_carried_changes_nothing($store));
