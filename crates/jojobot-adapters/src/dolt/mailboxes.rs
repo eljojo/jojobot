@@ -310,8 +310,16 @@ impl DoltMailboxes {
                     .fetch_all(&mut **tx)
                     .await
             }
+            #[cfg(test)]
             Scope::Mailbox(name) => {
                 sqlx::query(&format!("{WHOLE} WHERE m.mailbox = ?"))
+                    .bind(name.as_str())
+                    .fetch_all(&mut **tx)
+                    .await
+            }
+            Scope::Unprocessed(name) => {
+                let processed = countable_in(&[MessageState::Processed]);
+                sqlx::query(&format!("{WHOLE} WHERE m.mailbox = ? AND NOT {processed}"))
                     .bind(name.as_str())
                     .fetch_all(&mut **tx)
                     .await
@@ -393,7 +401,15 @@ fn boxes_from(rows: &[sqlx::mysql::MySqlRow], tally: &Tally) -> Vec<Mailbox> {
 /// in the wrong case is not accepted either; a case holds that to the row
 /// reader, because a change of collation would break it without a word.
 fn countable_predicate() -> String {
-    let states = MessageState::ALL
+    countable_in(&MessageState::ALL)
+}
+
+/// **The rows [`countable_predicate`] accepts that are in one of `states`.**
+/// Every other row is one a reader has to load and judge, so a query that
+/// leaves out only these rows leaves out nothing the row reader could have
+/// called anything else.
+fn countable_in(states: &[MessageState]) -> String {
+    let states = states
         .iter()
         .map(|state| format!("'{}'", state.as_token()))
         .collect::<Vec<_>>()
@@ -422,8 +438,14 @@ enum Scope<'a> {
     Marks,
     /// The marks of every row [`countable_predicate`] does not accept.
     NotCountable,
-    /// One box's messages.
+    /// One box's messages, every state. Only a case asks for it: it is the
+    /// straightforward reading a delivery has to agree with.
+    #[cfg(test)]
     Mailbox(&'a MailboxName),
+    /// One box's messages except those the store can recognise as processed
+    /// without loading them: what a delivery reads. A row only the row reader
+    /// can judge is still loaded.
+    Unprocessed(&'a MailboxName),
     /// One message, by its id.
     Message(&'a MessageId),
     /// Everything sent under any of these spellings of a sender, in any box.
@@ -839,7 +861,7 @@ impl Mailboxes for DoltMailboxes {
         }
 
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let cards = self.cards(&mut tx, Scope::Mailbox(name)).await?;
+        let cards = self.cards(&mut tx, Scope::Unprocessed(name)).await?;
         let mut delivered = Vec::new();
         for message in cards
             .iter()
@@ -1335,6 +1357,151 @@ mod tests {
         };
         assert_eq!(new_in("inbox"), Some(1));
         assert_eq!(new_in("workshop"), Some(3));
+
+        store.stop().await;
+    }
+
+    /// One message posted into `inbox`, returning its id.
+    async fn post_into_inbox(mail: &DoltMailboxes, body: &str, day: u32) -> MessageId {
+        mail.post_message(NewMessage {
+            mailbox: MailboxName("inbox".into()),
+            body: body.into(),
+            subject: None,
+            sender: "gamma".into(),
+            sent_at: format!("2026-02-{day:02}T00:00:00Z")
+                .parse()
+                .expect("a fixed instant"),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        })
+        .await
+        .expect("post ok")
+        .written()
+        .expect("not blocked")
+        .id
+    }
+
+    /// 🚨 **A delivery loads the unprocessed rows of its box and no others.**
+    ///
+    /// A delivery used to read every message the box had ever held, bodies
+    /// included, and drop the processed ones afterwards. The largest boxes hold
+    /// thousands of processed messages, so the read grew with the box's whole
+    /// history while it answered a question about what is waiting. The box here
+    /// holds three processed messages and two that are not.
+    #[tokio::test]
+    async fn a_delivery_loads_only_the_unprocessed_rows_of_its_box() {
+        let (_scratch, mut store, mail, _first) = board("delivery-loads").await;
+        let mut done = Vec::new();
+        for day in 2..5 {
+            done.push(post_into_inbox(&mail, &format!("finished long ago {day}"), day).await);
+        }
+        post_into_inbox(&mail, "still waiting", 6).await;
+        for id in &done {
+            mail.mark_processed(id, None).await.expect("processed");
+        }
+        took(&mail);
+
+        let delivery = mail
+            .read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
+            .await
+            .expect("read ok")
+            .written()
+            .expect("not blocked");
+        let (rows, bodies) = took(&mail);
+
+        let mut delivered: Vec<&str> = delivery
+            .messages
+            .iter()
+            .map(|d| d.message.body.as_str())
+            .collect();
+        delivered.sort();
+        assert_eq!(
+            delivered,
+            vec!["still waiting", "the readable one"],
+            "the delivery is the two unprocessed messages"
+        );
+        assert_eq!(rows, 2, "the delivery loaded rows that are processed");
+        assert_eq!(
+            bodies,
+            "still waiting".len() + "the readable one".len(),
+            "the delivery loaded the bodies of processed messages"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A delivery hands over what a read of the whole box would have.** The
+    /// board holds every shape of row the readability rule tells apart, in the
+    /// box, beside processed rows the store can recognise without loading them.
+    /// The rows the delivery skips must be exactly the ones a read of every row
+    /// would have dropped, and a row only the row reader can judge (a state with
+    /// a space in front of it) must still be delivered.
+    #[tokio::test]
+    async fn a_delivery_hands_over_what_a_read_of_the_whole_box_would() {
+        let (_scratch, mut store, mail, first) = board("delivery-oracle").await;
+        let done = post_into_inbox(&mail, "finished", 2).await;
+        mail.mark_processed(&done, None).await.expect("processed");
+        for (id, state, sent_at) in [
+            ("leapno", "new", "2026-02-29T00:00:00Z"),
+            ("upperstate", "NEW", "2026-03-01T00:00:00Z"),
+            ("upperdone", "PROCESSED", "2026-03-01T00:00:00Z"),
+            ("spaced", " new", "2026-03-01T00:00:00Z"),
+            ("spaceddone", " processed", "2026-03-01T00:00:00Z"),
+            ("badstampdone", "processed", "last tuesday"),
+            ("nostate", "pending", "2026-03-01T00:00:00Z"),
+        ] {
+            unreadable(&store, id, state, sent_at).await;
+        }
+        mail.quarantine(
+            &first,
+            &MailboxName("inbox".into()),
+            "a reason",
+            "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+        )
+        .await
+        .expect("quarantined");
+
+        let mut tx = mail.pool.begin().await.expect("a transaction");
+        let whole = mail
+            .cards(&mut tx, Scope::Mailbox(&MailboxName("inbox".into())))
+            .await
+            .expect("the whole box");
+        let mut expected: Vec<String> = whole
+            .iter()
+            .filter_map(Card::readable)
+            .filter(|m| m.state.is_unprocessed())
+            .map(|m| m.id.to_string())
+            .collect();
+        expected.sort();
+        drop(tx);
+
+        let delivery = mail
+            .read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
+            .await
+            .expect("read ok")
+            .written()
+            .expect("not blocked");
+        let mut delivered: Vec<String> = delivery
+            .messages
+            .iter()
+            .map(|d| d.message.id.to_string())
+            .collect();
+        delivered.sort();
+        assert_eq!(
+            delivered, expected,
+            "the delivery and the whole read differ"
+        );
+        // And the oracle is not vacuous: a row only the row reader can judge is
+        // in what it hands over.
+        assert!(
+            delivered.contains(&"spaced".to_string()),
+            "a state with a space in front of it is still unprocessed mail: {delivered:?}"
+        );
+        assert!(
+            !delivered.contains(&done.to_string()),
+            "a processed message was delivered"
+        );
 
         store.stop().await;
     }

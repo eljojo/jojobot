@@ -2444,6 +2444,55 @@ pub mod contract {
             .collect()
     }
 
+    /// **A box holding processed mail delivers what is owed and nothing else.**
+    /// Two messages are retired, one straight from `new` and one after a read,
+    /// and two are not. A delivery hands over the two that are owed, a second
+    /// hands them over again as leftovers, and the retired two stay retired.
+    /// This is the behaviour a store may answer from a narrower read of its
+    /// rows than the whole box, so it has to hold on every store.
+    pub async fn a_delivery_skips_processed_mail_and_hands_over_what_is_owed(
+        store: &dyn Mailboxes,
+    ) {
+        create(store, "inbox").await;
+        let retired_new = post(store, "inbox", "alpha", "retired from new", 0).await;
+        let retired_read = post(store, "inbox", "alpha", "retired after a read", 1).await;
+        post(store, "inbox", "alpha", "owed first", 2).await;
+        post(store, "inbox", "alpha", "owed second", 3).await;
+        store
+            .read_message(&retired_read.id)
+            .await
+            .expect("the message is taken");
+        store
+            .mark_processed(&retired_new.id, None)
+            .await
+            .expect("retired");
+        store
+            .mark_processed(&retired_read.id, None)
+            .await
+            .expect("retired");
+
+        let first = read(store, "inbox").await;
+        let bodies: Vec<&str> = first
+            .messages
+            .iter()
+            .map(|d| d.message.body.as_str())
+            .collect();
+        assert_eq!(bodies, vec!["owed first", "owed second"]);
+        assert!(
+            first.messages.iter().all(|d| !d.seen_before),
+            "nothing was handed over before"
+        );
+
+        let second = read(store, "inbox").await;
+        assert_eq!(second.messages.len(), 2, "the owed two come back");
+        assert!(
+            second.messages.iter().all(|d| d.seen_before),
+            "and come back flagged as leftovers"
+        );
+        let box_counts = counts(store, "inbox").await.expect("inbox");
+        assert_eq!(box_counts.processed, 2, "the retired two stay retired");
+    }
+
     pub async fn run_all<S, F, Fut>(fresh: F) -> ()
     where
         S: Mailboxes,
@@ -2494,5 +2543,6 @@ pub mod contract {
         processing_an_unknown_message_is_a_miss(&fresh().await).await;
         malformed_input_is_refused(&fresh().await).await;
         a_delivery_records_how_it_was_taken(&fresh().await).await;
+        a_delivery_skips_processed_mail_and_hands_over_what_is_owed(&fresh().await).await;
     }
 }
