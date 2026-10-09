@@ -90,7 +90,9 @@ in
         server on), with `issuer` set. JOJOBOT_ALLOWED_SUBJECTS, a comma-separated
         list of token subjects, limits who may log in; the operator's mailbox page
         is served only when it names one person. A JOJOBOT_UI_CLIENT_SECRET is
-        refused at start.
+        refused at start. JOJOBOT_UI_CLIENT_ID must differ from the audience /mcp
+        requires (`audience`, which defaults to the resource id); the server
+        refuses to start when they are equal.
 
         Pushes to the operator's phone are switched on here too, over ntfy: set
         both JOJOBOT_NTFY_URL (the ntfy server, scheme included) and
