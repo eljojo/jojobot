@@ -28,6 +28,9 @@ pub struct SearchArgs {
     pub(crate) query: Option<String>,
     /// Narrow to one entity kind — an entity's own kind, a fact's subject's kind,
     /// or the kind of the entity whose prose matched.
+    ///
+    /// A `kind` filter leaves mail out even when you ask for it, since a message
+    /// belongs to no entity and so has no kind to match.
     #[serde(default)]
     pub(crate) kind: Option<String>,
     /// `active` (the default) or `archived`. An archived fact is **excluded
@@ -71,6 +74,13 @@ pub struct SearchArgs {
     ///
     /// A name no type answers to comes back blocked, naming the types that do
     /// exist.
+    ///
+    /// An answers_type that matches nothing carries `type_keys`, the type's keys,
+    /// and the first such answer in a session under a type the software ships, with
+    /// nothing else narrowing the search, also carries a teaching. Reach for
+    /// answers_type unless you have a reason not to: a thing that arrives with its
+    /// gaps named can be judged, and a thing fits_type leaves out looks exactly
+    /// like a thing that is not there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) answers_type: Option<String>,
     /// **Only the things that FIT this type**, by name — the ones carrying
@@ -95,6 +105,20 @@ pub struct SearchArgs {
     /// would not know to go looking for, and this is the one call that finds
     /// it. It is off unless you ask, because a message hit carries somebody's
     /// box, sender and a snippet, and this verb is the one to reach for first.
+    ///
+    /// Mail is off unless you ask, because a message hit carries somebody's box,
+    /// sender and a snippet and this is the verb to reach for first. Reach for it
+    /// when you want what a session knows: a report filed for another session is
+    /// exactly the context you would not know to go looking for. `mail` in the
+    /// answer says whether messages were searched (`searched: false` means none
+    /// was) and can still be partial after a degraded start, where the hits are
+    /// real but anything older than this server's start is missing. `memory` says
+    /// the same for entities, facts and prose, and with a note the index is behind
+    /// the store, where `behind` says how much: `unscanned` (the index holds only
+    /// what jojobot has written since this server started) or `stale` (the index
+    /// holds an older version of one entity than the store, so a hit may be a
+    /// version the store has moved past). The hits are real either way, and
+    /// `recall` reads the store itself.
     #[serde(default)]
     pub(crate) include_mail: Option<bool>,
     /// **Whether matching also reaches a claim's earlier wordings.** Defaults
@@ -128,6 +152,10 @@ pub struct SearchArgs {
     /// and the answer's own `rank_fallbacks` says how many that happened to
     /// — an incomplete answer, accepted and explained, never a silent mix
     /// of two orderings.
+    ///
+    /// `clock` picks the day ranking reads: `recorded_on` (the default: the day a
+    /// claim was said) or `happened_at` (the day the thing itself did); a claim
+    /// with no happened_at ranks by recorded_on, and `rank_fallbacks` counts them.
     #[serde(default)]
     pub(crate) clock: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -574,70 +602,31 @@ pub(crate) fn coverage_notes() -> Vec<(String, String)> {
 #[tool_router(router = search_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "The front door — use it first, and any time you do not already hold the \
-                       exact handle or address. One ranked list over entities, facts, free \
-                       prose AND the messages in bots' mailboxes at once. `query` is free text (words \
-                       are matched by stem and a record needs most of its terms, not all of \
-                       them) and is optional when a filter narrows it: kind · status \
-                       (default active; archived is excluded unless named) · provenance · \
-                       standing (`open` is how you ask which claims are still in doubt) · \
-                       subject · edge {shape, object} · answers_type · fits_type; a call with \
-                       neither query nor one of those filters is refused, and include_mail is not \
-                       one of them \
-                       — it says what to search, not what to narrow to. The two type filters are \
-                       one question asked two ways, and a call names one of them, never both: \
-                       answers_type keeps the things carrying SOME of a type's keys and says \
-                       which each one lacks, fits_type keeps only the things with no gaps. Reach \
-                       for answers_type unless you have a reason not to — a thing that arrives \
-                       with its gaps named can be judged, and a thing fits_type leaves out looks \
-                       exactly like a thing that is not there. An answers_type that matches \
-                       nothing carries type_keys, the type's keys, and the first such answer in \
-                       a session under a type the software ships, with nothing else narrowing the search, also carries a teaching. kind \
-                       + edge answers a cross-entity question in one \
-                       call (\"which people are in X\") by walking typed edges — prose that \
-                       merely mentions X is not an answer. No hit comes back bare: a fact \
-                       carries the whole claim, its address (feed that to update_fact), and who it \
-                       is `about` and where it is `home`d (a null name there means the handle \
-                       names nothing — a real defect worth reporting); an entity or prose hit \
-                       carries that entity's names and the edges its facts draw; a message hit \
-                       carries its box, its state (new/read/processed — an archived report is \
-                       findable, and the state is how you tell it from live work), its sender \
-                       and the id read_message takes, plus a snippet rather than the whole body. \
-                       A person's box, the operator's, is never searched. \
-                       Mail is OPT-IN: pass include_mail: true to search messages too, and \
-                       reach for it when you want what a session knows — a report filed for \
-                       another session is exactly the context you would not know to go looking \
-                       for, and this is the one call that finds it. It is off unless you ask, \
-                       because a message hit carries somebody's box, sender and a snippet, and \
-                       this is the verb to reach for first. Note that a `kind` filter leaves \
-                       mail out even when you ask, since a message belongs to no entity and so \
-                       has no kind to match. ALWAYS read the \
-                       `mail` field of the answer, in BOTH directions: searched: false means no \
-                       message was searched at all, which is not the same as nothing matching; \
-                       and searched: true can still be partial after a degraded start, where the \
-                       hits are real but anything older than this server's start is missing. \
-                       Whenever `mail` carries a `note`, that note says which case you are in — \
-                       read it before concluding a message does not exist. `memory` answers the \
-                       same question about entities, facts and prose: searched: false means \
-                       nothing in memory is searchable right now, and searched: true with a \
-                       note means the \
-                       index is behind the store, where `behind` says how much: `unscanned` (the \
-                       index holds only what jojobot has written since this server started) or \
-                       `stale` (the index holds an older version of one entity than \
-                       the store, so a hit may be a version the store has moved past). The hits \
-                       are real either way, and \
-                       `recall` reads the store itself. `clock` picks the day ranking reads: \
-                       `recorded_on` (the default — the day a claim was said) or \
-                       happened_at (the day the thing itself did); a claim with no \
-                       happened_at ranks by recorded_on, and `rank_fallbacks` counts them. AN ANSWER \
-                       IS CUT AT THE CEILING, never mid-hit: it carries the best hits that fit, \
-                       and `not_shown` says how many it left out and the `offset` that returns \
-                       them — repeat the same call with it. THE MATCHING AND \
-                       CORPUS NOTES (what the matcher can miss, and the earlier wordings it \
-                       never reaches) ride your first search of a session and every answer of \
-                       fewer than three hits, and are left out of the rest. AN EMPTY ANSWER NAMES \
-                       WHAT IT LOOKED THROUGH: it carries `searched`, one line saying the \
-                       population, what was left out and the call that widens it."
+        description = "The front door — use it first, and any time you do not already hold \
+                       the exact handle or address. One ranked list over entities, facts, \
+                       free prose AND the messages in bots' mailboxes at once (the operator's \
+                       box is never searched). `query` is free text, matched by stem; a \
+                       record needs most of its terms, not all of them. It is optional when a \
+                       filter narrows: kind, status (default active), provenance, standing \
+                       (`open` asks which claims are still in doubt), subject, edge {shape, \
+                       object}, answers_type or fits_type (one of the two, never both; prefer \
+                       answers_type, which names each thing's gaps). A call with neither a \
+                       query nor one of those filters is refused, and include_mail is not a \
+                       filter. kind + edge answers a cross-entity question in one call (which \
+                       people are in X) by walking typed edges. No hit comes back bare: a \
+                       fact carries its claim, its address (feed it to update_fact), who it \
+                       is `about` and where it is `home`d; an entity or prose hit carries the \
+                       entity's names and edges; a message hit carries its box, state (new, \
+                       read or processed), sender and the id read_message takes, plus a \
+                       snippet. MAIL IS OPT-IN: pass include_mail: true to search messages \
+                       too. ALWAYS read the `mail` and `memory` fields of the answer: \
+                       searched: false means nothing there was searched, which is not the \
+                       same as nothing matching, and a `note` says which case you are in. AN \
+                       ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many \
+                       it left out and the offset that returns them. AN EMPTY ANSWER NAMES \
+                       WHAT IT LOOKED THROUGH, as searched. The matching and corpus notes \
+                       ride your first search of a session and every answer of fewer than \
+                       three hits. Each argument's own description holds the rest."
     )]
     pub(crate) async fn search(
         &self,
@@ -2265,14 +2254,17 @@ mod tests {
             .to_string();
 
         let tools = Jojobot::tool_router().list_all();
-        let description = tools
+        let search = tools
             .iter()
             .find(|t| t.name == "search")
-            .expect("search is a tool")
-            .description
-            .as_deref()
-            .unwrap_or_default()
-            .to_string();
+            .expect("search is a tool");
+        // What a client is served for search: the description and the argument
+        // descriptions, where the coverage notes are explained.
+        let description = format!(
+            "{} {}",
+            search.description.as_deref().unwrap_or_default(),
+            serde_json::to_string(&*search.input_schema).expect("the schema serializes")
+        );
 
         for (surface, text, present) in [
             ("the coverage note", note.as_str(), "PARTIAL"),
@@ -2366,15 +2358,19 @@ mod tests {
             ),
             (
                 "the search description",
-                Jojobot::tool_router()
-                    .list_all()
-                    .iter()
-                    .find(|t| t.name == "search")
-                    .expect("search is a tool")
-                    .description
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_string(),
+                {
+                    let tools = Jojobot::tool_router().list_all();
+                    let search = tools
+                        .iter()
+                        .find(|t| t.name == "search")
+                        .expect("search is a tool");
+                    format!(
+                        "{} {}",
+                        search.description.as_deref().unwrap_or_default(),
+                        serde_json::to_string(&*search.input_schema)
+                            .expect("the schema serializes")
+                    )
+                },
                 "unscanned",
             ),
         ];

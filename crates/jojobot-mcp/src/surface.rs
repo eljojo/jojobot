@@ -748,24 +748,35 @@ fn capture_documents_its_thought_room_mechanics() {
     );
 }
 
-/// The identifiers a caller must find in `verb`'s own description to know a
-/// capability exists. An agent chooses a verb from that text before it reads
-/// a schema, so a capability documented only on an argument is one it never
-/// reaches for. The words around the identifiers are free to change.
-fn assert_description_names(verb: &str, names: &[&str]) {
+/// **Everything a client is served for `verb`**: its description and the
+/// description of each of its arguments, at every depth.
+///
+/// A client reads about the first 2,000 characters of a description, so the rules
+/// that govern a call go there and the detail goes on the argument it belongs to,
+/// which arrives whole. `no_description_passes_the_length_clients_cut_at` holds
+/// the first half; this is what the second half is looked for in.
+fn served_for(verb: &str) -> String {
     let tools = Jojobot::tool_router().list_all();
-    let description = tools
+    let tool = tools
         .iter()
         .find(|t| t.name.as_ref() == verb)
-        .unwrap_or_else(|| panic!("the surface offers {verb}"))
-        .description
-        .as_deref()
-        .unwrap_or_default()
-        .to_string();
+        .unwrap_or_else(|| panic!("the surface offers {verb}"));
+    format!(
+        "{}\n{}",
+        tool.description.as_deref().unwrap_or_default(),
+        serde_json::to_string(&*tool.input_schema).expect("the schema serializes")
+    )
+}
+
+/// The identifiers a caller must find in what `verb` is served to know a
+/// capability exists: its description or one of its argument descriptions. The
+/// words around the identifiers are free to change.
+fn assert_description_names(verb: &str, names: &[&str]) {
+    let served = served_for(verb);
     for name in names {
         assert!(
-            description.contains(name),
-            "{verb}'s description does not name `{name}`: {description}"
+            served.contains(name),
+            "{verb}'s description and arguments do not name `{name}`: {served}"
         );
     }
 }
@@ -1513,7 +1524,7 @@ fn the_update_fact_description_carves_out_the_past_event_case() {
         "the way to record that something is not so is archive and capture: {description}"
     );
     assert!(
-        description.contains("NOT FOR A PAST EVENT"),
+        description.contains("past EVENT") && description.contains("retract it"),
         "a past-event negation is never this rewrite, and the door that hands the rewrite \
          instruction to every caller never carves that case out: {description}"
     );
@@ -1776,9 +1787,8 @@ fn the_recall_description_says_the_view_the_status_filter_and_the_handle_list() 
         );
     };
     near(&keys_argument, "asking again without", 260, "its kind");
-    near(description, "asking again without keys", 260, "its kind");
     near(description, "claims of EVERY status", 140, "`status`");
-    near(description, "FIELD LINK", 200, "comma");
+    near(&schema, "FIELD LINK", 200, "comma");
     near(&schema, "a field link (an entity", 200, "comma");
 }
 
@@ -1799,13 +1809,13 @@ fn the_capture_description_says_a_handle_in_a_field_is_a_link() {
         .expect("the surface offers capture");
     let description = capture.description.as_deref().unwrap_or_default();
     let at = description
-        .find("GIVE IT FIELDS")
+        .find("`fields` is a flat bag")
         .expect("capture's description gives fields their own sentence");
     let window: String = description[at..].chars().take(300).collect();
     for word in ["comma", "exist", "claim"] {
         assert!(
             window.contains(word),
-            "`{word}` is not within 300 characters after `GIVE IT FIELDS`: {window}"
+            "`{word}` is not within 300 characters after the sentence on `fields`: {window}"
         );
     }
 }
@@ -1964,11 +1974,11 @@ fn retract_and_clear_edge_no_longer_claim_the_same_case() {
     let retract = described("retract");
     let update_fact = described("update_fact");
     assert!(
-        retract.contains("SOMETHING THAT HAPPENED"),
+        retract.contains("past EVENT") && retract.contains("retract it"),
         "retract must still claim a past event that turned out not to have happened: {retract}"
     );
     assert!(
-        update_fact.contains("RETRACT'S CASE"),
+        update_fact.contains("past EVENT") && update_fact.contains("retract it"),
         "update_fact's clear_edge advice must name retract as the verb for that case rather \
          than explaining how to do it here: {update_fact}"
     );

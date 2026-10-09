@@ -19,6 +19,9 @@ pub struct PostMessageArgs {
     /// **The operator is the one person you may write to**, by their person
     /// handle (`person:` and the slug): the boot names it under `operator`.
     /// Nobody else has a box, and no bot reads the operator's box back.
+    ///
+    /// A post into your own box delivers nothing, and a post that had nothing to
+    /// hand over still succeeded.
     pub(crate) to: String,
     /// The message itself. Prose: paragraphs are fine.
     ///
@@ -29,6 +32,15 @@ pub struct PostMessageArgs {
     /// **Your session id.** Required here, because it is what jojobot records
     /// as the sender: a message from nobody is a message nobody can reply to,
     /// and identity that is merely declared is identity that can be wrong.
+    ///
+    /// The message carries `sender_mail_waiting_at_send`: what was genuinely
+    /// waiting in YOUR OWN box at the moment you sent it, the same count
+    /// your_mail's delivery would have shown, read before this post could touch it.
+    /// `null` means jojobot could not tell (no session, no box, an unreadable
+    /// board) and is NEVER zero; `0` is a real and different answer. It is stamped
+    /// once, here, and carried unchanged wherever read_mailbox or list_sent returns
+    /// the message later, so a reader can check a claim about your own mail against
+    /// what was true when you hit send.
     pub(crate) sid: String,
     /// What this message is about, in one line — a title, not a summary.
     /// Optional, and worth giving: it is what a reader sees in a listing and on
@@ -49,6 +61,11 @@ pub struct PostMessageArgs {
     /// It must name a message that exists — a miss comes back blocked and
     /// nothing is written — and it links the two without saying anything about
     /// either: it does not deliver, handle, or oblige.
+    ///
+    /// It says only that the two are one exchange: it does not deliver the
+    /// original, handle it, or oblige anybody. Messages riding back under your_mail
+    /// carry `written_by_other_run` when a different run posted them, exactly as
+    /// read_mailbox's own description says.
     #[serde(default)]
     pub(crate) in_reply_to: Option<String>,
 }
@@ -258,54 +275,31 @@ impl Jojobot {
 #[tool_router(router = post_message_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Leave a message for someone who is not in this conversation. THE GATE IS \
-                       THE ADDRESSEE'S MAILBOX, not the name alone: `to` must come down to exactly \
-                       one box jojobot can read, so a name no colleague answers to and a colleague \
-                       whose mail is missing or doubled both come back status: blocked with \
-                       nothing written. The answer says which — the first is a name to fix, \
-                       offered the bots that do exist; the second is damage on a bot that really \
-                       is there, and it says what repairs it. No verb opens a bot's \
-                       box: it arrives with the bot, so a name nobody answers to is a name nobody \
-                       drains. THE ONE PERSON YOU MAY ADDRESS IS THE OPERATOR, by their person \
-                       handle (`person:` and the slug), which the boot names under `operator`: your first post to them \
+        description = "Leave a message for someone who is not in this conversation. `to` must \
+                       come down to exactly one box jojobot can read: a bot by name or \
+                       handle, or the operator by their person handle (`person:` and the \
+                       slug; the boot names it under `operator`; your first post to them \
                        opens their box, nobody else has one, and no bot reads it back, you \
-                       included. A body too long to be handed to its reader whole \
-                       under the answer ceiling is refused with nothing written: split it, or put \
-                       the long text on a record and send its address. Returns the stored \
-                       message, including the id that read_message and mark_processed later \
-                       target. Give it a `subject`: one line \
-                       saying what the message is about, which is what a reader sees on the \
-                       listing and on a search hit before opening anything — put it there rather \
-                       than on the body's first line. The `state` you get back is the state as it \
-                       stands — it can already say `read` if a person picked the message up in \
-                       between, and that is success, not a problem: the message exists and someone \
-                       has it. POSTING ALSO DELIVERS: anything in YOUR OWN box that no read has \
-                       handed you yet rides back with this answer under your_mail — out of `new` \
-                       and yours to finish, exactly as read_mailbox would have handed it over — \
-                       so read it rather than treating this as a write. Mail an earlier read \
-                       already handed you is not listed again: it is counted under \
-                       your_mail.leftovers, still owed, and read_mailbox returns it. Posting into your own box delivers nothing, and a \
-                       post that had nothing to hand over still succeeded. THE MESSAGE ALSO CARRIES \
-                       `sender_mail_waiting_at_send`: what was genuinely waiting in YOUR OWN box at \
-                       the moment you sent it, the same count your_mail's delivery would have shown, \
-                       read before this post could touch it. `null` means jojobot could not tell \
-                       (no session, no box, an unreadable board) — NEVER read it as \"zero waiting\"; \
-                       `0` is a real answer and a different one. It is stamped once, here, and \
-                       carried unchanged on this same message wherever `read_mailbox` or `list_sent` \
-                       returns it later, so a reader can check a claim about your own mail against \
-                       what was actually true when you hit send. The sender is not yours \
-                       to declare: jojobot records the bot behind the `sid` you pass, so a reply \
-                       can always find you and nothing can be posted under somebody else's name. A \
-                       `sid` jojobot is not holding comes back status: blocked and nothing is \
-                       written. YOUR BODY IS NOT ECHOED BACK — you wrote it, so the answer carries \
-                       the id, the state and body_bytes with body_elided: true rather than the \
-                       text. `list_sent` with include_bodies returns it and takes no delivery. \
-                       `in_reply_to` links this message to the one it answers: optional, it must \
-                       name a message that exists (a miss comes back blocked, nothing written), \
-                       and it says only that the two are one exchange — it does not deliver the \
-                       original, handle it, or oblige anybody. Messages riding back under \
-                       your_mail carry `written_by_other_run` when a different run posted them, \
-                       exactly as read_mailbox's own description says."
+                       included). A name no colleague answers to, or a colleague whose mail \
+                       is missing or doubled, comes back status: blocked with nothing \
+                       written, and the answer says which. No verb opens a bot's box. Give it \
+                       a `subject`: one line saying what the message is about, which is what \
+                       a reader sees on a listing before opening anything. A body too long to \
+                       be handed to its reader whole is refused with nothing written: split \
+                       it, or put the long text on a record and send its address. IT ANSWERS \
+                       WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and \
+                       mark_processed later target, the state as it stands (it can already \
+                       say `read` if a person picked it up, and that is success), body_bytes \
+                       and body_elided: true. Your body is not echoed back; list_sent with \
+                       include_bodies returns it and takes no delivery. POSTING ALSO \
+                       DELIVERS: mail in YOUR OWN box that no read has handed you yet rides \
+                       back under your_mail, out of `new` and yours to finish. Mail an \
+                       earlier read already handed you is not listed again: it is counted \
+                       under your_mail.leftovers and still owed, and read_message returns it \
+                       by id (read_mailbox with new_only: false returns them all). The sender \
+                       is the bot behind the `sid` you pass, never one you declare, and a sid \
+                       jojobot is not holding comes back status: blocked with nothing \
+                       written. Each argument's own description holds the rest."
     )]
     pub(crate) async fn post_message(
         &self,

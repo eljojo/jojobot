@@ -22,6 +22,11 @@ pub struct RenameEntityArgs {
     /// reslug or a retype. Changing the kind IS a retype; changing the slug
     /// IS a reslug; the id is one string, so either, or both together, is
     /// this same call.
+    ///
+    /// `to` may name the same handle as `handle` when only the parent is moving,
+    /// since a reparent needs no reslug; but naming the same handle with no
+    /// `parent`, or the parent it already has, is refused, because that call would
+    /// change nothing.
     pub(crate) to: String,
     /// Reparent onto this handle. Omit to leave the current parent alone.
     /// **There is no way to clear a parent through this verb.** `to` may
@@ -29,6 +34,9 @@ pub struct RenameEntityArgs {
     /// changing — a reparent with no reslug — but naming the same handle
     /// with no parent, or the parent it already has, is refused: that call
     /// would change nothing.
+    ///
+    /// `parent` reparents when given and leaves the current parent alone when
+    /// omitted; there is no way to clear a parent through this verb.
     #[serde(default)]
     pub(crate) parent: Option<String>,
     /// The day this rename was made, `YYYY-MM-DD`. Defaults to today in the
@@ -217,38 +225,30 @@ impl Jojobot {
 #[tool_router(router = rename_entity_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Move a handle — a new slug, a new kind (a retype), a new parent, or any \
-                       two together in one call, since the handle is one string and a retype is \
-                       a rename. What follows automatically, with nothing rewritten anywhere: a \
-                       mention written as @kind:slug, an edge, a reference-typed field value, \
-                       every claim's own home, a journal beat and a mailbox message all keep \
-                       resolving under the new handle — the path renders on the way out, and \
-                       text stored before any of that was true was migrated once, so it is not \
-                       an exception. Every entity naming this one as its parent is repointed in \
-                       the same write, and a box follows its owner to the owner's new name. A \
-                       rename that moves an owner across the person line — a bot into a person, \
-                       a person into a bot, or the operator out of the person kind — is \
-                       refused, because a person's box is private. A role object (kind role) is \
-                       renamed, retyped or reparented only by the bot it belongs to or a bot \
-                       heading the chart; anyone else is refused and told who may. What does \
-                       NOT follow, ever: a handle written as free prose that never used \
-                       @kind:slug — nothing marked it as a link, so nothing resolves it. And a \
-                       thing renamed and later folded into another resolves one hop short of \
-                       the survivor, through the folded thing, rather than composing the two. \
-                       `to` is always `kind:slug`, \
-                       fully qualified — a bare slug is refused rather than guessed at, because \
-                       guessing one would be guessing whether this call is a reslug or a retype. \
-                       `parent` reparents when given and leaves the current parent alone when \
-                       omitted; there is no way to clear a parent through this verb. `to` may \
-                       name the same handle as `handle` when only the parent is moving — a \
-                       reparent needs no reslug — but naming the same handle with no `parent`, or \
-                       the parent it already has, is refused: that call would change nothing. The \
-                       destination faces the same near-miss guard a creation does: a collision \
-                       with something that resembles it comes back status: blocked with \
-                       candidates, liftable with override_token unless the collision is an exact \
-                       handle, which can never be forced. A `handle` that names nothing jojobot \
-                       ever held is blocked with the nearest handles; one that named something \
-                       BEFORE an earlier rename moved it is told what it is called now."
+        description = "Move a handle — a new slug, a new kind (a retype), a new parent, or \
+                       any two together in one call, since the handle is one string and a \
+                       retype is a rename. What follows automatically, with nothing rewritten \
+                       anywhere: a mention written as @kind:slug, an edge, a reference-typed \
+                       field value, every claim's own home, a journal beat and a mailbox \
+                       message all keep resolving under the new handle. Every entity naming \
+                       this one as its parent is repointed in the same write, and a box \
+                       follows its owner to the owner's new name. What does NOT follow: a \
+                       handle written as free prose that never used @kind:slug, and a thing \
+                       renamed and later folded into another resolves one hop short of the \
+                       survivor. A rename that moves an owner across the person line (a bot \
+                       into a person, a person into a bot, or the operator out of the person \
+                       kind) is refused, because a person's box is private. A role object \
+                       (kind role) is renamed, retyped or reparented only by the bot it \
+                       belongs to or a bot heading the chart; anyone else is refused and told \
+                       who may. `to` is always `kind:slug`, fully qualified: a bare slug is \
+                       refused rather than guessed at. The destination faces the same \
+                       near-miss guard a creation does: a collision with something that \
+                       resembles it comes back status: blocked with candidates, liftable with \
+                       override_token unless the collision is an exact handle, which can \
+                       never be forced. A `handle` that names nothing jojobot ever held is \
+                       blocked with the nearest handles; one that named something BEFORE an \
+                       earlier rename moved it is told what it is called now. Each argument's \
+                       own description holds the rest."
     )]
     pub(crate) async fn rename_entity(
         &self,

@@ -18,6 +18,11 @@ pub struct ListSentArgs {
     /// Whose outgoing mail to show, matched **exactly** against the sender
     /// recorded on each message. Omit it for your own — your `sid` says who
     /// that is, and your own mail is what this verb is for.
+    ///
+    /// Omit it for your own mail: your `sid` already says who that is. Pass one to
+    /// ask after somebody else's outgoing mail; it is matched exactly against the
+    /// bot handle recorded on each message (`bot:gamma`), which is allowed, because
+    /// where a message got to is not private to its sender.
     #[serde(default)]
     pub(crate) sender: Option<String>,
     /// **Only what you sent to this bot, or the operator** — a bare name like
@@ -28,6 +33,8 @@ pub struct ListSentArgs {
     /// How many messages to return, newest first. Defaults to twenty. This is
     /// the size of a page: an answer that would pass the answer ceiling carries
     /// fewer and says so, and `offset` reads on.
+    ///
+    /// Twenty newest by default: `limit` is the size of a page.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
     /// **How many of the newest messages you have already read.** The answer
@@ -37,6 +44,10 @@ pub struct ListSentArgs {
     pub(crate) offset: Option<u32>,
     /// Ship the bodies back too. Off by default: you wrote them, so the useful
     /// answer is where they got to, not what they say.
+    ///
+    /// Each message may also carry `sender_mail_waiting_at_send`, stamped once when
+    /// it was posted; see `post_message`'s `sid` for what it means (`null` is
+    /// unknown, never zero).
     #[serde(default)]
     pub(crate) include_bodies: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -50,39 +61,29 @@ pub struct ListSentArgs {
 #[tool_router(router = list_sent_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "See the mail YOU have sent and where it got to — read-only, and it moves \
-                       NOTHING: no state changes, nobody's delivery is taken, and the messages \
-                       stay exactly as owed as they were. It answers whether something you sent \
-                       arrived and whether anyone has read it — questions every other verb could \
-                       only answer by taking delivery of the box you posted into. A `to` that \
-                       names no colleague comes back status: blocked with candidates, never an \
-                       empty list, because an empty list would read as 'it never arrived'. Messages \
-                       jojobot cannot read are reported separately under \
-                       `unreadable`: it cannot tell who sent them, so one of yours could be \
-                       there. Newest first, each with its \
-                       state (`new` = nobody has picked it up · `read` = delivered, not yet \
-                       finished with · `processed` = acted on) plus notes when the consumer \
-                       recorded an outcome. A message that has left `new` also carries \
-                       `taken_by`: `reading` = the owner opened the box or took that message \
-                       by id, so somebody looked · `posting` = it rode back with the answer to \
-                       a post of the owner's own, so it reached them and nobody went looking. Bodies are left out unless you ask for them — you \
-                       wrote them — so each carries body_bytes and the opening line instead, and \
-                       says body_elided: true rather than leaving you to guess, with the one \
-                       instruction for getting them said once beside the list rather than on \
-                       every message. Twenty newest by default: `limit` is the size of a \
-                       page. An answer stops at the answer ceiling, never mid-message, and \
-                       whatever it leaves out is counted under not_shown with the `offset` that \
-                       reads the next page: repeat the same call with it. OMIT `sender` for \
-                       your own mail — your `sid` already says who that is. Pass one to ask after \
-                       somebody else's outgoing mail: it is matched exactly against the bot \
-                       handle recorded on each message (`bot:gamma`), which is allowed, because \
-                       where a message got to is not private to its sender. MAIL TO THE OPERATOR \
-                       is listed by id, time and subject only, even to you and even with \
-                       include_bodies, because no bot reads the operator's box back. Each message \
-                       may also \
-                       carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
-                       `post_message`'s own description for what it means; `null` there is unknown, \
-                       never zero."
+        description = "See the mail YOU have sent and where it got to — read-only, and it \
+                       moves NOTHING: no state changes, nobody's delivery is taken, and the \
+                       messages stay exactly as owed as they were. It answers whether \
+                       something you sent arrived and whether anyone has read it, which no \
+                       other verb can answer without taking delivery of the box you posted \
+                       into. A `to` that names no colleague comes back status: blocked with \
+                       candidates, never an empty list, because an empty list would read as \
+                       'it never arrived'. Messages jojobot cannot read are reported \
+                       separately under `unreadable`: it cannot tell who sent them, so one of \
+                       yours could be there. Newest first, each with its state (`new` = \
+                       nobody has picked it up · `read` = delivered, not yet finished with · \
+                       `processed` = acted on) plus notes when the consumer recorded an \
+                       outcome; a message that has left `new` also carries `taken_by` \
+                       (`reading` = the owner opened the box or took that message by id · \
+                       `posting` = it rode back with the answer to a post of the owner's \
+                       own). Bodies are left out unless you ask for them — you wrote them — \
+                       so each carries body_bytes and the opening line and says body_elided: \
+                       true. MAIL TO THE OPERATOR is listed by id, time and subject only, \
+                       even with include_bodies, because no bot reads the operator's box \
+                       back. Twenty newest by default; an answer stops at the ceiling, never \
+                       mid-message, and counts what it left out under not_shown with the \
+                       `offset` that reads the next page. Each argument's own description \
+                       holds the rest."
     )]
     pub(crate) async fn list_sent(
         &self,

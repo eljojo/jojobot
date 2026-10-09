@@ -10,7 +10,8 @@ use super::*;
 pub struct WrapSessionArgs {
     /// The story of this session, for somebody with none of your context: what
     /// it was for, what happened, what is left. It becomes the final entry in
-    /// this session's own chronology, and goes nowhere else.
+    /// this session's own chronology, and the next boot of this identity is
+    /// handed it as the handover, so it is not private to the session.
     ///
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as
@@ -25,37 +26,29 @@ pub struct WrapSessionArgs {
 impl Jojobot {
     #[tool(
         description = "End your session and tell its story. Two things happen together: the \
-                       story is recorded in your chronology as its final entry, and the session \
-                       moves to `wrapped` — terminal both ways, so \
-                       nothing appends to it afterwards and nothing reopens it except through \
-                       the wrap_code described below, and a later \
-                       journal/amend_journal/wrap_session on that id comes back status: blocked. \
-                       A wrap you have to retry finishes what the first attempt started rather \
-                       than repeating it, so the story is told once in each place — which means \
-                       it is your chronology's newest entry only when nothing was written \
-                       between the attempts. Write the story for somebody with \
-                       none of your context: what this run was for, what actually happened, what \
-                       is left. A session that stops without wrapping is not lost — the next \
-                       boot of the same identity sweeps it to `abandoned` after a day, its \
-                       chronology stays readable, and the run itself can be picked up again — but \
-                       its story was never told, and that is the difference between the two \
-                       endings. Pass your `sid` on every call. When the work continues but this \
-                       run has gotten long, wrapping is also how you ROTATE: wrap the story, then \
-                       boot again for a fresh sid. THE CLOSING ENTRY COMES BACK AS A RECEIPT \
-                       and the story is not read back to you — it is in the chronology below it, \
-                       where you can see what jojobot folded into it. THE CHRONOLOGY THIS HANDS BACK IS THE NEWEST \
-                       OF THE RECORD, not all of it: a long run's answer would be one no client \
-                       can read. `entry_count` is the whole length, and `chronology_elided` with \
-                       `entries_omitted` says how much is not here. Nothing was dropped from the \
-                       record — what was written is stored whole. THE FOCUS AS IT STOOD AT THE \
-                       CLOSE rides on the closing entry as `closing_focus`, beside the story \
-                       rather than inside its text; every other entry has none. \
-                       THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: calling start_here with \
-                       that code as its resume answer hands this run's own sid back for one \
-                       last change, while the run stays wrapped. The window ends when you wrap \
-                       a second time, which adds a second closing entry beside the first and \
-                       mints no code, or when a newer run of the bot starts. Until then a later \
-                       journal/amend_journal/wrap_session on that id is blocked, as above."
+                       story is recorded in your chronology as its final entry, and the \
+                       session moves to `wrapped` — terminal both ways, so nothing appends to \
+                       it afterwards and nothing reopens it except through the wrap_code \
+                       described below, and a later journal, amend_journal or wrap_session on \
+                       that id comes back status: blocked. A wrap you have to retry finishes \
+                       what the first attempt started rather than repeating it. Write the \
+                       story for somebody with none of your context: what this run was for, \
+                       what actually happened, what is left. It is also what the next boot of \
+                       this identity is handed as the handover, so it is not private to the \
+                       session. A session that stops without wrapping is not lost: the next \
+                       boot sweeps it to `abandoned` after a day, its chronology stays \
+                       readable and it is offered back to resume for 7 days, but its story \
+                       was never told. When the work continues but this run has gotten long, \
+                       wrapping is also how you ROTATE: wrap, then boot again for a fresh \
+                       sid. THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it \
+                       as the resume answer hands this run's own sid back for one last change \
+                       while the run stays wrapped; the window ends when you wrap a second \
+                       time (a second closing entry, no new code) or a newer run of the bot \
+                       starts. THE ANSWER IS A RECEIPT: the story is not read back, and the \
+                       chronology it hands back is the newest of the record (`entry_count` is \
+                       the whole length, `chronology_elided` and `entries_omitted` say how \
+                       much is not here; nothing was dropped). The closing entry carries the \
+                       focus as it stood as `closing_focus`. Pass your `sid` on every call."
     )]
     pub(crate) async fn wrap_session(
         &self,

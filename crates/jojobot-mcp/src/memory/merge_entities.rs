@@ -12,6 +12,15 @@ pub struct MergeArgs {
     /// **The handle that stops being a thing of its own** — the duplicate.
     /// Everything it holds moves to the survivor, and the handle itself goes on
     /// resolving.
+    ///
+    /// A merge into your own bot is refused when the duplicate carries
+    /// thought_capacity OR thought_body_cap, because the merge would raise your own
+    /// ceiling: have a different identity merge it, or take the key off the
+    /// duplicate first with update_fact and clear_fields. The duplicate's thoughts
+    /// become the survivor's, so a merge that would leave a room over its capacity
+    /// (every active thought counts, none ages out), or bring a thought over its
+    /// body cap, is refused with nothing moved: archive thoughts, or shorten the
+    /// one named, with update_fact, then merge again.
     pub(crate) duplicate: String,
     /// **The handle that survives.** Everything ends up here.
     pub(crate) survivor: String,
@@ -34,39 +43,32 @@ pub struct MergeArgs {
 #[tool_router(router = merge_entities_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Merge a duplicate into the thing it duplicates — the repair for one thing \
-                       named twice. A deliberate act rather than a flag on an edit, because it is \
-                       the one call here that destroys structure. Everything the duplicate held \
-                       moves to the survivor: its claims, the edges drawn at it, the history \
-                       under its keys, and its names, which become aliases of the survivor. \
-                       Beside them lands a dated record of the merge itself, on the survivor, \
-                       naming the handle that went and the reason if you give one. \
-                       NOTHING IS REMOVED: the duplicate's handle keeps answering, so a handle \
-                       written down anywhere still resolves — but a recall of it comes back with \
-                       status merged, names the survivor in merged_into and holds nothing of \
-                       its own. It does not answer as the survivor: recall the survivor to read \
-                       everything. It simply stops being a thing of its own. USE IT WHEN TWO \
-                       HANDLES ARE ONE THING. It does not ask whether they really are: that is your \
-                       judgement, so putting two unrelated things together is allowed and is \
-                       recorded exactly as legibly. There is no way back, so if you are unsure, \
-                       read both with recall first. ⚠️ THE CLAIMS THAT MOVE GET NEW ADDRESSES, \
-                       because an address is local to the thing that holds it — any address you \
-                       were holding for the duplicate's claims is stale afterwards, and the \
-                       answer says how many moved. A role object (kind role), on either side of \
-                       a merge, is merged only by the bot it belongs to or a bot heading the \
-                       chart; anyone else is refused and told who may. A MERGE INTO YOUR OWN BOT IS REFUSED WHEN THE DUPLICATE CARRIES \
-                       thought_capacity OR thought_body_cap, because the merge would raise your \
-                       own ceiling: have a different identity merge it, or take the key off the \
-                       duplicate first with update_fact and clear_fields. THE DUPLICATE'S \
-                       THOUGHTS BECOME THE SURVIVOR'S, so a merge that would leave a room over \
-                       its capacity (every active thought counts, none ages out), or bring a \
-                       thought over its body cap, is refused with \
-                       nothing moved: archive thoughts, or shorten the one named, with \
-                       update_fact, then merge again. Naming one handle as \
-                       both sides comes back status: blocked. So does naming a handle that was already merged away, on \
-                       either side, and that refusal names the handle to use instead. A merge whose result, the survivor with the duplicate's names and keys \
-                       or the record of the merge, could not be read back whole in one answer \
-                       is refused and nothing moves."
+        description = "Merge a duplicate into the thing it duplicates — the repair for one \
+                       thing named twice. A deliberate act rather than a flag on an edit, \
+                       because there is no way back. Everything the duplicate held moves to \
+                       the survivor: its claims, the edges drawn at it, the history under its \
+                       keys, and its names, which become aliases of the survivor; beside them \
+                       lands a dated record of the merge itself, naming the handle that went \
+                       and the reason if you give one. NOTHING IS DELETED: the duplicate's \
+                       handle keeps answering, so a handle written down anywhere still \
+                       resolves, but a recall of it comes back with status merged, names the \
+                       survivor in merged_into and holds nothing of its own. It does not \
+                       answer as the survivor: recall the survivor to read everything. USE IT \
+                       WHEN TWO HANDLES ARE ONE THING. It does not ask whether they really \
+                       are: that is your judgement, so putting two unrelated things together \
+                       is allowed and is recorded exactly as legibly. If you are unsure, read \
+                       both with recall first. THE CLAIMS THAT MOVE GET NEW ADDRESSES, \
+                       because an address is local to the thing that holds it: any address \
+                       you were holding for the duplicate's claims is stale afterwards, and \
+                       the answer says how many moved. A refusal is status: blocked with \
+                       nothing moved: one handle named as both sides; a handle already merged \
+                       away (the answer names the handle to use instead); a role object (kind \
+                       role), on either side, merged by anyone but the bot it belongs to or a \
+                       bot heading the chart (the answer tells you who may); a merge into \
+                       your own bot of a duplicate carrying thought_capacity or \
+                       thought_body_cap; a thought room that would go over capacity, or a \
+                       thought over its body cap; or a result that could not be read back \
+                       whole in one answer. Each argument's own description holds the rest."
     )]
     pub(crate) async fn merge_entities(
         &self,

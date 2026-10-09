@@ -593,6 +593,43 @@ async fn the_snapshot_renders_the_same_every_time() {
     }
 }
 
+/// **The most characters of a tool description, or of the server instructions,
+/// that reach a model.** Clients cut a description at about this length, so a
+/// rule written past it is a rule no model reads. Whatever a call must be told
+/// goes before this; detail goes in the argument descriptions, which arrive
+/// whole, or in `start_here`.
+const READ_IN_FULL: usize = 2_000;
+
+/// **No tool description and no instructions text passes the length clients
+/// cut at.** Every text over it is listed with its length, so one failure names
+/// all of them rather than the first.
+#[test]
+fn no_description_passes_the_length_clients_cut_at() {
+    let mut over: Vec<(String, usize)> = Jojobot::tool_router()
+        .list_all()
+        .into_iter()
+        .filter_map(|tool| {
+            let length = tool.description.as_deref().map_or(0, |d| d.chars().count());
+            (length > READ_IN_FULL).then(|| (format!("tool `{}`", tool.name), length))
+        })
+        .collect();
+    let length = instructions().chars().count();
+    if length > READ_IN_FULL {
+        over.push(("the server instructions".to_string(), length));
+    }
+    over.sort();
+    assert!(
+        over.is_empty(),
+        "a text passes the {READ_IN_FULL} characters clients read before they cut it. Move its \
+         detail into the argument descriptions or start_here, and keep the rules that govern \
+         the call in the first {READ_IN_FULL}:\n{}",
+        over.iter()
+            .map(|(what, length)| format!("{what}: {length} characters"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 /// **A teaching added to `teaching.rs` is in the snapshot.** The list above is
 /// written by hand, so this reads the source for every teaching constant and
 /// holds the list to it.

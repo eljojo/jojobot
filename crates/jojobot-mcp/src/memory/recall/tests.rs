@@ -4656,14 +4656,20 @@ fn an_unscoped_follow_names_mention_and_ref_on_the_verbs_own_description() {
         .iter()
         .find(|t| t.name.as_ref() == "recall")
         .expect("recall is a tool");
-    let tool_description = recall.description.as_deref().unwrap_or_default();
+    // What a client is served for recall: the description and the argument
+    // descriptions, where the walk is explained.
+    let tool_description = format!(
+        "{} {}",
+        recall.description.as_deref().unwrap_or_default(),
+        serde_json::to_string(&*recall.input_schema).expect("a schema serialises")
+    );
     assert!(
         tool_description.contains("MENTION"),
-        "the tool-level description does not name mention: {tool_description}"
+        "recall's served text does not name mention: {tool_description}"
     );
     assert!(
         tool_description.contains("REF"),
-        "the tool-level description does not name ref: {tool_description}"
+        "recall's served text does not name ref: {tool_description}"
     );
 }
 
@@ -4864,10 +4870,14 @@ fn an_unscoped_follow_names_the_field_link_on_the_verbs_own_description() {
         .iter()
         .find(|t| t.name.as_ref() == "recall")
         .expect("recall is a tool");
-    let tool_description = recall.description.as_deref().unwrap_or_default();
+    let tool_description = format!(
+        "{} {}",
+        recall.description.as_deref().unwrap_or_default(),
+        serde_json::to_string(&*recall.input_schema).expect("a schema serialises")
+    );
     assert!(
         tool_description.contains("FIELD LINK"),
-        "the tool-level description does not name field: {tool_description}"
+        "recall's served text does not name the field link: {tool_description}"
     );
     let schema = serde_json::to_string(&*recall.input_schema).expect("a schema serialises");
     assert!(

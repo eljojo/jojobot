@@ -32,6 +32,10 @@ pub struct CaptureArgs {
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as the
     /// handle that thing wears today, even after a rename.
+    ///
+    /// A claim too big to be read back whole in one answer is refused with nothing
+    /// written: shorten it, split it into claims that each say one thing, or keep
+    /// the long text outside and write a pointer claim.
     pub(crate) content: String,
     /// Nuance, the why, merge notes — the description under the claim. It may
     /// hold paragraph breaks and reads back with every one; the claim above
@@ -39,9 +43,9 @@ pub struct CaptureArgs {
     /// does.
     #[serde(default)]
     pub(crate) details: Option<String>,
-    /// `testimony` (the user said it), `observation` (you read it in a system
+    /// `testimony` (the operator said it), `observation` (you read it in a system
     /// of record) or `inference` (you derived it). Defaults to `inference`:
-    /// anything not tied to the user's words is a hypothesis.
+    /// anything not tied to the operator's words is a hypothesis.
     ///
     /// **`observation` must say where it was read** — the field `read_from`
     /// naming the system, and `read_ref` for what was read there if you have
@@ -65,9 +69,9 @@ pub struct CaptureArgs {
     /// `provenance: testimony` with `standing: open`.
     ///
     /// **Declared on honour, exactly as `provenance` is.** Nothing here asks
-    /// you to confirm a standing. `update_fact` is where the gate sits, and
-    /// only on the one move that takes a claim the operator hedged and calls
-    /// it settled.
+    /// you to confirm a standing. `update_fact` is where the gate sits, on two
+    /// moves of an EXISTING claim: anything to `testimony`, and an open
+    /// standing to `settled`.
     #[serde(default)]
     pub(crate) standing: Option<String>,
     /// **The day the claim was MADE**, `YYYY-MM-DD` — the day it was said,
@@ -84,7 +88,7 @@ pub struct CaptureArgs {
     #[serde(default)]
     pub(crate) recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
-    /// a different question from `date`, which is about the claim.
+    /// a different question from `recorded_at`, which is about the claim.
     ///
     /// ⛔️ **Leave it off unless you were told a day.** *Over the summer* is not
     /// a day: a claim that says nothing about when the thing happened is a
@@ -119,6 +123,10 @@ pub struct CaptureArgs {
     /// it.** Send this key about your own handle and the write is refused,
     /// whatever else the call carries — only a different identity may raise
     /// or lower it. The same holds for `thought_ages_after_runs`.
+    ///
+    /// A thought's content is capped: 200 characters unless the bot's own
+    /// `thought_body_cap` setting says otherwise, and a longer one is refused. Put
+    /// the substance on the thing it points at and keep the thought short.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
@@ -154,6 +162,22 @@ pub struct CaptureArgs {
     /// a bot has is `rule_seats`, written about it by a different identity** —
     /// a bot cannot raise its own — and a star or a count that would leave
     /// the boot over its size ceiling is refused, naming the overage.
+    ///
+    /// **Six keys describe their own claim and never fold onto the thing:**
+    /// `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by`.
+    /// Read them back with `facts: true`; find by them with a `fields` filter and
+    /// `scope: record`. A field you send that equals what jojobot ships as its
+    /// default today is stored exactly as you sent it either way, and the receipt's
+    /// echoes_defaults names which key that was.
+    ///
+    /// **A pass, ticket, membership or registration somebody holds** is a claim on
+    /// the HOLDER, with fields `admits` (the handle of the event, place or
+    /// organisation it opens), `valid_from` and `valid_until` (days; no window
+    /// reads as live) and optionally `tier`. That an event offers a tier is a claim
+    /// on the event instead. Holding is not attendance, not wanting to go and not a
+    /// calendar entry: each is its own claim. Recall the holder with facts to read
+    /// what they hold, or recall the event and read its `held` block, which ranks
+    /// who holds what, live first.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// **What this claim sets on its thing**, as key/value pairs: the keys that
@@ -162,8 +186,8 @@ pub struct CaptureArgs {
     /// belongs to one of the two for as long as this record holds it, so a key
     /// named here and in `fields` is refused, and a key the record already holds
     /// in the other is refused with the way to move it. A key that only labels
-    /// the claim (`read_from`, `purpose`, `subject`) is never a property of the
-    /// thing and is refused here by name.
+    /// the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
+    /// `recorded_by`) is never a property of the thing and is refused here by name.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
@@ -696,71 +720,32 @@ impl Jojobot {
 #[tool_router(router = capture_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Remember one fact about an entity: the claim, when it became true, and \
-                       whether it is testimony, observation or inference (default \
-                       inference — a hypothesis, not a finding). A NEW THING THAT HAPPENED IS A \
-                       NEW CLAIM, even about a thing that already carries one — capture it again \
-                       rather than reaching for update_fact, because capture adds and never \
-                       erases what stood before. OBSERVATION is a claim you READ \
-                       out of a system of record, confidently — a statement, an app, a service — \
-                       and it reads back settled, so it MUST say where: give fields a read_from \
-                       naming the system, and a read_ref for what you read there if you have \
-                       one. Without read_from the call is refused, because who confirmed \
-                       something and on what is one question and half of it is no answer. Use it \
-                       where nobody said it to you and you did not work it out. \
-                       PROVENANCE AND STANDING ARE TWO QUESTIONS: provenance says \
-                       WHO BACKS IT, standing says HOW SURE anyone is (settled or open). Leave \
-                       standing off and it follows the provenance. Set it when the two come \
-                       apart, and the case that matters is the operator stating something \
-                       first-hand and hedging it — that is provenance testimony with \
-                       standing open, and there is no other way to record it. It may also draw \
-                       one typed edge at another entity. \
-                       Returns the stored fact with the address you later edit it through. \
-                       Every entity it names — the subject, and an edge's object — must \
-                       ALREADY EXIST: one jojobot doesn't know comes back status: blocked with \
-                       candidates and nothing is written. A genuinely new entity is two \
-                       deliberate steps — add_entity, then capture. GIVE IT FIELDS: fields is \
-                       a flat bag of key/value pairs jojobot stores as written; a handle or a \
-                       comma list of handles is a link and must exist, and six keys stay on \
-                       their claim. `sets` is the other bag: keys that are properties of the \
-                       thing the claim is about, set by the same call; a key a record holds \
-                       belongs to one bag or the other. refs names the entities the record touches — those are links whose \
-                       meaning is deliberately unrecorded, so they are searchable but assert \
-                       nothing, which is what makes them not `about` edges. NOTHING HAS TO BE \
-                       DECLARED FIRST and no name for the class of thing is asked for: a key you \
-                       invent is kept as you wrote it, and a type is something the keys answer \
-                       rather than something you announce. A field you send that equals what \
-                       jojobot ships as its default today is stored exactly as you sent it either \
-                       way, and the receipt's echoes_defaults names which key that was. \
-                       derived_from names the claim this one \
-                       was worked out from, as its address — use it when the source is another \
-                       claim, not an entity. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
-                       address that edits it, the subject as it was qualified, the date, the \
-                       provenance and the standing it was given — which is how a caller that \
-                       named none of those learns what was recorded — and how many keys landed, \
-                       with your claim elided and said to be. The write is read back \
-                       from the store before it is called a success; what stops is shipping \
-                       you the words you just sent. recall the subject to read it back. A \
-                       `thought` is a claim drawn as a connection edge with your OWN bot \
-                       handle as the subject; `thought_capacity` caps how many are live at \
-                       once. When the room is full, name one to `drop` and say why in \
-                       `drop_because` (required with it), or pass `borrow` to land one over \
-                       capacity — once, as the emergency reserve. A RULE FOR YOUR OWN BOOT: \
-                       capture it on your own bot handle with `starred` set to \"true\" in fields \
-                       and it competes for one of the few seats your boot spends on rules. An \
-                       unstarred rule is kept all the same and reads back with recall's facts; \
-                       when a new star pushes the oldest starred rule off its seat, the receipt \
-                       names it. A PASS, TICKET, MEMBERSHIP OR REGISTRATION SOMEBODY HOLDS is a claim on \
-                       the HOLDER, with fields `admits` (the handle of the event, place or \
-                       organisation it opens), `valid_from` and `valid_until` (days; no window \
-                       reads as live) and optionally `tier`. That an event offers a tier is a \
-                       claim on the event instead. Holding is not attendance, not wanting to go \
-                       and not a calendar entry: each is its own claim. Recall the holder with \
-                       facts to read what they hold, or recall the event and read its `held` \
-                       block, which ranks who holds what, live first. A claim too big to be read \
-                       back whole in one answer is refused with \
-                       nothing written: shorten it, split it into claims that each say one \
-                       thing, or keep the long text outside and write a pointer claim."
+        description = "Remember one claim about an entity: the words, when they became true, \
+                       and who backs them. PROVENANCE: testimony (the operator said it), \
+                       observation (you READ it in a system of record, so `read_from` in \
+                       fields must name the system or the call is refused) or inference (you \
+                       worked it out; the default, and a hypothesis, not a finding). STANDING \
+                       (settled or open) is a separate question — how sure anyone is — and \
+                       follows the provenance unless you set it; the operator hedging their \
+                       own words is testimony with standing open. A NEW THING THAT HAPPENED \
+                       IS A NEW CLAIM: capture it again, never update_fact, because capture \
+                       adds and never erases. Every entity the call names — the subject, an \
+                       edge's object, refs — must ALREADY EXIST, or nothing is written and \
+                       the answer is status: blocked with candidates; a new entity is two \
+                       steps, add_entity and then capture. `fields` is a flat bag stored as \
+                       written (a handle, or a comma list of handles, is a link and must \
+                       exist; six keys describe their own claim and stay on it, listed under \
+                       `fields`); `sets` sets keys on the thing itself in the same call. A \
+                       claim drawn as a connection edge with your OWN bot handle as subject \
+                       is a `thought`: its content is capped (200 characters unless the bot's \
+                       `thought_body_cap` says otherwise) and `thought_capacity` caps how \
+                       many are live, so a full room needs `drop` with `drop_because`, or \
+                       `borrow`. It answers with a receipt, not the record: the address you \
+                       edit it through, what was recorded, and how many keys landed; the \
+                       write is read back from the store before it is called a success. \
+                       recall the subject to read it back. A claim too big to be read back \
+                       whole is refused with nothing written. Each argument's own description \
+                       holds the rest."
     )]
     pub(crate) async fn capture(
         &self,

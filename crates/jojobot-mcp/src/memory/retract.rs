@@ -38,24 +38,30 @@ pub struct RetractArgs {
 #[tool_router(router = retract_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Take back a record — one way, never reversed, and a deliberate act rather \
-                       than a flag on an edit. Nothing is removed: the record keeps its address, \
-                       its words and its place, and is marked archived; beside it lands a dated \
-                       record of the retraction itself, naming what it takes back and the reason \
-                       if you give one. The two then read as one story. An archived record is \
-                       out of every default read and out of \
-                       every later edit, INCLUDING a status flip back — there is no un-retract, \
-                       so if you are unsure, capture what is so now instead. THIS IS THE MOVE FOR \
-                       SOMETHING THAT HAPPENED and turned out not to have. For a claim about what \
-                       is true NOW, archive it with update_fact and capture the replacement \
-                       instead — the old words stay readable and the replacement stands \
-                       beside them, where a retraction leaves a companion record. Retracting a retraction comes back status: \
-                       blocked: it is the last word on what it takes back. Retracting something \
-                       ALREADY archived comes back blocked as well, and reads differently on \
-                       purpose: it says the record is archived, because it is — that answer \
-                       tells you the state you asked for is the state jojobot holds, not that \
-                       nothing happened. An address that names no record comes back blocked too, \
-                       with the addresses that do exist."
+        description = "Take back a record — one way, never reversed, and a deliberate act \
+                       rather than a flag on an edit. ARCHIVE, RETRACT OR REWRITE — one rule, \
+                       stated the same in update_fact, its status argument and retract. A \
+                       claim that was true and has changed, or that was never true: archive \
+                       it with update_fact (status: archived, the reason in details) and \
+                       capture the replacement, naming the old claim in derived_from. A claim \
+                       about a past EVENT that turned out never to have happened: retract it, \
+                       which also leaves a dated record of the retraction. A mistyped or \
+                       reworded claim: rewrite it. Archiving and retracting are one-way for a \
+                       claim: nothing edits an archived claim, status included, so there is \
+                       no un-archive (an archived ENTITY comes back with restore: true). \
+                       Nothing is removed: the record keeps its address, its words and its \
+                       place and is marked archived, and beside it lands a dated record of \
+                       the retraction itself, naming what it takes back and the reason if you \
+                       give one. The two read as one story. recall returns claims of every \
+                       status unless you ask it for one, so a retracted record is out of a \
+                       default search, not out of a recall. Nothing edits an archived claim, \
+                       a status flip back included, so if you are unsure, capture what is so \
+                       now instead. A refusal is an answer with status: blocked and nothing \
+                       written. Retracting a retraction is refused: it is the last word on \
+                       what it takes back. Retracting a record that is already archived is \
+                       refused too, and says so, because the state you asked for is the state \
+                       jojobot holds. An address that names no record is refused with the \
+                       addresses that do exist."
     )]
     pub(crate) async fn retract(
         &self,

@@ -12,10 +12,21 @@ pub struct OrientArgs {
     /// handle. A handle of any other kind is refused — this door boots bots.
     /// Omit it for an anonymous orientation: you get the world and the
     /// snapshot, and no sid.
+    ///
+    /// Booting sweeps that bot's sessions that have gone a day without a beat to
+    /// `abandoned`; an abandoned run is offered back at a later boot for 7 days. It
+    /// does REPAIR one thing: a bot whose box is missing gets it opened here,
+    /// because a box is part of what a bot is and its absence is damage rather than
+    /// a setup step, and the answer says so plainly. A boot that starts a new run
+    /// ends any wrap window the bot has open.
     #[serde(default)]
     pub(crate) bot: Option<String>,
     /// Skip the orientation essay and return only what changes between calls —
     /// the snapshot, your identity, your session.
+    ///
+    /// The essay is the only part of the answer that does not change between calls.
+    /// An anonymous boot whose essay did not fit whole names every section it left
+    /// out; `section` fetches one.
     #[serde(default)]
     pub(crate) brief: Option<bool>,
     /// Your answer to the resume-or-new choice a boot hands back when this bot
@@ -26,6 +37,13 @@ pub struct OrientArgs {
     /// **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
     /// wrapped run's own sid back so that run can take one last change. The run
     /// stays wrapped. No role is taken, nothing is swept and no lease renews.
+    ///
+    /// Answering the resume-or-new offer? That answer carries no charter, because
+    /// only a boot that shipped one hands the offer back, so you are holding it
+    /// already; booting again with no `resume` reads it in full. A boot given a
+    /// `wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
+    /// back, the run stays wrapped for one last change, and no role is taken,
+    /// nothing is swept and no lease renews.
     #[serde(default)]
     pub(crate) resume: Option<String>,
     /// **A skill to read, by the name the index gave it.** The boot lists every
@@ -137,67 +155,31 @@ pub struct OrientArgs {
 #[tool_router(router = start_here_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "New here? Call this first — it is the ONE door, whether or not you have an \
-                       identity. Explains what jojobot is and how its world fits together — \
-                       entities, facts, provenance, edges, mailboxes — with worked examples, and \
-                       returns a live snapshot of what exists right now (entities by kind, EVERY \
-                       BOT NAMED so you can see which identities you could boot as, each with \
-                       its own mail beside it — counts on the one box you drain, elided on \
-                       everybody else's), so you start oriented instead of guessing. IT ALSO LISTS THE SKILLS this build \
-                       ships — a name and what each is FOR, never the procedures themselves. \
-                       When one of them matches the job in front of you, call this again with \
-                       skill: its name and you get that body. Nothing here decides when a \
-                       skill applies; the index says what each is for and you choose. AN \
-                       ANONYMOUS BOOT WHOSE ESSAY DID NOT FIT WHOLE names every section it left \
-                       out — call this again with section: one of those exact headings, or \
-                       \"opening\" for the remainder's un-headed opening paragraphs, and you get \
-                       that one unit whole, no bot and no session either. CALLED THIS \
-                       BEFORE? Pass brief: true and you get the snapshot without the essay — the \
-                       essay is the only part that does not change between calls, and calling \
-                       again without brief reads it in full. NAME A BOT and the same answer also \
-                       carries that identity: its charter (the orienting text — what this \
-                       identity is, its hard lines, where its work lives), its rules as dated \
-                       claims each carrying its own provenance (testimony and observation are \
-                       settled, inference \
-                       is a hypothesis — read them that way), and the per-state counts of the \
-                       mailbox it owns. ANSWERING THE RESUME-OR-NEW OFFER? That answer carries \
-                       no charter: only a boot that shipped one hands the offer back, so you \
-                       are holding it already. It says so rather than reading as a bot with \
-                       none, and booting again with no resume reads it in full. THIS DOOR \
-                       CREATES NO IDENTITY: a name that is no bot \
-                       comes back status: blocked, listing the bots that do exist and offering to \
-                       boot as one of them. It does REPAIR one thing: a bot whose box is missing \
-                       gets it opened here, because a box is part of what a bot is and its \
-                       absence is damage rather than a setup step — and the answer says so \
-                       plainly rather than reading as normal. BOOTING STARTS OR RESUMES THAT \
-                       BOT'S SESSION — there is no separate start verb. It first sweeps that \
-                       bot's sessions that have gone a day without a beat to `abandoned`. That \
-                       sweep and that repair are the only things a boot writes, except that a boot \
-                       which starts a new run ends any wrap window the bot has open, and a boot \
-                       given a wrap_code as `resume` opens that window: the wrapped run's own \
-                       sid comes back, the run stays wrapped for one last change, and no role \
-                       is taken, nothing is swept and no lease renews. Name no bot at \
-                       all and this is an orientation \
-                       preview: read-only, the world and the snapshot, no identity and no \
-                       session. THIS DOOR IS WHERE A SESSION HANDLE COMES FROM, and it takes one \
-                       too: that handle rides every verb after it, reads included, because it is \
-                       how jojobot knows which bot is asking — and this call is one of them. Pass \
-                       `sid` if you are already carrying one and the answer says whether it still \
-                       addresses your session; leave it off on a first boot, when you have none. \
-                       The `sid` you carry is never turned away here, whatever became of it: this \
-                       is the door you come back to. PASS `claim` WITH A ROLE NAME TO HOLD THAT \
-                       ROLE for 45 minutes, so two sessions never work one role at once: the \
-                       answer says `taken` (your claim succeeded and you hold the role), \
-                       `refused` (somebody else holds it, and the answer names who and until when; \
-                       or the role belongs to another bot, and the answer names the owner; or its \
-                       role object is archived, and the answer names the archive_entity call that \
-                       restores it), \
-                       `conflict` (the same call, retried, is the answer) or `unavailable` \
-                       (the store could not decide the claim, nothing is held, and the answer \
-                       says what to do next). A boot that passes no `claim` takes the role the \
-                       bot carries in `claims_role`, if it carries one, and the holder of a \
-                       role is never refused its own seat. Any write renews the lease and \
-                       wrapping releases it."
+        description = "New here? Call this first — it is the ONE door, whether or not you \
+                       have an identity. With no bot it is a read-only orientation: what \
+                       jojobot is, a live snapshot (entities by kind, EVERY BOT NAMED so you \
+                       can see which identities you could boot as) and the skills index (a \
+                       name and what each is FOR, never the procedures: call again with \
+                       skill: its name to get one). NAME A BOT and the answer also carries \
+                       that identity: its charter, its rules as dated claims each with its \
+                       own provenance (testimony and observation are settled, inference is a \
+                       hypothesis), and the counts of the mailbox it owns. THIS DOOR CREATES \
+                       NO IDENTITY: a name that is no bot comes back blocked, listing the \
+                       bots that exist. Booting starts or resumes that bot's session — there \
+                       is no separate start verb — and THIS DOOR IS WHERE A SESSION HANDLE \
+                       COMES FROM: that `sid` rides every verb after it, reads included, and \
+                       passing `sid` here tells you whether it still addresses your session. \
+                       A bot with a run to pick up gets a resume-or-new choice and no sid \
+                       until it answers with `resume`: a sid, `new`, or the wrap_code a wrap \
+                       handed back. CALLED THIS BEFORE? Pass brief: true to skip the essay; \
+                       calling without brief reads it in full. `claim` holds a named role for \
+                       45 minutes so two sessions never work one role at once (taken, \
+                       refused, conflict or unavailable; a claim is refused while its role \
+                       object is archived, and archive_entity restores it); every write, and \
+                       every read of your own box, renews the lease, and wrapping releases \
+                       it. A boot writes only the sweep of abandoned runs, the repair of a \
+                       missing box and, with a wrap_code, the wrap window it opens. Each \
+                       argument's own description holds the rest."
     )]
     pub(crate) async fn start_here(
         &self,

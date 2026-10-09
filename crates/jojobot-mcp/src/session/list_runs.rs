@@ -44,7 +44,8 @@ impl Jojobot {
                        It is a plain read: nothing here is begun, closed or swept. A bot with no \
                        runs at all comes back with an empty list rather than a blocked answer — \
                        that is not a fault, it is a bot that has never journalled. Each run \
-                       carries its own handle (`sid`, addressable through start_here's resume — \
+                       carries its own handle (`sid`, which start_here resumes while the run is \
+                       not wrapped; a wrapped run reopens only through its wrap_code — \
                        `null` only for a run that predates stored handles, since a plain read mints \
                        none), \
                        what it was working on last, its state (active · wrapped · abandoned), \

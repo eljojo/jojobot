@@ -15,6 +15,11 @@ pub struct MarkProcessedArgs {
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as
     /// the handle that thing wears today, even after a rename.
+    ///
+    /// Write the outcome you actually have: a note longer than the record holds is
+    /// CUT to fit and says so (a trailing ellipsis, and a delta naming what was
+    /// stored), never refused, because the verb that retires a message will not
+    /// fail over the length of its own record.
     #[serde(default)]
     pub(crate) notes: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -37,38 +42,29 @@ pub struct MarkProcessedArgs {
 #[tool_router(router = mark_processed_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Retire a message once it has been handled — terminal, an archive, never \
-                       a deletion — optionally recording the outcome in `notes`. \
-                       THE CRASH CONTRACT: call this ONLY AFTER you have acted on the message. \
+        description = "Retire a message once it has been handled — terminal, an archive, \
+                       never a deletion — optionally recording the outcome in `notes`. THE \
+                       CRASH CONTRACT: call this ONLY AFTER you have acted on the message. \
                        Mark first and then fail, and the message is gone from every future \
-                       delivery with nobody the wiser; act first and crash before marking, and \
-                       the next read_mailbox hands it back as a leftover — recoverable. A \
+                       delivery with nobody the wiser; act first and crash before marking, \
+                       and the next read_mailbox hands it back as a leftover — recoverable. A \
                        FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new \
-                       message if someone needs to know) — there is no failed status, because a \
-                       message whose handling failed has still been handled. When a message asks \
-                       nothing of you — its whole content is known to you once you have read it \
-                       — READING IT IS THE ACTING, so process it with a note and move on; the \
-                       order matters for work you still owe, not for work that was never owed. \
-                       Write the outcome you actually have: a note \
-                       longer than the record holds is CUT to fit and says so (a trailing ellipsis, \
-                       and a delta naming what was stored), never refused — the verb that retires a \
-                       message will not fail over the length of its own record. The answer \
-                       confirms the move — state, notes, id — WITHOUT echoing the message's body \
-                       back at you, since the read that handed it over already gave you that; it \
-                       carries body_bytes and body_elided: true instead, and read_message returns \
-                       the text unchanged for a processed message. A message can be \
-                       processed straight from `new`, no delivery first. Two refusals wear the \
-                       same status: blocked shape and mean different things: an id that names \
-                       nothing at all (use one read_mailbox or post_message handed you), and an \
-                       id naming an item jojobot cannot read, which comes back saying why — \
-                       retrying that one will not help, a person has to repair it, and until \
-                       then treat whatever it carried as unhandled and say so. TO QUARANTINE A \
-                       MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` \
-                       with your reason and leave `notes` unset; the message becomes unreadable \
-                       from every future delivery, and its refusal names you and your reason \
-                       rather than asking for repair. Only your own mail: naming a message sitting \
-                       in another box is refused, and nothing is written. There is no verb that \
-                       lifts a quarantine."
+                       message if someone needs to know); there is no failed status, because \
+                       a message whose handling failed has still been handled. When a message \
+                       asks nothing of you, READING IT IS THE ACTING: process it with a note \
+                       and move on. A message can be processed straight from `new`. The \
+                       answer confirms the move (state, notes, id) without echoing the body, \
+                       which read_message returns unchanged for a processed message. A \
+                       refusal is an answer with status: blocked and nothing written, in \
+                       three kinds: an id that names nothing (use one read_mailbox or \
+                       post_message handed you); an item jojobot cannot read, which says why \
+                       (no retry helps: a person has to repair it, and until then treat what \
+                       it carried as unhandled and say so); and a message that is not yours \
+                       to retire — one in another bot's box, or in the operator's, which no \
+                       bot reads. TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a \
+                       decision, not damage — pass `quarantine` with your reason and leave \
+                       `notes` unset; there is no verb that lifts a quarantine. Each \
+                       argument's own description holds the rest."
     )]
     pub(crate) async fn mark_processed(
         &self,

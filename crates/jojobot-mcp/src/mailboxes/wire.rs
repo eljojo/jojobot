@@ -371,16 +371,14 @@ pub(crate) fn note_written_by_other_run(
 /// A whole delivery.
 ///
 /// **`new_only` changes what is shipped, never what is owed.** Every message
-/// the delivery covers is here either way, counted and flagged the same, and
-/// every one of them still has to be marked processed — the crash contract is
-/// exactly as it was. What it drops is the BODIES of the leftovers, which is
-/// the whole cost of polling a box that holds a message somebody is
-/// deliberately keeping open: the report stays unprocessed on purpose until its
-/// round closes, and every poll in between was re-shipping it in full.
-///
-/// The elision is announced per message rather than once for the delivery,
-/// because a reader walking the list must not have to remember a flag from the
-/// envelope to know what it is looking at.
+/// the delivery covers is owed either way, and every one of them still has to
+/// be marked processed — the crash contract is exactly as it was. What it
+/// drops is the leftovers' envelopes: they are named by id under `leftovers`
+/// and not shipped again, which is the whole cost of polling a box that holds a
+/// message somebody is deliberately keeping open: the report stays unprocessed
+/// on purpose until its round closes, and every poll in between was
+/// re-shipping it in full. `new_only: false` ships them whole, flagged
+/// `seen_before`.
 pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::Value {
     serde_json::json!({
         "mailbox": delivery.mailbox.as_str(),

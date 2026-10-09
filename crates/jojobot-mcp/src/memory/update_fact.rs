@@ -16,13 +16,20 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateFactArgs {
     /// The fact's global address, `kind:slug#local-id` — exactly as `recall`
-    /// returned it.
+    /// returned it. **A claim cannot change subject:** to move one filed on the
+    /// wrong thing, capture it on the right one, re-sending its dates, fields and
+    /// edge, with `derived_from` naming this claim, then archive this one.
     pub(crate) address: String,
     /// Replacement claim.
     ///
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as the
     /// handle that thing wears today, even after a rename.
+    ///
+    /// An edit that would leave the claim too big to be read back whole in one
+    /// answer is refused with the claim unchanged: shorten it, split it into claims
+    /// that each say one thing, or keep the long text outside and write a pointer
+    /// claim.
     #[serde(default)]
     pub(crate) content: Option<String>,
     /// Replacement details; pass an empty string to clear them. They may hold
@@ -50,7 +57,7 @@ pub struct UpdateFactArgs {
     pub recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
     ///
-    /// A different question from `date`, and **learning it late is ordinary**:
+    /// A different question from `recorded_at`, and **learning it late is ordinary**:
     /// a claim written when nobody knew the day gains one here. Leaving it off
     /// keeps whatever the record says, like every other field this patch does
     /// not name.
@@ -72,16 +79,21 @@ pub struct UpdateFactArgs {
     /// one, alongside `clear_happened_at`) rather than a span.
     #[serde(default)]
     pub clear_happened_through: Option<bool>,
-    /// `active` or `archived`. **Archive a claim that changed or was never
-    /// true — do not negate it.** Rewriting `content` into its own denial
-    /// ("the club does NOT meet on Tuesdays" replacing "the club meets on
-    /// Tuesdays") leaves a sentence about what is not so where a claim about
-    /// what is true belongs. Set `status: archived` and give `details`
-    /// saying why, then capture the true claim as a new record — name this
-    /// one as its `derived_from` when there is a direct replacement. A
-    /// negative is still an ordinary fact when it is not correcting
-    /// anything: "he did not attend" stands on its own, written with
-    /// `capture` like any other claim.
+    /// `active` or `archived`. ARCHIVE, RETRACT OR REWRITE — one rule, stated the
+    /// same in update_fact, its status argument and retract. A claim that was
+    /// true and has changed, or that was never true: archive it with update_fact
+    /// (status: archived, the reason in details) and capture the replacement,
+    /// naming the old claim in derived_from. A claim about a past EVENT that turned
+    /// out never to have happened: retract it, which also leaves a dated record of
+    /// the retraction. A mistyped or reworded claim: rewrite it. Archiving and
+    /// retracting are one-way for a claim: nothing edits an archived claim,
+    /// status included, so there is no un-archive (an archived ENTITY comes back
+    /// with restore: true). Rewriting `content` into its own denial ("the club
+    /// does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
+    /// sentence about what is not so where a claim about what is true belongs. A
+    /// negative is still an ordinary fact when it is not correcting anything: "he
+    /// did not attend" stands on its own, written with `capture` like any other
+    /// claim.
     #[serde(default)]
     pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
@@ -91,6 +103,8 @@ pub struct UpdateFactArgs {
     /// the source off a claim that stays an observation is refused for the same
     /// reason**, because both leave a machine read of a system nobody named.
     /// A claim that already carries one does not have to name it again.
+    ///
+    /// A session that wrote a claim keeps its provenance when it sends none.
     #[serde(default)]
     pub(crate) provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled
@@ -100,6 +114,10 @@ pub struct UpdateFactArgs {
     /// That is the whole of the gate: it is on this promotion, not on
     /// declaring a standing. A fresh `capture` may state `settled` and is
     /// taken at its word, the way it is taken at its word about provenance.
+    ///
+    /// This is how a hedge is confirmed: the operator hedged the claim and no
+    /// longer does, so set standing settled (with `confirmed_by_user`) and leave
+    /// provenance alone; the claim was theirs from the start.
     #[serde(default)]
     pub(crate) standing: Option<String>,
     /// Required for two promotions of an EXISTING claim: anything → testimony
@@ -120,6 +138,10 @@ pub struct UpdateFactArgs {
     /// **Fields to set**, as key/value pairs. Each key named is written; a key
     /// the record already carries and this does not name is left alone, so an
     /// edit reaches one field without restating the rest.
+    ///
+    /// A field you set that equals what jojobot ships as its default today is
+    /// stored exactly as you sent it either way, and the receipt's echoes_defaults
+    /// names which key that was.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to set on the thing this claim is about**, as key/value pairs,
@@ -135,6 +157,9 @@ pub struct UpdateFactArgs {
     /// value in `fields`: an empty value is a value somebody wrote, and
     /// setting a key to nothing and taking the key off the record are two
     /// different edits.
+    ///
+    /// To move a value to another key, send `fields` with the new key and
+    /// `clear_fields` with the old one in the same call.
     #[serde(default)]
     pub(crate) clear_fields: Option<Vec<String>>,
     /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
@@ -218,90 +243,36 @@ pub struct UpdateFactArgs {
 /// Edit one addressed fact in place — fix the source, never an addendum.
 #[tool_router(router = update_fact_router, vis = "pub(crate)")]
 impl Jojobot {
-    #[tool(description = "Edit an addressed fact in place \
-                       (content/details/date/status/provenance/standing). To record that something \
-                       is NOT so, or never was, archive the claim (status: archived, with a \
-                       note saying why) and capture the replacement; there is no negated status, \
-                       and a rewrite is for a mistyped or reworded claim. \
-                       NOT FOR A PAST EVENT: turning a claim about one into its negation is \
-                       never this rewrite — archive it, or retract it. \
-                       DATE REWRITES THE DAY THIS CLAIM WAS MADE — the day it was said, decided \
-                       or worked out, YYYY-MM-DD — the same argument retract carries, and it is \
-                       never the day the call happens to be made on. Omit it and the record \
-                       keeps the day of the claim it replaces; give it when the correction \
-                       itself was made on a different day, or a rewrite made long after the \
-                       fact keeps the ORIGINAL day forever, reading back as if it had always \
-                       been made on a day it was never made on. \
-                       TWO MOVES NEED confirmed_by_user, and they are different: moving a \
-                       claim TO testimony (who backs it), from inference or from observation \
-                       alike — a claim you read in a system of record is not a step towards the \
-                       operator having said it — and settling a claim that is already open (how \
-                       sure anyone is). THIS IS HOW A HEDGE IS CONFIRMED — the \
-                       operator hedged the claim and no longer does, so set standing settled \
-                       and leave provenance alone; the claim was theirs from the start. \
-                       Reopening is free. THE GATE IS ON PROMOTION, NOT ON ASSERTION: a fresh \
-                       capture may declare standing settled and nobody is asked to confirm it, \
-                       exactly as it declares its provenance — what needs the operator's word \
-                       is moving a claim they hedged. IT ALSO REACHES THE RECORD'S FIELDS: \
-                       fields sets the keys you name and leaves every other key alone, and \
-                       clear_fields takes keys off; `sets` does the same for the keys that are \
-                       properties of the thing the claim is about, apart from the claim's own \
-                       `fields`. Those are two arguments rather than one, \
-                       because setting a key to an empty value and removing the key are \
-                       different edits and a caller means one of them. A field you set that \
-                       equals what jojobot ships as its default today is stored exactly as you \
-                       sent it either way, and the receipt's echoes_defaults names which key that \
-                       was. TO MOVE A VALUE TO ANOTHER KEY, send `fields` with the new key and \
-                       `clear_fields` with the old one in the same call. A CLAIM CANNOT CHANGE \
-                       SUBJECT: to move one filed on the wrong thing, capture it on the right \
-                       one, re-sending its dates, fields and edge, with `derived_from` naming \
-                       this claim, then archive this one. AND IT REACHES THE \
-                       EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge \
-                       takes it off. Reach for clear_edge when the rewrite turns a claim about \
-                       what is true NOW into its current negative — was a member and is not any \
-                       more, was living somewhere and moved away — because then the edge belongs \
-                       to the sentence you just erased. A rewrite that stays positive is not this \
-                       case: clearing the edge there stops every walk through it and makes the \
-                       entity on the other end unreachable from this record, so leave it alone. \
-                       A PAST EVENT THAT TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, \
-                       NOT THIS ONE: retracting marks the record rather than rewriting it, and \
-                       there is no un-retract. \
-                       stands_for MARKS THIS RECORD AS STANDING FOR THE CLAIMS NAMED HERE, each \
-                       as its address: a synthesis, never a citation — the named claims stay \
-                       active and readable exactly as they were, so recall still shows the full \
-                       picture. clear_stands_for takes the mark off. A write replaces the whole \
-                       set; naming an address that does not exist, this record's own address, \
-                       the same address twice, or an empty set is refused. \
-                       An address that \
-                       names no fact comes back status: blocked with the addresses that do \
-                       exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
-                       address, the date, the provenance, the standing, the status and how many \
-                       keys the record now carries, with the claim itself elided and said to be. \
-                       The write is read back from the store before it is called a \
-                       success; what stops is shipping you the words you just sent. recall the \
-                       subject to read the record back. AND A REWRITE DESTROYS NOTHING: every \
-                       write of a claim is kept, so what it said before this call is still \
-                       readable — recall the subject with history_record: the address, and you \
-                       get every version of it, oldest first. So a claim you disagree with is \
-                       safe to correct, unless it is testimony from an earlier session, which is \
-                       archived and replaced instead (below): you are not deciding whether the \
-                       old wording survives, only what the claim says now. \
-                       TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT: a \
-                       content rewrite of testimony from an earlier session is refused, and so is \
-                       one of testimony that records no session. Archive it (status: archived, \
-                       with a reason in details), then capture the corrected claim with \
-                       derived_from naming the archived one. The original stays readable. A \
-                       session that wrote a claim keeps its provenance when it sends none. \
-                       NAMING NOTHING TO CHANGE IS REFUSED, NOT SILENTLY HONOURED: a call that \
-                       sets none of the arguments above still reaches this verb, and a claim is \
-                       never re-asserted by accident. keep IS THE DESIGNED WAY TO DO IT ON \
-                       PURPOSE — set keep: true and nothing else to keep this claim exactly as it \
-                       stands while moving when it was last touched. keep IS REFUSED IF ANYTHING \
-                       ELSE HERE WOULD ACTUALLY CHANGE THE CLAIM: there is no partial keep, only \
-                       this alone or an ordinary edit naming what changes. An edit that would leave the claim too big to be read back whole in \
-                       one answer is refused with the claim unchanged: shorten it, split it \
-                       into claims that each say one thing, or keep the long text outside and \
-                       write a pointer claim.")]
+    #[tool(
+        description = "Edit one addressed claim in place — fix the source, never an addendum. \
+                       It changes `content`, `details`, `recorded_at` (the day the claim was \
+                       MADE, never the day you call), `status`, `provenance`, `standing`, \
+                       `fields`, `sets` and the claim's edge; `stands_for` marks a record as \
+                       a synthesis of other claims. ARCHIVE, RETRACT OR REWRITE — one rule, \
+                       stated the same in update_fact, its status argument and retract. A \
+                       claim that was true and has changed, or that was never true: archive \
+                       it with update_fact (status: archived, the reason in details) and \
+                       capture the replacement, naming the old claim in derived_from. A claim \
+                       about a past EVENT that turned out never to have happened: retract it, \
+                       which also leaves a dated record of the retraction. A mistyped or \
+                       reworded claim: rewrite it. Archiving and retracting are one-way for a \
+                       claim: nothing edits an archived claim, status included, so there is \
+                       no un-archive (an archived ENTITY comes back with restore: true). A \
+                       rewrite destroys nothing — every earlier wording stays readable \
+                       (recall with history_record: the address) — so a claim you disagree \
+                       with is safe to correct, except testimony from an earlier session: \
+                       TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and \
+                       any other is archived and replaced, with derived_from naming the \
+                       archived claim. confirmed_by_user is required for exactly two moves of \
+                       an existing claim: anything to testimony, and open to settled. \
+                       Reopening is free, and a fresh capture is taken at its word. It \
+                       answers with a receipt, not the record: the write is read back from \
+                       the store before it is called a success, and recall the subject reads \
+                       the record. A call that names nothing to change is refused; keep: true \
+                       alone is the designed way to touch a claim unchanged. An address that \
+                       names no claim comes back blocked with the addresses that exist. Each \
+                       argument's own description holds its rules."
+    )]
     pub(crate) async fn update_fact(
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
@@ -910,9 +881,9 @@ impl Jojobot {
     /// is — once, on the receipt, and never as a refusal.**
     ///
     /// Neither reason a past-event claim turns into its negation is a
-    /// rewrite. A record that was never true is archived, with a note
-    /// saying why — `retract` does the same and keeps a dated account
-    /// beside it. A record that was true and changed is archived too, and
+    /// rewrite. An event that never happened is retracted, which leaves a
+    /// dated record of the retraction beside the claim. A record that was
+    /// true and changed is archived, with a note saying why, and
     /// the new claim is a fresh capture, not this row overwritten: rule 58,
     /// which told an agent to rewrite a disproved fact into its own denial,
     /// is gone, and an in-place negation is the shape it took. Two paid runs
@@ -962,10 +933,10 @@ impl Jojobot {
         }
         String::from(
             " This turns a claim about an event into its negation, and neither reason for that \
-             is a rewrite. If the record was never true, archive it instead — status: archived, \
-             details saying why — or retract, which does the same and keeps a dated account \
-             beside it. If it was true and has changed, archive it and capture the new claim; \
-             overwriting it here loses the day it stopped being true.",
+             is a rewrite. If the event never happened, retract the claim, which also leaves a \
+             dated record of the retraction. If it was true and has changed, archive it \
+             (status: archived, details saying why) and capture the new claim; overwriting it \
+             here loses the day it stopped being true.",
         )
     }
 

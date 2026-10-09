@@ -17,14 +17,28 @@ pub struct ReadMailboxArgs {
     /// yours to finish — so a poll that finds an empty box costs nothing and
     /// owes nothing. `new_only` has nothing to say here: no bodies are shipped
     /// either way.
+    ///
+    /// Draining a whole box makes every message in it yours to finish; use
+    /// read_message when you want only one.
     #[serde(default)]
     pub(crate) counts_only: Option<bool>,
     /// Ship bodies only for messages nobody has taken yet — **the default**.
-    /// Leftovers, the ones flagged `seen_before`, still come back, still
-    /// counted, still owed; only their bodies are left out, and each says so.
+    /// Leftovers, the ones a previous read already handed you, are still owed
+    /// but are not shipped again: they are named by id under `leftovers` (a
+    /// count and the ids), and `read_message` returns one whole.
     ///
     /// Pass `false` to get those bodies back — the read a consumer makes when
     /// it is recovering from a crash and no longer holds what it was given.
+    ///
+    /// A message somebody else finished while this delivery was in flight is left
+    /// out, so a delivery can be smaller than counts you saw a moment ago. Two
+    /// sessions of one bot share its one box, so a delivery taken by one is not
+    /// waiting for the other; two workers that must not share a queue are two bots.
+    /// Each message may carry `sender_mail_waiting_at_send`, stamped once when it
+    /// was posted (see post_message's `sid`; `null` is unknown, never zero), and
+    /// `written_by_other_run` when a DIFFERENT run posted it than the one reading,
+    /// naming that run and whether it has since ended (`null` when that could not
+    /// be read).
     #[serde(default)]
     pub(crate) new_only: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -209,46 +223,27 @@ impl Jojobot {
     #[tool(
         description = "Take delivery of everything unprocessed in YOUR OWN mailbox, oldest \
                        first, moving each message from `new` to `read`. There is no peek: \
-                       reading IS taking delivery. WHICH BOX IS NOT AN ARGUMENT — the `sid` you \
-                       pass says which bot is asking, and a bot reads the box it owns, full \
-                       stop. Reading somebody else's would move their mail out of `new` and \
-                       make it no longer waiting for them; to reach another box, post_message \
-                       writes into it without reading it, which is the shape of a request. No \
-                       box to open comes back status: blocked, saying which kind of nothing it \
-                       found — no sid, no claim, or a claim nobody has opened — and delivers \
-                       nothing. Messages a previous read already handed over are leftovers from \
-                       an interrupted earlier read, not fresh mail: they are named under \
-                       `leftovers` (a count and their ids) and not shipped again. A message somebody else finished while this delivery was \
-                       in flight is left out, so a delivery can be smaller than counts you saw a \
-                       moment ago. Act on what you receive, then call \
-                       mark_processed for each. Two sessions of one bot share its one box, so \
-                       a delivery taken by one is not waiting for the other; two workers that \
-                       must not share a queue are two bots. Draining a whole box makes every \
-                       message in it yours to finish — use read_message when you want only one. ONLY CHECKING \
-                       WHETHER ANYTHING IS WAITING? Call this with counts_only: true — you get \
-                       your box's per-state counts and its unreadable report, NOTHING moves out \
-                       of new and nothing becomes yours to finish, so a poll that finds an empty \
-                       box costs nothing and owes nothing. BY DEFAULT you get the messages nobody has taken yet, \
-                       whole: leftovers stay counted and owed, and `leftovers` names them by id \
-                       (read_message returns one) — because you were handed them once already. \
-                       Pass new_only: false to get every message back whole, flagged seen_before, \
-                       which is the read for a consumer recovering from a crash that no longer \
-                       holds what it was given. Either \
-                       way it changes what is SHIPPED, never what is owed. AN ANSWER STOPS AT \
-                       THE ANSWER CEILING AND TAKES EVERY MESSAGE ANYWAY: the oldest bodies come \
-                       whole, a body that does not fit is left out and flagged body_elided with \
-                       body_bytes and body_head, and a message that does not fit even so is named \
-                       by id under not_shown; read_message returns any of them whole. Each message may also \
-                       carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
-                       `post_message`'s own description for what it means; `null` there is unknown, \
-                       never zero. A message that a DIFFERENT run posted than the one reading it \
-                       carries `written_by_other_run`, naming that run and whether it has since \
-                       ended (`null` when that could not be read); a message your own run posted \
-                       does not carry the key. A POLL ALSO KEEPS YOUR ROLE: reading your own box \
-                       with your own sid renews the role claim your session holds, the same as a \
-                       write does, so a session that only polls does not go stale. AN EMPTY DELIVERY NAMES WHAT IT \
-                       LOOKED THROUGH: it carries `searched`, one line naming the box, what was \
-                       left out and the call that reads it."
+                       reading IS taking delivery, and every message delivered is yours to \
+                       finish — act on it, then call mark_processed. WHICH BOX IS NOT AN \
+                       ARGUMENT: the `sid` says which bot is asking, and a bot reads the box \
+                       it owns. To reach another box, post_message. ONLY CHECKING WHETHER \
+                       ANYTHING IS WAITING? Pass counts_only: true: you get the per-state \
+                       counts and the unreadable report, nothing moves out of `new` and \
+                       nothing becomes yours to finish, so a poll that finds an empty box \
+                       costs nothing and owes nothing. By default you get the messages nobody \
+                       has taken yet, whole. Messages a previous read already handed you are \
+                       LEFTOVERS, still owed: they are named by id under `leftovers` and not \
+                       shipped again, read_message returns one by id, and new_only: false \
+                       returns every message whole, flagged seen_before (the read for a crash \
+                       that lost what it was given). Either way it changes what is shipped, \
+                       never what is owed. The answer stops at the ceiling and takes every \
+                       message anyway: a body that does not fit is flagged body_elided, and a \
+                       message that does not fit even so is named under not_shown. No box to \
+                       open comes back status: blocked and delivers nothing. Reading your own \
+                       box with your own sid, a poll included, renews a role claim your \
+                       session holds, so a session that only polls does not go stale. An \
+                       empty delivery names what it looked through, as searched. Each \
+                       argument's own description holds the rest."
     )]
     pub(crate) async fn read_mailbox(
         &self,

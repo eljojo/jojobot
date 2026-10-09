@@ -420,36 +420,17 @@ attributed, never journalled.
 #### `capture` — description
 
 ```text
-Remember one fact about an entity: the claim, when it became true, and whether it is testimony, observation or inference (default inference — a hypothesis, not a finding).
-A NEW THING THAT HAPPENED IS A NEW CLAIM, even about a thing that already carries one — capture it again rather than reaching for update_fact, because capture adds and never erases what stood before.
-OBSERVATION is a claim you READ out of a system of record, confidently — a statement, an app, a service — and it reads back settled, so it MUST say where: give fields a read_from naming the system, and a read_ref for what you read there if you have one.
-Without read_from the call is refused, because who confirmed something and on what is one question and half of it is no answer.
-Use it where nobody said it to you and you did not work it out.
-PROVENANCE AND STANDING ARE TWO QUESTIONS: provenance says WHO BACKS IT, standing says HOW SURE anyone is (settled or open).
-Leave standing off and it follows the provenance.
-Set it when the two come apart, and the case that matters is the operator stating something first-hand and hedging it — that is provenance testimony with standing open, and there is no other way to record it.
-It may also draw one typed edge at another entity.
-Returns the stored fact with the address you later edit it through.
-Every entity it names — the subject, and an edge's object — must ALREADY EXIST: one jojobot doesn't know comes back status: blocked with candidates and nothing is written.
-A genuinely new entity is two deliberate steps — add_entity, then capture.
-GIVE IT FIELDS: fields is a flat bag of key/value pairs jojobot stores as written; a handle or a comma list of handles is a link and must exist, and six keys stay on their claim.
-`sets` is the other bag: keys that are properties of the thing the claim is about, set by the same call; a key a record holds belongs to one bag or the other.
-refs names the entities the record touches — those are links whose meaning is deliberately unrecorded, so they are searchable but assert nothing, which is what makes them not `about` edges.
-NOTHING HAS TO BE DECLARED FIRST and no name for the class of thing is asked for: a key you invent is kept as you wrote it, and a type is something the keys answer rather than something you announce.
-A field you send that equals what jojobot ships as its default today is stored exactly as you sent it either way, and the receipt's echoes_defaults names which key that was.
-derived_from names the claim this one was worked out from, as its address — use it when the source is another claim, not an entity.
-IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the address that edits it, the subject as it was qualified, the date, the provenance and the standing it was given — which is how a caller that named none of those learns what was recorded — and how many keys landed, with your claim elided and said to be.
-The write is read back from the store before it is called a success; what stops is shipping you the words you just sent.
+Remember one claim about an entity: the words, when they became true, and who backs them.
+PROVENANCE: testimony (the operator said it), observation (you READ it in a system of record, so `read_from` in fields must name the system or the call is refused) or inference (you worked it out; the default, and a hypothesis, not a finding).
+STANDING (settled or open) is a separate question — how sure anyone is — and follows the provenance unless you set it; the operator hedging their own words is testimony with standing open.
+A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
+Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates; a new entity is two steps, add_entity and then capture.
+`fields` is a flat bag stored as written (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim and stay on it, listed under `fields`); `sets` sets keys on the thing itself in the same call.
+A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (200 characters unless the bot's `thought_body_cap` says otherwise) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`.
+It answers with a receipt, not the record: the address you edit it through, what was recorded, and how many keys landed; the write is read back from the store before it is called a success.
 recall the subject to read it back.
-A `thought` is a claim drawn as a connection edge with your OWN bot handle as the subject; `thought_capacity` caps how many are live at once.
-When the room is full, name one to `drop` and say why in `drop_because` (required with it), or pass `borrow` to land one over capacity — once, as the emergency reserve.
-A RULE FOR YOUR OWN BOOT: capture it on your own bot handle with `starred` set to "true" in fields and it competes for one of the few seats your boot spends on rules.
-An unstarred rule is kept all the same and reads back with recall's facts; when a new star pushes the oldest starred rule off its seat, the receipt names it.
-A PASS, TICKET, MEMBERSHIP OR REGISTRATION SOMEBODY HOLDS is a claim on the HOLDER, with fields `admits` (the handle of the event, place or organisation it opens), `valid_from` and `valid_until` (days; no window reads as live) and optionally `tier`.
-That an event offers a tier is a claim on the event instead.
-Holding is not attendance, not wanting to go and not a calendar entry: each is its own claim.
-Recall the holder with facts to read what they hold, or recall the event and read its `held` block, which ranks who holds what, live first.
-A claim too big to be read back whole in one answer is refused with nothing written: shorten it, split it into claims that each say one thing, or keep the long text outside and write a pointer claim.
+A claim too big to be read back whole is refused with nothing written.
+Each argument's own description holds the rest.
 ```
 
 #### `capture` — structure
@@ -677,6 +658,10 @@ The crisp claim to remember — single line, no line breaks. Put the rest in
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+
+A claim too big to be read back whole in one answer is refused with nothing
+written: shorten it, split it into claims that each say one thing, or keep
+the long text outside and write a pointer claim.
 ```
 
 #### `capture` — argument `/inputSchema.derived_from`
@@ -746,6 +731,22 @@ a bot has is `rule_seats`, written about it by a different identity** —
 a bot cannot raise its own — and a star or a count that would leave
 the boot over its size ceiling is refused, naming the overage.
 
+**Six keys describe their own claim and never fold onto the thing:**
+`read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by`.
+Read them back with `facts: true`; find by them with a `fields` filter and
+`scope: record`. A field you send that equals what jojobot ships as its
+default today is stored exactly as you sent it either way, and the receipt's
+echoes_defaults names which key that was.
+
+**A pass, ticket, membership or registration somebody holds** is a claim on
+the HOLDER, with fields `admits` (the handle of the event, place or
+organisation it opens), `valid_from` and `valid_until` (days; no window
+reads as live) and optionally `tier`. That an event offers a tier is a claim
+on the event instead. Holding is not attendance, not wanting to go and not a
+calendar entry: each is its own claim. Recall the holder with facts to read
+what they hold, or recall the event and read its `held` block, which ranks
+who holds what, live first.
+
 A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as you wrote it and nothing acts on it: it never makes a thing fall due or appear in what is owed.
 
 `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by` describe their own claim and never fold onto the thing: read them back with `facts: true`, and find by them with a `fields` filter with `scope: record`.
@@ -755,7 +756,7 @@ A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on 
 
 ```text
 **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
-a different question from `date`, which is about the claim.
+a different question from `recorded_at`, which is about the claim.
 
 ⛔️ **Leave it off unless you were told a day.** *Over the summer* is not
 a day: a claim that says nothing about when the thing happened is a
@@ -784,9 +785,9 @@ how a cross-entity question quietly starts coming back empty.
 #### `capture` — argument `/inputSchema.provenance`
 
 ```text
-`testimony` (the user said it), `observation` (you read it in a system
+`testimony` (the operator said it), `observation` (you read it in a system
 of record) or `inference` (you derived it). Defaults to `inference`:
-anything not tied to the user's words is a hypothesis.
+anything not tied to the operator's words is a hypothesis.
 
 **`observation` must say where it was read** — the field `read_from`
 naming the system, and `read_ref` for what was read there if you have
@@ -838,8 +839,8 @@ are the claim's own. One call records the claim and sets the thing. A key
 belongs to one of the two for as long as this record holds it, so a key
 named here and in `fields` is refused, and a key the record already holds
 in the other is refused with the way to move it. A key that only labels
-the claim (`read_from`, `purpose`, `subject`) is never a property of the
-thing and is refused here by name.
+the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
+`recorded_by`) is never a property of the thing and is refused here by name.
 ```
 
 #### `capture` — argument `/inputSchema.shape`
@@ -865,6 +866,10 @@ still matters, on purpose, without changing a word of it.
 it.** Send this key about your own handle and the write is refused,
 whatever else the call carries — only a different identity may raise
 or lower it. The same holds for `thought_ages_after_runs`.
+
+A thought's content is capped: 200 characters unless the bot's own
+`thought_body_cap` setting says otherwise, and a longer one is refused. Put
+the substance on the thing it points at and keep the thought short.
 ```
 
 #### `capture` — argument `/inputSchema.sid`
@@ -902,9 +907,9 @@ something first-hand and hedging it**: that is
 `provenance: testimony` with `standing: open`.
 
 **Declared on honour, exactly as `provenance` is.** Nothing here asks
-you to confirm a standing. `update_fact` is where the gate sits, and
-only on the one move that takes a claim the operator hedged and calls
-it settled.
+you to confirm a standing. `update_fact` is where the gate sits, on two
+moves of an EXISTING claim: anything to `testimony`, and an open
+standing to `settled`.
 ```
 
 #### `capture` — argument `/inputSchema.subject`
@@ -1164,7 +1169,7 @@ Not every tool call, not every file: a reader months from now wants the story, a
 The first journal entry (or the first write of any kind) is what brings your session's record into being, so a boot that does nothing leaves nothing behind.
 PASS `sid` — the session id the boot door gave you — ON EVERY CALL; it is the only address, and it is what tells jojobot which bot is writing.
 A `sid` whose session is closed comes back status: blocked: a closed session takes no more entries, whichever end it reached.
-The two ends part company on what comes NEXT — a run that stopped without being wrapped up is offered back at your next boot, and resuming it continues this same record, while a wrapped one is the last word — its story is told and nothing appends to it except through the wrap_code its wrap handed back, so carrying on means a fresh session.
+The two ends part company on what comes NEXT — a run that stopped without being wrapped up is offered back at your next boot for 7 days, and resuming it continues this same record, while a wrapped one is the last word — its story is told and nothing appends to it except through the wrap_code its wrap handed back, so carrying on means a fresh session.
 IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and the opening line.
 You wrote the entry; start_here returns the whole chronology when you resume.
 IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, exactly as any other write does — the lease is not journal's alone to keep fresh.
@@ -1330,7 +1335,7 @@ See YOUR OWN bot's past runs — every one this identity has had, in whatever st
 WHOSE RUNS IS NOT AN ARGUMENT: the `sid` you pass says which bot is asking, exactly as it does for journal, and there is no way to name a different identity's runs — this reads what is yours and nothing else.
 It is a plain read: nothing here is begun, closed or swept.
 A bot with no runs at all comes back with an empty list rather than a blocked answer — that is not a fault, it is a bot that has never journalled.
-Each run carries its own handle (`sid`, addressable through start_here's resume — `null` only for a run that predates stored handles, since a plain read mints none), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
+Each run carries its own handle (`sid`, which start_here resumes while the run is not wrapped; a wrapped run reopens only through its wrap_code — `null` only for a run that predates stored handles, since a plain read mints none), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
 Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, on every boot of this identity.
 Each run also carries `served`: the total characters this run has been answered, plus a token count that is an estimate derived from those characters, never a real tokenisation.
@@ -1408,18 +1413,14 @@ whose runs this reads, and no way to name a different one.
 
 ```text
 See the mail YOU have sent and where it got to — read-only, and it moves NOTHING: no state changes, nobody's delivery is taken, and the messages stay exactly as owed as they were.
-It answers whether something you sent arrived and whether anyone has read it — questions every other verb could only answer by taking delivery of the box you posted into.
+It answers whether something you sent arrived and whether anyone has read it, which no other verb can answer without taking delivery of the box you posted into.
 A `to` that names no colleague comes back status: blocked with candidates, never an empty list, because an empty list would read as 'it never arrived'.
 Messages jojobot cannot read are reported separately under `unreadable`: it cannot tell who sent them, so one of yours could be there.
-Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome.
-A message that has left `new` also carries `taken_by`: `reading` = the owner opened the box or took that message by id, so somebody looked · `posting` = it rode back with the answer to a post of the owner's own, so it reached them and nobody went looking.
-Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and the opening line instead, and says body_elided: true rather than leaving you to guess, with the one instruction for getting them said once beside the list rather than on every message.
-Twenty newest by default: `limit` is the size of a page.
-An answer stops at the answer ceiling, never mid-message, and whatever it leaves out is counted under not_shown with the `offset` that reads the next page: repeat the same call with it.
-OMIT `sender` for your own mail — your `sid` already says who that is.
-Pass one to ask after somebody else's outgoing mail: it is matched exactly against the bot handle recorded on each message (`bot:gamma`), which is allowed, because where a message got to is not private to its sender.
-MAIL TO THE OPERATOR is listed by id, time and subject only, even to you and even with include_bodies, because no bot reads the operator's box back.
-Each message may also carry `sender_mail_waiting_at_send`, stamped once when it was posted — see `post_message`'s own description for what it means; `null` there is unknown, never zero.
+Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message that has left `new` also carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own).
+Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and the opening line and says body_elided: true.
+MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
+Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
+Each argument's own description holds the rest.
 ```
 
 #### `list_sent` — structure
@@ -1487,6 +1488,10 @@ Each message may also carry `sender_mail_waiting_at_send`, stamped once when it 
 ```text
 Ship the bodies back too. Off by default: you wrote them, so the useful
 answer is where they got to, not what they say.
+
+Each message may also carry `sender_mail_waiting_at_send`, stamped once when
+it was posted; see `post_message`'s `sid` for what it means (`null` is
+unknown, never zero).
 ```
 
 #### `list_sent` — argument `/inputSchema.limit`
@@ -1495,6 +1500,8 @@ answer is where they got to, not what they say.
 How many messages to return, newest first. Defaults to twenty. This is
 the size of a page: an answer that would pass the answer ceiling carries
 fewer and says so, and `offset` reads on.
+
+Twenty newest by default: `limit` is the size of a page.
 ```
 
 #### `list_sent` — argument `/inputSchema.offset`
@@ -1511,6 +1518,11 @@ out; repeat the same call with it. Defaults to 0.
 Whose outgoing mail to show, matched **exactly** against the sender
 recorded on each message. Omit it for your own — your `sid` says who
 that is, and your own mail is what this verb is for.
+
+Omit it for your own mail: your `sid` already says who that is. Pass one to
+ask after somebody else's outgoing mail; it is matched exactly against the
+bot handle recorded on each message (`bot:gamma`), which is allowed, because
+where a message got to is not private to its sender.
 ```
 
 #### `list_sent` — argument `/inputSchema.sid`
@@ -1537,15 +1549,13 @@ colleague, so this is how you ask after them.
 Retire a message once it has been handled — terminal, an archive, never a deletion — optionally recording the outcome in `notes`.
 THE CRASH CONTRACT: call this ONLY AFTER you have acted on the message.
 Mark first and then fail, and the message is gone from every future delivery with nobody the wiser; act first and crash before marking, and the next read_mailbox hands it back as a leftover — recoverable.
-A FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new message if someone needs to know) — there is no failed status, because a message whose handling failed has still been handled.
-When a message asks nothing of you — its whole content is known to you once you have read it — READING IT IS THE ACTING, so process it with a note and move on; the order matters for work you still owe, not for work that was never owed.
-Write the outcome you actually have: a note longer than the record holds is CUT to fit and says so (a trailing ellipsis, and a delta naming what was stored), never refused — the verb that retires a message will not fail over the length of its own record.
-The answer confirms the move — state, notes, id — WITHOUT echoing the message's body back at you, since the read that handed it over already gave you that; it carries body_bytes and body_elided: true instead, and read_message returns the text unchanged for a processed message.
-A message can be processed straight from `new`, no delivery first.
-Two refusals wear the same status: blocked shape and mean different things: an id that names nothing at all (use one read_mailbox or post_message handed you), and an id naming an item jojobot cannot read, which comes back saying why — retrying that one will not help, a person has to repair it, and until then treat whatever it carried as unhandled and say so.
-TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; the message becomes unreadable from every future delivery, and its refusal names you and your reason rather than asking for repair.
-Only your own mail: naming a message sitting in another box is refused, and nothing is written.
-There is no verb that lifts a quarantine.
+A FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new message if someone needs to know); there is no failed status, because a message whose handling failed has still been handled.
+When a message asks nothing of you, READING IT IS THE ACTING: process it with a note and move on.
+A message can be processed straight from `new`.
+The answer confirms the move (state, notes, id) without echoing the body, which read_message returns unchanged for a processed message.
+A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
+TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
+Each argument's own description holds the rest.
 ```
 
 #### `mark_processed` — structure
@@ -1603,6 +1613,11 @@ What happened — including a failure. Optional, one plain line.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+
+Write the outcome you actually have: a note longer than the record holds is
+CUT to fit and says so (a trailing ellipsis, and a delta naming what was
+stored), never refused, because the verb that retires a message will not
+fail over the length of its own record.
 ```
 
 #### `mark_processed` — argument `/inputSchema.quarantine`
@@ -1631,22 +1646,16 @@ attributed, never journalled.
 
 ```text
 Merge a duplicate into the thing it duplicates — the repair for one thing named twice.
-A deliberate act rather than a flag on an edit, because it is the one call here that destroys structure.
-Everything the duplicate held moves to the survivor: its claims, the edges drawn at it, the history under its keys, and its names, which become aliases of the survivor.
-Beside them lands a dated record of the merge itself, on the survivor, naming the handle that went and the reason if you give one.
-NOTHING IS REMOVED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves — but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
+A deliberate act rather than a flag on an edit, because there is no way back.
+Everything the duplicate held moves to the survivor: its claims, the edges drawn at it, the history under its keys, and its names, which become aliases of the survivor; beside them lands a dated record of the merge itself, naming the handle that went and the reason if you give one.
+NOTHING IS DELETED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves, but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
 It does not answer as the survivor: recall the survivor to read everything.
-It simply stops being a thing of its own.
 USE IT WHEN TWO HANDLES ARE ONE THING.
 It does not ask whether they really are: that is your judgement, so putting two unrelated things together is allowed and is recorded exactly as legibly.
-There is no way back, so if you are unsure, read both with recall first.
-⚠️ THE CLAIMS THAT MOVE GET NEW ADDRESSES, because an address is local to the thing that holds it — any address you were holding for the duplicate's claims is stale afterwards, and the answer says how many moved.
-A role object (kind role), on either side of a merge, is merged only by the bot it belongs to or a bot heading the chart; anyone else is refused and told who may.
-A MERGE INTO YOUR OWN BOT IS REFUSED WHEN THE DUPLICATE CARRIES thought_capacity OR thought_body_cap, because the merge would raise your own ceiling: have a different identity merge it, or take the key off the duplicate first with update_fact and clear_fields.
-THE DUPLICATE'S THOUGHTS BECOME THE SURVIVOR'S, so a merge that would leave a room over its capacity (every active thought counts, none ages out), or bring a thought over its body cap, is refused with nothing moved: archive thoughts, or shorten the one named, with update_fact, then merge again.
-Naming one handle as both sides comes back status: blocked.
-So does naming a handle that was already merged away, on either side, and that refusal names the handle to use instead.
-A merge whose result, the survivor with the duplicate's names and keys or the record of the merge, could not be read back whole in one answer is refused and nothing moves.
+If you are unsure, read both with recall first.
+THE CLAIMS THAT MOVE GET NEW ADDRESSES, because an address is local to the thing that holds it: any address you were holding for the duplicate's claims is stale afterwards, and the answer says how many moved.
+A refusal is status: blocked with nothing moved: one handle named as both sides; a handle already merged away (the answer names the handle to use instead); a role object (kind role), on either side, merged by anyone but the bot it belongs to or a bot heading the chart (the answer tells you who may); a merge into your own bot of a duplicate carrying thought_capacity or thought_body_cap; a thought room that would go over capacity, or a thought over its body cap; or a result that could not be read back whole in one answer.
+Each argument's own description holds the rest.
 ```
 
 #### `merge_entities` — structure
@@ -1700,6 +1709,15 @@ A merge whose result, the survivor with the duplicate's names and keys or the re
 **The handle that stops being a thing of its own** — the duplicate.
 Everything it holds moves to the survivor, and the handle itself goes on
 resolving.
+
+A merge into your own bot is refused when the duplicate carries
+thought_capacity OR thought_body_cap, because the merge would raise your own
+ceiling: have a different identity merge it, or take the key off the
+duplicate first with update_fact and clear_fields. The duplicate's thoughts
+become the survivor's, so a merge that would leave a room over its capacity
+(every active thought counts, none ages out), or bring a thought over its
+body cap, is refused with nothing moved: archive thoughts, or shorten the
+one named, with update_fact, then merge again.
 ```
 
 #### `merge_entities` — argument `/inputSchema.reason`
@@ -1780,26 +1798,17 @@ stops looking like the one you booted on.
 
 ```text
 Leave a message for someone who is not in this conversation.
-THE GATE IS THE ADDRESSEE'S MAILBOX, not the name alone: `to` must come down to exactly one box jojobot can read, so a name no colleague answers to and a colleague whose mail is missing or doubled both come back status: blocked with nothing written.
-The answer says which — the first is a name to fix, offered the bots that do exist; the second is damage on a bot that really is there, and it says what repairs it.
-No verb opens a bot's box: it arrives with the bot, so a name nobody answers to is a name nobody drains.
-THE ONE PERSON YOU MAY ADDRESS IS THE OPERATOR, by their person handle (`person:` and the slug), which the boot names under `operator`: your first post to them opens their box, nobody else has one, and no bot reads it back, you included.
-A body too long to be handed to its reader whole under the answer ceiling is refused with nothing written: split it, or put the long text on a record and send its address.
-Returns the stored message, including the id that read_message and mark_processed later target.
-Give it a `subject`: one line saying what the message is about, which is what a reader sees on the listing and on a search hit before opening anything — put it there rather than on the body's first line.
-The `state` you get back is the state as it stands — it can already say `read` if a person picked the message up in between, and that is success, not a problem: the message exists and someone has it.
-POSTING ALSO DELIVERS: anything in YOUR OWN box that no read has handed you yet rides back with this answer under your_mail — out of `new` and yours to finish, exactly as read_mailbox would have handed it over — so read it rather than treating this as a write.
-Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers, still owed, and read_mailbox returns it.
-Posting into your own box delivers nothing, and a post that had nothing to hand over still succeeded.
-THE MESSAGE ALSO CARRIES `sender_mail_waiting_at_send`: what was genuinely waiting in YOUR OWN box at the moment you sent it, the same count your_mail's delivery would have shown, read before this post could touch it.
-`null` means jojobot could not tell (no session, no box, an unreadable board) — NEVER read it as "zero waiting"; `0` is a real answer and a different one.
-It is stamped once, here, and carried unchanged on this same message wherever `read_mailbox` or `list_sent` returns it later, so a reader can check a claim about your own mail against what was actually true when you hit send.
-The sender is not yours to declare: jojobot records the bot behind the `sid` you pass, so a reply can always find you and nothing can be posted under somebody else's name.
-A `sid` jojobot is not holding comes back status: blocked and nothing is written.
-YOUR BODY IS NOT ECHOED BACK — you wrote it, so the answer carries the id, the state and body_bytes with body_elided: true rather than the text.
-`list_sent` with include_bodies returns it and takes no delivery.
-`in_reply_to` links this message to the one it answers: optional, it must name a message that exists (a miss comes back blocked, nothing written), and it says only that the two are one exchange — it does not deliver the original, handle it, or oblige anybody.
-Messages riding back under your_mail carry `written_by_other_run` when a different run posted them, exactly as read_mailbox's own description says.
+`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; the boot names it under `operator`; your first post to them opens their box, nobody else has one, and no bot reads it back, you included).
+A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
+No verb opens a bot's box.
+Give it a `subject`: one line saying what the message is about, which is what a reader sees on a listing before opening anything.
+A body too long to be handed to its reader whole is refused with nothing written: split it, or put the long text on a record and send its address.
+IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (it can already say `read` if a person picked it up, and that is success), body_bytes and body_elided: true.
+Your body is not echoed back; list_sent with include_bodies returns it and takes no delivery.
+POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
+Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id (read_mailbox with new_only: false returns them all).
+The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
+Each argument's own description holds the rest.
 ```
 
 #### `post_message` — structure
@@ -1861,6 +1870,11 @@ The id of the message this one answers, when it answers one. Optional.
 It must name a message that exists — a miss comes back blocked and
 nothing is written — and it links the two without saying anything about
 either: it does not deliver, handle, or oblige.
+
+It says only that the two are one exchange: it does not deliver the
+original, handle it, or oblige anybody. Messages riding back under your_mail
+carry `written_by_other_run` when a different run posted them, exactly as
+read_mailbox's own description says.
 ```
 
 #### `post_message` — argument `/inputSchema.sid`
@@ -1869,6 +1883,15 @@ either: it does not deliver, handle, or oblige.
 **Your session id.** Required here, because it is what jojobot records
 as the sender: a message from nobody is a message nobody can reply to,
 and identity that is merely declared is identity that can be wrong.
+
+The message carries `sender_mail_waiting_at_send`: what was genuinely
+waiting in YOUR OWN box at the moment you sent it, the same count
+your_mail's delivery would have shown, read before this post could touch it.
+`null` means jojobot could not tell (no session, no box, an unreadable
+board) and is NEVER zero; `0` is a real and different answer. It is stamped
+once, here, and carried unchanged wherever read_mailbox or list_sent returns
+the message later, so a reader can check a claim about your own mail against
+what was true when you hit send.
 ```
 
 #### `post_message` — argument `/inputSchema.subject`
@@ -1902,6 +1925,9 @@ candidates and nothing is written.
 **The operator is the one person you may write to**, by their person
 handle (`person:` and the slug): the boot names it under `operator`.
 Nobody else has a box, and no bot reads the operator's box back.
+
+A post into your own box delivers nothing, and a post that had nothing to
+hand over still succeeded.
 ```
 
 ### Tool `read_mailbox`
@@ -1910,24 +1936,18 @@ Nobody else has a box, and no bot reads the operator's box back.
 
 ```text
 Take delivery of everything unprocessed in YOUR OWN mailbox, oldest first, moving each message from `new` to `read`.
-There is no peek: reading IS taking delivery.
-WHICH BOX IS NOT AN ARGUMENT — the `sid` you pass says which bot is asking, and a bot reads the box it owns, full stop.
-Reading somebody else's would move their mail out of `new` and make it no longer waiting for them; to reach another box, post_message writes into it without reading it, which is the shape of a request.
-No box to open comes back status: blocked, saying which kind of nothing it found — no sid, no claim, or a claim nobody has opened — and delivers nothing.
-Messages a previous read already handed over are leftovers from an interrupted earlier read, not fresh mail: they are named under `leftovers` (a count and their ids) and not shipped again.
-A message somebody else finished while this delivery was in flight is left out, so a delivery can be smaller than counts you saw a moment ago.
-Act on what you receive, then call mark_processed for each.
-Two sessions of one bot share its one box, so a delivery taken by one is not waiting for the other; two workers that must not share a queue are two bots.
-Draining a whole box makes every message in it yours to finish — use read_message when you want only one.
-ONLY CHECKING WHETHER ANYTHING IS WAITING? Call this with counts_only: true — you get your box's per-state counts and its unreadable report, NOTHING moves out of new and nothing becomes yours to finish, so a poll that finds an empty box costs nothing and owes nothing.
-BY DEFAULT you get the messages nobody has taken yet, whole: leftovers stay counted and owed, and `leftovers` names them by id (read_message returns one) — because you were handed them once already.
-Pass new_only: false to get every message back whole, flagged seen_before, which is the read for a consumer recovering from a crash that no longer holds what it was given.
-Either way it changes what is SHIPPED, never what is owed.
-AN ANSWER STOPS AT THE ANSWER CEILING AND TAKES EVERY MESSAGE ANYWAY: the oldest bodies come whole, a body that does not fit is left out and flagged body_elided with body_bytes and body_head, and a message that does not fit even so is named by id under not_shown; read_message returns any of them whole.
-Each message may also carry `sender_mail_waiting_at_send`, stamped once when it was posted — see `post_message`'s own description for what it means; `null` there is unknown, never zero.
-A message that a DIFFERENT run posted than the one reading it carries `written_by_other_run`, naming that run and whether it has since ended (`null` when that could not be read); a message your own run posted does not carry the key.
-A POLL ALSO KEEPS YOUR ROLE: reading your own box with your own sid renews the role claim your session holds, the same as a write does, so a session that only polls does not go stale.
-AN EMPTY DELIVERY NAMES WHAT IT LOOKED THROUGH: it carries `searched`, one line naming the box, what was left out and the call that reads it.
+There is no peek: reading IS taking delivery, and every message delivered is yours to finish — act on it, then call mark_processed.
+WHICH BOX IS NOT AN ARGUMENT: the `sid` says which bot is asking, and a bot reads the box it owns.
+To reach another box, post_message.
+ONLY CHECKING WHETHER ANYTHING IS WAITING? Pass counts_only: true: you get the per-state counts and the unreadable report, nothing moves out of `new` and nothing becomes yours to finish, so a poll that finds an empty box costs nothing and owes nothing.
+By default you get the messages nobody has taken yet, whole.
+Messages a previous read already handed you are LEFTOVERS, still owed: they are named by id under `leftovers` and not shipped again, read_message returns one by id, and new_only: false returns every message whole, flagged seen_before (the read for a crash that lost what it was given).
+Either way it changes what is shipped, never what is owed.
+The answer stops at the ceiling and takes every message anyway: a body that does not fit is flagged body_elided, and a message that does not fit even so is named under not_shown.
+No box to open comes back status: blocked and delivers nothing.
+Reading your own box with your own sid, a poll included, renews a role claim your session holds, so a session that only polls does not go stale.
+An empty delivery names what it looked through, as searched.
+Each argument's own description holds the rest.
 ```
 
 #### `read_mailbox` — structure
@@ -1977,17 +1997,31 @@ its unreadable report, nothing moves out of `new`, and nothing becomes
 yours to finish — so a poll that finds an empty box costs nothing and
 owes nothing. `new_only` has nothing to say here: no bodies are shipped
 either way.
+
+Draining a whole box makes every message in it yours to finish; use
+read_message when you want only one.
 ```
 
 #### `read_mailbox` — argument `/inputSchema.new_only`
 
 ```text
 Ship bodies only for messages nobody has taken yet — **the default**.
-Leftovers, the ones flagged `seen_before`, still come back, still
-counted, still owed; only their bodies are left out, and each says so.
+Leftovers, the ones a previous read already handed you, are still owed
+but are not shipped again: they are named by id under `leftovers` (a
+count and the ids), and `read_message` returns one whole.
 
 Pass `false` to get those bodies back — the read a consumer makes when
 it is recovering from a crash and no longer holds what it was given.
+
+A message somebody else finished while this delivery was in flight is left
+out, so a delivery can be smaller than counts you saw a moment ago. Two
+sessions of one bot share its one box, so a delivery taken by one is not
+waiting for the other; two workers that must not share a queue are two bots.
+Each message may carry `sender_mail_waiting_at_send`, stamped once when it
+was posted (see post_message's `sid`; `null` is unknown, never zero), and
+`written_by_other_run` when a DIFFERENT run posted it than the one reading,
+naming that run and whether it has since ended (`null` when that could not
+be read).
 ```
 
 #### `read_mailbox` — argument `/inputSchema.sid`
@@ -2064,77 +2098,18 @@ attributed, never journalled.
 
 ```text
 The graph query: say the shape you want and get that shape back.
-Use it when you can describe what you are after — a handle, a kind, a type, a key and its value — and use search when you are looking for something and only have words for it.
-YOUR OWN PAST RUNS ARE A KIND: kind `session` reads this identity's own past runs and no other's, and prose: true brings back a run's chronology — list_runs gives each run's state and focus line, and this is the read for what it did.
-THE FOCUS A RUN CLOSED ON IS NOT IN THAT PROSE: wrap_session's closing entry carries it as `closing_focus`.
-A selection that reaches another identity's runs counts them as `withheld` and shows none of them, so `withheld` counts only runs that are not yours.
-A filter that leaves out runs of YOUR OWN says how many as `own_runs_excluded`.
-A run carries its `sid` as a field, which you can filter on and which start_here takes to resume that run, and `near` places a run on the day it started.
-A call with no sid owns no run: boot with start_here and pass the sid it returns to read your own.
-START WITH A VIEW IF ONE FITS: a view is a question somebody already worked out, asked for by NAME — `view: "colleagues"` for the identities here and what each is for, `view: "loops"` for the recurring things and what each last recorded.
-SOME SHIP WITH THE SOFTWARE AND YOU CAN DECLARE YOUR OWN, with add_entity of kind view and the keys selects, shows and asks; a name that is no view comes back blocked naming the ones that are, which is how you find out what is here.
-Anything you send beside the name wins, so a view is a starting point rather than a cage — and you never have to work the shape out first to get an answer.
-Three axes, and they COMBINE into one question rather than three.
-WHICH OBJECTS: subject (one handle), kind, answers_type (structural — an OBJECT answers a type by the keys every write on it leaves standing, whether or not anybody declared it one, and carrying SOME of them is enough: the answer says which it lacks), and fields (a key, and the value it holds; omit the value to ask only that the key is there).
-WHAT OF EACH: every object always comes back as its FIELDS — every write on it folded, one value per key, the newest write of that key winning, and a write that takes a key off takes it off the thing.
-A LOOP HOLDING A SNOOZE DAY carries `snooze` {until, in_force} beside its fields: in_force is true only while the loop's last check-in is that snooze, and after a ran or skipped check-in the day stays in the fields as history.
-Those fields are what the thing HOLDS — its KIND is what it IS — and they answer most questions; the records behind them are bigger and say the same thing at length.
-To see only some of the keys, name them in keys: every object, the ones a walk reaches included, then carries just those, an object that held others names them in fields_left_out, and asking again without keys reads them all, unless a view supplied the keys: then ask again without the view, sending its kind, or with keys naming them.
-A view carries it as shows_keys, which is how view colleagues shows each bot's one_liner and reports_to.
-Ask for facts when you need a claim's own wording, its provenance, or the address that edits it, and the answer says how many records it left out when you did not.
-A RECORD MARKED stands_for ANOTHER (a synthesis, over update_fact) is served, and the records it stands for are left out of that same facts listing — the answer says how many and names stood_for as the way to read them back; ask for stood_for: true when you need those sources themselves rather than the shape that already speaks for them.
-Then prose, off by default, which is the human half of the object's page, whole; charter, which is how you read a COLLEAGUE — a bot's charter whole, and no session is made and no handle comes back, because booting as another bot to read it is the one act the rules refuse; and history, which names ONE KEY and brings back every write of it, oldest first.
-A read is current truth — one value per key, the newest write — and history is the other question the same data answers: every time that key was written, with the record each write arrived in and its date.
-THE COUNT OF THE WRITES IS THE ANSWER TO HOW MANY TIMES, so a key a sitting records once each time something happens is how you count occurrences.
-A key nobody wrote comes back as no writes, never as a refusal.
-HISTORY_RECORD is the other half of that axis: it names ONE RECORD by its address and brings back every write of THAT CLAIM, oldest first — what it said, who backed it and whether it stood, each time somebody wrote it.
-That is how you read what a claim used to say before it was corrected, and how you tell a claim nobody ever made from one somebody made and got wrong.
-Each write says WHEN IT HAPPENED and where it sits in the order — and that moment is not the claim's own first-recorded one, which answers a different question.
-A write kept before jojobot recorded one carries none.
-Name a key or a record, never both.
-AN ADDRESS IS SELECTION ENOUGH: history_record on its own answers about the thing its address names, so you do not repeat the subject beside it — and naming a subject that is something else is refused rather than guessed at.
-A long history comes back CUT to its newest twenty, saying how many exist and how many it left out; history_most raises the window when you really want the far end, for either half.
-VALUES names a key and answers with the values the selected objects already hold under it, most used first, each with how many hold it — what to write in a key like colour or status when you want the spelling everything else uses.
-IT IS A READ AND NEVER A RULE: a value nobody has used is written exactly as any other, and this is how you see the list before adding to it.
-The scope is whatever the call selected, so a `fields` filter naming the key alone asks it of everything carrying the key.
-A key nobody has written comes back with nothing in use rather than as a refusal, and a long list is cut to its most used twenty with values_most to reach the rest.
-BACKING answers who stands behind each value: name it and every object also carries, per key, the claim whose write won that key and that claim's own provenance and standing — because a value the user stated and one an assistant worked out are the same string otherwise.
-It is off by default because it is a second read; ask for it when you are about to act on a value.
-A key whose writes are summed has no single winning claim and is not there.
-WHAT SOMEBODY HOLDS COMES BACK UNASKED: every object carries a held block naming the records that point at it, best first — what admits somebody to it and is good on the day, then what admits them and has lapsed, and, only when nothing admits anybody at all, whatever else points here through a declared key.
-Each one says who holds it, whether it is in force on the day (liveness: live, lapsed, or related when nothing admits anybody at all), what backs it, and HOW SURE THE OPERATOR WAS (standing) — because a claim somebody made and a claim an assistant worked out are not the same claim to act on, and neither are a pass somebody confirmed and one they only think they hold.
-It says nothing about whether anybody may go: that is a judgement and jojobot makes none.
-Nothing pointing here at all and nothing gating it are different answers and the block says which.
-It is bounded, and when it does not fit it names the walk that returns the rest.
-A BOT'S OWN THOUGHTS AGE QUIETLY, AND FACTS SAYS SO UNASKED: asking facts of a bot carrying thought_capacity (capture's connection edges drawn on the bot's own handle — see capture's shape) adds a `room` block naming the capacity, how many count against it now, and how many have gone quiet from being untouched too long — still there, marked aged_out on the fact itself, excluded from the count rather than hidden.
-THE BLOCK NAMES THE THRESHOLD: ages_after_runs is how many of the bot's runs a thought may go untouched, and ages_after_from says whether the bot's own thought_ages_after_runs setting gave it or the default did.
-THE BLOCK IS SENT ONLY WHEN AT LEAST ONE THOUGHT HAS GONE QUIET: no block means none has, and the room is exactly as full as its live thoughts.
-A write that would go over the capacity is refused the same way; this is the same room, read rather than written.
-WHICH EDGES: follow {shape, direction, depth}, and THE ANSWER NESTS — a walked object carries the objects it reached, each carrying its own.
-EACH HOP IS BOUNDED: a wide fan-in comes back cut to what fits, in the order the walk reached it rather than any ranking, and connected_left_out on the object above says how many did not fit — recall that handle again, or narrow the walk with keeping, to reach the rest.
-NARROW A WALK WITH follow.fits_type, which is the stricter half of the pair: answers_type selects objects carrying SOME of a type's keys and reports the gaps, fits_type keeps only the ones carrying EVERY key.
-Which of these are described like a pet, versus which of these ARE pets.
-Direction is two different questions: `out` follows the edges this object's records draw, `in` follows the edges drawn AT it, so from a party `in` reaches its guests and from a guest `out` reaches the party.
-A RELATION is the other kind of link, and a DECLARATION is what makes one: a KEY some type declared to hold a `reference` points at another entity, so it is walkable.
-LEAVE shape AND relation BOTH UNSET and a walk also reaches a MENTION (an entity named in a claim's own words), a REF (an entity a claim touches with no claim about how) and a FIELD LINK (an entity whose handle a record holds as a whole field value, or as every item of a comma list, under any key, declared or not), each labelled mention, ref or field rather than as an edge — name a shape or a relation and none answers, because none has one.
-Name the key and use `direction` — `out` reaches what a record points at ('owner' from a pet reaches the person), `in` reaches every record pointing here through that key ('owner' from that person reaches the pets).
-Inbound is scoped by the KEY ALONE: it returns every record using that key, so a repair record carrying `owner` arrives beside the pets.
-For one kind of thing, SELECT it — `kind` plus a `fields` filter on the key — rather than walking.
-`keeping` narrows what the walk reaches, taking the same key filters, so 'this person's pets' becomes 'this person's pets born before a date'.
-A key's DECLARED value type also licenses how you compare it: `before` and `after` on a declared date, `less` and `greater` on a declared number, `equals` always and on anything.
-That is what declaring a type buys you — reach — and nothing is gated by it: an undeclared record is still found by the keys it carries.
-That nesting is what a flat list cannot express: one call answers 'these objects, and what each of them is connected to' instead of one call per object.
-Unlike search this returns claims of EVERY status, archived included, unless you pass `status`.
-A named subject always comes back, even when the filters keep none of its records — naming a handle asks for that object, a filter asks which objects — while a handle that names nothing comes back blocked with the nearest handles, never as an empty answer.
-An object that draws edges the walk did not follow says so; an empty `connected` with no such note is an object with nothing beyond it.
-A query that narrows nothing is refused: name at least one of subject, kind, parent, answers_type or fields.
-AN answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the answer carries type_keys, the type's keys and what each holds, so the spelling to write under it is in the empty answer.
-The first such answer in a session, under a type the software ships and with nothing else narrowing the read, also carries a teaching: reading again finds nothing, and what you worked out is kept by capturing under those keys.
-AN ANSWER STOPS AT THE ANSWER CEILING, never mid-record: it carries the objects that fit in its own order, and `not_shown` says how many it left out and the `offset` that reads on — repeat the same call with it.
-One subject with more facts than fit is read the same way, `offset` counting its facts, and an object that cannot fit even first in its part carries `facts_not_shown` naming that subject to recall alone, which reads its facts in parts, and a single fact larger than the ceiling still comes back whole.
-HOW OLD WHAT AN OBJECT HOLDS IS: each object carries `as_of`, the day the store last took in a write about it, and `fields_as_of` for any key whose own day is older; an object with no `as_of` has no write the store could date.
-That is a day the store saw, while `overdue`'s `as_of` is the day an overdue question is asked about.
-AN EMPTY ANSWER NAMES WHAT IT LOOKED THROUGH: it carries `searched`, one line saying the population, what was left out and the call that widens it.
+Use it for a handle, a kind, a type, a key and its value; use search when you only have words for it.
+THREE AXES COMBINE INTO ONE QUESTION.
+WHICH OBJECTS: subject (one handle; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds) or view (a question already worked out, asked by name, so start with one if it fits).
+A call that narrows nothing is refused: name one of subject, kind, parent, answers_type or fields, or a record's own address (history_record or built_on).
+WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a loop under a snooze also carries `snooze` {until, in_force}).
+facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (fields_left_out names what it hid, and a view's shows_keys yields to it).
+WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
+Unlike search, recall returns claims of EVERY status unless you pass `status`.
+Your own past runs are kind session.
+AN ANSWER STOPS AT THE CEILING, never mid-record: not_shown names the offset that reads on.
+An empty answer names what it looked through, as searched.
+Each argument's own description holds the rest.
 ```
 
 #### `recall` — structure
@@ -2710,6 +2685,13 @@ of these ARE services*.
 
 A name no type answers to comes back blocked, naming the types that do
 exist.
+
+An answer that selects nothing still says what the type is: it carries
+`type_keys`, the type's keys and what each holds, so the spelling to write
+under it is in the empty answer. The first such answer in a session, under a
+type the software ships and with nothing else narrowing the read, also
+carries a teaching: reading again finds nothing, and what you worked out is
+kept by capturing under those keys.
 ```
 
 #### `recall` — argument `/inputSchema.backing`
@@ -2784,6 +2766,23 @@ claims that were rewritten a different number of times otherwise read
 back identical. `history_record` on this same call is the door that
 opens onto the earlier wording; the count only says the door is worth
 opening.
+
+**Who holds what comes back unasked:** every object carries a `held` block
+naming the records that point at it, best first: what admits somebody and is
+good on the day (live), then what admits them and has lapsed (lapsed), and,
+only when nothing admits anybody at all, whatever else points here through a
+declared key (related). Each says who holds it, what backs it and how sure
+the operator was (standing). It says nothing about whether anybody may go,
+which is a judgement jojobot does not make; it is bounded, and when it does
+not fit it names the walk that returns the rest. **A bot's own thoughts age
+quietly:** asking facts of a bot that carries thought_capacity adds a `room`
+block naming the capacity, how many thoughts count against it now and how
+many have gone quiet from being untouched too long (still there, marked
+aged_out on the fact, excluded from the count rather than hidden). The block
+names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
+the bot's own thought_ages_after_runs gave it or the default did) and is
+sent only when at least one thought has gone quiet. A write that would go
+over the capacity is refused the same way.
 ```
 
 #### `recall` — argument `/inputSchema.fields`
@@ -2809,8 +2808,26 @@ values, make two calls.
 #### `recall` — argument `/inputSchema.follow`
 
 ```text
-Which edges to walk.
-Omit to walk none, and the answer is flat.
+Which edges to walk. Omit to walk none, and the answer is flat.
+
+**Walking.** The answer nests: a walked object carries the objects it
+reached, each carrying its own, so one call answers 'these objects, and what
+each is connected to'. Each hop is bounded: a wide fan-in comes back cut to
+what fits, in the order the walk reached it, and `connected_left_out` on the
+object above says how many did not fit (recall that handle again, or narrow
+with `keeping`). An object that draws edges the walk did not follow says so;
+an empty `connected` with no such note is an object with nothing beyond it.
+With `shape` and `relation` both unset a walk also reaches a MENTION (an
+entity named in a claim's own words), a REF (an entity a claim touches with
+no claim about how) and a FIELD LINK (an entity whose handle a record holds
+as a whole field value, or as every item of a comma list, under any key),
+each labelled mention, ref or field rather than as an edge; naming a shape
+or a relation answers only that. For one kind of thing, SELECT it (`kind`
+plus a `fields` filter on the key) rather than walking: traversal reaches,
+selection chooses. A key's declared value type licenses how you compare it
+(`before`/`after` on a date, `less`/`greater` on a number, `equals` on
+anything), and nothing is gated by a declaration: an undeclared record is
+still found by the keys it carries.
 ```
 
 #### `recall` — argument `/inputSchema.history`
@@ -2831,6 +2848,12 @@ Omit it and no history comes back at all, which is the normal read: a
 caller who wants the value wants one value. A key nobody has written
 comes back as no writes rather than as a refusal — the thing is there
 and nothing was recorded under that key.
+
+The count of the writes is the answer to how many times: a key a sitting
+records once each time something happens is how you count occurrences. A key
+nobody wrote comes back as no writes, never as a refusal. A long history is
+cut to its newest twenty, saying how many exist and how many it left out;
+`history_most` raises the window.
 ```
 
 #### `recall` — argument `/inputSchema.history_most`
@@ -2892,13 +2915,31 @@ narrows what each object says, never which objects come back, and it
 leaves facts, prose and the charter as the arguments for those say.
 **A view can carry it** as its `shows_keys`, and what you send beside
 the view's name wins.
+
+**How old what an object holds is:** each object carries `as_of`, the day
+the store last took in a write about it, and `fields_as_of` for any key
+whose own day is older; an object with no `as_of` has no write the store
+could date. That is a day the store saw, while `overdue`'s `as_of` is the
+day an overdue question is asked about.
 ```
 
 #### `recall` — argument `/inputSchema.kind`
 
 ```text
-Every entity of one kind.
-`session` reads your own past runs.
+Every entity of one kind. `session` reads your own past runs.
+
+**YOUR OWN PAST RUNS ARE A KIND:** `session` reads this identity's own past
+runs and no other's, and `prose: true` brings back a run's chronology
+(list_runs gives each run's state and focus line; this is the read for what
+it did). The focus a run closed on is not in that prose: wrap_session's
+closing entry carries it as `closing_focus`. A selection that reaches
+another identity's runs counts them as `withheld` and shows none of them; a
+filter that leaves out runs of YOUR OWN says how many as
+`own_runs_excluded`. A run carries its `sid` as a field you can filter on,
+and `near` places a run on the day it started. start_here resumes an
+unwrapped run by its sid; only the `wrap_code` a wrap handed back reopens a
+wrapped one. A call with no sid owns no run: boot with start_here and pass
+the sid it returns to read your own.
 ```
 
 #### `recall` — argument `/inputSchema.near`
@@ -2915,6 +2956,11 @@ ceiling.** The answer names the `offset` that returns the next part;
 repeat the same call with it. A call that selects ONE object counts its
 facts (`facts: true` on a subject with more than fit); a call that
 selects several, a kind or a walk, counts the objects. Defaults to 0.
+
+One subject with more facts than fit is read the same way, `offset` counting
+its facts; an object that cannot fit even first in its part carries
+`facts_not_shown` naming that subject to recall alone, which reads its facts
+in parts, and a single fact larger than the ceiling still comes back whole.
 ```
 
 #### `recall` — argument `/inputSchema.overdue`
@@ -3072,6 +3118,10 @@ What the view says is what this call asks; anything you send beside it
 is yours and wins, so a view is a starting point rather than a cage.
 
 A name that is no view comes back blocked, with the views that exist.
+
+`view: "colleagues"` lists the identities here and what each is for; `view:
+"loops"` lists the recurring things (rhythms) and what each last recorded. A
+view carries its own `shows_keys`, and a `keys` you send wins over it.
 ```
 
 ### Tool `rename_entity`
@@ -3080,17 +3130,15 @@ A name that is no view comes back blocked, with the views that exist.
 
 ```text
 Move a handle — a new slug, a new kind (a retype), a new parent, or any two together in one call, since the handle is one string and a retype is a rename.
-What follows automatically, with nothing rewritten anywhere: a mention written as @kind:slug, an edge, a reference-typed field value, every claim's own home, a journal beat and a mailbox message all keep resolving under the new handle — the path renders on the way out, and text stored before any of that was true was migrated once, so it is not an exception.
+What follows automatically, with nothing rewritten anywhere: a mention written as @kind:slug, an edge, a reference-typed field value, every claim's own home, a journal beat and a mailbox message all keep resolving under the new handle.
 Every entity naming this one as its parent is repointed in the same write, and a box follows its owner to the owner's new name.
-A rename that moves an owner across the person line — a bot into a person, a person into a bot, or the operator out of the person kind — is refused, because a person's box is private.
+What does NOT follow: a handle written as free prose that never used @kind:slug, and a thing renamed and later folded into another resolves one hop short of the survivor.
+A rename that moves an owner across the person line (a bot into a person, a person into a bot, or the operator out of the person kind) is refused, because a person's box is private.
 A role object (kind role) is renamed, retyped or reparented only by the bot it belongs to or a bot heading the chart; anyone else is refused and told who may.
-What does NOT follow, ever: a handle written as free prose that never used @kind:slug — nothing marked it as a link, so nothing resolves it.
-And a thing renamed and later folded into another resolves one hop short of the survivor, through the folded thing, rather than composing the two.
-`to` is always `kind:slug`, fully qualified — a bare slug is refused rather than guessed at, because guessing one would be guessing whether this call is a reslug or a retype.
-`parent` reparents when given and leaves the current parent alone when omitted; there is no way to clear a parent through this verb.
-`to` may name the same handle as `handle` when only the parent is moving — a reparent needs no reslug — but naming the same handle with no `parent`, or the parent it already has, is refused: that call would change nothing.
+`to` is always `kind:slug`, fully qualified: a bare slug is refused rather than guessed at.
 The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
+Each argument's own description holds the rest.
 ```
 
 #### `rename_entity` — structure
@@ -3175,6 +3223,9 @@ name the same handle as `handle` when this is the only thing
 changing — a reparent with no reslug — but naming the same handle
 with no parent, or the parent it already has, is refused: that call
 would change nothing.
+
+`parent` reparents when given and leaves the current parent alone when
+omitted; there is no way to clear a parent through this verb.
 ```
 
 #### `rename_entity` — argument `/inputSchema.recorded_at`
@@ -3201,6 +3252,11 @@ here, because guessing one would be guessing whether this call is a
 reslug or a retype. Changing the kind IS a retype; changing the slug
 IS a reslug; the id is one string, so either, or both together, is
 this same call.
+
+`to` may name the same handle as `handle` when only the parent is moving,
+since a reparent needs no reslug; but naming the same handle with no
+`parent`, or the parent it already has, is refused, because that call would
+change nothing.
 ```
 
 ### Tool `retract`
@@ -3209,14 +3265,19 @@ this same call.
 
 ```text
 Take back a record — one way, never reversed, and a deliberate act rather than a flag on an edit.
-Nothing is removed: the record keeps its address, its words and its place, and is marked archived; beside it lands a dated record of the retraction itself, naming what it takes back and the reason if you give one.
-The two then read as one story.
-An archived record is out of every default read and out of every later edit, INCLUDING a status flip back — there is no un-retract, so if you are unsure, capture what is so now instead.
-THIS IS THE MOVE FOR SOMETHING THAT HAPPENED and turned out not to have.
-For a claim about what is true NOW, archive it with update_fact and capture the replacement instead — the old words stay readable and the replacement stands beside them, where a retraction leaves a companion record.
-Retracting a retraction comes back status: blocked: it is the last word on what it takes back.
-Retracting something ALREADY archived comes back blocked as well, and reads differently on purpose: it says the record is archived, because it is — that answer tells you the state you asked for is the state jojobot holds, not that nothing happened.
-An address that names no record comes back blocked too, with the addresses that do exist.
+ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in update_fact, its status argument and retract.
+A claim that was true and has changed, or that was never true: archive it with update_fact (status: archived, the reason in details) and capture the replacement, naming the old claim in derived_from.
+A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated record of the retraction.
+A mistyped or reworded claim: rewrite it.
+Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
+Nothing is removed: the record keeps its address, its words and its place and is marked archived, and beside it lands a dated record of the retraction itself, naming what it takes back and the reason if you give one.
+The two read as one story.
+recall returns claims of every status unless you ask it for one, so a retracted record is out of a default search, not out of a recall.
+Nothing edits an archived claim, a status flip back included, so if you are unsure, capture what is so now instead.
+A refusal is an answer with status: blocked and nothing written.
+Retracting a retraction is refused: it is the last word on what it takes back.
+Retracting a record that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
+An address that names no record is refused with the addresses that do exist.
 ```
 
 #### `retract` — structure
@@ -3302,25 +3363,18 @@ attributed, never journalled.
 
 ```text
 The front door — use it first, and any time you do not already hold the exact handle or address.
-One ranked list over entities, facts, free prose AND the messages in bots' mailboxes at once.
-`query` is free text (words are matched by stem and a record needs most of its terms, not all of them) and is optional when a filter narrows it: kind · status (default active; archived is excluded unless named) · provenance · standing (`open` is how you ask which claims are still in doubt) · subject · edge {shape, object} · answers_type · fits_type; a call with neither query nor one of those filters is refused, and include_mail is not one of them — it says what to search, not what to narrow to.
-The two type filters are one question asked two ways, and a call names one of them, never both: answers_type keeps the things carrying SOME of a type's keys and says which each one lacks, fits_type keeps only the things with no gaps.
-Reach for answers_type unless you have a reason not to — a thing that arrives with its gaps named can be judged, and a thing fits_type leaves out looks exactly like a thing that is not there.
-An answers_type that matches nothing carries type_keys, the type's keys, and the first such answer in a session under a type the software ships, with nothing else narrowing the search, also carries a teaching.
-kind + edge answers a cross-entity question in one call ("which people are in X") by walking typed edges — prose that merely mentions X is not an answer.
-No hit comes back bare: a fact carries the whole claim, its address (feed that to update_fact), and who it is `about` and where it is `home`d (a null name there means the handle names nothing — a real defect worth reporting); an entity or prose hit carries that entity's names and the edges its facts draw; a message hit carries its box, its state (new/read/processed — an archived report is findable, and the state is how you tell it from live work), its sender and the id read_message takes, plus a snippet rather than the whole body.
-A person's box, the operator's, is never searched.
-Mail is OPT-IN: pass include_mail: true to search messages too, and reach for it when you want what a session knows — a report filed for another session is exactly the context you would not know to go looking for, and this is the one call that finds it.
-It is off unless you ask, because a message hit carries somebody's box, sender and a snippet, and this is the verb to reach for first.
-Note that a `kind` filter leaves mail out even when you ask, since a message belongs to no entity and so has no kind to match.
-ALWAYS read the `mail` field of the answer, in BOTH directions: searched: false means no message was searched at all, which is not the same as nothing matching; and searched: true can still be partial after a degraded start, where the hits are real but anything older than this server's start is missing.
-Whenever `mail` carries a `note`, that note says which case you are in — read it before concluding a message does not exist.
-`memory` answers the same question about entities, facts and prose: searched: false means nothing in memory is searchable right now, and searched: true with a note means the index is behind the store, where `behind` says how much: `unscanned` (the index holds only what jojobot has written since this server started) or `stale` (the index holds an older version of one entity than the store, so a hit may be a version the store has moved past).
-The hits are real either way, and `recall` reads the store itself.
-`clock` picks the day ranking reads: `recorded_on` (the default — the day a claim was said) or happened_at (the day the thing itself did); a claim with no happened_at ranks by recorded_on, and `rank_fallbacks` counts them.
-AN ANSWER IS CUT AT THE CEILING, never mid-hit: it carries the best hits that fit, and `not_shown` says how many it left out and the `offset` that returns them — repeat the same call with it.
-THE MATCHING AND CORPUS NOTES (what the matcher can miss, and the earlier wordings it never reaches) ride your first search of a session and every answer of fewer than three hits, and are left out of the rest.
-AN EMPTY ANSWER NAMES WHAT IT LOOKED THROUGH: it carries `searched`, one line saying the population, what was left out and the call that widens it.
+One ranked list over entities, facts, free prose AND the messages in bots' mailboxes at once (the operator's box is never searched).
+`query` is free text, matched by stem; a record needs most of its terms, not all of them.
+It is optional when a filter narrows: kind, status (default active), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
+A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
+kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
+No hit comes back bare: a fact carries its claim, its address (feed it to update_fact), who it is `about` and where it is `home`d; an entity or prose hit carries the entity's names and edges; a message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet.
+MAIL IS OPT-IN: pass include_mail: true to search messages too.
+ALWAYS read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, which is not the same as nothing matching, and a `note` says which case you are in.
+AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
+AN EMPTY ANSWER NAMES WHAT IT LOOKED THROUGH, as searched.
+The matching and corpus notes ride your first search of a session and every answer of fewer than three hits.
+Each argument's own description holds the rest.
 ```
 
 #### `search` — structure
@@ -3508,6 +3562,13 @@ described like one, and what is missing* — that is `fits_type`, below.
 
 A name no type answers to comes back blocked, naming the types that do
 exist.
+
+An answers_type that matches nothing carries `type_keys`, the type's keys,
+and the first such answer in a session under a type the software ships, with
+nothing else narrowing the search, also carries a teaching. Reach for
+answers_type unless you have a reason not to: a thing that arrives with its
+gaps named can be judged, and a thing fits_type leaves out looks exactly
+like a thing that is not there.
 ```
 
 #### `search` — argument `/inputSchema.clock`
@@ -3522,6 +3583,10 @@ caller makes each time.
 and the answer's own `rank_fallbacks` says how many that happened to
 — an incomplete answer, accepted and explained, never a silent mix
 of two orderings.
+
+`clock` picks the day ranking reads: `recorded_on` (the default: the day a
+claim was said) or `happened_at` (the day the thing itself did); a claim
+with no happened_at ranks by recorded_on, and `rank_fallbacks` counts them.
 ```
 
 #### `search` — argument `/inputSchema.edge`
@@ -3572,6 +3637,20 @@ knows: a report filed for another session is exactly the context you
 would not know to go looking for, and this is the one call that finds
 it. It is off unless you ask, because a message hit carries somebody's
 box, sender and a snippet, and this verb is the one to reach for first.
+
+Mail is off unless you ask, because a message hit carries somebody's box,
+sender and a snippet and this is the verb to reach for first. Reach for it
+when you want what a session knows: a report filed for another session is
+exactly the context you would not know to go looking for. `mail` in the
+answer says whether messages were searched (`searched: false` means none
+was) and can still be partial after a degraded start, where the hits are
+real but anything older than this server's start is missing. `memory` says
+the same for entities, facts and prose, and with a note the index is behind
+the store, where `behind` says how much: `unscanned` (the index holds only
+what jojobot has written since this server started) or `stale` (the index
+holds an older version of one entity than the store, so a hit may be a
+version the store has moved past). The hits are real either way, and
+`recall` reads the store itself.
 ```
 
 #### `search` — argument `/inputSchema.kind`
@@ -3579,6 +3658,9 @@ box, sender and a snippet, and this verb is the one to reach for first.
 ```text
 Narrow to one entity kind — an entity's own kind, a fact's subject's kind,
 or the kind of the entity whose prose matched.
+
+A `kind` filter leaves mail out even when you ask for it, since a message
+belongs to no entity and so has no kind to match.
 ```
 
 #### `search` — argument `/inputSchema.limit`
@@ -3735,27 +3817,15 @@ attributed, never journalled.
 
 ```text
 New here? Call this first — it is the ONE door, whether or not you have an identity.
-Explains what jojobot is and how its world fits together — entities, facts, provenance, edges, mailboxes — with worked examples, and returns a live snapshot of what exists right now (entities by kind, EVERY BOT NAMED so you can see which identities you could boot as, each with its own mail beside it — counts on the one box you drain, elided on everybody else's), so you start oriented instead of guessing.
-IT ALSO LISTS THE SKILLS this build ships — a name and what each is FOR, never the procedures themselves.
-When one of them matches the job in front of you, call this again with skill: its name and you get that body.
-Nothing here decides when a skill applies; the index says what each is for and you choose.
-AN ANONYMOUS BOOT WHOSE ESSAY DID NOT FIT WHOLE names every section it left out — call this again with section: one of those exact headings, or "opening" for the remainder's un-headed opening paragraphs, and you get that one unit whole, no bot and no session either.
-CALLED THIS BEFORE? Pass brief: true and you get the snapshot without the essay — the essay is the only part that does not change between calls, and calling again without brief reads it in full.
-NAME A BOT and the same answer also carries that identity: its charter (the orienting text — what this identity is, its hard lines, where its work lives), its rules as dated claims each carrying its own provenance (testimony and observation are settled, inference is a hypothesis — read them that way), and the per-state counts of the mailbox it owns.
-ANSWERING THE RESUME-OR-NEW OFFER? That answer carries no charter: only a boot that shipped one hands the offer back, so you are holding it already.
-It says so rather than reading as a bot with none, and booting again with no resume reads it in full.
-THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back status: blocked, listing the bots that do exist and offering to boot as one of them.
-It does REPAIR one thing: a bot whose box is missing gets it opened here, because a box is part of what a bot is and its absence is damage rather than a setup step — and the answer says so plainly rather than reading as normal.
-BOOTING STARTS OR RESUMES THAT BOT'S SESSION — there is no separate start verb.
-It first sweeps that bot's sessions that have gone a day without a beat to `abandoned`.
-That sweep and that repair are the only things a boot writes, except that a boot which starts a new run ends any wrap window the bot has open, and a boot given a wrap_code as `resume` opens that window: the wrapped run's own sid comes back, the run stays wrapped for one last change, and no role is taken, nothing is swept and no lease renews.
-Name no bot at all and this is an orientation preview: read-only, the world and the snapshot, no identity and no session.
-THIS DOOR IS WHERE A SESSION HANDLE COMES FROM, and it takes one too: that handle rides every verb after it, reads included, because it is how jojobot knows which bot is asking — and this call is one of them.
-Pass `sid` if you are already carrying one and the answer says whether it still addresses your session; leave it off on a first boot, when you have none.
-The `sid` you carry is never turned away here, whatever became of it: this is the door you come back to.
-PASS `claim` WITH A ROLE NAME TO HOLD THAT ROLE for 45 minutes, so two sessions never work one role at once: the answer says `taken` (your claim succeeded and you hold the role), `refused` (somebody else holds it, and the answer names who and until when; or the role belongs to another bot, and the answer names the owner; or its role object is archived, and the answer names the archive_entity call that restores it), `conflict` (the same call, retried, is the answer) or `unavailable` (the store could not decide the claim, nothing is held, and the answer says what to do next).
-A boot that passes no `claim` takes the role the bot carries in `claims_role`, if it carries one, and the holder of a role is never refused its own seat.
-Any write renews the lease and wrapping releases it.
+With no bot it is a read-only orientation: what jojobot is, a live snapshot (entities by kind, EVERY BOT NAMED so you can see which identities you could boot as) and the skills index (a name and what each is FOR, never the procedures: call again with skill: its name to get one).
+NAME A BOT and the answer also carries that identity: its charter, its rules as dated claims each with its own provenance (testimony and observation are settled, inference is a hypothesis), and the counts of the mailbox it owns.
+THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing the bots that exist.
+Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION HANDLE COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
+A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: a sid, `new`, or the wrap_code a wrap handed back.
+CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads it in full.
+`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease, and wrapping releases it.
+A boot writes only the sweep of abandoned runs, the repair of a missing box and, with a wrap_code, the wrap window it opens.
+Each argument's own description holds the rest.
 ```
 
 #### `start_here` — structure
@@ -3842,6 +3912,13 @@ Optional. The bot to boot as: its bare slug, or its full `bot:`-prefixed
 handle. A handle of any other kind is refused — this door boots bots.
 Omit it for an anonymous orientation: you get the world and the
 snapshot, and no sid.
+
+Booting sweeps that bot's sessions that have gone a day without a beat to
+`abandoned`; an abandoned run is offered back at a later boot for 7 days. It
+does REPAIR one thing: a bot whose box is missing gets it opened here,
+because a box is part of what a bot is and its absence is damage rather than
+a setup step, and the answer says so plainly. A boot that starts a new run
+ends any wrap window the bot has open.
 ```
 
 #### `start_here` — argument `/inputSchema.brief`
@@ -3849,6 +3926,10 @@ snapshot, and no sid.
 ```text
 Skip the orientation essay and return only what changes between calls —
 the snapshot, your identity, your session.
+
+The essay is the only part of the answer that does not change between calls.
+An anonymous boot whose essay did not fit whole names every section it left
+out; `section` fetches one.
 ```
 
 #### `start_here` — argument `/inputSchema.claim`
@@ -3889,6 +3970,13 @@ off on a first boot — there is nothing to answer yet.
 **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
 wrapped run's own sid back so that run can take one last change. The run
 stays wrapped. No role is taken, nothing is swept and no lease renews.
+
+Answering the resume-or-new offer? That answer carries no charter, because
+only a boot that shipped one hands the offer back, so you are holding it
+already; booting again with no `resume` reads it in full. A boot given a
+`wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
+back, the run stays wrapped for one last change, and no role is taken,
+nothing is swept and no lease renews.
 ```
 
 #### `start_here` — argument `/inputSchema.section`
@@ -4138,41 +4226,20 @@ New source.
 #### `update_fact` — description
 
 ```text
-Edit an addressed fact in place (content/details/date/status/provenance/standing).
-To record that something is NOT so, or never was, archive the claim (status: archived, with a note saying why) and capture the replacement; there is no negated status, and a rewrite is for a mistyped or reworded claim.
-NOT FOR A PAST EVENT: turning a claim about one into its negation is never this rewrite — archive it, or retract it.
-DATE REWRITES THE DAY THIS CLAIM WAS MADE — the day it was said, decided or worked out, YYYY-MM-DD — the same argument retract carries, and it is never the day the call happens to be made on.
-Omit it and the record keeps the day of the claim it replaces; give it when the correction itself was made on a different day, or a rewrite made long after the fact keeps the ORIGINAL day forever, reading back as if it had always been made on a day it was never made on.
-TWO MOVES NEED confirmed_by_user, and they are different: moving a claim TO testimony (who backs it), from inference or from observation alike — a claim you read in a system of record is not a step towards the operator having said it — and settling a claim that is already open (how sure anyone is).
-THIS IS HOW A HEDGE IS CONFIRMED — the operator hedged the claim and no longer does, so set standing settled and leave provenance alone; the claim was theirs from the start.
-Reopening is free.
-THE GATE IS ON PROMOTION, NOT ON ASSERTION: a fresh capture may declare standing settled and nobody is asked to confirm it, exactly as it declares its provenance — what needs the operator's word is moving a claim they hedged.
-IT ALSO REACHES THE RECORD'S FIELDS: fields sets the keys you name and leaves every other key alone, and clear_fields takes keys off; `sets` does the same for the keys that are properties of the thing the claim is about, apart from the claim's own `fields`.
-Those are two arguments rather than one, because setting a key to an empty value and removing the key are different edits and a caller means one of them.
-A field you set that equals what jojobot ships as its default today is stored exactly as you sent it either way, and the receipt's echoes_defaults names which key that was.
-TO MOVE A VALUE TO ANOTHER KEY, send `fields` with the new key and `clear_fields` with the old one in the same call.
-A CLAIM CANNOT CHANGE SUBJECT: to move one filed on the wrong thing, capture it on the right one, re-sending its dates, fields and edge, with `derived_from` naming this claim, then archive this one.
-AND IT REACHES THE EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge takes it off.
-Reach for clear_edge when the rewrite turns a claim about what is true NOW into its current negative — was a member and is not any more, was living somewhere and moved away — because then the edge belongs to the sentence you just erased.
-A rewrite that stays positive is not this case: clearing the edge there stops every walk through it and makes the entity on the other end unreachable from this record, so leave it alone.
-A PAST EVENT THAT TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, NOT THIS ONE: retracting marks the record rather than rewriting it, and there is no un-retract.
-stands_for MARKS THIS RECORD AS STANDING FOR THE CLAIMS NAMED HERE, each as its address: a synthesis, never a citation — the named claims stay active and readable exactly as they were, so recall still shows the full picture.
-clear_stands_for takes the mark off.
-A write replaces the whole set; naming an address that does not exist, this record's own address, the same address twice, or an empty set is refused.
-An address that names no fact comes back status: blocked with the addresses that do exist — it never creates.
-IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the address, the date, the provenance, the standing, the status and how many keys the record now carries, with the claim itself elided and said to be.
-The write is read back from the store before it is called a success; what stops is shipping you the words you just sent.
-recall the subject to read the record back.
-AND A REWRITE DESTROYS NOTHING: every write of a claim is kept, so what it said before this call is still readable — recall the subject with history_record: the address, and you get every version of it, oldest first.
-So a claim you disagree with is safe to correct, unless it is testimony from an earlier session, which is archived and replaced instead (below): you are not deciding whether the old wording survives, only what the claim says now.
-TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT: a content rewrite of testimony from an earlier session is refused, and so is one of testimony that records no session.
-Archive it (status: archived, with a reason in details), then capture the corrected claim with derived_from naming the archived one.
-The original stays readable.
-A session that wrote a claim keeps its provenance when it sends none.
-NAMING NOTHING TO CHANGE IS REFUSED, NOT SILENTLY HONOURED: a call that sets none of the arguments above still reaches this verb, and a claim is never re-asserted by accident.
-keep IS THE DESIGNED WAY TO DO IT ON PURPOSE — set keep: true and nothing else to keep this claim exactly as it stands while moving when it was last touched.
-keep IS REFUSED IF ANYTHING ELSE HERE WOULD ACTUALLY CHANGE THE CLAIM: there is no partial keep, only this alone or an ordinary edit naming what changes.
-An edit that would leave the claim too big to be read back whole in one answer is refused with the claim unchanged: shorten it, split it into claims that each say one thing, or keep the long text outside and write a pointer claim.
+Edit one addressed claim in place — fix the source, never an addendum.
+It changes `content`, `details`, `recorded_at` (the day the claim was MADE, never the day you call), `status`, `provenance`, `standing`, `fields`, `sets` and the claim's edge; `stands_for` marks a record as a synthesis of other claims.
+ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in update_fact, its status argument and retract.
+A claim that was true and has changed, or that was never true: archive it with update_fact (status: archived, the reason in details) and capture the replacement, naming the old claim in derived_from.
+A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated record of the retraction.
+A mistyped or reworded claim: rewrite it.
+Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
+A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
+confirmed_by_user is required for exactly two moves of an existing claim: anything to testimony, and open to settled.
+Reopening is free, and a fresh capture is taken at its word.
+It answers with a receipt, not the record: the write is read back from the store before it is called a success, and recall the subject reads the record.
+A call that names nothing to change is refused; keep: true alone is the designed way to touch a claim unchanged.
+An address that names no claim comes back blocked with the addresses that exist.
+Each argument's own description holds its rules.
 ```
 
 #### `update_fact` — structure
@@ -4386,7 +4453,9 @@ An edit that would leave the claim too big to be read back whole in one answer i
 
 ```text
 The fact's global address, `kind:slug#local-id` — exactly as `recall`
-returned it.
+returned it. **A claim cannot change subject:** to move one filed on the
+wrong thing, capture it on the right one, re-sending its dates, fields and
+edge, with `derived_from` naming this claim, then archive this one.
 ```
 
 #### `update_fact` — argument `/inputSchema.clear_derived_from`
@@ -4425,6 +4494,9 @@ un-retract.
 value in `fields`: an empty value is a value somebody wrote, and
 setting a key to nothing and taking the key off the record are two
 different edits.
+
+To move a value to another key, send `fields` with the new key and
+`clear_fields` with the old one in the same call.
 ```
 
 #### `update_fact` — argument `/inputSchema.clear_happened_at`
@@ -4478,6 +4550,11 @@ Replacement claim.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+
+An edit that would leave the claim too big to be read back whole in one
+answer is refused with the claim unchanged: shorten it, split it into claims
+that each say one thing, or keep the long text outside and write a pointer
+claim.
 ```
 
 #### `update_fact` — argument `/inputSchema.derived_from`
@@ -4506,6 +4583,10 @@ mentions exactly as `content` does.
 the record already carries and this does not name is left alone, so an
 edit reaches one field without restating the rest.
 
+A field you set that equals what jojobot ships as its default today is
+stored exactly as you sent it either way, and the receipt's echoes_defaults
+names which key that was.
+
 A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as you wrote it and nothing acts on it: it never makes a thing fall due or appear in what is owed.
 
 `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by` describe their own claim and never fold onto the thing: read them back with `facts: true`, and find by them with a `fields` filter with `scope: record`.
@@ -4516,7 +4597,7 @@ A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on 
 ```text
 **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
 
-A different question from `date`, and **learning it late is ordinary**:
+A different question from `recorded_at`, and **learning it late is ordinary**:
 a claim written when nobody knew the day gains one here. Leaving it off
 keeps whatever the record says, like every other field this patch does
 not name.
@@ -4560,6 +4641,8 @@ somewhere is not a step towards the user having said it. An
 the source off a claim that stays an observation is refused for the same
 reason**, because both leave a machine read of a system nobody named.
 A claim that already carries one does not have to name it again.
+
+A session that wrote a claim keeps its provenance when it sends none.
 ```
 
 #### `update_fact` — argument `/inputSchema.recorded_at`
@@ -4632,6 +4715,10 @@ only the operator can withdraw the hedge. Reopening is free.
 That is the whole of the gate: it is on this promotion, not on
 declaring a standing. A fresh `capture` may state `settled` and is
 taken at its word, the way it is taken at its word about provenance.
+
+This is how a hedge is confirmed: the operator hedged the claim and no
+longer does, so set standing settled (with `confirmed_by_user`) and leave
+provenance alone; the claim was theirs from the start.
 ```
 
 #### `update_fact` — argument `/inputSchema.stands_for`
@@ -4651,16 +4738,21 @@ session never finished marking.
 #### `update_fact` — argument `/inputSchema.status`
 
 ```text
-`active` or `archived`. **Archive a claim that changed or was never
-true — do not negate it.** Rewriting `content` into its own denial
-("the club does NOT meet on Tuesdays" replacing "the club meets on
-Tuesdays") leaves a sentence about what is not so where a claim about
-what is true belongs. Set `status: archived` and give `details`
-saying why, then capture the true claim as a new record — name this
-one as its `derived_from` when there is a direct replacement. A
-negative is still an ordinary fact when it is not correcting
-anything: "he did not attend" stands on its own, written with
-`capture` like any other claim.
+`active` or `archived`. ARCHIVE, RETRACT OR REWRITE — one rule, stated the
+same in update_fact, its status argument and retract. A claim that was
+true and has changed, or that was never true: archive it with update_fact
+(status: archived, the reason in details) and capture the replacement,
+naming the old claim in derived_from. A claim about a past EVENT that turned
+out never to have happened: retract it, which also leaves a dated record of
+the retraction. A mistyped or reworded claim: rewrite it. Archiving and
+retracting are one-way for a claim: nothing edits an archived claim,
+status included, so there is no un-archive (an archived ENTITY comes back
+with restore: true). Rewriting `content` into its own denial ("the club
+does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
+sentence about what is not so where a claim about what is true belongs. A
+negative is still an ordinary fact when it is not correcting anything: "he
+did not attend" stands on its own, written with `capture` like any other
+claim.
 ```
 
 ### Tool `wrap_session`
@@ -4669,20 +4761,16 @@ anything: "he did not attend" stands on its own, written with
 
 ```text
 End your session and tell its story.
-Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways, so nothing appends to it afterwards and nothing reopens it except through the wrap_code described below, and a later journal/amend_journal/wrap_session on that id comes back status: blocked.
-A wrap you have to retry finishes what the first attempt started rather than repeating it, so the story is told once in each place — which means it is your chronology's newest entry only when nothing was written between the attempts.
+Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways, so nothing appends to it afterwards and nothing reopens it except through the wrap_code described below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked.
+A wrap you have to retry finishes what the first attempt started rather than repeating it.
 Write the story for somebody with none of your context: what this run was for, what actually happened, what is left.
-A session that stops without wrapping is not lost — the next boot of the same identity sweeps it to `abandoned` after a day, its chronology stays readable, and the run itself can be picked up again — but its story was never told, and that is the difference between the two endings.
+It is also what the next boot of this identity is handed as the handover, so it is not private to the session.
+A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
+When the work continues but this run has gotten long, wrapping is also how you ROTATE: wrap, then boot again for a fresh sid.
+THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run's own sid back for one last change while the run stays wrapped; the window ends when you wrap a second time (a second closing entry, no new code) or a newer run of the bot starts.
+THE ANSWER IS A RECEIPT: the story is not read back, and the chronology it hands back is the newest of the record (`entry_count` is the whole length, `chronology_elided` and `entries_omitted` say how much is not here; nothing was dropped).
+The closing entry carries the focus as it stood as `closing_focus`.
 Pass your `sid` on every call.
-When the work continues but this run has gotten long, wrapping is also how you ROTATE: wrap the story, then boot again for a fresh sid.
-THE CLOSING ENTRY COMES BACK AS A RECEIPT and the story is not read back to you — it is in the chronology below it, where you can see what jojobot folded into it.
-THE CHRONOLOGY THIS HANDS BACK IS THE NEWEST OF THE RECORD, not all of it: a long run's answer would be one no client can read.
-`entry_count` is the whole length, and `chronology_elided` with `entries_omitted` says how much is not here.
-Nothing was dropped from the record — what was written is stored whole.
-THE FOCUS AS IT STOOD AT THE CLOSE rides on the closing entry as `closing_focus`, beside the story rather than inside its text; every other entry has none.
-THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: calling start_here with that code as its resume answer hands this run's own sid back for one last change, while the run stays wrapped.
-The window ends when you wrap a second time, which adds a second closing entry beside the first and mints no code, or when a newer run of the bot starts.
-Until then a later journal/amend_journal/wrap_session on that id is blocked, as above.
 ```
 
 #### `wrap_session` — structure
@@ -4720,7 +4808,8 @@ Your session id — the session to wrap.
 ```text
 The story of this session, for somebody with none of your context: what
 it was for, what happened, what is left. It becomes the final entry in
-this session's own chronology, and goes nowhere else.
+this session's own chronology, and the next boot of this identity is
+handed it as the handover, so it is not private to the session.
 
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as

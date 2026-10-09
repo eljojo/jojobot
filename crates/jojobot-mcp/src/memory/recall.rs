@@ -150,6 +150,19 @@ pub struct RecallArgs {
     #[serde(default)]
     pub(crate) subject: Option<String>,
     /// Every entity of one kind. `session` reads your own past runs.
+    ///
+    /// **YOUR OWN PAST RUNS ARE A KIND:** `session` reads this identity's own past
+    /// runs and no other's, and `prose: true` brings back a run's chronology
+    /// (list_runs gives each run's state and focus line; this is the read for what
+    /// it did). The focus a run closed on is not in that prose: wrap_session's
+    /// closing entry carries it as `closing_focus`. A selection that reaches
+    /// another identity's runs counts them as `withheld` and shows none of them; a
+    /// filter that leaves out runs of YOUR OWN says how many as
+    /// `own_runs_excluded`. A run carries its `sid` as a field you can filter on,
+    /// and `near` places a run on the day it started. start_here resumes an
+    /// unwrapped run by its sid; only the `wrap_code` a wrap handed back reopens a
+    /// wrapped one. A call with no sid owns no run: boot with start_here and pass
+    /// the sid it returns to read your own.
     #[serde(default)]
     pub(crate) kind: Option<String>,
     /// **Only the direct children of this entity**, as `kind:slug` (a bare
@@ -174,6 +187,13 @@ pub struct RecallArgs {
     ///
     /// A name no type answers to comes back blocked, naming the types that do
     /// exist.
+    ///
+    /// An answer that selects nothing still says what the type is: it carries
+    /// `type_keys`, the type's keys and what each holds, so the spelling to write
+    /// under it is in the empty answer. The first such answer in a session, under a
+    /// type the software ships and with nothing else narrowing the read, also
+    /// carries a teaching: reading again finds nothing, and what you worked out is
+    /// kept by capturing under those keys.
     #[serde(default)]
     pub(crate) answers_type: Option<String>,
     /// **Which objects**, by a key and the value it holds. Omit a filter's
@@ -210,6 +230,23 @@ pub struct RecallArgs {
     /// back identical. `history_record` on this same call is the door that
     /// opens onto the earlier wording; the count only says the door is worth
     /// opening.
+    ///
+    /// **Who holds what comes back unasked:** every object carries a `held` block
+    /// naming the records that point at it, best first: what admits somebody and is
+    /// good on the day (live), then what admits them and has lapsed (lapsed), and,
+    /// only when nothing admits anybody at all, whatever else points here through a
+    /// declared key (related). Each says who holds it, what backs it and how sure
+    /// the operator was (standing). It says nothing about whether anybody may go,
+    /// which is a judgement jojobot does not make; it is bounded, and when it does
+    /// not fit it names the walk that returns the rest. **A bot's own thoughts age
+    /// quietly:** asking facts of a bot that carries thought_capacity adds a `room`
+    /// block naming the capacity, how many thoughts count against it now and how
+    /// many have gone quiet from being untouched too long (still there, marked
+    /// aged_out on the fact, excluded from the count rather than hidden). The block
+    /// names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
+    /// the bot's own thought_ages_after_runs gave it or the default did) and is
+    /// sent only when at least one thought has gone quiet. A write that would go
+    /// over the capacity is refused the same way.
     #[serde(default)]
     pub(crate) facts: Option<bool>,
     /// **Serve a shape's sources alongside it**, on the same listing of
@@ -271,6 +308,12 @@ pub struct RecallArgs {
     /// leaves facts, prose and the charter as the arguments for those say.
     /// **A view can carry it** as its `shows_keys`, and what you send beside
     /// the view's name wins.
+    ///
+    /// **How old what an object holds is:** each object carries `as_of`, the day
+    /// the store last took in a write about it, and `fields_as_of` for any key
+    /// whose own day is older; an object with no `as_of` has no write the store
+    /// could date. That is a day the store saw, while `overdue`'s `as_of` is the
+    /// day an overdue question is asked about.
     #[serde(default)]
     pub(crate) keys: Option<Vec<String>>,
     /// **The writes behind one key, oldest first** — name the key, and each
@@ -288,6 +331,12 @@ pub struct RecallArgs {
     /// caller who wants the value wants one value. A key nobody has written
     /// comes back as no writes rather than as a refusal — the thing is there
     /// and nothing was recorded under that key.
+    ///
+    /// The count of the writes is the answer to how many times: a key a sitting
+    /// records once each time something happens is how you count occurrences. A key
+    /// nobody wrote comes back as no writes, never as a refusal. A long history is
+    /// cut to its newest twenty, saying how many exist and how many it left out;
+    /// `history_most` raises the window.
     #[serde(default)]
     pub(crate) history: Option<String>,
     /// **The writes behind one RECORD, oldest first** — name a record's address
@@ -330,6 +379,11 @@ pub struct RecallArgs {
     /// repeat the same call with it. A call that selects ONE object counts its
     /// facts (`facts: true` on a subject with more than fit); a call that
     /// selects several, a kind or a walk, counts the objects. Defaults to 0.
+    ///
+    /// One subject with more facts than fit is read the same way, `offset` counting
+    /// its facts; an object that cannot fit even first in its part carries
+    /// `facts_not_shown` naming that subject to recall alone, which reads its facts
+    /// in parts, and a single fact larger than the ceiling still comes back whole.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
     /// **Where each folded value came from**, and who backs it: the claim whose
@@ -429,6 +483,25 @@ pub struct RecallArgs {
     #[serde(default)]
     pub(crate) near: Option<NearArgs>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
+    ///
+    /// **Walking.** The answer nests: a walked object carries the objects it
+    /// reached, each carrying its own, so one call answers 'these objects, and what
+    /// each is connected to'. Each hop is bounded: a wide fan-in comes back cut to
+    /// what fits, in the order the walk reached it, and `connected_left_out` on the
+    /// object above says how many did not fit (recall that handle again, or narrow
+    /// with `keeping`). An object that draws edges the walk did not follow says so;
+    /// an empty `connected` with no such note is an object with nothing beyond it.
+    /// With `shape` and `relation` both unset a walk also reaches a MENTION (an
+    /// entity named in a claim's own words), a REF (an entity a claim touches with
+    /// no claim about how) and a FIELD LINK (an entity whose handle a record holds
+    /// as a whole field value, or as every item of a comma list, under any key),
+    /// each labelled mention, ref or field rather than as an edge; naming a shape
+    /// or a relation answers only that. For one kind of thing, SELECT it (`kind`
+    /// plus a `fields` filter on the key) rather than walking: traversal reaches,
+    /// selection chooses. A key's declared value type licenses how you compare it
+    /// (`before`/`after` on a date, `less`/`greater` on a number, `equals` on
+    /// anything), and nothing is gated by a declaration: an undeclared record is
+    /// still found by the keys it carries.
     #[serde(default)]
     pub(crate) follow: Option<FollowArgs>,
     /// **A question asked by name** — a view's handle, or its bare slug.
@@ -443,6 +516,10 @@ pub struct RecallArgs {
     /// is yours and wins, so a view is a starting point rather than a cage.
     ///
     /// A name that is no view comes back blocked, with the views that exist.
+    ///
+    /// `view: "colleagues"` lists the identities here and what each is for; `view:
+    /// "loops"` lists the recurring things (rhythms) and what each last recorded. A
+    /// view carries its own `shows_keys`, and a `keys` you send wins over it.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -1555,195 +1632,28 @@ type FillSessionProseFuture<'a> = std::pin::Pin<
 #[tool_router(router = recall_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "The graph query: say the shape you want and get that shape back. Use it \
-                       when you can describe what you are after — a handle, a kind, a type, a key \
-                       and its value — and use search when you are looking for something and only \
-                       have words for it. \
-                       YOUR OWN PAST RUNS ARE A KIND: kind `session` reads this identity's own \
-                       past runs and no other's, and prose: true brings back a run's chronology \
-                       — list_runs gives each run's state and focus line, and this is the read \
-                       for what it did. THE FOCUS A RUN CLOSED ON IS NOT IN THAT PROSE: \
-                       wrap_session's closing entry carries it as `closing_focus`. A selection \
-                       that reaches another identity's runs counts \
-                       them as `withheld` and shows none of them, so `withheld` counts only \
-                       runs that are not yours. A filter that leaves out runs of YOUR OWN says \
-                       how many as `own_runs_excluded`. A run carries its `sid` as a field, \
-                       which you can filter on and which start_here takes to resume that \
-                       run, and \
-                       `near` places a run on the day it started. A call with no sid owns \
-                       no run: boot with start_here and pass the sid it returns to read your \
-                       own. \
-                       START WITH A VIEW IF ONE FITS: a view is a question somebody already \
-                       worked out, asked for by NAME — `view: \"colleagues\"` for the identities \
-                       here and what each is for, `view: \"loops\"` for the recurring things and \
-                       what each last recorded. SOME SHIP WITH THE SOFTWARE AND YOU CAN DECLARE \
-                       YOUR OWN, with add_entity of kind view and the keys selects, shows and \
-                       asks; a name that is no view comes back blocked naming the ones that are, \
-                       which is how you find out what is here. Anything you send beside the name \
-                       wins, so a view is a starting point rather than a cage — and you never \
-                       have to work the shape out first to get an answer. \
-                       Three axes, and they COMBINE into one question rather \
-                       than three. WHICH OBJECTS: subject (one handle), kind, answers_type \
-                       (structural — an OBJECT answers a type by the keys every write on it \
-                       leaves standing, whether or not anybody declared it one, and carrying \
-                       SOME of them is enough: the answer says which it lacks), and fields (a \
-                       key, and the value it holds; omit the value to ask only that the key is \
-                       there). WHAT OF EACH: every object always comes back as its FIELDS — \
-                       every write on it folded, one value per key, the newest write of that key \
-                       winning, and a write that takes a key off takes it off the thing. A LOOP \
-                       HOLDING A SNOOZE DAY carries `snooze` {until, in_force} beside its \
-                       fields: in_force is true only while the loop's last check-in is that \
-                       snooze, and after a ran or skipped check-in the day stays in the \
-                       fields as history. Those \
-                       fields are what the thing HOLDS — its KIND is what it \
-                       IS — and they answer most questions; the records behind them are bigger and say the same thing at \
-                       length. To see only some of the keys, name them in keys: every object, \
-                       the ones a walk reaches included, then carries just those, an object \
-                       that held others names them in fields_left_out, and asking again \
-                       without keys reads them all, unless a view supplied the keys: then ask \
-                       again without the view, sending its kind, or with keys naming them. A \
-                       view carries it as shows_keys, which is \
-                       how view colleagues shows each bot's one_liner and reports_to. Ask for \
-                       facts when you need a claim's own wording, its \
-                       provenance, or the address that edits it, and the answer says how many \
-                       records it left out when you did not. A RECORD MARKED stands_for ANOTHER \
-                       (a synthesis, over update_fact) is served, and the records it stands for \
-                       are left out of that same facts listing — the answer says how many and \
-                       names stood_for as the way to read them back; ask for stood_for: true when \
-                       you need those sources themselves rather than the shape that already \
-                       speaks for them. Then prose, off by default, which is the human half of the \
-                       object's page, whole; charter, which is how you read a COLLEAGUE — a \
-                       bot's charter whole, and no session is made and no handle comes back, \
-                       because booting as another bot to read it is the one act the rules \
-                       refuse; and history, which names ONE KEY and brings back \
-                       every write of it, oldest first. A read is current truth — one value per \
-                       key, the newest write — and history is the other question the same data \
-                       answers: every time that key was written, with the record each write \
-                       arrived in and its date. THE COUNT OF THE WRITES IS THE ANSWER TO HOW \
-                       MANY TIMES, so a key a sitting records once each time something happens \
-                       is how you count occurrences. A key nobody wrote comes back as no \
-                       writes, never as a refusal. HISTORY_RECORD is the other half of that \
-                       axis: it names ONE RECORD by its address and brings back every write of \
-                       THAT CLAIM, oldest first — what it said, who backed it and whether it \
-                       stood, each time somebody wrote it. That is how you read what a claim \
-                       used to say before it was corrected, and how you tell a claim nobody ever \
-                       made from one somebody made and got wrong. Each write says WHEN IT \
-                       HAPPENED and where it sits in the order — and that moment is not the \
-                       claim's own first-recorded one, which answers a different question. A \
-                       write kept before jojobot recorded one carries none. Name a key or a \
-                       record, never both. AN ADDRESS IS SELECTION ENOUGH: history_record on \
-                       its own answers about the thing its address names, so you do not repeat \
-                       the subject beside it — and naming a subject that is something else is \
-                       refused rather than guessed at. A long history comes back CUT to its newest \
-                       twenty, saying how many exist and how many it left out; history_most \
-                       raises the window when you really want the far end, for either half. VALUES names a key \
-                       and answers with the values the selected objects already hold under it, \
-                       most used first, each with how many hold it — what to write in a key \
-                       like colour or status when you want the spelling everything else \
-                       uses. IT IS A READ AND NEVER A RULE: a value nobody has used is written \
-                       exactly as any other, and this is how you see the list before adding to \
-                       it. The scope is whatever the call selected, so a `fields` filter naming \
-                       the key alone asks it of everything carrying the key. A key nobody has \
-                       written comes back with nothing in use rather than as a refusal, and a \
-                       long list is cut to its most used twenty with values_most to reach the \
-                       rest. BACKING answers who stands behind each value: name it and every \
-                       object also carries, per key, the claim whose write won that key and \
-                       that claim's own provenance and standing — because a value the user \
-                       stated and one an assistant worked out are the same string otherwise. It \
-                       is off by default because it is a second read; ask for it when you are \
-                       about to act on a value. A key whose writes are summed has no single \
-                       winning claim and is not there. WHAT SOMEBODY HOLDS COMES BACK UNASKED: every object carries a held \
-                       block naming the records that point at it, best first — what admits \
-                       somebody to it and is good on the day, then what admits them and has \
-                       lapsed, and, only when nothing admits anybody at all, whatever else \
-                       points here through a declared key. Each one says who holds it, whether \
-                       it is in force on the day (liveness: live, lapsed, or related when \
-                       nothing admits anybody at all), what backs it, and HOW SURE THE OPERATOR \
-                       WAS (standing) — because a claim somebody made and a claim an assistant \
-                       worked out are not the same claim to act on, and neither are a pass \
-                       somebody confirmed and one they only think they hold. It says nothing \
-                       about whether anybody may go: that is a judgement and jojobot makes \
-                       none. Nothing pointing here at all and nothing gating it are different \
-                       answers and the block says which. It is bounded, and when it does not \
-                       fit it names the walk that returns the rest. A BOT'S OWN THOUGHTS AGE \
-                       QUIETLY, AND FACTS SAYS SO UNASKED: asking facts of a bot carrying \
-                       thought_capacity (capture's connection edges drawn on the bot's own \
-                       handle — see capture's shape) adds a `room` block naming the capacity, how \
-                       many count against it now, and how many have gone quiet from being untouched \
-                       too long — still there, marked aged_out on the fact itself, excluded from \
-                       the count rather than hidden. THE BLOCK NAMES THE THRESHOLD: \
-                       ages_after_runs is how many of the bot's runs a thought may go untouched, \
-                       and ages_after_from says whether the bot's own thought_ages_after_runs \
-                       setting gave it or the default did. THE BLOCK IS SENT ONLY WHEN AT LEAST ONE \
-                       THOUGHT HAS GONE QUIET: no block means none has, and the room is \
-                       exactly as full as its live thoughts. A write that would go over the \
-                       capacity is refused the same way; this is the same room, read rather \
-                       than written. \
-                       WHICH EDGES: follow {shape, direction, depth}, and \
-                       THE ANSWER NESTS — a walked object carries the objects it reached, each \
-                       carrying its own. EACH HOP IS BOUNDED: a wide fan-in comes back cut to \
-                       what fits, in the order the walk reached it rather than any ranking, and \
-                       connected_left_out on the object above says how many did not fit — recall \
-                       that handle again, or narrow the walk with keeping, to reach the rest. \
-                       NARROW A WALK WITH follow.fits_type, which is the \
-                       stricter half of the pair: answers_type selects objects carrying SOME of \
-                       a type's keys and reports the gaps, fits_type keeps only the ones \
-                       carrying EVERY key. Which of these are described like a pet, versus which \
-                       of these ARE pets. Direction is two different questions: `out` follows the \
-                       edges this object's records draw, `in` follows the edges drawn AT it, so \
-                       from a party `in` reaches its guests and from a guest `out` reaches the \
-                       party. A RELATION is the other kind of link, and a DECLARATION is what \
-                       makes one: a KEY some type declared to hold a `reference` points at \
-                       another entity, so it is walkable. LEAVE shape AND relation BOTH UNSET \
-                       and a walk also reaches a MENTION (an entity named in a claim's own \
-                       words), a REF (an entity a claim touches with no claim about how) and a \
-                       FIELD LINK (an entity whose handle a record holds as a whole field value, \
-                       or as every item of a comma list, under any key, declared or not), each labelled mention, ref or field \
-                       rather than as an edge — name a shape or a relation and none answers, \
-                       because none has one. Name the key and \
-                       use `direction` — \
-                       `out` reaches what a record points at ('owner' from a pet reaches the \
-                       person), `in` reaches every record pointing here through that key ('owner' \
-                       from that person reaches the pets). Inbound is scoped by the KEY ALONE: it \
-                       returns every record using that key, so a repair record carrying `owner` \
-                       arrives beside the pets. For one kind of thing, SELECT it — `kind` plus a \
-                       `fields` filter on the key — rather than walking. `keeping` narrows what \
-                       the walk reaches, taking the same key \
-                       filters, so 'this person's pets' becomes 'this person's pets born before a \
-                       date'. A key's DECLARED value type also licenses how you compare it: \
-                       `before` and `after` on a declared date, `less` and `greater` on a \
-                       declared number, `equals` always and on anything. That is what declaring a \
-                       type buys you — reach — and nothing is gated by it: an undeclared record \
-                       is still found by the keys it carries. That nesting is what a flat list cannot express: one call answers \
-                       'these objects, and what each of them is connected to' instead of one call \
-                       per object. Unlike search this returns claims of EVERY status, archived \
-                       included, unless you pass `status`. A named subject always comes back, even when the filters keep \
-                       none of its records — naming a handle asks for that object, a filter asks \
-                       which objects — while a handle that names nothing comes back blocked with \
-                       the nearest handles, never as an empty answer. An object that draws edges \
-                       the walk did not follow says so; an empty `connected` with no such note is \
-                       an object with nothing beyond it. A query that narrows nothing is refused: \
-                       name at least one of subject, kind, parent, answers_type or fields. AN \
-                       answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
-                       answer carries type_keys, the type's keys and what each holds, so the \
-                       spelling to write under it is in the empty answer. The first such answer \
-                       in a session, under a type the software ships and with nothing else narrowing the read, also carries a teaching: \
-                       reading again finds nothing, and what you worked out is kept by capturing \
-                       under those keys. AN ANSWER STOPS AT THE \
-                       ANSWER CEILING, never mid-record: it carries the objects that fit in its \
-                       own order, and `not_shown` says how many it left out and the `offset` that \
-                       reads on — repeat the same call with it. One subject with more facts than \
-                       fit is read the same way, `offset` counting its facts, and an object that \
-                       cannot fit even first in its part carries `facts_not_shown` naming that \
-                       subject to recall alone, which reads its facts in parts, and a single \
-                       fact larger than the ceiling still comes back whole. HOW OLD WHAT AN \
-                       OBJECT HOLDS IS: each object carries `as_of`, the day the store last took \
-                       in a write about it, and `fields_as_of` for any key whose own day is \
-                       older; an object with no `as_of` has no write the store could date. That \
-                       is a day the store saw, while `overdue`'s `as_of` is the day an overdue \
-                       question is asked about. AN EMPTY ANSWER NAMES WHAT \
-                       IT LOOKED THROUGH: it carries `searched`, one line saying the population, \
-                       what was left out and the call that widens it."
+        description = "The graph query: say the shape you want and get that shape back. Use \
+                       it for a handle, a kind, a type, a key and its value; use search when \
+                       you only have words for it. THREE AXES COMBINE INTO ONE QUESTION. \
+                       WHICH OBJECTS: subject (one handle; a named subject always comes back, \
+                       and a handle that names nothing is blocked with the nearest), kind, \
+                       parent, answers_type, fields (a key and the value it holds) or view (a \
+                       question already worked out, asked by name, so start with one if it \
+                       fits). A call that narrows nothing is refused: name one of subject, \
+                       kind, parent, answers_type or fields, or a record's own address \
+                       (history_record or built_on). WHAT OF EACH: every object comes back as \
+                       its FIELDS, what the thing HOLDS: every write on it folded, the newest \
+                       write of each key winning (a loop under a snooze also carries `snooze` \
+                       {until, in_force}). facts, prose, charter, history, history_record, \
+                       values, backing and stood_for ask for more, each off by default and \
+                       each saying what it left out; `keys` asks for less (fields_left_out \
+                       names what it hid, and a view's shows_keys yields to it). WHICH EDGES: \
+                       follow {shape or relation, direction, depth, keeping, fits_type}, and \
+                       the answer nests. Unlike search, recall returns claims of EVERY status \
+                       unless you pass `status`. Your own past runs are kind session. AN \
+                       ANSWER STOPS AT THE CEILING, never mid-record: not_shown names the \
+                       offset that reads on. An empty answer names what it looked through, as \
+                       searched. Each argument's own description holds the rest."
     )]
     pub(crate) async fn recall(
         &self,
