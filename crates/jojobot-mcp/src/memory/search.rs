@@ -863,11 +863,11 @@ impl Jojobot {
             .iter()
             .map(|hit| {
                 let json = hit_json(hit, as_of);
-                let size = json.to_string().chars().count() + 1;
+                let size = crate::answer::served_len(&json) + 1;
                 (json, size)
             })
             .collect();
-        let rest = body.to_string().chars().count()
+        let rest = crate::answer::served_len(&body)
             + crate::answer::widest_not_shown("hits")
             + crate::answer::STATUS_BAR_ROOM;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
@@ -995,7 +995,7 @@ mod tests {
                     .await
                     .expect("search ok"),
             );
-            let size = body.to_string().chars().count();
+            let size = crate::answer::served_len(&body);
             assert!(
                 size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
                 "snippets of {snippet_len}: the answer is {size} characters"
@@ -3176,6 +3176,74 @@ mod tests {
         assert_eq!(whole["count"], ranks.len(), "{whole}");
         assert_eq!(whole["not_shown"]["count"], 100 - ranks.len(), "{whole}");
         assert_eq!(whole["not_shown"]["offset"], ranks.len(), "{whole}");
+    }
+
+    /// **The characters a page may differ from the sum of its parts by**: the
+    /// digits of `count` and the brackets of the list the fill did not render.
+    const PAGE_EDGE_SLACK: usize = 4;
+
+    /// A ranked list of entity hits, each carrying the null keys an entity
+    /// does (`crm`, `parent`, `archived`), named by rank.
+    fn entity_hits(count: usize, source: usize) -> Vec<Hit> {
+        (0..count)
+            .map(|rank| Hit::Entity {
+                entity: Entity {
+                    id: EntityId(format!("thing:{}", "kiln".repeat(1 + rank % 3))),
+                    kind: EntityKind::THING,
+                    name: format!("hit {rank:04}"),
+                    aliases: Vec::new(),
+                    source: "s".repeat(source),
+                    crm: None,
+                    parent: None,
+                    boot: Boot::OnDemand,
+                    merged_into: None,
+                    badge: None,
+                    archived: None,
+                },
+                doc_id: format!("doc-{rank}"),
+                edges: Vec::new(),
+                answers: None,
+            })
+            .collect()
+    }
+
+    /// **A page of hits holds every hit that fits under the ceiling as the
+    /// answer is served, at every size of hit.** The surface drops null keys from
+    /// what it ships, so a page filled against each hit with its nulls in, or
+    /// against an envelope with its nulls in, stops short by the length of those
+    /// keys. This reads the page as served, then the hit that begins the next
+    /// page the same way, and holds that the page was under the ceiling and full
+    /// to within that one hit. Sweeping the size of the hit is what puts the
+    /// edge of the page inside the few characters an envelope's null keys take.
+    #[tokio::test]
+    async fn a_page_of_hits_is_full_to_within_one_hit_as_the_answer_is_served() {
+        for source in 140..=190 {
+            let mut page = searched_over(entity_hits(100, source), 100, 0).await;
+            let shown = page["results"].as_array().expect("results").len();
+            let mut after = searched_over(entity_hits(100, source), 100, shown as u32).await;
+            // What the fill reserved for the block naming what it left out, at
+            // its widest, less the block this page really carries.
+            let reserved = crate::answer::widest_not_shown("hits")
+                - serde_json::json!({"not_shown": page["not_shown"]})
+                    .to_string()
+                    .chars()
+                    .count();
+            crate::answer::strip_nulls(&mut page);
+            crate::answer::strip_nulls(&mut after);
+            let served = page.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+            let next = after["results"][0].to_string().chars().count() + 1;
+            assert!(shown > 1 && shown < 100, "{source}: not a page: {shown}");
+            assert!(
+                served <= jojobot_domain::text::ANSWER_CEILING,
+                "{source}: the page is {served} characters as served"
+            );
+            assert!(
+                served + next + reserved + PAGE_EDGE_SLACK > jojobot_domain::text::ANSWER_CEILING,
+                "{source}: another hit of {next} characters would have fit: the page is {served} \
+                 of {} as served, with {shown} hits",
+                jojobot_domain::text::ANSWER_CEILING
+            );
+        }
     }
 
     /// **Continuing until the end returns every hit exactly once.** The same call

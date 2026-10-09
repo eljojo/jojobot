@@ -113,7 +113,7 @@ impl Jojobot {
             .skip(offset)
             .map(|entity| {
                 let json = entity_json(entity);
-                let size = json.to_string().chars().count() + 1;
+                let size = answer::served_len(&json) + 1;
                 (json, size)
             })
             .collect();
@@ -766,7 +766,7 @@ mod tests {
             let body = listed(&jojobot, Some(offset)).await;
             parts += 1;
             assert!(parts < 20, "the walk never ends");
-            let size = body.to_string().chars().count();
+            let size = crate::answer::served_len(&body);
             assert!(
                 size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
                 "part {parts} is {size} characters"
@@ -807,7 +807,7 @@ mod tests {
             let count = 90;
             let jojobot = with_things(count, source_len).await;
             let body = listed(&jojobot, None).await;
-            let size = body.to_string().chars().count();
+            let size = crate::answer::served_len(&body);
             assert!(
                 size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
                 "sources of {source_len}: the answer is {size} characters"
@@ -815,6 +815,52 @@ mod tests {
             let carried = body["entities"].as_array().expect("entities").len();
             let left = body["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
             assert_eq!(carried + left, count, "sources of {source_len}: {body}");
+        }
+    }
+
+    /// **The characters a page may differ from the sum of its parts by**: the
+    /// digits of `count`.
+    const PAGE_EDGE_SLACK: usize = 4;
+
+    /// **A page holds every entity that fits under the ceiling as the answer is
+    /// served.** The surface drops null keys from what it ships, so a page that
+    /// was filled against the entity with its nulls in stops short by the length
+    /// of those keys on every entity it carries. This reads the page the way it
+    /// is served, then the entity that begins the next page the same way, and
+    /// holds that the page was under the ceiling and full to within that one
+    /// entity, at several sizes of entity.
+    #[tokio::test]
+    async fn a_listing_page_is_full_to_within_one_entity_as_the_answer_is_served() {
+        for source_len in [188, 192, 196, 200] {
+            let jojobot = with_things(100, source_len).await;
+            let mut page = listed(&jojobot, None).await;
+            let shown = page["entities"].as_array().expect("entities").len();
+            let mut after = listed(&jojobot, Some(shown as u32)).await;
+            // What the fill reserved for the block naming what it left out, at
+            // its widest, less the block this page really carries.
+            let reserved = answer::widest_not_shown("entities")
+                - serde_json::json!({"not_shown": page["not_shown"]})
+                    .to_string()
+                    .chars()
+                    .count();
+            crate::answer::strip_nulls(&mut page);
+            crate::answer::strip_nulls(&mut after);
+            let served = page.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+            let next = after["entities"][0].to_string().chars().count() + 1;
+            assert!(
+                shown > 1 && shown < 100,
+                "{source_len}: not a page: {shown}"
+            );
+            assert!(
+                served <= jojobot_domain::text::ANSWER_CEILING,
+                "{source_len}: the page is {served} characters as served"
+            );
+            assert!(
+                served + next + reserved + PAGE_EDGE_SLACK > jojobot_domain::text::ANSWER_CEILING,
+                "{source_len}: another entity of {next} characters would have fit: the page is \
+                 {served} of {} as served, with {shown} entities",
+                jojobot_domain::text::ANSWER_CEILING
+            );
         }
     }
 

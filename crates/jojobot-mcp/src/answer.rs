@@ -365,6 +365,17 @@ pub(crate) fn strip_nulls(value: &mut serde_json::Value) {
     }
 }
 
+/// **How long a value is once it is served**: the characters of its text with
+/// every null key [`strip_nulls`] drops already gone. A fill that fills a page
+/// against the ceiling measures with this, so it spends the room on what ships
+/// and not on keys the surface removes after the verb returns. It is the same
+/// function the surface strips with, not a second copy of its rule.
+pub(crate) fn served_len(value: &serde_json::Value) -> usize {
+    let mut served = value.clone();
+    strip_nulls(&mut served);
+    served.to_string().chars().count()
+}
+
 /// Apply [`strip_nulls`] to the body of a completed answer. An answer this
 /// cannot read as a JSON object is left exactly as the verb wrote it, for the
 /// reason [`structure`] leaves one alone.

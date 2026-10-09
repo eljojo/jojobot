@@ -179,7 +179,7 @@ async fn world(aged: bool) -> World {
         let written = memory
             .capture(NewFact::about(
                 handles[i % 40].clone(),
-                format!("pantry observation {i}: {}", filler(180, i)),
+                format!("pantry observation {i}: {}", filler(300, i)),
                 today,
             ))
             .await
