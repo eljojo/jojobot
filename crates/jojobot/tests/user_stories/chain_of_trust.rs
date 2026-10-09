@@ -508,6 +508,7 @@ async fn the_assistants_code_grants_the_root_which_turns_the_gate_on_and_dies_wi
         .call("wrap_session", json!({"story": "the assistant's sitting"}))
         .await;
     let wrap_code = wrapped.field("wrap_code");
+    wrapped.says("\"vouchers_voided\":1");
     s.call("recall", json!({"subject": root}))
         .await
         .says("\"state\":\"void\"");
@@ -537,36 +538,41 @@ async fn the_assistants_code_grants_the_root_which_turns_the_gate_on_and_dies_wi
 
 /// "I asked twice, and I typed it wrong."
 ///
-/// **One challenge stands per bot**: a newer request replaces the older, whose
-/// code is then refused. **A wrong code counts, and the third voids the
-/// challenge**, after which even the right code is refused and the refusal says
-/// to ask for a new one. A wrong code names no part of the right one.
+/// **A pending code is not replaced**: a second request for the same bot while
+/// the first is good is refused, and the refusal names when the first expires,
+/// so a misfiring session cannot burn the operator's codes. The first code still
+/// works. **A wrong code counts, and the third voids the challenge**, after
+/// which even the right code is refused and the refusal says to ask for a new
+/// one, and a new request then stands. A wrong code names no part of the right
+/// one.
 #[tokio::test]
-async fn a_newer_request_replaces_the_older_code_and_three_wrong_codes_void_a_challenge() {
+async fn a_pending_code_is_not_replaced_and_three_wrong_codes_void_a_challenge() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     an_instance_with_an_operator(&s).await;
 
-    // ── a second request replaces the first ─────────────────────────────────
-    let (first, first_code) = ask_and_read(&story, "marge").await;
+    // ── a second request is refused while the first is good ─────────────────
     let (second, second_code) = ask_and_read(&story, "marge").await;
-    assert_ne!(first, second);
-    s.call("recall", json!({"subject": first}))
+    let mails = story.operators_mail("person:lisa").await.len();
+    story
+        .refused_at_the_door("start_here", json!({"bot": "marge", "ask_for_code": true}))
         .await
-        .says("\"state\":\"replaced\"");
+        .says("\"wrote\":false")
+        .says("expires_at")
+        .says(&second)
+        .never_says(&second_code);
+    assert_eq!(
+        story.operators_mail("person:lisa").await.len(),
+        mails,
+        "a refused request sent the operator nothing"
+    );
+    s.list("challenge").await.number("/count", 1);
     s.call("recall", json!({"subject": second}))
         .await
         .says("\"state\":\"issued\"");
-    story
-        .refused_at_the_door(
-            "start_here",
-            json!({"bot": "marge", "challenge": first, "code": first_code}),
-        )
-        .await
-        .says("replaced");
     s.list("voucher").await.number("/count", 0);
 
-    // ── a request for another bot replaces nothing of marge's ───────────────
+    // ── a request for another bot is never in the way ───────────────────────
     let (other, _) = ask_and_read(&story, "patty").await;
     s.call("recall", json!({"subject": second}))
         .await
@@ -667,6 +673,17 @@ async fn a_code_is_dead_after_its_window_and_after_a_restart() {
         .await
         .says("\"wrong_tries\":\"0\"");
     tomorrow.list("voucher").await.number("/count", 0);
+
+    // ── an expired code is not in the way: a new request replaces it ────────
+    let (renewed, _) = ask_and_read(&later, "marge").await;
+    tomorrow
+        .call("recall", json!({"subject": challenge}))
+        .await
+        .says("\"state\":\"replaced\"");
+    tomorrow
+        .call("recall", json!({"subject": renewed}))
+        .await
+        .says("\"state\":\"issued\"");
 
     // ── a restart inside the window: the key is new, the old hash is dead ───
     let (challenge, code) = ask_and_read(&story, "patty").await;

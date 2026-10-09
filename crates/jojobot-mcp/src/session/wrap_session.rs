@@ -145,6 +145,38 @@ impl Jojobot {
             },
         };
 
+        // **A wrap ends every voucher its run holds, and fails closed.** Done
+        // before the run closes: a listing, a read or a write that fails stops
+        // the wrap with the step named, the run stays active, and a retry with
+        // the same story finishes it without telling the story twice.
+        let vouchers_voided = match self
+            .void_vouchers_held_by(caller.sid.as_str(), &caller.bot)
+            .await
+        {
+            Ok(voided) => voided,
+            Err(failure) => {
+                let mut body = serde_json::json!({
+                    "status": "blocked",
+                    "attempted": caller.sid.as_str(),
+                    "wrote": true,
+                    "recorded": {"story_entry": entry.id.as_str()},
+                    "revocation": {
+                        "failed": failure.step,
+                        "voided_before_failing": failure.voided,
+                    },
+                });
+                WayForward::retry(format!(
+                    "The wrap was stopped: the {} of this run's vouchers failed, so it could not \
+                     be shown that none is still held. The run is still active and your story is \
+                     recorded. Call wrap_session again with the same story to finish.",
+                    failure.step
+                ))
+                .write_into(&mut body);
+                return Ok(CallToolResult::success(vec![ContentBlock::text(
+                    body.to_string(),
+                )]));
+            }
+        };
         let wrapped = match self.sessions.close(&session, SessionState::Wrapped).await {
             Ok(wrapped) => wrapped,
             Err(e) => return session_declined(e, caller.sid.as_str()),
@@ -154,11 +186,7 @@ impl Jojobot {
         // lease is not what a caller telling its story asked for.
         self.release_role_claims(&caller.bot, caller.sid.as_str())
             .await;
-        // **A root lasts one session**: wrapping voids the roots this run holds,
-        // and the receipt below says how many, or that it could not.
-        let roots = self
-            .void_roots_held_by(caller.sid.as_str(), &caller.bot)
-            .await;
+
         // **The handle outlives the run it named, and stops addressing it.** The
         // registry keeps the mapping — re-issuing a wrapped run's handle would
         // send somebody's next call into an archive — so nothing is removed
@@ -172,22 +200,13 @@ impl Jojobot {
             "session": session_json(&wrapped),
             "entry": entry_receipt_json(&entry),
         });
-        if (roots.voided > 0 || roots.failed)
+        if vouchers_voided > 0
             && let Some(obj) = receipt.as_object_mut()
         {
-            let mut trust = serde_json::Map::new();
-            if roots.voided > 0 {
-                trust.insert("roots_voided".into(), roots.voided.into());
-            }
-            if roots.failed {
-                trust.insert(
-                    "roots_not_voided".into(),
-                    "A root this run held could not be checked or voided just now, so it may \
-                     still be held. Nothing retries this: tell the operator or the EM."
-                        .into(),
-                );
-            }
-            obj.insert("trust".into(), trust.into());
+            obj.insert(
+                "trust".into(),
+                serde_json::json!({ "vouchers_voided": vouchers_voided }),
+            );
         }
         // **The first wrap hands back the code that reopens this run for one
         // last change.** Best-effort: the wrap has landed, and a store that

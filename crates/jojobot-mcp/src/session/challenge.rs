@@ -184,6 +184,7 @@ impl Jojobot {
             Ok(standing) => standing,
             Err(e) => return Ok(self.ask_failed(bot, &e)),
         };
+        let mut expired: Vec<FactAddress> = Vec::new();
         for entity in standing.into_iter().filter(|e| e.archived.is_none()) {
             // **A challenge that cannot be read fails the ask.** Making a new one
             // beside it would leave two standing, and both codes would work.
@@ -193,13 +194,42 @@ impl Jojobot {
                 Err(e) => return Ok(self.ask_failed(bot, &e)),
             };
             if &held.bot == bot && held.state == ChallengeState::Issued {
-                let state = ChallengeState::Replaced.as_token().to_string();
-                if let Err(e) = self
-                    .write_challenge(&address, bot, [(challenge::STATE, state)])
-                    .await
-                {
-                    return Ok(self.ask_failed(bot, &e));
+                // **A pending challenge is not replaced.** While the window is
+                // open the request is refused and names when it ends, so a
+                // misfiring session cannot burn the operator's codes. The
+                // refusal comes before any write, so it leaves nothing behind.
+                let expires_at = held.issued_at + WINDOW;
+                if now <= expires_at {
+                    let mut body = serde_json::json!({
+                        "status": "blocked",
+                        "attempted": bot.as_str(),
+                        "wrote": false,
+                        "pending": {
+                            "challenge": entity.id.as_str(),
+                            "expires_at": expires_at.to_string(),
+                        },
+                    });
+                    WayForward::retry(format!(
+                        "A code for {bot} is already waiting in the operator's box and is good \
+                         until {expires_at}. Use that code, or ask again after that moment. \
+                         Three wrong codes void it sooner."
+                    ))
+                    .write_into(&mut body);
+                    return Ok(CallToolResult::success(vec![crate::ContentBlock::text(
+                        body.to_string(),
+                    )]));
                 }
+                expired.push(address);
+            }
+        }
+        // Only now, with no pending challenge in the way, do the expired ones end.
+        for address in expired {
+            let state = ChallengeState::Replaced.as_token().to_string();
+            if let Err(e) = self
+                .write_challenge(&address, bot, [(challenge::STATE, state)])
+                .await
+            {
+                return Ok(self.ask_failed(bot, &e));
             }
         }
 
@@ -513,46 +543,48 @@ impl Jojobot {
             .map(|claim| (claim.address(), claim.fields.clone())))
     }
 
-    /// **A root lasts one session**: wrapping voids every root the wrapping
-    /// session holds. After the close, like the release of a role: the wrap
-    /// already landed. A voucher that is not a root, or is held by another
-    /// session, is left alone.
+    /// **A wrap ends every voucher its run holds.** Until escrow exists a voucher
+    /// is not carried to a successor, so a run that is over holds nothing: a root
+    /// and an ordinary voucher alike end with it, and a voucher another run holds
+    /// is left alone.
     ///
-    /// **The outcome is said, never silent.** A listing, a read or a write that
-    /// failed leaves the root held, and the wrap's receipt must not claim
-    /// otherwise.
-    pub(crate) async fn void_roots_held_by(&self, sid: &str, bot: &EntityId) -> RootsVoided {
-        let mut outcome = RootsVoided::default();
-        let listed = match self.memory.list_entities(Some(EntityKind::VOUCHER)).await {
-            Ok(listed) => listed,
-            Err(e) => {
-                tracing::warn!(
-                    error = %loggable(&e), sid, "a wrapped session's roots could not be listed"
-                );
-                outcome.failed = true;
-                return outcome;
-            }
+    /// **It fails closed.** Called BEFORE the run closes: a listing, a read or a
+    /// write that fails stops the wrap, with the step named, so a run is never
+    /// closed over a voucher it may still hold. Nothing here is best-effort.
+    pub(crate) async fn void_vouchers_held_by(
+        &self,
+        sid: &str,
+        bot: &EntityId,
+    ) -> Result<usize, RevocationFailed> {
+        let failed = |step: &'static str, voided: usize, e: &MemoryError| {
+            tracing::warn!(
+                error = %loggable(e), sid, step, "a run's vouchers could not be revoked"
+            );
+            RevocationFailed { step, voided }
         };
+        let listed = self
+            .memory
+            .list_entities(Some(EntityKind::VOUCHER))
+            .await
+            .map_err(|e| failed("list", 0, &e))?;
+        let mut voided = 0;
         for entity in listed {
-            let (address, fields) = match self.voucher_claim(&entity.id).await {
-                Ok(Some(claim)) => claim,
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %loggable(&e), sid, "a voucher of a wrapped session could not be read"
-                    );
-                    outcome.failed = true;
-                    continue;
-                }
+            let Some((address, fields)) = self
+                .voucher_claim(&entity.id)
+                .await
+                .map_err(|e| failed("read", voided, &e))?
+            else {
+                continue;
             };
+            let state = fields.get(voucher::STATE).map(String::as_str);
             let held = fields.get(voucher::HOLDER).map(String::as_str) == Some(sid)
-                && fields.get(voucher::RIGHT).map(String::as_str) == Some(voucher::ROOT)
-                && fields.get(voucher::STATE).map(String::as_str)
-                    == Some(VoucherState::Held.as_token());
+                && [VoucherState::Held, VoucherState::Issued]
+                    .iter()
+                    .any(|live| state == Some(live.as_token()));
             if !held {
                 continue;
             }
-            let voided = self
+            let written = self
                 .memory
                 .update_fact(
                     &address,
@@ -567,27 +599,23 @@ impl Jojobot {
                     bot,
                 )
                 .await;
-            match voided {
-                Ok(_) | Err(MemoryError::FoldBehind { .. }) => outcome.voided += 1,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %loggable(&e), sid, "a wrapped session's root could not be voided"
-                    );
-                    outcome.failed = true;
-                }
+            match written {
+                Ok(_) | Err(MemoryError::FoldBehind { .. }) => voided += 1,
+                Err(e) => return Err(failed("write", voided, &e)),
             }
         }
-        outcome
+        Ok(voided)
     }
 }
 
-/// **What a wrap did to the roots its run held.**
-#[derive(Debug, Default)]
-pub(crate) struct RootsVoided {
-    /// How many roots were voided.
+/// **Why a wrap could not end the vouchers its run holds**: the step that
+/// failed, and how many it had ended before it did.
+#[derive(Debug)]
+pub(crate) struct RevocationFailed {
+    /// `list`, `read` or `write`.
+    pub(crate) step: &'static str,
+    /// How many vouchers ended before the failure.
     pub(crate) voided: usize,
-    /// Whether any listing, read or write failed, so some root may still be held.
-    pub(crate) failed: bool,
 }
 
 #[cfg(test)]
@@ -721,6 +749,7 @@ mod tests {
     use crate::session::WrapSessionArgs;
     use crate::session::scripted::{Scripted, UnreachableRuns};
     use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::session::SessionState;
 
     fn day() -> Date {
         jiff::civil::date(2026, 10, 9)
@@ -860,7 +889,16 @@ mod tests {
             .verify_code(&gamma(), handle.as_str(), &code)
             .await
             .unwrap_or_else(|_| panic!("the right code verifies"));
-        let _ = asked(&jojobot).await;
+        // The first challenge expires, then a newer request replaces it.
+        let later = jojobot
+            .clone()
+            .on_clock(jojobot_domain::clock::Clock::stating(jiff::civil::date(
+                2026, 10, 11,
+            )));
+        later
+            .ask_for_code(&gamma(), jiff::civil::date(2026, 10, 11))
+            .await
+            .expect("ask answers");
         let spent = jojobot.redeem_code(&verified, "abcd", day()).await;
         assert!(spent.is_err(), "a replaced challenge was spent: {spent:?}");
         let vouchers = jojobot
@@ -955,59 +993,177 @@ mod tests {
         assert_eq!(loggable(&plain), plain.to_string());
     }
 
-    /// **P2: a wrap that could not void a root says so, and one that did says
-    /// how many.** The receipt never claims a root died when it could not be
-    /// listed.
+    /// **A wrap voids every voucher its run holds, and only those.** A root and
+    /// an ordinary `boot-as` voucher held by the run end with it, a voucher
+    /// another run holds stays held, and the receipt says how many ended. Until
+    /// escrow exists, a voucher is not carried to a successor.
     #[tokio::test]
-    async fn a_wrap_names_the_roots_it_voided_and_the_failure_when_it_could_not() {
-        for failing in [false, true] {
+    async fn a_wrap_voids_every_voucher_its_run_holds_and_no_other() {
+        let (jojobot, _) = scripted_instance().await;
+        let sid = booted_sid(&jojobot).await;
+        let mut ids = Vec::new();
+        for (right, holder, state) in [
+            (voucher::ROOT, sid.as_str(), VoucherState::Held),
+            ("boot-as", sid.as_str(), VoucherState::Held),
+            ("claim-role", sid.as_str(), VoucherState::Issued),
+            ("boot-as", sid.as_str(), VoucherState::Spent),
+            ("boot-as", "someone-else", VoucherState::Held),
+        ] {
+            let held = Voucher {
+                right: right.into(),
+                target: "bot:gamma".into(),
+                holder: holder.into(),
+                issuer: "person:milhouse".into(),
+                parent: None,
+                state,
+            };
+            ids.push(jojobot.issue_voucher(&held, day()).await.expect("issued"));
+        }
+        let wrapped = wrap(&jojobot, &sid).await;
+        let mut states = Vec::new();
+        for id in &ids {
+            states.push(jojobot.memory.fields(id).await.expect("fields")["state"].clone());
+        }
+        assert_eq!(
+            states,
+            ["void", "void", "void", "spent", "held"],
+            "{states:?}"
+        );
+        assert_eq!(wrapped["trust"]["vouchers_voided"], 3, "{wrapped}");
+        assert_eq!(wrapped["session"]["state"], "wrapped", "{wrapped}");
+    }
+
+    /// **A wrap that cannot revoke stops, and says which step failed.** The
+    /// listing, a read and a write each fail in turn. The wrap is refused, the
+    /// run stays active, nothing it held is claimed to have ended, and once the
+    /// store answers again the same wrap goes through.
+    #[tokio::test]
+    async fn a_wrap_that_cannot_revoke_stops_and_says_which_step_failed() {
+        for step in ["list", "read", "write"] {
             let (jojobot, scripted) = scripted_instance().await;
-            let booted = json_of(
-                &jojobot
-                    .start_here(Parameters(Args {
-                        resume: Some("new".into()),
-                        ..boot_with_code("gamma", "", "")
-                    }))
-                    .await
-                    .expect("boot answers"),
-            );
-            let sid = sid_of(&booted).expect("a handle");
-            let root = Voucher {
-                right: voucher::ROOT.into(),
+            let sid = booted_sid(&jojobot).await;
+            let held = Voucher {
+                right: "boot-as".into(),
                 target: "bot:gamma".into(),
                 holder: sid.clone(),
                 issuer: "person:milhouse".into(),
                 parent: None,
                 state: VoucherState::Held,
             };
-            let id = jojobot.issue_voucher(&root, day()).await.expect("issued");
-            if failing {
-                scripted.script(|s| s.listing_fails_for = Some(EntityKind::VOUCHER));
-            }
-            let wrapped = json_of(
-                &jojobot
-                    .wrap_session(Parameters(WrapSessionArgs {
-                        story: "done".into(),
-                        sid,
-                    }))
-                    .await
-                    .expect("wrap answers"),
-            );
-            scripted.script(|s| s.listing_fails_for = None);
+            let id = jojobot.issue_voucher(&held, day()).await.expect("issued");
+            scripted.script(|s| match step {
+                "list" => s.listing_fails_for = Some(EntityKind::VOUCHER),
+                "read" => s.recall_fails_for = Some(id.clone()),
+                _ => s.update_fails = true,
+            });
+            let refused = wrap(&jojobot, &sid).await;
+            assert_eq!(refused["status"], "blocked", "{step}: {refused}");
+            assert_eq!(refused["revocation"]["failed"], step, "{step}: {refused}");
             let state = jojobot.memory.fields(&id).await.expect("fields")["state"].clone();
-            if failing {
-                assert_eq!(state, "held", "the root cannot have died: {state}");
-                assert!(
-                    wrapped["trust"]["roots_not_voided"].is_string(),
-                    "the receipt is silent about a root it could not void: {wrapped}"
-                );
-                assert!(wrapped["trust"]["roots_voided"].is_null(), "{wrapped}");
-            } else {
-                assert_eq!(state, "void");
-                assert_eq!(wrapped["trust"]["roots_voided"], 1, "{wrapped}");
-                assert!(wrapped["trust"]["roots_not_voided"].is_null(), "{wrapped}");
-            }
+            assert_eq!(state, "held", "{step}: the voucher cannot have ended");
+            let runs = jojobot
+                .sessions
+                .all_sessions()
+                .await
+                .expect("the runs read");
+            assert!(
+                runs.iter().all(|run| run.state == SessionState::Active),
+                "{step}: a refused wrap closed the run: {runs:?}"
+            );
+            scripted.script(|s| *s = Default::default());
+            let wrapped = wrap(&jojobot, &sid).await;
+            assert_eq!(wrapped["trust"]["vouchers_voided"], 1, "{step}: {wrapped}");
+            let state = jojobot.memory.fields(&id).await.expect("fields")["state"].clone();
+            assert_eq!(state, "void", "{step}");
         }
+    }
+
+    async fn booted_sid(jojobot: &Jojobot) -> String {
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(Args {
+                    resume: Some("new".into()),
+                    ..boot_with_code("gamma", "", "")
+                }))
+                .await
+                .expect("boot answers"),
+        );
+        sid_of(&booted).expect("a handle")
+    }
+
+    async fn wrap(jojobot: &Jojobot, sid: &str) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "done".into(),
+                    sid: sid.into(),
+                }))
+                .await
+                .expect("wrap answers"),
+        )
+    }
+
+    /// **A pending challenge is not replaced.** A second request for the same
+    /// bot while the first is good is refused and names when the first expires,
+    /// so a misfiring session cannot burn the operator's codes. The first code
+    /// still works. Once the window is over a new request stands, and the old
+    /// challenge is replaced. A request for another bot is never in the way.
+    #[tokio::test]
+    async fn a_pending_challenge_is_not_replaced_and_the_refusal_names_its_expiry() {
+        let (jojobot, _) = scripted_instance().await;
+        make_bot(&jojobot, "delta").await;
+        let (first, code) = asked(&jojobot).await;
+        let issued_at = jojobot.memory.fields(&first).await.expect("fields")["issued_at"].clone();
+
+        let refused = jojobot
+            .ask_for_code(&gamma(), day())
+            .await
+            .expect("ask answers");
+        let body = json_of(&refused);
+        assert_eq!(body["status"], "blocked", "{body}");
+        let until: jiff::Timestamp = body["pending"]["expires_at"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the refusal names the expiry: {body}"))
+            .parse()
+            .expect("a moment");
+        let began: jiff::Timestamp = issued_at.parse().expect("a moment");
+        assert_eq!(until, began + WINDOW, "{body}");
+        let standing = jojobot
+            .memory
+            .list_entities(Some(EntityKind::CHALLENGE))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            standing.len(),
+            1,
+            "a second challenge was made: {standing:?}"
+        );
+        assert!(
+            jojobot
+                .verify_code(&gamma(), first.as_str(), &code)
+                .await
+                .is_ok(),
+            "the pending code still works"
+        );
+
+        let other = jojobot
+            .ask_for_code(&EntityId("bot:delta".into()), day())
+            .await
+            .expect("ask answers");
+        assert!(json_of(&other)["challenge"]["handle"].is_string());
+
+        let later = jojobot
+            .clone()
+            .on_clock(jojobot_domain::clock::Clock::stating(jiff::civil::date(
+                2026, 10, 11,
+            )));
+        let renewed = later
+            .ask_for_code(&gamma(), jiff::civil::date(2026, 10, 11))
+            .await
+            .expect("ask answers");
+        assert!(json_of(&renewed)["challenge"]["handle"].is_string());
+        let fields = jojobot.memory.fields(&first).await.expect("fields ok");
+        assert_eq!(fields["state"], "replaced", "{fields:?}");
     }
 
     /// **P3: a boot whose session store is down says that, not that it was
