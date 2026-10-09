@@ -151,7 +151,8 @@ pub struct UpdateFactArgs {
     /// record holds as its own, or under `fields` one it holds as a setting, is
     /// refused with the way to move it — take it off with `clear_fields`, then
     /// write it under the other. A key that only labels the claim is never a
-    /// property of the thing and is refused here by name.
+    /// property of the thing and is refused here by name. The keys that make a
+    /// thing fall due act on it only when sent here.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. Its own argument rather than an empty
@@ -159,8 +160,9 @@ pub struct UpdateFactArgs {
     /// setting a key to nothing and taking the key off the record are two
     /// different edits.
     ///
-    /// To move a value to another key, send `fields` with the new key and
-    /// `clear_fields` with the old one in the same call.
+    /// To move a value to another key, send the new key in `sets` (or in `fields`
+    /// for a key of the claim itself) and `clear_fields` with the old one in the
+    /// same call.
     #[serde(default)]
     pub(crate) clear_fields: Option<Vec<String>>,
     /// **The day after which this reading stops being good**, `YYYY-MM-DD`.

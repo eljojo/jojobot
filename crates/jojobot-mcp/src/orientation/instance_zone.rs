@@ -106,7 +106,7 @@ impl Jojobot {
 /// tell a caller different things.
 pub(crate) fn no_operator_yet() -> String {
     format!(
-        "no entity yet: add_entity a person, then capture {INSTANCE_OPERATOR_KEY} on \
+        "no entity yet: add_entity a person, then capture {INSTANCE_OPERATOR_KEY} in sets on \
          {INSTANCE_RECORD}"
     )
 }
@@ -120,8 +120,8 @@ pub(crate) fn operator_is_not_a_person(held: &EntityId) -> String {
     let kind = held.kind().map_or("unknown kind", |kind| kind.as_token());
     format!(
         "the instance's record holds '{held}' as its operator, which is a {kind} and not a \
-         person, so there is no operator yet: capture {INSTANCE_OPERATOR_KEY} with a person's \
-         handle on {INSTANCE_RECORD}"
+         person, so there is no operator yet: capture {INSTANCE_OPERATOR_KEY} in sets with a \
+         person's handle on {INSTANCE_RECORD}"
     )
 }
 

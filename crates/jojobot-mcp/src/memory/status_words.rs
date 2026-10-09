@@ -46,8 +46,9 @@ impl Jojobot {
         };
         let note = format!(
             "'{word}' is not one of the words this {} holds: {}. It counts as not finished. \
-             One write binds it: add it to `{}` on {instance_record} (every board){board}, or \
-             write `{}{word}` on {instance_record} set to the shipped word it means, one of {}.",
+             One write in `sets` binds it: add it to `{}` on {instance_record} (every \
+             board){board}, or write `{}{word}` on {instance_record} set to the shipped word it \
+             means, one of {}.",
             fact.subject.kind_token(),
             accepted.join(", "),
             kinds::COLUMNS,

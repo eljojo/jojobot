@@ -171,9 +171,9 @@ pub struct CaptureArgs {
     /// echoes_defaults names which key that was.
     ///
     /// **A pass, ticket, membership or registration somebody holds** is a claim on
-    /// the HOLDER, with fields `admits` (the handle of the event, place or
+    /// the HOLDER, with `admits` (the handle of the event, place or
     /// organisation it opens), `valid_from` and `valid_until` (days; no window
-    /// reads as live) and optionally `tier`. That an event offers a tier is a claim
+    /// reads as live) and optionally `tier`, all in `sets`. That an event offers a tier is a claim
     /// on the event instead. Holding is not attendance, not wanting to go and not a
     /// calendar entry: each is its own claim. Recall the holder with facts to read
     /// what they hold, or recall the event and read its `held` block, which ranks
@@ -188,6 +188,7 @@ pub struct CaptureArgs {
     /// in the other is refused with the way to move it. A key that only labels
     /// the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
     /// `recorded_by`) is never a property of the thing and is refused here by name.
+    /// The keys that make a thing fall due act on it only when sent here.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
@@ -218,7 +219,7 @@ pub struct CaptureArgs {
     /// compute those yourself and do not send them in `fields`.
     ///
     /// **A snooze names the day it lasts until**, as `snoozed_until` in
-    /// `fields` (`YYYY-MM-DD`), a day after this check-in's own, which is
+    /// `sets` (`YYYY-MM-DD`), a day after this check-in's own, which is
     /// `recorded_at` (today when you send none). The rhythm is
     /// not owed again before that day, and on it the rhythm comes back and is
     /// acted on again; it falls due on the later of that day and its own. A

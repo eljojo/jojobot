@@ -5933,7 +5933,7 @@ async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
 
 /// 🚨 **Moving a value to another key is one call.**
 ///
-/// `update_fact`'s description says to send `fields` with the new key and
+/// `update_fact`'s description says to send the new key in `sets` and
 /// `clear_fields` with the old one together. The key the value left is gone
 /// from what the thing holds, and the key it arrived on holds it: both halves
 /// in one read, so a call that did only one of them cannot pass.

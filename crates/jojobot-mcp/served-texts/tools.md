@@ -632,7 +632,7 @@ when the cycle is consumed, the new
 compute those yourself and do not send them in `fields`.
 
 **A snooze names the day it lasts until**, as `snoozed_until` in
-`fields` (`YYYY-MM-DD`), a day after this check-in's own, which is
+`sets` (`YYYY-MM-DD`), a day after this check-in's own, which is
 `recorded_at` (today when you send none). The rhythm is
 not owed again before that day, and on it the rhythm comes back and is
 acted on again; it falls due on the later of that day and its own. A
@@ -742,9 +742,9 @@ default today is stored exactly as you sent it either way, and the receipt's
 echoes_defaults names which key that was.
 
 **A pass, ticket, membership or registration somebody holds** is a claim on
-the HOLDER, with fields `admits` (the handle of the event, place or
+the HOLDER, with `admits` (the handle of the event, place or
 organisation it opens), `valid_from` and `valid_until` (days; no window
-reads as live) and optionally `tier`. That an event offers a tier is a claim
+reads as live) and optionally `tier`, all in `sets`. That an event offers a tier is a claim
 on the event instead. Holding is not attendance, not wanting to go and not a
 calendar entry: each is its own claim. Recall the holder with facts to read
 what they hold, or recall the event and read its `held` block, which ranks
@@ -844,6 +844,7 @@ named here and in `fields` is refused, and a key the record already holds
 in the other is refused with the way to move it. A key that only labels
 the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
+The keys that make a thing fall due act on it only when sent here.
 ```
 
 #### `capture` — argument `/inputSchema.shape`
@@ -3752,8 +3753,8 @@ IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes
 You wrote the prose; start_here with this bot returns it in full.
 A bot that does not exist comes back status: blocked with the nearest handles — add_entity first; nothing is created here.
 Rules are not written here either: a rule is a fact about the bot, so capture it.
-Neither is a short self-description for the colleagues view: capture fields.one_liner on this bot instead — that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
-Who the bot reports to goes the same way: capture fields.reports_to on this bot, holding its manager's handle, and the colleagues view shows whom each bot reports to.
+Neither is a short self-description for the colleagues view: capture sets.one_liner on this bot instead — that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
+Who the bot reports to goes the same way: capture sets.reports_to on this bot, holding its manager's handle, and the colleagues view shows whom each bot reports to.
 The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does, and a bot with no manager is adopted by the manager named or by a bot above that manager.
 The refusal names who may.
 Who reports to a bot is the other direction, a second call: recall that bot with follow, relation reports_to, direction in.
@@ -4505,8 +4506,9 @@ value in `fields`: an empty value is a value somebody wrote, and
 setting a key to nothing and taking the key off the record are two
 different edits.
 
-To move a value to another key, send `fields` with the new key and
-`clear_fields` with the old one in the same call.
+To move a value to another key, send the new key in `sets` (or in `fields`
+for a key of the claim itself) and `clear_fields` with the old one in the
+same call.
 ```
 
 #### `update_fact` — argument `/inputSchema.clear_happened_at`
@@ -4685,7 +4687,8 @@ was first written under on this record: naming under `sets` a key the
 record holds as its own, or under `fields` one it holds as a setting, is
 refused with the way to move it — take it off with `clear_fields`, then
 write it under the other. A key that only labels the claim is never a
-property of the thing and is refused here by name.
+property of the thing and is refused here by name. The keys that make a
+thing fall due act on it only when sent here.
 ```
 
 #### `update_fact` — argument `/inputSchema.shape`

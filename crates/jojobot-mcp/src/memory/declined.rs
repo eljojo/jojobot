@@ -706,7 +706,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing was written: {e}. '{word}' is one of the five words the software ships \
                  and it means itself on every instance, so sending this again will not change \
-                 the answer. Map a word of your own instead: write `{}<your word>` set to the \
+                 the answer. Map a word of your own instead: write `{}<your word>` in `sets`, set to the \
                  shipped word it should mean, one of {}.",
                 jojobot_domain::memory::kinds::STATUS_WORD,
                 jojobot_domain::memory::kinds::WORK_STATUSES.join(", "),

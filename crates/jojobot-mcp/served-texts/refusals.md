@@ -12,7 +12,7 @@ One row per error kind in each of the three lanes, built from the sample the lan
 
 ```text
 vocabulary (WORK_STATUSES): someday, next, now, waiting, done
-status_word_note: 'nonsense' is not one of the words this work holds: someday, next, now, waiting, done. It counts as not finished. One write binds it: add it to `columns` on topic:instance (every board), or write `status_word/nonsense` on topic:instance set to the shipped word it means, one of someday, next, now, waiting, done.
+status_word_note: 'nonsense' is not one of the words this work holds: someday, next, now, waiting, done. It counts as not finished. One write in `sets` binds it: add it to `columns` on topic:instance (every board), or write `status_word/nonsense` on topic:instance set to the shipped word it means, one of someday, next, now, waiting, done.
 ```
 
 ### Memory refusal `InvalidFact`
@@ -333,7 +333,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'done' is a shipped status word and means itself, so it cannot be mapped to 'someday'. 'done' is one of the five words the software ships and it means itself on every instance, so sending this again will not change the answer. Map a word of your own instead: write `status_word/<your word>` set to the shipped word it should mean, one of someday, next, now, waiting, done.",
+  "how_to_proceed": "Nothing was written: 'done' is a shipped status word and means itself, so it cannot be mapped to 'someday'. 'done' is one of the five words the software ships and it means itself on every instance, so sending this again will not change the answer. Map a word of your own instead: write `status_word/<your word>` in `sets`, set to the shipped word it should mean, one of someday, next, now, waiting, done.",
   "status": "blocked",
   "wrote": false
 }

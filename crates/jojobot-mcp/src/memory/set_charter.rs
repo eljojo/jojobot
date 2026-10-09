@@ -51,10 +51,10 @@ impl Jojobot {
                        does not exist comes back status: blocked with the nearest handles — \
                        add_entity first; nothing is created here. Rules are not written here \
                        either: a rule is a fact about the bot, so capture it. Neither is a short \
-                       self-description for the colleagues view: capture fields.one_liner on \
+                       self-description for the colleagues view: capture sets.one_liner on \
                        this bot instead — that is the key view:colleagues reads, and a bot \
                        nobody has written one for shows up there with nothing to say. Who \
-                       the bot reports to goes the same way: capture fields.reports_to on \
+                       the bot reports to goes the same way: capture sets.reports_to on \
                        this bot, holding its manager's handle, and the colleagues view \
                        shows whom each bot reports to. The bot itself does not write it, \
                        except a bot that heads a chart, which has reports and no manager \
