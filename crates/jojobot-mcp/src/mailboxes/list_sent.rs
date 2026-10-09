@@ -246,10 +246,10 @@ impl Jojobot {
                 } else {
                     message_receipt_json(m, None)
                 };
-                if json.to_string().chars().count() + 1 > full_room && json["body"].is_string() {
+                if crate::answer::served_len(&json) + 1 > full_room && json["body"].is_string() {
                     elide_body(&mut json, m);
                 }
-                let size = json.to_string().chars().count() + 1;
+                let size = crate::answer::served_len(&json) + 1;
                 (json, size)
             })
             .collect();
@@ -275,7 +275,7 @@ impl Jojobot {
                 "messages": [],
             })
         };
-        let rest = envelope(page.len(), &[]).to_string().chars().count()
+        let rest = crate::answer::served_len(&envelope(page.len(), &[]))
             + BODIES_POINTER.chars().count()
             + crate::answer::widest_not_shown("messages")
             + STATUS_BAR_ROOM;
@@ -404,7 +404,7 @@ mod tests {
                         .await
                         .expect("list_sent ok"),
                 );
-                let size = body.to_string().chars().count();
+                let size = crate::answer::served_len(&body);
                 assert!(
                     size + STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
                     "bodies {bodies}, {body_len} long: the answer is {size} characters"
@@ -421,6 +421,73 @@ mod tests {
                     "bodies {bodies}, {body_len} long did not make the fill cut"
                 );
             }
+        }
+    }
+
+    /// One page of `otto`'s receipts, read as the body it served.
+    async fn receipts_from(jojobot: &Jojobot, offset: u32) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: Some(1_000),
+                    offset: Some(offset),
+                    sender: Some("bot:otto".into()),
+                    to: None,
+                    include_bodies: Some(false),
+                    sid: None,
+                }))
+                .await
+                .expect("list_sent ok"),
+        )
+    }
+
+    /// **The characters a page may differ from the sum of its parts by**: the
+    /// digits of `count` and the brackets of the list the fill did not render.
+    const PAGE_EDGE_SLACK: usize = 4;
+
+    /// **A page of sent mail holds every message that fits under the ceiling
+    /// as the answer is served.** The surface drops null keys from what it
+    /// ships, so a page filled against each receipt with its nulls in stops short
+    /// by the length of those keys on every message it carries. This reads the
+    /// page as served and the message that begins the next page the same way,
+    /// and holds that the page was under the ceiling and full to within that one
+    /// message, once the room the fill reserves for the block naming what it
+    /// left out, and for the pointer it counts twice, is given back. Several
+    /// sizes of message put the edge of the page at several places.
+    #[tokio::test]
+    async fn a_page_of_sent_mail_is_full_to_within_one_message_as_the_answer_is_served() {
+        for body_len in 1..=120 {
+            let jojobot = mailbox_handler();
+            make_box(&jojobot, "pm").await;
+            for _ in 0..300 {
+                send(&jojobot, "pm", "otto", &"x".repeat(body_len)).await;
+            }
+            let mut page = receipts_from(&jojobot, 0).await;
+            let shown = page["messages"].as_array().expect("messages").len();
+            let mut after = receipts_from(&jojobot, shown as u32).await;
+            // What the fill reserved for the block naming what it left out, at
+            // its widest, less the block this page really carries.
+            let reserved = crate::answer::widest_not_shown("messages")
+                - serde_json::json!({"not_shown": page["not_shown"]})
+                    .to_string()
+                    .chars()
+                    .count();
+            crate::answer::strip_nulls(&mut page);
+            crate::answer::strip_nulls(&mut after);
+            let served = page.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+            let next = after["messages"][0].to_string().chars().count() + 1;
+            assert!(shown > 1 && shown < 300, "{body_len}: not a page: {shown}");
+            assert!(
+                served <= jojobot_domain::text::ANSWER_CEILING,
+                "{body_len}: the page is {served} characters as served"
+            );
+            assert!(
+                served + next + reserved + BODIES_POINTER.chars().count() + PAGE_EDGE_SLACK
+                    > jojobot_domain::text::ANSWER_CEILING,
+                "{body_len}: another message of {next} characters would have fit: the page is \
+                 {served} of {} as served, with {shown} messages",
+                jojobot_domain::text::ANSWER_CEILING
+            );
         }
     }
 
@@ -1229,7 +1296,7 @@ mod tests {
             send(&jojobot, "pm", "otto", &body).await;
         }
         let page = bodies(&jojobot, &sid).await;
-        let size = page.to_string().chars().count();
+        let size = crate::answer::served_len(&page);
         // The status bar joins the answer after the verb has returned, in the room
         // the verb left for it.
         assert!(
