@@ -2151,6 +2151,21 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
         served.push(write.content);
         served.extend(write.details);
     }
+    // **The batched chains are a door of their own.** `claim_histories` answers
+    // every claim's chain on a thing in one read, and its render is a separate
+    // line from the single chain's, so a case that reads only the single one
+    // proves half of it.
+    for chain in store
+        .claim_histories(&author)
+        .await
+        .expect("the chains read")
+        .into_values()
+    {
+        for write in chain {
+            served.push(write.content);
+            served.extend(write.details);
+        }
+    }
     // A key's history carries the note its record carried, which is the
     // same text under a different name.
     for write in store

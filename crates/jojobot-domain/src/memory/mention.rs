@@ -21,6 +21,13 @@
 //! the stored form is written down once, here** (rule 51): a second reader of
 //! it is a second answer to what a stored mention is.
 //!
+//! # Rendering is not optional for a door
+//!
+//! [`Mentioning`] reads the store beneath it as [`super::stored::StoredMemory`],
+//! so every read that returns text comes back as [`super::stored::Stored`] and
+//! cannot be handed on as it is: a door that forgets to render does not compile.
+//! The one gap the type leaves is named in [`super::stored`].
+//!
 //! # What this does NOT do
 //!
 //! ⛔️ **It migrates nothing.** A claim's content or a thing's prose written
@@ -41,6 +48,7 @@
 //! [`resolved`] and [`rendered`] directly rather than duplicating the
 //! spelling of the stored form.
 
+use super::stored::{StoredMemory, Unrendered};
 use super::{Entity, EntityId, kinds};
 
 /// **What marks a resolved mention in stored text.**
@@ -340,12 +348,18 @@ fn is_badge_byte(b: u8) -> bool {
 /// of the fake and of the real store alike, and the fake's contract run lives
 /// here.
 pub struct Mentioning {
-    inner: std::sync::Arc<dyn super::Memory>,
+    /// **The store beneath, read as stored.** It is a [`StoredMemory`] and not a
+    /// [`super::Memory`], so a door that returns what the store returned does not
+    /// compile: the text comes back as [`super::stored::Stored`], and only its `open`
+    /// (visible here and nowhere else) turns it into something a reader sees.
+    inner: std::sync::Arc<dyn StoredMemory>,
 }
 
 impl Mentioning {
     pub fn new(inner: std::sync::Arc<dyn super::Memory>) -> Self {
-        Mentioning { inner }
+        Mentioning {
+            inner: std::sync::Arc::new(Unrendered(inner)),
+        }
     }
 
     /// **What exists, as both directions of a mention need to see it.**
@@ -571,7 +585,8 @@ impl super::Memory for Mentioning {
                     ..first
                 },
             )
-            .await?;
+            .await?
+            .open();
         Ok(match written {
             super::Guarded::Written((entity, mut stored)) => {
                 let known = self.known().await?;
@@ -623,7 +638,8 @@ impl super::Memory for Mentioning {
                     ..claim
                 },
             )
-            .await?;
+            .await?
+            .open();
         Ok(match written {
             super::Guarded::Written((entity, mut stored)) => {
                 let known = self.known().await?;
@@ -709,7 +725,8 @@ impl super::Memory for Mentioning {
                     .map_err(unloaded)?,
                 ..fact
             })
-            .await?;
+            .await?
+            .open();
         Ok(match written {
             super::Guarded::Written(mut stored) => {
                 let former = self.former().await?;
@@ -721,7 +738,7 @@ impl super::Memory for Mentioning {
         })
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<super::Fact>, super::MemoryError> {
-        let mut facts = self.inner.recall(subject).await?;
+        let mut facts = self.inner.recall(subject).await?.open();
         self.render_facts(&mut facts).await?;
         Ok(facts)
     }
@@ -769,7 +786,8 @@ impl super::Memory for Mentioning {
                 },
                 caller,
             )
-            .await?;
+            .await?
+            .open();
         Ok(match written {
             super::Guarded::Written(mut stored) => {
                 let former = self.former().await?;
@@ -787,7 +805,7 @@ impl super::Memory for Mentioning {
         entity: &EntityId,
         key: &str,
     ) -> Result<Vec<super::FieldWrite>, super::MemoryError> {
-        let mut writes = self.inner.history(entity, key).await?;
+        let mut writes = self.inner.history(entity, key).await?.open();
         if writes.iter().all(|w| w.note.is_none()) {
             return Ok(writes);
         }
@@ -806,7 +824,7 @@ impl super::Memory for Mentioning {
         &self,
         address: &super::FactAddress,
     ) -> Result<Vec<super::ClaimWrite>, super::MemoryError> {
-        let mut chain = self.inner.claim_history(address).await?;
+        let mut chain = self.inner.claim_history(address).await?.open();
         if chain.is_empty() {
             return Ok(chain);
         }
@@ -835,7 +853,7 @@ impl super::Memory for Mentioning {
         entity: &EntityId,
     ) -> Result<std::collections::HashMap<super::FactId, Vec<super::ClaimWrite>>, super::MemoryError>
     {
-        let mut chains = self.inner.claim_histories(entity).await?;
+        let mut chains = self.inner.claim_histories(entity).await?.open();
         if chains.values().all(Vec::is_empty) {
             return Ok(chains);
         }
@@ -861,7 +879,7 @@ impl super::Memory for Mentioning {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, super::MemoryError> {
-        let mut fields = self.inner.fields(entity).await?;
+        let mut fields = self.inner.fields(entity).await?.open();
         if fields.is_empty() {
             return Ok(fields);
         }
@@ -879,7 +897,7 @@ impl super::Memory for Mentioning {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, super::FieldBacking>, super::MemoryError> {
-        let mut backing = self.inner.backing(entity).await?;
+        let mut backing = self.inner.backing(entity).await?.open();
         if backing.values().all(|b| b.note.is_none()) {
             return Ok(backing);
         }
@@ -914,7 +932,8 @@ impl super::Memory for Mentioning {
         let mut done = self
             .inner
             .retract(address, reason.as_deref(), date, caller)
-            .await?;
+            .await?
+            .open();
         self.render_fact(&mut done.retracted, &known, &former, &declared);
         self.render_fact(&mut done.record, &known, &former, &declared);
         Ok(done)
@@ -943,7 +962,8 @@ impl super::Memory for Mentioning {
         let mut done = self
             .inner
             .merge(folded, survivor, reason.as_deref(), date, caller)
-            .await?;
+            .await?
+            .open();
         self.render_fact(&mut done.record, &known, &former, &declared);
         Ok(done)
     }
@@ -960,14 +980,15 @@ impl super::Memory for Mentioning {
         let stored = self
             .inner
             .set_prose(entity, &resolved(prose, &known).map_err(unloaded)?)
-            .await?;
+            .await?
+            .open();
         Ok(rendered(&stored, &known))
     }
     /// **The index scans through here**, so what search holds is what a reader
     /// sees: a claim mentioning a thing is findable by that thing's handle
     /// rather than by a badge nobody types.
     async fn scan(&self) -> Result<Vec<super::search::DocScan>, super::MemoryError> {
-        let mut scanned = self.inner.scan().await?;
+        let mut scanned = self.inner.scan().await?.open();
         let known = self.known().await?;
         let former = self.former().await?;
         let declared = self.declared().await?;
@@ -1006,7 +1027,7 @@ impl super::Memory for Mentioning {
         &self,
         entity: &EntityId,
     ) -> Result<Option<super::search::DocScan>, super::MemoryError> {
-        let Some(mut doc) = self.inner.scan_entity(entity).await? else {
+        let Some(mut doc) = self.inner.scan_entity(entity).await?.open() else {
             return Ok(None);
         };
         let known = self.known().await?;
@@ -1020,7 +1041,7 @@ impl super::Memory for Mentioning {
         &self,
         source: &super::FactAddress,
     ) -> Result<Vec<super::Fact>, super::MemoryError> {
-        let mut facts = self.inner.built_on(source).await?;
+        let mut facts = self.inner.built_on(source).await?.open();
         self.render_facts(&mut facts).await?;
         Ok(facts)
     }
@@ -1029,7 +1050,7 @@ impl super::Memory for Mentioning {
         &self,
         target: &EntityId,
     ) -> Result<Vec<super::Fact>, super::MemoryError> {
-        let mut facts = self.inner.referring_to(target).await?;
+        let mut facts = self.inner.referring_to(target).await?.open();
         self.render_facts(&mut facts).await?;
         Ok(facts)
     }
