@@ -5,15 +5,15 @@
 //! so the real `bar` binary is driven end to end and no real cargo runs.
 
 use std::fs;
-use std::io::Write as _;
 use std::process::Command;
+
+mod support;
 
 /// **A fake `cargo` whose two listings come from the environment.** A plain
 /// `--list` prints `STUB_ALL`; `--list --ignored` prints `STUB_IGNORED`, the
 /// way libtest prints only the ignored subset. Every other phase succeeds.
 fn write_listing_cargo(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("cargo");
-    let mut f = fs::File::create(&path).expect("write fake cargo");
     let script = r#"#!/bin/sh
 case " $* " in
   *" --list "*)
@@ -30,12 +30,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat fake cargo").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod fake cargo");
+    support::write_executable(&path, script);
     path
 }
 
@@ -72,7 +67,7 @@ fn narrow_with(tag: &str, all: &str, ignored: &str, ignored_fails: bool) -> (Opt
     if ignored_fails {
         command.env("STUB_IGNORED_FAILS", "1");
     }
-    let output = command.output().expect("run bar narrow");
+    let output = support::output_fenced(&mut command).expect("run bar narrow");
     let _ = fs::remove_dir_all(&dir);
     (
         output.status.code(),

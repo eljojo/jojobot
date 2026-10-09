@@ -4,8 +4,9 @@
 //! reading the library functions' return values in isolation.
 
 use std::fs;
-use std::io::Write as _;
 use std::process::Command;
+
+mod support;
 
 /// **A fake `cargo` where every phase succeeds.** Isolates the size report
 /// from the rest of `run_check`: whatever this test asserts about the exit
@@ -13,7 +14,6 @@ use std::process::Command;
 /// own account.
 fn write_fake_cargo_always_green(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("cargo");
-    let mut f = fs::File::create(&path).expect("write fake cargo");
     let script = r#"#!/bin/sh
 case " $* " in
   *" --list "*) echo 'some::test::name: test'; exit 0 ;;
@@ -23,12 +23,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat fake cargo").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod fake cargo");
+    support::write_executable(&path, script);
     path
 }
 
@@ -49,11 +44,7 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
 /// reads whatever repo `bar` is run inside, so the scratch dir has to be one.
 fn git_init(dir: &std::path::Path) {
     let run = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .expect("run git")
+        support::output_fenced(Command::new("git").args(args).current_dir(dir)).expect("run git")
     };
     run(&["init", "-q"]);
     run(&["config", "user.email", "scratch@example.com"]);
@@ -61,10 +52,7 @@ fn git_init(dir: &std::path::Path) {
 }
 
 fn git_add(dir: &std::path::Path, file: &str) {
-    Command::new("git")
-        .args(["add", file])
-        .current_dir(dir)
-        .status()
+    support::status_fenced(Command::new("git").args(["add", file]).current_dir(dir))
         .expect("git add");
 }
 
@@ -77,14 +65,15 @@ fn an_oversized_tracked_file_is_named_and_the_exit_code_is_unchanged() {
     git_add(&dir, "big.rs");
     let fake_cargo = write_fake_cargo_always_green(&dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("check")
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .output()
-        .expect("run bar check");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run bar check");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
@@ -111,14 +100,15 @@ fn a_tree_with_nothing_oversized_names_nothing_and_the_exit_code_is_unchanged() 
     git_add(&dir, "small.rs");
     let fake_cargo = write_fake_cargo_always_green(&dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("check")
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .output()
-        .expect("run bar check");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run bar check");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
@@ -148,14 +138,15 @@ fn the_verdict_prints_before_the_size_report() {
     git_add(&dir, "big.rs");
     let fake_cargo = write_fake_cargo_always_green(&dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("check")
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .output()
-        .expect("run bar check");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run bar check");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let verdict = stdout.find("verdict:").expect(&stdout);

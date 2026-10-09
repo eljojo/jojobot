@@ -5,8 +5,9 @@
 //! the bar actually spawned and no real cargo runs.
 
 use std::fs;
-use std::io::Write as _;
 use std::process::Command;
+
+mod support;
 
 /// **A fake `cargo` that records its argument list and succeeds.** It lists
 /// one test so `narrow`'s zero-selection guard does not stop the run before
@@ -14,7 +15,6 @@ use std::process::Command;
 /// after the build go green.
 fn write_recording_cargo(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("cargo");
-    let mut f = fs::File::create(&path).expect("write fake cargo");
     let script = r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
 case " $* " in
@@ -30,12 +30,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat fake cargo").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod fake cargo");
+    support::write_executable(&path, script);
     path
 }
 
@@ -63,14 +58,15 @@ fn calls_of(tag: &str, args: &[&str], verb: &str) -> Vec<String> {
     let dir = scratch_dir(tag);
     let fake_cargo = write_recording_cargo(&dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .args(args)
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .output()
-        .expect("run bar");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(args)
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run bar");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let recorded = fs::read_to_string(dir.join("argv.log")).expect("the bar called cargo");

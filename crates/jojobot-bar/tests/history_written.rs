@@ -4,9 +4,10 @@
 //! history directory is never written.
 
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+mod support;
 
 /// **A fake `cargo` that lists three test binaries.** Every `test` job prints a
 /// `test the_<job>_case ...` line and a suite line, after sleeping
@@ -37,13 +38,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    let mut f = fs::File::create(&path).expect("write fake cargo");
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod");
+    support::write_executable(&path, script);
     path
 }
 
@@ -103,7 +98,7 @@ fn file_names(dir: &Path) -> Vec<String> {
 #[test]
 fn a_finished_check_leaves_a_header_and_a_file_per_job() {
     let dir = scratch();
-    let output = bar(&dir, &["check"], &[]).output().expect("run bar");
+    let output = support::output_fenced(&mut bar(&dir, &["check"], &[])).expect("run bar");
     assert!(
         output.status.success(),
         "{}",
@@ -156,8 +151,7 @@ fn a_finished_check_leaves_a_header_and_a_file_per_job() {
 #[test]
 fn a_red_job_is_recorded_as_failed() {
     let dir = scratch();
-    let output = bar(&dir, &["check"], &[("FAKE_BETA", "red")])
-        .output()
+    let output = support::output_fenced(&mut bar(&dir, &["check"], &[("FAKE_BETA", "red")]))
         .expect("run bar");
     assert!(!output.status.success(), "the red job reddens the bar");
 
@@ -179,9 +173,12 @@ fn a_red_job_is_recorded_as_failed() {
 #[test]
 fn a_rooms_run_records_each_room_as_a_job() {
     let dir = scratch();
-    let output = bar(&dir, &["rooms", "--test", "alpha", "--test", "beta"], &[])
-        .output()
-        .expect("run bar");
+    let output = support::output_fenced(&mut bar(
+        &dir,
+        &["rooms", "--test", "alpha", "--test", "beta"],
+        &[],
+    ))
+    .expect("run bar");
     assert!(
         output.status.success(),
         "{}",
@@ -207,11 +204,12 @@ fn a_rooms_run_records_each_room_as_a_job() {
 #[test]
 fn a_killed_run_leaves_no_end_and_only_whole_job_files() {
     let dir = scratch();
-    let mut child = bar(&dir, &["check"], &[("BAR_JOBS", "1"), ("FAKE_SLEEP", "1")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("start bar");
+    let mut child = support::fenced_spawn(
+        bar(&dir, &["check"], &[("BAR_JOBS", "1"), ("FAKE_SLEEP", "1")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )
+    .expect("start bar");
     let history = dir.join("history");
     let started = std::time::Instant::now();
     let written = loop {
@@ -264,7 +262,7 @@ fn a_killed_run_leaves_no_end_and_only_whole_job_files() {
 fn a_history_that_cannot_be_written_does_not_change_the_verdict() {
     let dir = scratch();
     fs::write(dir.join("history"), b"a file where a directory should be").expect("a file");
-    let output = bar(&dir, &["check"], &[]).output().expect("run bar");
+    let output = support::output_fenced(&mut bar(&dir, &["check"], &[])).expect("run bar");
     assert!(
         output.status.success(),
         "{}",

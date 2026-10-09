@@ -4,11 +4,12 @@
 //! history has the shape a real run leaves. The real history is never read.
 
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use jojobot_bar::{JobRecord, Run, RunHeader};
+
+mod support;
 
 /// **A fake `cargo` that lists the library group, three test files and the
 /// upgrade gate, logs every call, and passes.**
@@ -32,13 +33,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    let mut f = fs::File::create(&path).expect("write fake cargo");
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod");
+    support::write_executable(&path, script);
     path
 }
 
@@ -102,15 +97,16 @@ struct Ran {
 }
 
 fn bar(dir: &Path, args: &[&str]) -> Ran {
-    let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .args(args)
-        .current_dir(dir)
-        .env("TMPDIR", dir)
-        .env("CARGO", write_cargo(dir))
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .env_remove("BAR_JOBS")
-        .output()
-        .expect("run bar");
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(args)
+            .current_dir(dir)
+            .env("TMPDIR", dir)
+            .env("CARGO", write_cargo(dir))
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env_remove("BAR_JOBS"),
+    )
+    .expect("run bar");
     let jobs = fs::read_to_string(dir.join("argv.log"))
         .unwrap_or_default()
         .lines()

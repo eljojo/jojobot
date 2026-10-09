@@ -5,8 +5,9 @@
 //! A stub `cargo` drives the real `bar` binary end to end to prove that.
 
 use std::fs;
-use std::io::Write as _;
 use std::process::Command;
+
+mod support;
 
 /// **A fake `cargo` that mimics a crashed sibling suite.** `fmt`, `build`
 /// and `clippy` succeed silently; a real `-- --list` still lists one test,
@@ -18,7 +19,6 @@ use std::process::Command;
 /// stop it from doing.
 fn write_fake_cargo(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("cargo");
-    let mut f = fs::File::create(&path).expect("write fake cargo");
     let script = r#"#!/bin/sh
 case " $* " in
   *" --list "*)
@@ -33,12 +33,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat fake cargo").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod fake cargo");
+    support::write_executable(&path, script);
     path
 }
 
@@ -65,14 +60,15 @@ fn a_crashed_sibling_suite_reds_the_whole_check_run() {
     let dir = scratch_dir("check");
     let fake_cargo = write_fake_cargo(&dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("check")
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .output()
-        .expect("run bar check");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run bar check");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -100,14 +96,15 @@ fn a_crashed_sibling_suite_reds_the_whole_narrow_run() {
     let dir = scratch_dir("narrow");
     let fake_cargo = write_fake_cargo(&dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .args(["narrow", "--crate", "jojobot-bar"])
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .output()
-        .expect("run bar narrow");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(["narrow", "--crate", "jojobot-bar"])
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run bar narrow");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

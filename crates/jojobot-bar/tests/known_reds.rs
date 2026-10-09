@@ -4,8 +4,9 @@
 //! to each of the three verdicts, and a library call proves none of that wiring.
 
 use std::fs;
-use std::io::Write as _;
 use std::process::{Command, Output};
+
+mod support;
 
 const LISTED: &str = "known::tests::a_listed_red";
 const UNLISTED: &str = "fresh::tests::an_unlisted_red";
@@ -14,7 +15,6 @@ const UNLISTED: &str = "fresh::tests::an_unlisted_red";
 /// the way a real run does. The lines are the shape `cargo test` prints.
 fn write_fake_cargo(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("cargo");
-    let mut f = fs::File::create(&path).expect("write fake cargo");
     let script = format!(
         r#"#!/bin/sh
 case " $* " in
@@ -48,12 +48,7 @@ case "$1" in
 esac
 "#
     );
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat fake cargo").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod fake cargo");
+    support::write_executable(&path, &script);
     path
 }
 
@@ -88,15 +83,16 @@ fn bar_saying(tag: &str, args: &[&str], known_reds: Option<&str>, items: &str) -
     if let Some(text) = known_reds {
         fs::write(dir.join("known-reds.toml"), text).expect("write the list");
     }
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .args(args)
-        .current_dir(&dir)
-        .env("TMPDIR", &dir)
-        .env("CARGO", &fake_cargo)
-        .env("BAR_HISTORY_DIR", dir.join("history"))
-        .env("FAKE_ITEMS", items)
-        .output()
-        .expect("run bar");
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(args)
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &fake_cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("FAKE_ITEMS", items),
+    )
+    .expect("run bar");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let _ = fs::remove_dir_all(&dir);
     (output, stdout)

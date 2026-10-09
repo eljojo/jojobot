@@ -4,9 +4,11 @@
 //! No real cargo runs.
 
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod support;
+use support::{fenced_spawn, output_fenced};
 
 /// **A fake `cargo` that lists four test binaries and fails one of them.**
 /// `--no-run` prints the `Executable` lines cargo prints; each `test` job
@@ -15,8 +17,6 @@ use std::process::Command;
 /// `FAKE_BETA=ok` makes it pass. `FAKE_CRASH=<file>` kills that job with
 /// SIGKILL before it prints anything, as a crashed suite is.
 fn write_cargo(dir: &Path) -> PathBuf {
-    // Held until the file is closed and executable: see [`FORK_FENCE`].
-    let _fence = FORK_FENCE.write().unwrap_or_else(|e| e.into_inner());
     let path = dir.join("cargo");
     let script = r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
@@ -82,45 +82,8 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    let mut f = fs::File::create(&path).expect("write fake cargo");
-    f.write_all(script.as_bytes())
-        .expect("write fake cargo body");
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&path).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).expect("chmod");
+    support::write_executable(&path, script);
     path
-}
-
-/// **No child starts while a stub's write handle is open.**
-///
-/// The cases here run on threads released together, and each writes an
-/// executable `cargo` stub and has a child run it. A child started on another
-/// thread while a stub is still open for writing carries a copy of that handle
-/// until it execs, and an exec of the stub in that window fails with "Text file
-/// busy". The stub is not at fault and the bar under test is not either, so the
-/// run reads as a bar that stopped after one phase, or never ran one.
-///
-/// Writing a stub takes the write side; starting a child takes the read side
-/// from the fork until the exec has happened, and releases it before waiting,
-/// so children still run side by side. A rename would not do instead: the copy
-/// of the handle belongs to the file, not to its name.
-static FORK_FENCE: std::sync::RwLock<()> = std::sync::RwLock::new(());
-
-/// **Start a child, from the fork to the exec.** Every child these cases start
-/// goes through here, so this is the one place that decides how they start.
-fn fenced_spawn(cmd: &mut Command) -> std::io::Result<std::process::Child> {
-    let _fence = FORK_FENCE.read().unwrap_or_else(|e| e.into_inner());
-    cmd.spawn()
-}
-
-/// **Run a child to its end and take what it printed**, started through the
-/// fence.
-fn output_fenced(cmd: &mut Command) -> std::io::Result<std::process::Output> {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    fenced_spawn(cmd)?.wait_with_output()
 }
 
 struct Ran {
