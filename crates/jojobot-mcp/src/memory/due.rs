@@ -123,6 +123,7 @@ impl Jojobot {
         subject: &EntityId,
         incoming: &std::collections::BTreeMap<String, String>,
         cleared: &[String],
+        today: jiff::civil::Date,
     ) -> (attention::DueMove, bool) {
         let carriers = self.carriers();
         // **The keys a carrier's answer reads, not only the ones that make a
@@ -178,6 +179,7 @@ impl Jojobot {
                 &held,
                 &projected,
                 &instance,
+                today,
             ),
             attention::due_is_derived(&carriers, &projected),
         )

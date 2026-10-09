@@ -165,7 +165,14 @@ impl Jojobot {
                 // out below is jojobot's own arithmetic beside them, kept as one of
                 // the claim's own fields.
                 let set_keys: std::collections::BTreeSet<String> = fields.keys().cloned().collect();
-                let (due_on, _) = self.moved_due_moment(&handle, &fields, &[]).await;
+                let (due_on, _) = self
+                    .moved_due_moment(
+                        &handle,
+                        &fields,
+                        &[],
+                        self.dated(None, args.sid.as_deref()).await?,
+                    )
+                    .await;
                 due_moved = due_on;
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(

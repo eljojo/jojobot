@@ -622,6 +622,37 @@ pub async fn boot_store_pushing(
         }
     }
 
+    // **The one-time pass that gives a thing whose schedule cannot be read the
+    // day it became late.** The owed read selects on the stored due day alone, so
+    // a loop left unreadable before a write stored one for it never reached the
+    // read. Stamped with the day of this boot, once, and marked finished; a thing
+    // that becomes unreadable afterwards is stamped by the write that made it so.
+    // Not fatal: a pass that failed or was skipped is owed again at the next boot.
+    match jojobot_adapters::dolt::backfill_unreadable_due_days(
+        store.pool(),
+        indexed.as_ref(),
+        clock.today_in(&jiff::tz::TimeZone::UTC),
+    )
+    .await
+    {
+        jojobot_adapters::dolt::Migrated::Ran(n) => {
+            tracing::info!(stamped = n, "due days: stamped what could not be read")
+        }
+        jojobot_adapters::dolt::Migrated::Settled => {
+            tracing::info!("due days: already stamped")
+        }
+        jojobot_adapters::dolt::Migrated::Skipped(reason) => tracing::warn!(
+            error = %reason,
+            "UNREADABLE-DUE PASS SKIPPED — the read it needed failed, so nothing was stamped. \
+             Not fatal; a restart retries."
+        ),
+        jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::warn!(
+            error = %reason,
+            "UNREADABLE-DUE PASS FAILED — some things that cannot say when they fall due were \
+             not stamped, so the owed read may miss them. A restart retries."
+        ),
+    }
+
     let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
 
     // **Wrapped in the same decorators the story harness shares** — see this

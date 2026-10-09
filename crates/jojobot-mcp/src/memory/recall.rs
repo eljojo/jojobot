@@ -2240,6 +2240,10 @@ impl Jojobot {
         // asked nothing is told nothing, rather than a distance for a
         // question it never asked.
         let mut overdue_by_days: Option<Vec<Option<i64>>> = None;
+        // **Why each object that cannot say when it falls due cannot**, aligned
+        // with `found` the same way. Only the carrier that answers for the object
+        // knows which keys of its schedule are missing or unreadable.
+        let mut unreadable_because: Option<Vec<Option<attention::Unreadable>>> = None;
         if let Some(as_of) = as_of {
             // **The read compares a moment to a day and computes none of them.**
             // Which moment a thing falls due at is its carrier's answer, so a
@@ -2265,6 +2269,19 @@ impl Jojobot {
                 found
                     .iter()
                     .map(|object| owed_by(&asked, object, &instance).days_overdue(as_of))
+                    .collect(),
+            );
+            unreadable_because = Some(
+                found
+                    .iter()
+                    .map(|object| {
+                        matches!(
+                            owed_by(&asked, object, &instance),
+                            attention::Due::Unreadable
+                        )
+                        .then(|| attention::unreadable_because(&asked, &object.fields))
+                        .flatten()
+                    })
                     .collect(),
             );
         }
@@ -2586,6 +2603,17 @@ impl Jojobot {
                             Some(days) => days.into(),
                             None => serde_json::Value::Null,
                         };
+                    }
+                    // **Beside the distance it cannot give**: which keys of the
+                    // schedule the thing lacks or holds unreadably. Absent on an
+                    // object that has a day.
+                    if let Some(reasons) = &unreadable_because
+                        && let Some(why) = &reasons[idx]
+                    {
+                        rendered["unreadable_because"] = serde_json::json!({
+                            "lacks": why.lacks,
+                            "will_not_parse": why.will_not_parse,
+                        });
                     }
                     let elided_bot_has_charter = elided_bot_charters
                         .get(&o.entity.id)

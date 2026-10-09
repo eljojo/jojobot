@@ -381,7 +381,14 @@ impl Jojobot {
                 // **Worked out here too**: a loop made with its cadence is whole
                 // from the moment it is made, with the day it falls due beside
                 // the keys that set it.
-                let (due_on, _) = self.moved_due_moment(&creating, &fields, &[]).await;
+                let (due_on, _) = self
+                    .moved_due_moment(
+                        &creating,
+                        &fields,
+                        &[],
+                        self.dated(None, args.sid.as_deref()).await?,
+                    )
+                    .await;
                 due_moved = due_on;
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(

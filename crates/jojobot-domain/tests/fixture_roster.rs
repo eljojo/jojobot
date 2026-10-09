@@ -569,8 +569,12 @@ const ROSTER: &[&str] = &[
     "thing:that-search-summary",
     "thing:the-furnace",
     "thing:marge-wrench",
+    "thing:fern",   // made up: a houseplant watered on a schedule
+    "thing:cactus", // made up: a houseplant with a readable schedule
+    "thing:wrench", // made up: a tool that has to go back
     "thing:torque-wrench",
     "thing:upgrade-fixture-archived",
+    "thing:upgrade-fixture-fern",
     "thing:upgrade-fixture-namesake",
     "thing:upgrade-fixture-successor",
     "thing:upgrade-fixture-thing",

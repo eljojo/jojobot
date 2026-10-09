@@ -92,13 +92,17 @@ pub const OUTCOME: &str = "outcome";
 /// whichever write touched a key a carrier's [`Carrier::interface`] names.
 /// See [`moved_due_moment`].
 ///
-/// **Only ever holds a date, and only while the carrier's own answer is
-/// [`Due::On`].** A thing whose answer is `Never`, `NotYetOpened` or
-/// `Unreadable` is not represented by a value here. [`moved_due_moment`]
-/// says so via [`DueMove::Cleared`] — a write that clears a key the schedule
-/// reads from acts on it and removes the stale value; a write that only
-/// adds or changes field values has nothing in its own shape to act on it
-/// with, since it has no way to take a key off a record.
+/// **Holds a date while the carrier's own answer is [`Due::On`], and the day of
+/// the write that left it unreadable while the answer is [`Due::Unreadable`].**
+/// A thing that is owed and cannot say when is late from the day it became so,
+/// and the owed read selects on this key alone, so a thing without it would never
+/// reach the part of the read that sorts the unreadable first. Becoming readable
+/// overwrites the day with the real one, and finishing the thing removes it.
+/// A thing whose answer is `Never` or `NotYetOpened` is not represented by a
+/// value here. [`moved_due_moment`] says so via [`DueMove::Cleared`] — a write
+/// that clears a key the schedule reads from acts on it and removes the stale
+/// value; a write that only adds or changes field values has nothing in its
+/// own shape to act on it with, since it has no way to take a key off a record.
 pub const DUE_ON: &str = "due_on";
 
 /// **What a check-in found, and whether the cycle is consumed.**
@@ -519,6 +523,22 @@ pub trait Carrier: Send + Sync {
     fn ending(&self) -> Option<Ending> {
         None
     }
+    /// **Why [`Carrier::due`] answers [`Due::Unreadable`]** for these fields,
+    /// when the carrier can say. None by default, and None for a thing it can
+    /// read.
+    fn unreadable_because(&self, _fields: &BTreeMap<String, String>) -> Option<Unreadable> {
+        None
+    }
+}
+
+/// **Why a carrier cannot say when a thing falls due**: the keys of its schedule
+/// the thing does not hold, and the keys it holds that will not parse.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Unreadable {
+    /// Keys the schedule needs and the thing does not hold.
+    pub lacks: Vec<&'static str>,
+    /// Keys the thing holds that the schedule cannot read.
+    pub will_not_parse: Vec<&'static str>,
 }
 
 /// **How a thing stops falling due without losing its day.**
@@ -584,6 +604,49 @@ impl Carrier for Rhythms {
             Err(why) if why.key == COUNTS_FROM && why.held.is_none() => Due::NotYetOpened,
             Err(_) => Due::Unreadable,
         }
+    }
+
+    /// **The keys a loop lacks or holds unreadably**, each of the three the
+    /// schedule needs asked on its own so the answer is every one and not only
+    /// the first. A held snooze day that will not parse is named too, when it
+    /// is the only thing in the way.
+    fn unreadable_because(&self, fields: &BTreeMap<String, String>) -> Option<Unreadable> {
+        if !matches!(self.due(fields), Due::Unreadable) {
+            return None;
+        }
+        let mut why = Unreadable::default();
+        let mut note = |failed: Result<(), NotSchedulable>| {
+            if let Err(not) = failed {
+                if not.held.is_none() {
+                    why.lacks.push(not.key);
+                } else {
+                    why.will_not_parse.push(not.key);
+                }
+            }
+        };
+        note(
+            read(fields, CADENCE_DAYS, &[], |held| {
+                held.parse::<i32>().ok().filter(|days| *days > 0)
+            })
+            .map(|_| ()),
+        );
+        note(
+            read(
+                fields,
+                ADVANCES_FROM,
+                &AdvancesFrom::ALL.map(AdvancesFrom::as_token),
+                AdvancesFrom::of_token,
+            )
+            .map(|_| ()),
+        );
+        note(read(fields, COUNTS_FROM, &[], |held| held.parse::<Date>().ok()).map(|_| ()));
+        if why.lacks.is_empty()
+            && why.will_not_parse.is_empty()
+            && let Err(not) = schedule_of(fields)
+        {
+            why.will_not_parse.push(not.key);
+        }
+        Some(why)
     }
 }
 
@@ -746,6 +809,18 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
         .unwrap_or(Due::Never)
 }
 
+/// **Why the carrier that answers for these fields cannot say when the thing
+/// falls due**, when it answers [`Due::Unreadable`] and can say why.
+pub fn unreadable_because(
+    carriers: &[&dyn Carrier],
+    fields: &BTreeMap<String, String>,
+) -> Option<Unreadable> {
+    carriers
+        .iter()
+        .find(|carrier| carrier.interface().matched_by(fields).is_some())
+        .and_then(|carrier| carrier.unreadable_because(fields))
+}
+
 /// **What is owed by a thing of this kind**: [`owed`], except that a finished
 /// work item or project owes nothing. Its date stays on the record; it is no
 /// longer asked for.
@@ -852,19 +927,24 @@ pub enum DueMove {
 /// moment exactly where it was has nothing to add to the record it is
 /// already part of.
 ///
-/// **Only [`Due::On`] is ever stored here.** `Never`, `NotYetOpened` and
-/// `Unreadable` all mean the carrier has no date to give — [`DueMove::Cleared`]
-/// when [`DUE_ON`] holds a value from before, [`DueMove::Unchanged`] when it
-/// does not, so a write never merges a bogus date in and never leaves a
-/// stale one behind either.
+/// **[`Due::On`] stores its own day, and [`Due::Unreadable`] stores `today`**, the
+/// day of the write that is making the thing late, so the owed read can find it:
+/// it selects on [`DUE_ON`], and a thing with no value there would never be
+/// asked whether it is overdue. `Never` and `NotYetOpened` have no date to give
+/// — [`DueMove::Cleared`] when [`DUE_ON`] holds a value from before,
+/// [`DueMove::Unchanged`] when it does not, so a write never merges a bogus
+/// date in and never leaves a stale one behind either.
 pub fn moved_due_moment(
     carriers: &[&dyn Carrier],
     existing: Option<Date>,
     projected: &BTreeMap<String, String>,
+    today: Date,
 ) -> DueMove {
     match owed(carriers, projected) {
         Due::On(day) if Some(day) != existing => DueMove::Set(day),
         Due::On(_) => DueMove::Unchanged,
+        Due::Unreadable if Some(today) != existing => DueMove::Set(today),
+        Due::Unreadable => DueMove::Unchanged,
         _ if existing.is_some() => DueMove::Cleared,
         _ => DueMove::Unchanged,
     }
@@ -882,6 +962,7 @@ pub fn moved_due_moment_as(
     held: &BTreeMap<String, String>,
     projected: &BTreeMap<String, String>,
     instance: &BTreeMap<String, String>,
+    today: Date,
 ) -> DueMove {
     if crate::memory::kinds::is_finished(kind, projected, instance) {
         return match existing {
@@ -889,7 +970,7 @@ pub fn moved_due_moment_as(
             None => DueMove::Unchanged,
         };
     }
-    match moved_due_moment(carriers, existing, projected) {
+    match moved_due_moment(carriers, existing, projected, today) {
         // **A stored moment is cleared here only when a carrier used to answer
         // for it.** `held` is the thing as it stood before the write. With no
         // carrier answering then, the date is a leftover of a write the old code
@@ -1380,7 +1461,12 @@ mod tests {
         let before = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
         let projected = snoozed_until("2026-08-20");
         assert_eq!(
-            moved_due_moment(&[&Rhythms], Some(date(2026, 8, 8)), &projected),
+            moved_due_moment(
+                &[&Rhythms],
+                Some(date(2026, 8, 8)),
+                &projected,
+                date(2026, 9, 1)
+            ),
             DueMove::Set(date(2026, 8, 20)),
         );
         assert!(
@@ -1818,11 +1904,20 @@ mod tests {
                 &held("now"),
                 &held("done"),
                 &none,
+                date(2026, 9, 1),
             ),
             DueMove::Cleared,
         );
         assert_eq!(
-            moved_due_moment_as("work", &asked, None, &held("now"), &held("now"), &none),
+            moved_due_moment_as(
+                "work",
+                &asked,
+                None,
+                &held("now"),
+                &held("now"),
+                &none,
+                date(2026, 9, 1)
+            ),
             DueMove::Set(date(2026, 1, 1)),
         );
         assert_eq!(
@@ -1833,6 +1928,7 @@ mod tests {
                 &held("now"),
                 &held("done"),
                 &none,
+                date(2026, 9, 1),
             ),
             DueMove::Unchanged,
         );
@@ -1900,6 +1996,7 @@ mod tests {
                 &held("now"),
                 &held("closed"),
                 &mapping,
+                date(2026, 9, 1),
             ),
             DueMove::Cleared,
             "the mover clears the moment of a work item moved into a word that means done",
@@ -1912,6 +2009,7 @@ mod tests {
                 &held("closed"),
                 &held("considering"),
                 &mapping,
+                date(2026, 9, 1),
             ),
             DueMove::Set(date(2026, 1, 1)),
             "and puts it back when the work moves to a word that means something unfinished",
@@ -1944,6 +2042,7 @@ mod tests {
                 &fields(&[("status", "now")]),
                 &fields(&[("status", "next")]),
                 &BTreeMap::new(),
+                date(2026, 9, 1),
             ),
             DueMove::Unchanged,
             "no carrier answered before or after, so the date was never jojobot's to clear",
@@ -1956,6 +2055,7 @@ mod tests {
                 &fields(&[("status", "now")]),
                 &fields(&[("status", "done")]),
                 &BTreeMap::new(),
+                date(2026, 9, 1),
             ),
             DueMove::Cleared,
             "finishing clears it whether or not a carrier answered",
@@ -1968,6 +2068,7 @@ mod tests {
                 &fields(&[(DECIDE_BY, "2026-06-01"), ("status", "now")]),
                 &fields(&[("status", "now")]),
                 &BTreeMap::new(),
+                date(2026, 9, 1),
             ),
             DueMove::Cleared,
             "a carrier answered before and no longer does, so the stored date is stale",
@@ -2185,14 +2286,19 @@ mod tests {
         let mut changed_cadence = existing.clone();
         changed_cadence.insert(CADENCE_DAYS.to_string(), "14".to_string());
         assert_eq!(
-            moved_due_moment(&[&Rhythms], existing_due_on, &changed_cadence),
+            moved_due_moment(
+                &[&Rhythms],
+                existing_due_on,
+                &changed_cadence,
+                date(2026, 9, 1)
+            ),
             DueMove::Set(date(2026, 8, 15)),
             "the cadence moved, so the due moment moves with it, with no check-in in sight",
         );
 
         // The paired negative: the same fields, unmoved, move nothing.
         assert_eq!(
-            moved_due_moment(&[&Rhythms], existing_due_on, &existing),
+            moved_due_moment(&[&Rhythms], existing_due_on, &existing, date(2026, 9, 1)),
             DueMove::Unchanged,
             "unchanged fields carry no new due moment to store",
         );
@@ -2200,7 +2306,7 @@ mod tests {
         // The not-yet-opened state survives this: never a bogus date.
         let declared = unopened(AdvancesFrom::CheckInDate);
         assert_eq!(
-            moved_due_moment(&[&Rhythms], None, &declared),
+            moved_due_moment(&[&Rhythms], None, &declared, date(2026, 9, 1)),
             DueMove::Unchanged,
             "a declared, never-checked-in loop is not due, and this must not invent a date for it",
         );
@@ -2387,7 +2493,12 @@ mod tests {
         let mut counts_from_cleared = existing.clone();
         counts_from_cleared.remove(COUNTS_FROM);
         assert_eq!(
-            moved_due_moment(&[&Rhythms], existing_due_on, &counts_from_cleared),
+            moved_due_moment(
+                &[&Rhythms],
+                existing_due_on,
+                &counts_from_cleared,
+                date(2026, 9, 1)
+            ),
             DueMove::Cleared,
             "the schedule can no longer say when it is due, and a value from before it changed \
              must not survive as if it still could",
@@ -2396,9 +2507,74 @@ mod tests {
         // Paired negative: nothing was ever stored, so there is nothing to
         // take off.
         assert_eq!(
-            moved_due_moment(&[&Rhythms], None, &counts_from_cleared),
+            moved_due_moment(&[&Rhythms], None, &counts_from_cleared, date(2026, 9, 1)),
             DueMove::Unchanged,
             "clearing a due moment that was never there is not a move",
         );
+    }
+
+    /// **A schedule that cannot be read stores the day of the write.** The owed
+    /// read selects on the stored day alone, so a thing that is late and cannot
+    /// say when needs a day to be found by: the day it became unreadable. A day
+    /// already stored for that same day moves nothing, a real day from before the
+    /// schedule broke is replaced, and a thing with no schedule at all still
+    /// stores nothing.
+    #[test]
+    fn a_schedule_that_cannot_be_read_stores_the_day_of_the_write() {
+        let today = date(2026, 9, 1);
+        let mut broken = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        broken.insert(CADENCE_DAYS.to_string(), "often".to_string());
+
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], None, &broken, today),
+            DueMove::Set(today),
+            "late from the day it became unreadable",
+        );
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], Some(today), &broken, today),
+            DueMove::Unchanged,
+            "stamped for this day already",
+        );
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], Some(date(2026, 8, 8)), &broken, today),
+            DueMove::Set(today),
+            "the day from before the schedule broke is no longer true",
+        );
+        let none: BTreeMap<String, String> = BTreeMap::new();
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], None, &none, today),
+            DueMove::Unchanged,
+            "a thing with no schedule at all is not late",
+        );
+        let readable = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], Some(today), &readable, today),
+            DueMove::Set(date(2026, 8, 8)),
+            "becoming readable overwrites the stamp with the real day",
+        );
+    }
+
+    /// **A loop says which keys it lacks and which it cannot parse**, all of them
+    /// and not only the first, and says nothing when it can be read.
+    #[test]
+    fn a_loop_that_cannot_be_read_names_the_keys_in_the_way() {
+        let mut broken = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        broken.insert(CADENCE_DAYS.to_string(), "often".to_string());
+        broken.remove(ADVANCES_FROM);
+        assert_eq!(
+            Rhythms.unreadable_because(&broken),
+            Some(Unreadable {
+                lacks: vec![ADVANCES_FROM],
+                will_not_parse: vec![CADENCE_DAYS],
+            }),
+        );
+        let readable = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        assert_eq!(Rhythms.unreadable_because(&readable), None);
+        assert_eq!(
+            unreadable_because(&[&Rhythms], &broken).map(|why| why.will_not_parse),
+            Some(vec![CADENCE_DAYS]),
+            "asked through the carrier that answers for the fields",
+        );
+        assert_eq!(RunsOut.unreadable_because(&broken), None);
     }
 }

@@ -649,6 +649,105 @@ async fn settled<E: std::fmt::Display>(
     }
 }
 
+/// **The one-time pass that gives a thing whose schedule cannot be read the day it
+/// became late**, by the name it logs under and its marker carries.
+///
+/// The owed read selects on the stored due day alone, and a thing that is late
+/// because its schedule cannot be read used to store none, so such a thing never
+/// reached the read. A write now stores the day it leaves such a thing late; this
+/// reaches the ones that were left before. It is separate from the permanent-id
+/// passes because it writes through the memory store and not through a table.
+pub const UNREADABLE_DUE_PASS: &str = "unreadable due day";
+
+/// **Stamp `today` as the due day of every thing that is owed and cannot say
+/// when**, once, and mark the pass finished.
+///
+/// A thing is stamped only when the same arithmetic a write runs
+/// ([`jojobot_domain::attention::moved_due_moment_as`]) would store a day for
+/// it: its carrier answers `Unreadable`, it is not finished, and it holds no
+/// stamp for that day already. A thing that is archived or folded into another
+/// is out of every browse and is left alone. The stamp is a claim of its own,
+/// written as jojobot's inference, so no earlier claim is changed.
+///
+/// **A pass that finished on this store reads nothing**, like the passes above:
+/// a thing that becomes unreadable afterwards is stamped by the write that made
+/// it so. A thing that could not be read or stamped leaves the pass owed, and
+/// the next boot runs it again; it is idempotent, because a thing stamped for
+/// `today` is not stamped twice and a stamp for another day is replaced by the
+/// one the next write makes.
+pub async fn backfill_unreadable_due_days(
+    pool: &MySqlPool,
+    memory: &dyn jojobot_domain::memory::Memory,
+    today: jiff::civil::Date,
+) -> Migrated {
+    use jojobot_domain::attention::{self, Carrier, Due, DueMove};
+    if finished_passes(pool).await.contains(UNREADABLE_DUE_PASS) {
+        return Migrated::Settled;
+    }
+    let entities = match memory.list_entities(None).await {
+        Ok(entities) => entities,
+        Err(e) => return Migrated::Skipped(e.to_string()),
+    };
+    let carriers = attention::shipped();
+    let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+    // What the operator mapped their status words to: a word mapped to `done`
+    // finishes a work item, so the pass reads the same record a write reads.
+    let instance = memory
+        .fields(&jojobot_domain::memory::EntityId(
+            jojobot_domain::memory::INSTANCE_RECORD.to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+    let mut stamped = 0usize;
+    let mut failed = Vec::new();
+    for entity in entities
+        .iter()
+        .filter(|e| e.archived.is_none() && !e.left_out_as_folded())
+    {
+        let fields = match memory.fields(&entity.id).await {
+            Ok(fields) => fields,
+            Err(e) => {
+                failed.push(format!("{}: {e}", entity.id));
+                continue;
+            }
+        };
+        let kind = entity.kind.as_token();
+        if !matches!(
+            attention::owed_as(kind, &asked, &fields, &instance),
+            Due::Unreadable
+        ) {
+            continue;
+        }
+        let existing = fields
+            .get(attention::DUE_ON)
+            .and_then(|held| held.trim().parse().ok());
+        let DueMove::Set(day) = attention::moved_due_moment_as(
+            kind, &asked, existing, &fields, &fields, &instance, today,
+        ) else {
+            continue;
+        };
+        let stamp = jojobot_domain::memory::NewFact {
+            provenance: jojobot_domain::memory::Provenance::Inference,
+            fields: std::iter::once((attention::DUE_ON.to_string(), day.to_string())).collect(),
+            ..jojobot_domain::memory::NewFact::about(
+                entity.id.clone(),
+                "jojobot stamped the day this became late: its schedule cannot be read",
+                today,
+            )
+        };
+        match memory.capture(stamp).await {
+            Ok(jojobot_domain::memory::Guarded::Written(_)) => stamped += 1,
+            Ok(_) => failed.push(format!("{}: the store refused the stamp", entity.id)),
+            Err(e) => failed.push(format!("{}: {e}", entity.id)),
+        }
+    }
+    if failed.is_empty() {
+        settled(pool, UNREADABLE_DUE_PASS, Ok::<usize, String>(stamped)).await
+    } else {
+        Migrated::Failed(failed.join("; "))
+    }
+}
+
 /// **Run every one-time permanent-id migration mail and sessions still
 /// need, over one read of the entity list, and say what actually happened
 /// for each — never a false `Ran(0)` standing in for a read that never

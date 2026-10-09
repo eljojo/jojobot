@@ -864,7 +864,14 @@ impl Jojobot {
         // by a plain capture is a write like any other, and the due moment it
         // carries is jojobot's own arithmetic riding along in the same
         // record — exactly as a check-in's own computed keys already do.
-        let (due_on_computed, due_on_derived) = self.moved_due_moment(&subject, &fields, &[]).await;
+        let (due_on_computed, due_on_derived) = self
+            .moved_due_moment(
+                &subject,
+                &fields,
+                &[],
+                self.dated(None, args.sid.as_deref()).await?,
+            )
+            .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         if let attention::DueMove::Set(due_on) = due_on_computed {
             fields.insert(attention::DUE_ON.to_string(), due_on.to_string());

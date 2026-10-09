@@ -4101,6 +4101,153 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
     store.stop().await;
 }
 
+/// **A thing that is owed and cannot say when is given the day the pass ran,
+/// once.** The owed read selects on the stored due day alone, and a loop left
+/// unreadable before a write stored one for it never reached the read. The pass
+/// stamps what is unreadable, leaves a thing with a real day alone, leaves a
+/// finished thing alone, marks itself finished, and then reads nothing: a thing
+/// that becomes unreadable afterwards is stamped by the write that made it so.
+#[tokio::test]
+async fn the_pass_that_stamps_unreadable_due_days_runs_once_and_touches_only_what_it_should() {
+    use jojobot_adapters::dolt::{Migrated, UNREADABLE_DUE_PASS, backfill_unreadable_due_days};
+    use jojobot_domain::memory::{Guarded, NewEntity, NewFact};
+
+    let scratch = Scratch::new("unreadable_due_pass");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let today = date(2026, 10, 9);
+
+    let thing = |handle: &str, name: &str, parent: Option<&str>| NewEntity {
+        parent: parent.map(|p| EntityId(p.into())),
+        ..NewEntity::new(EntityId(handle.into()), name, "user-named")
+    };
+    let write = |handle: &str, fields: &[(&str, &str)]| NewFact {
+        fields: fields
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        ..NewFact::about(
+            EntityId(handle.into()),
+            "recorded as it was",
+            date(2026, 9, 1),
+        )
+    };
+    let broken = [
+        ("cadence_days", "often"),
+        ("advances_from", "due_date"),
+        ("counts_from", "2026-06-01"),
+    ];
+    for (handle, name, parent) in [
+        ("thing:fern", "The Fern", None),
+        ("thing:wrench", "The Wrench", None),
+        ("project:atlas", "The Campaign", None),
+        ("work:sigma", "The Rigging", Some("project:atlas")),
+    ] {
+        memory
+            .add_entity(thing(handle, name, parent))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    // The loop nobody can read, stored the way an older build left it: no day.
+    // A thing with a real day, which the pass has no reason to touch. And a
+    // finished piece of work whose schedule is just as broken.
+    for (handle, fields) in [
+        ("thing:fern", broken.to_vec()),
+        (
+            "thing:wrench",
+            vec![("runs_out", "2026-08-01"), ("due_on", "2026-08-01")],
+        ),
+        ("work:sigma", [&broken[..], &[("status", "done")]].concat()),
+    ] {
+        let landed = memory
+            .capture(write(handle, &fields))
+            .await
+            .expect("capture ok");
+        assert!(
+            matches!(landed, Guarded::Written(_)),
+            "{handle}: {landed:?}"
+        );
+    }
+    let held = |handle: &'static str| {
+        let memory = &memory;
+        async move {
+            memory
+                .fields(&EntityId(handle.into()))
+                .await
+                .expect("fields read")
+        }
+    };
+    assert_eq!(
+        held("thing:fern").await.get("due_on"),
+        None,
+        "the loop stored no day"
+    );
+    let wrench_before = held("thing:wrench").await;
+    let sigma_before = held("work:sigma").await;
+
+    let first = backfill_unreadable_due_days(&pool, &memory, today).await;
+    assert!(
+        matches!(first, Migrated::Ran(1)),
+        "one thing was stamped: {first:?}"
+    );
+    assert_eq!(
+        held("thing:fern").await.get("due_on").map(String::as_str),
+        Some("2026-10-09"),
+        "the loop that cannot be read is late from the day of the pass"
+    );
+    assert_eq!(
+        held("thing:wrench").await,
+        wrench_before,
+        "a thing with a real day is as it was"
+    );
+    assert_eq!(
+        held("work:sigma").await,
+        sigma_before,
+        "a finished thing owes nothing and is as it was"
+    );
+    let marks: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass")
+        .fetch_all(&pool)
+        .await
+        .expect("the marks read");
+    assert!(
+        marks.iter().any(|name| name == UNREADABLE_DUE_PASS),
+        "{marks:?}"
+    );
+
+    // A thing that becomes unreadable after the pass is not the pass's to find.
+    memory
+        .add_entity(thing("thing:cactus", "The Cactus", None))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    memory
+        .capture(write("thing:cactus", &broken))
+        .await
+        .expect("capture ok");
+    let second = backfill_unreadable_due_days(&pool, &memory, today).await;
+    assert!(
+        matches!(second, Migrated::Settled),
+        "a finished pass reads nothing: {second:?}"
+    );
+    assert_eq!(
+        held("thing:cactus").await.get("due_on"),
+        None,
+        "and stamps nothing"
+    );
+
+    store.stop().await;
+}
+
 /// **A renewal stamps the row it overwrites.** The renewal replaces the value of
 /// the newest `claimed_at` write instead of appending one, and every write of a
 /// key carries the moment the store wrote it, which is how a merge tells the

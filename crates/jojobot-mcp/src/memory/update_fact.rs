@@ -329,7 +329,12 @@ impl Jojobot {
         // moment — the mechanism does not care that this one is a patch
         // rather than a fresh capture.
         let (due_on_computed, due_on_derived) = self
-            .moved_due_moment(&address.home, &fields, &cleared)
+            .moved_due_moment(
+                &address.home,
+                &fields,
+                &cleared,
+                self.dated(None, args.sid.as_deref()).await?,
+            )
             .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         let mut clears_due_on = false;

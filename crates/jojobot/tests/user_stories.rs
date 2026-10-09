@@ -116,6 +116,9 @@ mod operators_phone;
 /// A write says what it made owed, in the answer to the write.
 #[path = "user_stories/owed_receipt.rs"]
 mod owed_receipt;
+/// A thing whose schedule cannot be read is still owed, and says why.
+#[path = "user_stories/owed_unreadable.rs"]
+mod owed_unreadable;
 #[path = "user_stories/paragraphs.rs"]
 mod paragraphs;
 #[path = "user_stories/party.rs"]

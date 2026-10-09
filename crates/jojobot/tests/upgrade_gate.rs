@@ -510,7 +510,8 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
             "message sender column",
             "reference field lowering",
             "session bot column",
-            "session mentions"
+            "session mentions",
+            "unreadable due day"
         ],
         "each pass that finished is marked"
     );
@@ -691,6 +692,115 @@ async fn a_store_with_threads_and_no_decisions_boots_unchanged_and_takes_its_fir
         ["decision:upgrade-fixture-choice", RECORDED_THREAD],
         "recorded at {git_ref}: the decision leads the thread it was made under: {after}"
     );
+    drop(scratch);
+}
+
+/// The loop an older build left behind: a schedule that cannot be read, stored the
+/// way every such loop was before a write stamped the day it became late, so it
+/// holds no due day at all.
+const UNREADABLE_LOOP: &str = "thing:upgrade-fixture-fern";
+
+/// **Rows for a thing whose cadence is not a number**, written below the surface
+/// into the recorded schema. The badge, the record and its three fields are the
+/// whole of a thing the way the recording holds one; nothing here is a due day.
+async fn plant_an_unreadable_loop(pool: &sqlx::MySqlPool) {
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
+                             archived_reason, archived_at)
+         VALUES (?, 'thing', 'A Recorded Fern', 'test', NULL, NULL, 'on-demand', '', 'fern01',
+                 NULL, NULL, NULL)",
+    )
+    .bind(UNREADABLE_LOOP)
+    .execute(pool)
+    .await
+    .expect("the loop's thing lands");
+    sqlx::query(
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status, recorded_at,
+                           edge_shape, edge_object, event_kind, derived_from, derived_from_id,
+                           inserted_at, stale_after, happened_at, happened_through)
+         VALUES ('fern01', 'f1', 'watered on a schedule nobody wrote down properly', NULL,
+                 'testimony', 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL,
+                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+    )
+    .execute(pool)
+    .await
+    .expect("the loop's record lands");
+    for (key, value) in [
+        ("cadence_days", "often"),
+        ("advances_from", "due_date"),
+        ("counts_from", "2026-06-01"),
+    ] {
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+             VALUES ('fern01', ?, 1, ?, 'f1')",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .expect("the loop's field lands");
+    }
+}
+
+/// **A loop an older build left unreadable, with no due day, is given one by the
+/// first boot, found by the owed read exactly as it is taught, and left alone by
+/// the next boot.** Nothing in the recording holds such a loop, so the case
+/// writes one below the surface the way the older build would have left it. The
+/// first boot stamps it and says so; the owed read returns it with the reason it
+/// cannot be read; the second boot says the pass is already done.
+#[tokio::test]
+async fn an_unreadable_loop_an_older_build_left_is_stamped_by_the_first_boot_and_found() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "unreadable-loop").await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_an_unreadable_loop(store.pool()).await;
+    store.stop().await;
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let stamped = first
+        .log
+        .iter()
+        .filter(|line| line.contains("due days: stamped what could not be read"))
+        .count();
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let owed = surface
+        .call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {}}),
+        )
+        .await;
+    first.stop().await;
+    assert_eq!(stamped, 1, "the first boot stamped the loop and said so");
+    let owed: serde_json::Value = serde_json::from_str(&owed)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the owed read did not answer: {owed}"));
+    let fern = owed["objects"]
+        .as_array()
+        .and_then(|all| all.iter().find(|o| o["id"] == UNREADABLE_LOOP))
+        .unwrap_or_else(|| {
+            panic!("recorded at {git_ref}: the unreadable loop is not owed to the read: {owed}")
+        });
+    assert!(
+        fern["unreadable_because"]
+            .to_string()
+            .contains("cadence_days"),
+        "and says which key it cannot be read from: {fern}"
+    );
+
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    let settled = second
+        .log
+        .iter()
+        .any(|line| line.contains("due days: already stamped"));
+    second.stop().await;
+    assert!(settled, "the second boot says the pass is already done");
     drop(scratch);
 }
 
