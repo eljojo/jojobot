@@ -144,6 +144,9 @@ mod rule_seats;
 /// A claim that sets keys on its thing from a bag of its own.
 #[path = "user_stories/setting.rs"]
 mod setting;
+/// An empty search names what shares a word with it.
+#[path = "user_stories/shared_word.rs"]
+mod shared_word;
 /// One charter, and a session never learns which half the build supplied.
 #[path = "user_stories/shipping.rs"]
 mod shipping;

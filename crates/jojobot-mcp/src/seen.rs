@@ -16,9 +16,10 @@
 //! and the next creation simply gets no question: a missed note, never a wrong
 //! one.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use jojobot_domain::memory::EntityKind;
+use jojobot_domain::memory::words::words;
 
 /// **How many things one session remembers having been shown.** The oldest
 /// shown goes first. Real sittings were shown a median of 7 distinct things and
@@ -28,10 +29,6 @@ pub(crate) const MAX_SHOWN_PER_SESSION: usize = 200;
 /// **How many sessions the ledger holds at once.** The session that has gone
 /// longest without a new thing shown goes first.
 pub(crate) const MAX_SESSIONS: usize = 512;
-
-/// The shortest word that can be shared. Shorter words are articles and
-/// connectives, which two unrelated things share.
-const MIN_WORD: usize = 4;
 
 /// One entity a read returned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,30 +204,6 @@ impl Noticed {
             self.word,
         )
     }
-}
-
-/// **The words a name is made of that two things could share.** Lowercased, at
-/// least [`MIN_WORD`] letters, and never a bare number.
-///
-/// There is deliberately no stoplist and no rarity test. Over 188 real
-/// creations neither removed a single pair, so a threshold would be invented. A
-/// run showing a common word that fires a false question is what would justify
-/// adding rarity (how many other things of the kind carry the word), and it
-/// should be added then, with the run as its sample.
-///
-/// **The one word removed is not a rarity rule.** A run did show a false
-/// question: two things under one project shared the project's own slug. That
-/// word is not common and it is not rare; it is given by the parent, so it says
-/// nothing about whether the two are the same thing. [`Ledger::consult`] removes
-/// the parent's slug words for a shown thing under the same parent and for
-/// nothing else, so no word is dropped for how often it occurs.
-fn words(text: &str) -> BTreeSet<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| word.chars().count() >= MIN_WORD)
-        .filter(|word| word.chars().any(char::is_alphabetic))
-        .map(str::to_string)
-        .collect()
 }
 
 /// **Every entity a read answer returned**, read off the body before it is sent.

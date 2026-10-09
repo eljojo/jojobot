@@ -344,7 +344,7 @@ say     rule 241 was not filed as active where the later question can find it
 window  phase-end
 
 search {"query": "hard capacity it cannot raise", "status": "active", "limit": 1}
-carries capacity
+carries prioritize
 say     rule 275 was not filed as active where the later question can find it
 window  phase-end
 

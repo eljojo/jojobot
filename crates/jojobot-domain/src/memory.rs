@@ -30,6 +30,7 @@ pub mod mention;
 pub mod owned;
 pub mod search;
 pub mod types;
+pub mod words;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

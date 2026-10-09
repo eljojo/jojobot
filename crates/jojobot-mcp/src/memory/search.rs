@@ -851,6 +851,47 @@ impl Jojobot {
             if !query.include_mail {
                 left_out.push("mailbox messages (include_mail reads them)".to_string());
             }
+            // **An empty answer also names the things that share a word with
+            // the query.** The index needs most of a query's words to match, so a
+            // long query can miss a place that one of its words names, and a
+            // caller who then creates it makes a second. Naming them is all this
+            // does: it asks the caller a question and never refuses anything.
+            if let Some(text) = query.text.as_deref() {
+                let sharing = match self.memory.list_entities(query.kind).await {
+                    Ok(entities) => {
+                        let found = jojobot_domain::memory::words::sharing_a_word(text, &entities);
+                        if found.is_empty() {
+                            None
+                        } else {
+                            let shown = found.len().min(SHARES_A_WORD_SHOWN);
+                            Some(serde_json::json!({
+                                "note": "nothing matched, but these share a word with the \
+                                         query, in the kind asked for if one was. If one of \
+                                         them is what you are looking for, recall it by its \
+                                         id.",
+                                "things": found
+                                    .iter()
+                                    .take(shown)
+                                    .map(|(entity, shared)| serde_json::json!({
+                                        "id": entity.id.as_str(),
+                                        "name": entity.name,
+                                        "shares": shared,
+                                    }))
+                                    .collect::<Vec<_>>(),
+                                "not_shown": found.len() - shown,
+                            }))
+                        }
+                    }
+                    Err(e) => Some(serde_json::json!({
+                        "unchecked": format!(
+                            "the things that might share a word with the query were not read: {e}"
+                        ),
+                    })),
+                };
+                if let Some(sharing) = sharing {
+                    body["shares_a_word"] = sharing;
+                }
+            }
             body["searched"] = crate::answer::population_line(
                 &looked,
                 &left_out,
@@ -924,6 +965,9 @@ impl Jojobot {
         json_result(&body)
     }
 }
+
+/// **How many things an empty answer names as sharing a word with the query.**
+const SHARES_A_WORD_SHOWN: usize = 5;
 
 /// **What the matcher can and cannot promise about this query.**
 ///
