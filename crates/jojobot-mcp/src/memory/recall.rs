@@ -2739,6 +2739,25 @@ impl Jojobot {
                     .collect(),
             );
         }
+        // **The first empty read of a type the software ships says that reading
+        // again finds nothing, and where to keep what the session worked out.**
+        // The ledger row is spent only when the note is shown, so a read that
+        // held something, or named a type the caller declared, spends none.
+        if nothing_selected {
+            if let Some(shipped) = asked_answers.as_ref().filter(|declared| {
+                declared.origin == jojobot_domain::memory::types::Origin::Shipped
+            }) {
+                if self
+                    .first_contact(crate::teaching::EMPTY_SHIPPED_TYPE_DOMAIN, caller.as_ref())
+                    .await
+                {
+                    crate::answer::note_teaching(
+                        &mut body,
+                        &crate::teaching::empty_shipped_type_teaching(&shipped.name),
+                    );
+                }
+            }
+        }
         // **A caller with no identity owns no run, and the count above is all
         // it can see of them.** Say how to read its own, because "withheld" on
         // its own does not.

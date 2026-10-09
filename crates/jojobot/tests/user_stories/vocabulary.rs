@@ -268,3 +268,104 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_and_says_it_once() {
+    // **A session that read, concluded, and kept the conclusion in prose.** An
+    // empty answer under a type the software ships is the moment it decides
+    // whether to write what it just worked out. The note rides that one answer,
+    // once, and never on an answer that held something or a type the caller
+    // declared.
+    let story = Story::begin("bot:gamma").await;
+
+    // ── a session that reads before it writes ───────────────────────────────
+    let s = story.session().await;
+    let first = s
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert!(
+        first["objects"].as_array().is_some_and(Vec::is_empty),
+        "nothing carries a trip's keys yet, or this proves nothing: {first}"
+    );
+    let taught = first["teaching"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the first empty read of a shipped type teaches: {first}"));
+    assert_eq!(taught.len(), 1, "one note, once: {first}");
+    // The answer still carries the keys to write under, beside the note.
+    assert!(first["type_keys"][0]["name"] == "trip", "{first}");
+
+    let again = s
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert!(
+        again["objects"].as_array().is_some_and(Vec::is_empty),
+        "still nothing, or the second read proves nothing: {again}"
+    );
+    assert!(
+        again.get("teaching").is_none(),
+        "the same session reading an empty answer again is not taught twice: {again}"
+    );
+
+    // ── a session whose first reads are not empty shipped-type reads ────────
+    let t = story.session().await;
+    t.add("event:gorge-survey", "The Gorge Survey").await;
+    t.add("place:springfield", "Springfield").await;
+    t.add("place:north-gorge", "The North Gorge").await;
+    t.event_with(
+        "event:gorge-survey",
+        "four days up the gorge",
+        json!({
+            "departs_from": "place:springfield",
+            "arrives_at": "place:north-gorge",
+            "leaves_on": "2026-09-03",
+            "returns_on": "2026-09-07",
+        }),
+        &[],
+    )
+    .await;
+    let held = t
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert_eq!(held["objects"][0]["id"], "event:gorge-survey", "{held}");
+    assert!(
+        held.get("teaching").is_none(),
+        "an answer that holds something teaches nothing about an empty one: {held}"
+    );
+
+    t.call(
+        "declare_type",
+        json!({ "name": "loan", "fields": [{ "key": "due_back", "holds": "date" }] }),
+    )
+    .await;
+    let declared = t
+        .call("recall", json!({ "answers_type": "loan" }))
+        .await
+        .json();
+    assert!(
+        declared["objects"].as_array().is_some_and(Vec::is_empty),
+        "{declared}"
+    );
+    assert!(
+        declared.get("teaching").is_none(),
+        "a type the caller declared is not one the software ships: {declared}"
+    );
+
+    // The two reads above spent nothing: this session's first EMPTY read of a
+    // shipped type still carries the note.
+    let empty = t
+        .call("recall", json!({ "answers_type": "entitlement" }))
+        .await
+        .json();
+    assert!(
+        empty["objects"].as_array().is_some_and(Vec::is_empty),
+        "{empty}"
+    );
+    assert!(
+        empty["teaching"].as_array().is_some_and(|t| t.len() == 1),
+        "a non-empty read and a declared type left the note unspent: {empty}"
+    );
+    story.finish().await;
+}

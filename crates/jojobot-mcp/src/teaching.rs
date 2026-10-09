@@ -234,6 +234,23 @@ pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     )
 }
 
+/// **An empty read of a type the software ships** — a session that read,
+/// worked something out and keeps it in prose has not written it down. Named on
+/// the call that raises the question: the first `answers_type` read in a session
+/// that selects nothing under a shipped type. A read that held something, or a
+/// type the caller declared, has no such gap and spends nothing.
+pub(crate) const EMPTY_SHIPPED_TYPE_DOMAIN: &str = "empty-shipped-type";
+
+/// **The sentence for [`EMPTY_SHIPPED_TYPE_DOMAIN`]**, naming the type so a
+/// caller sees the one it asked about reflected back.
+pub(crate) fn empty_shipped_type_teaching(name: &str) -> String {
+    format!(
+        "No record answers the type {name} yet, and reading again will not find one. To keep \
+         what you just worked out, capture it under the keys of {name} listed in type_keys, with \
+         the provenance that is true of it."
+    )
+}
+
 /// **Which field key, if any, shadows one of `properties`' own names.** Pure
 /// over an already-extracted property set, so the RULE — the first field key
 /// that is also a property name — is tested without a live tool registry: see
