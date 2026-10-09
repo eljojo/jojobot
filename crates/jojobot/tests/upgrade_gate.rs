@@ -571,6 +571,43 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
         })
 }
 
+/// **The alert sqlx logs when a statement runs past its slow threshold**, by the
+/// target and the message it logs it under. On a busy machine a statement of a
+/// healthy boot takes longer than a second, so the alert says the machine is
+/// loaded and nothing about the boot.
+///
+/// **Narrower than raising the threshold for the booted binary.** A raised
+/// threshold hides every slow statement, whichever target logs it, and needs a
+/// setting in the binary's own code for the gate to turn. This reads the one line
+/// the library writes and nothing else, so a statement alert from another target
+/// or another message, and every other warning, still fails the gate.
+fn is_the_slow_statement_alert(line: &str) -> bool {
+    line.contains("WARN")
+        && line.contains("sqlx::query")
+        && line.contains("slow statement: execution time exceeded alert threshold")
+}
+
+/// **The lines of a boot's log that say part of the boot failed or degraded.**
+/// Every warning and every error counts, except the ones the gate itself causes
+/// or expects, the ones the caller names in `tolerated_warnings` (each by a word
+/// the line holds), and the slow-statement alert of a loaded machine.
+fn degradations<'a>(
+    seen: &'a [String],
+    stored_over_the_ceiling: bool,
+    tolerated_warnings: &[&str],
+) -> Vec<&'a String> {
+    seen.iter()
+        .filter(|line| !is_the_slow_statement_alert(line))
+        .filter(|line| {
+            let expected = line.contains(WARNING_THE_GATE_CAUSES)
+                || is_the_recorded_ambiguous_handle(line)
+                || (stored_over_the_ceiling && line.contains("OVER THE CEILING"))
+                || tolerated_warnings.iter().any(|named| line.contains(named));
+            line.contains("ERROR") || (line.contains("WARN") && !expected)
+        })
+        .collect()
+}
+
 /// **A running copy of the current binary over a restored store.**
 struct Booted {
     child: tokio::process::Child,
@@ -715,16 +752,7 @@ async fn boot_current_with(
     //
     // **An error line fails it too, whatever it says.** The boot logs a pass it
     // could not finish at the error level.
-    let warned: Vec<&String> = seen
-        .iter()
-        .filter(|line| {
-            let expected = line.contains(WARNING_THE_GATE_CAUSES)
-                || is_the_recorded_ambiguous_handle(line)
-                || (stored_over_the_ceiling && line.contains("OVER THE CEILING"))
-                || tolerated_warnings.iter().any(|named| line.contains(named));
-            line.contains("ERROR") || (line.contains("WARN") && !expected)
-        })
-        .collect();
+    let warned = degradations(&seen, stored_over_the_ceiling, tolerated_warnings);
     assert!(
         warned.is_empty(),
         "the current binary booted on a store recorded at {git_ref} and said part of its own \
@@ -2741,4 +2769,91 @@ async fn a_lost_link_table_is_rebuilt_at_the_next_boot() {
 #[tokio::test]
 async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_3_store() {
     a_lost_link_table_is_rebuilt(DEPLOY_3_FIXTURE_DIR, "rebuilt-deploy3").await;
+}
+
+/// **What a real store's pool logs when a statement runs past the alert
+/// threshold, and four other lines logged beside it.** The slow statement is a
+/// real one: `SLEEP` against the store, through the pool the binary builds its
+/// own the same way, so the line is the one sqlx writes and not one invented
+/// for the case. Every line carries `label`, so a sibling case's log in the
+/// store's one global sink is not read as this case's.
+async fn lines_logged_around_a_slow_statement(label: &str) -> Vec<String> {
+    let state_dir = std::env::temp_dir().join(format!(
+        "jojobot-upgrade-gate-{}-{label}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let _scratch = Scratch(state_dir.clone());
+    // `free_port` installs the store's log sink, the process's one global
+    // subscriber, before the store starts.
+    let store = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("a fresh store comes up");
+    sqlx::query(&format!("SELECT SLEEP(1.3) /* {label} */"))
+        .execute(store.pool())
+        .await
+        .expect("the slow statement runs");
+    tracing::warn!("{label} a boot step degraded");
+    tracing::warn!(target: "sqlx::query", "{label} an alert of another kind");
+    tracing::warn!(
+        target: "jojobot_adapters::dolt",
+        "{label} slow statement: execution time exceeded alert threshold"
+    );
+    tracing::error!("{label} a pass could not finish");
+    jojobot_adapters::testing::store_log()
+        .lines()
+        .filter(|line| line.contains(label))
+        .map(str::to_string)
+        .collect()
+}
+
+/// **The slow-statement alert is not a failed boot.** On a busy machine a
+/// statement of the boot runs past sqlx's alert threshold and sqlx says so at
+/// warning level. That says nothing about the boot, so the gate lets exactly
+/// that line through: by its target and its message.
+#[tokio::test]
+async fn a_slow_statement_alert_is_not_a_degradation() {
+    let logged = lines_logged_around_a_slow_statement("slow-alert-alone").await;
+    let alert = logged
+        .iter()
+        .find(|line| line.contains("sqlx::query: slow statement"))
+        .unwrap_or_else(|| {
+            panic!("sqlx logged no slow-statement alert, so this proves nothing: {logged:?}")
+        });
+    assert!(
+        degradations(std::slice::from_ref(alert), false, &[]).is_empty(),
+        "the slow-statement alert counted as a degraded boot: {alert}"
+    );
+}
+
+/// **Every other warning and every error still fails the gate**, beside the
+/// alert it lets through. A warning from the same target with another message,
+/// the alert's own message from another target, a warning from anywhere else
+/// and an error are each a degradation, and the alert in the same log is not.
+#[tokio::test]
+async fn any_other_warning_or_error_is_still_a_degradation_beside_the_alert() {
+    let logged = lines_logged_around_a_slow_statement("slow-alert-beside").await;
+    let failing = degradations(&logged, false, &[]);
+    assert_eq!(
+        failing.len(),
+        4,
+        "the four other lines fail, and only they: {logged:?}"
+    );
+    assert!(
+        failing
+            .iter()
+            .all(|line| !line.contains("sqlx::query: slow statement")),
+        "the alert was counted as a degradation: {failing:?}"
+    );
+    for said in [
+        "a boot step degraded",
+        "an alert of another kind",
+        "execution time exceeded alert threshold",
+        "a pass could not finish",
+    ] {
+        assert!(
+            failing.iter().any(|line| line.contains(said)),
+            "{said:?} did not fail the gate: {failing:?}"
+        );
+    }
 }
