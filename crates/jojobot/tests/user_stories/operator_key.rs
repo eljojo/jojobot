@@ -167,21 +167,21 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     // fold does not move, so nothing is asked of the chart, whether the resend
     // arrives as a new claim or as an edit of the claim that holds it. The pair:
     // the same bot naming somebody else is still refused.
-    omega
+    nelson
         .call("capture", naming("person:milhouse"))
         .await
         .field("address");
-    omega
+    nelson
         .call(
             "update_fact",
             json!({"address": current, "fields": {"operator": "person:milhouse"}}),
         )
         .await;
-    omega
+    nelson
         .refused("capture", naming("person:lisa"))
         .await
         .says("operator")
-        .says("bot:alpha");
+        .says("bot:marge");
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:milhouse\"");
