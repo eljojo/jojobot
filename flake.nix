@@ -211,6 +211,13 @@
             # directory, and a test that skips when a binary is missing is a
             # test nobody notices stopped running.
             dolt
+            # The bar needs both on the path: `scripts/sabotage` is a python
+            # script, and the bar's history tests and size reports build and read
+            # scratch repositories with git. The sandbox's check phase lists them
+            # as `nativeCheckInputs` for the same reason, and a shell that lacked
+            # them worked only on a machine that happened to have its own.
+            pkgs.python3
+            pkgs.git
           ];
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run
