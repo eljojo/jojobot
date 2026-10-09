@@ -1137,6 +1137,87 @@ pub mod contract {
         );
     }
 
+    /// **One run is summarised without its chronology, and the runs of each bot
+    /// are counted without reading any of them.** The summary agrees with the one
+    /// the bot's own listing gives for the same run, so the cheap read is the same
+    /// answer; an id nothing carries, and an id that could never be a run's, are
+    /// no run and not an error; a closed run is still a run; and a board with
+    /// nothing on it counts nothing, so a count that always said something would
+    /// fail on the empty store.
+    pub async fn one_run_is_summarised_and_the_runs_of_each_bot_are_counted(store: &dyn Sessions) {
+        assert!(
+            store.run_counts().await.expect("count ok").is_empty(),
+            "a board with no run counts none"
+        );
+        assert!(
+            store
+                .summary_of(&SessionId("nothing1".into()))
+                .await
+                .expect("summary ok")
+                .is_none(),
+            "a board with no run summarises none"
+        );
+
+        let busy = begin(store, "gamma", "the busy run", 0).await;
+        journal(store, &busy.id, "first beat", 60).await;
+        journal(store, &busy.id, "second beat", 120).await;
+        let other = begin(store, "gamma", "the second run", 300).await;
+        let theirs = begin(store, "delta", "somebody else's run", 600).await;
+        store
+            .close(&other.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let summary = store
+            .summary_of(&busy.id)
+            .await
+            .expect("summary ok")
+            .expect("the run exists");
+        let listed = store
+            .summaries_of(&bot("gamma"))
+            .await
+            .expect("list ok")
+            .into_iter()
+            .find(|run| run.id == busy.id)
+            .expect("the bot lists it");
+        assert_eq!(summary, listed, "the one-run read is the listing's answer");
+        assert_eq!(summary.entry_count, 2, "{summary:?}");
+        assert_eq!(summary.bot, bot("gamma"));
+
+        let closed = store
+            .summary_of(&other.id)
+            .await
+            .expect("summary ok")
+            .expect("a closed run is still a run");
+        assert_eq!(closed.state, SessionState::Wrapped);
+        let elsewhere = store
+            .summary_of(&theirs.id)
+            .await
+            .expect("summary ok")
+            .expect("another bot's run is a run");
+        assert_eq!(elsewhere.bot, bot("delta"));
+
+        for id in ["nothing1", "Not A Run!"] {
+            assert!(
+                store
+                    .summary_of(&SessionId(id.into()))
+                    .await
+                    .expect("a miss is not an error")
+                    .is_none(),
+                "{id} is no run"
+            );
+        }
+
+        let counts = store.run_counts().await.expect("count ok");
+        assert_eq!(counts.get(&bot("gamma")), Some(&2), "{counts:?}");
+        assert_eq!(counts.get(&bot("delta")), Some(&1), "{counts:?}");
+        assert_eq!(
+            counts.len(),
+            2,
+            "no bot without a run is counted: {counts:?}"
+        );
+    }
+
     /// A closed session stays in the bot's list — closed is an archive, never a
     /// deletion, and the record of what happened is the whole capability.
     pub async fn a_closed_session_stays_on_the_record(store: &dyn Sessions) {
@@ -1786,6 +1867,7 @@ pub mod contract {
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;
+        one_run_is_summarised_and_the_runs_of_each_bot_are_counted(&fresh()).await;
         all_sessions_carries_every_card_across_bots_with_its_handle(&fresh()).await;
         a_closed_session_stays_on_the_record(&fresh()).await;
         addressing_an_unknown_session_is_a_miss(&fresh()).await;

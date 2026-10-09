@@ -183,6 +183,37 @@ impl Sessions for Mentioning {
         Ok(summaries)
     }
 
+    /// **Answered by what the store beneath offers, rendered as every other
+    /// summary is**: a default off `read_session` would read the run in full.
+    async fn summary_of(&self, id: &SessionId) -> Result<Option<SessionSummary>, SessionError> {
+        let Some(mut summary) = self.inner.summary_of(id).await? else {
+            return Ok(None);
+        };
+        let known = self.known().await?;
+        Self::render_summary(&mut summary, &known);
+        Ok(Some(summary))
+    }
+
+    /// **Counted by the store beneath and keyed by the handle each bot answers
+    /// to now**: a run is stored under the badge its bot wore, and a bot renamed
+    /// since is one bot, so counts under its old and new names are one count.
+    async fn run_counts(
+        &self,
+    ) -> Result<std::collections::BTreeMap<EntityId, usize>, SessionError> {
+        let stored = self.inner.run_counts().await?;
+        if stored.is_empty() {
+            return Ok(stored);
+        }
+        let known = self.known().await?;
+        let mut counts = std::collections::BTreeMap::new();
+        for (bot, n) in stored {
+            *counts
+                .entry(Self::current_handle_for(&bot, &known))
+                .or_insert(0) += n;
+        }
+        Ok(counts)
+    }
+
     /// **Straight through.** The signal counts writes to the store and says
     /// nothing in text, so there is nothing here to resolve. Left to the
     /// default it answers `None`, and every refresh above this layer then
@@ -603,6 +634,48 @@ mod tests {
             raw_before.bot, now,
             "the bare row must not hold the handle itself"
         );
+    }
+
+    /// **The cheap reads render as the full ones do.** A run is stored under the
+    /// badge its bot wore, so a count keyed by what the store holds would give a
+    /// renamed bot's runs under a name nobody uses, and split one bot's runs
+    /// between two keys. The one-run summary names the bot as it is called now.
+    #[tokio::test]
+    async fn the_counts_and_the_one_run_summary_name_a_renamed_bot_by_its_current_handle() {
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
+        let was = crate::memory::EntityId("bot:gamma".into());
+        let now = crate::memory::EntityId("bot:sigma".into());
+        add(memory.as_ref(), &was).await;
+        let sessions = Mentioning::new(Arc::new(InMemorySessions::new()), memory.clone());
+        let begin = |bot: &crate::memory::EntityId, sid: &str| NewSession {
+            bot: bot.clone(),
+            sid: super::super::Sid(sid.to_string()),
+            focus: "a run".into(),
+            started_at: epoch(),
+            timezone: None,
+            started_on: None,
+        };
+        let before = sessions.begin(begin(&was, "sd05")).await.expect("begin");
+        memory
+            .rename_entity(&was, &now, None, date(2026, 6, 2), None)
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the rename");
+        sessions.begin(begin(&now, "sd06")).await.expect("begin");
+
+        let counts = sessions.run_counts().await.expect("count ok");
+        assert_eq!(
+            counts,
+            [(now.clone(), 2)].into_iter().collect(),
+            "one bot, two runs, under the handle it answers to now"
+        );
+        let summary = sessions
+            .summary_of(&before.id)
+            .await
+            .expect("summary ok")
+            .expect("the run exists");
+        assert_eq!(summary.bot, now, "{summary:?}");
     }
 
     #[tokio::test]

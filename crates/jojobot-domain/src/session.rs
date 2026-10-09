@@ -1194,6 +1194,42 @@ pub trait Sessions: Send + Sync {
             .collect())
     }
 
+    /// **One run, without its chronology** — `None` when no run carries the id,
+    /// or the id could never be one. What a caller that names a single run needs
+    /// to know whose it is and what state it is in, which is never the text of
+    /// a beat and never the other runs on the board.
+    ///
+    /// **Defaulted off [`read_session`](Sessions::read_session).** A store with
+    /// no cheaper query is still correct through here; [`DoltSessions`] overrides
+    /// it with the aggregate [`summaries_of`](Sessions::summaries_of) uses,
+    /// narrowed to the one run. A layer over a store forwards this, or the read
+    /// it stands for goes back to costing what the board holds.
+    async fn summary_of(&self, id: &SessionId) -> Result<Option<SessionSummary>, SessionError> {
+        match self.read_session(id).await {
+            Ok(session) => Ok(Some(SessionSummary::of(&session))),
+            Err(SessionError::UnknownSession { .. } | SessionError::InvalidId(_)) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// **How many runs each bot has**, whatever their states: the numbers a
+    /// caller needs to say how many runs exist, or how many belong to others,
+    /// without reading any of them. A bot with no run is absent.
+    ///
+    /// **Defaulted off [`all_summaries`](Sessions::all_summaries)**, as the
+    /// others are, and overridden by [`DoltSessions`] with one grouped count. A
+    /// layer over a store forwards this, for the reason
+    /// [`summary_of`](Sessions::summary_of) names.
+    async fn run_counts(
+        &self,
+    ) -> Result<std::collections::BTreeMap<EntityId, usize>, SessionError> {
+        let mut counts = std::collections::BTreeMap::new();
+        for run in self.all_summaries().await? {
+            *counts.entry(run.bot).or_insert(0) += 1;
+        }
+        Ok(counts)
+    }
+
     /// **Every session on the board, whosever it is** — what the handle registry
     /// is rebuilt from at startup.
     ///

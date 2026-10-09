@@ -5168,10 +5168,9 @@ async fn a_sessions_chronology_is_recalled_and_capture_onto_it_stays_refused() {
     );
 }
 
-/// **A session answers its own bot alone.** `recall` fetches every run
-/// on the board (`all_summaries`, cheap — no beat's text leaves the
-/// store to build the entity index), so a second bot naming the first
-/// bot's session DOES reach it in the index; `graph::walk`'s owner check
+/// **A session answers its own bot alone.** A subject that names a run reads
+/// that one run's summary whoever it belongs to, so a second bot naming the
+/// first bot's session DOES reach it in the index; `graph::walk`'s owner check
 /// (`session::projected_summary` sets `owner`, proven on this exact
 /// shape at `19fca07`) is what refuses it, as somebody else's, never as
 /// absent — the same distinction an ordinary owned entity already gets.
@@ -5495,6 +5494,155 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
         old_fact["status"], "active",
         "ageing must not archive a row a plain read passes over: {old_fact}"
     );
+}
+
+/// **A read of runs asks the board for the caller's own and counts the rest.**
+/// Every run on the board used to be read as summaries to find the caller's own
+/// and to count the others, so the read grew with every run any bot ever had.
+/// The caller's own runs, the one run a subject names, and a count of the
+/// others now answer the same questions.
+///
+/// The answers are the ones the whole read gave: a browse shows the caller's
+/// own and counts the rest, a run of another bot is refused as theirs and an
+/// unknown one offers the caller's own as a near miss, a parent narrows what is
+/// counted, and a caller with no identity is told how many exist. The counter is
+/// shown to count by one read of the whole board at the end, so a count of zero
+/// is a fact about these calls and not about a counter that cannot move.
+#[tokio::test]
+async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
+    let counting = Arc::new(crate::session::testing::CountingSessions::new(
+        InMemorySessions::new(),
+    ));
+    let (jojobot, _memory) =
+        crate::session::testing::with_sessions_port_and_memory(counting.clone());
+    let sid = writing_as(&jojobot);
+    let own = journal_entry(&jojobot, &sid, "otto's own beat").await["session"]
+        .as_str()
+        .expect("journal answers with the session it landed in")
+        .to_string();
+    let mut theirs = Vec::new();
+    for _ in 0..2 {
+        let other = jojobot
+            .registry
+            .mint(&EntityId("bot:milhouse".into()), None)
+            .expect("a free handle in a fresh registry")
+            .to_string();
+        let receipt = journal_entry(&jojobot, &other, "milhouse's own beat").await;
+        theirs.push(format!(
+            "session:{}",
+            receipt["session"].as_str().expect("the run it landed in")
+        ));
+    }
+    let own_handle = format!("session:{own}");
+    let before = counting.board_summaries();
+
+    let ask = |sid: Option<&str>, subject: Option<&str>, parent: Option<&str>| RecallArgs {
+        subject: subject.map(str::to_string),
+        kind: subject.is_none().then(|| "session".to_string()),
+        parent: parent.map(str::to_string),
+        sid: sid.map(str::to_string),
+        ..of("unused")
+    };
+
+    // A browse: the caller's own, and the two of the other bot counted.
+    let browse = json_of(
+        &jojobot
+            .recall(Parameters(ask(Some(&sid), None, None)))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(
+        browse["objects"].as_array().map(Vec::len),
+        Some(1),
+        "{browse}"
+    );
+    assert_eq!(browse["objects"][0]["id"], own_handle, "{browse}");
+    assert_eq!(browse["withheld"], 2, "{browse}");
+
+    // The parent narrows what is counted, in both directions.
+    let theirs_only = json_of(
+        &jojobot
+            .recall(Parameters(ask(Some(&sid), None, Some("bot:milhouse"))))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(
+        theirs_only["objects"].as_array().map(Vec::len),
+        Some(0),
+        "{theirs_only}"
+    );
+    assert_eq!(theirs_only["withheld"], 2, "{theirs_only}");
+    let mine_only = json_of(
+        &jojobot
+            .recall(Parameters(ask(Some(&sid), None, Some("bot:otto"))))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(mine_only["objects"][0]["id"], own_handle, "{mine_only}");
+    assert_eq!(mine_only["withheld"], 0, "{mine_only}");
+
+    // Naming another bot's run: theirs, never absent, and not leaked.
+    let refused = blocked(
+        &jojobot
+            .recall(Parameters(ask(Some(&sid), Some(&theirs[0]), None)))
+            .await
+            .expect("recall answers"),
+    );
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains("not yours")),
+        "another bot's run is refused as somebody else's: {refused}"
+    );
+    assert!(
+        !refused.to_string().contains("milhouse's own beat"),
+        "{refused}"
+    );
+
+    // Naming a run that is not there: the caller's own is the near miss.
+    let mut near = own_handle.clone();
+    let last = near.pop().expect("a handle is not empty");
+    near.push(if last == 'a' { 'b' } else { 'a' });
+    let missed = blocked(
+        &jojobot
+            .recall(Parameters(ask(Some(&sid), Some(&near), None)))
+            .await
+            .expect("recall answers"),
+    )
+    .to_string();
+    assert!(
+        missed.contains(&own_handle),
+        "the caller's own run is offered as the near miss: {missed}"
+    );
+    assert!(
+        theirs
+            .iter()
+            .all(|handle| !missed.contains(handle.as_str())),
+        "another bot's run is never offered: {missed}"
+    );
+
+    // A caller with no identity: how many exist, and none shown.
+    let anonymous = json_of(
+        &jojobot
+            .recall(Parameters(ask(None, None, None)))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(
+        anonymous["objects"].as_array().map(Vec::len),
+        Some(0),
+        "{anonymous}"
+    );
+    assert_eq!(anonymous["withheld"], 3, "{anonymous}");
+
+    assert_eq!(
+        counting.board_summaries(),
+        before,
+        "no read of runs above asked the board for every run"
+    );
+    // The counter moves when the whole board is read, so zero above means none.
+    counting.all_summaries().await.expect("the board reads");
+    assert_eq!(counting.board_summaries(), before + 1);
 }
 
 /// 🚨 **A caller with no identity is told how many runs exist and nothing

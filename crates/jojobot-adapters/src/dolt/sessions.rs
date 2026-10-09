@@ -625,6 +625,53 @@ impl Sessions for DoltSessions {
         rows.iter().map(summary_from).collect()
     }
 
+    /// **The same aggregate [`summaries_of`](Self::summaries_of) runs, narrowed to
+    /// one run.** An id that could never be a run's is no run, and is not an
+    /// error: the caller asked whether a run exists.
+    async fn summary_of(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<jojobot_domain::session::SessionSummary>, SessionError> {
+        if validate_session_id(id).is_err() {
+            return Ok(None);
+        }
+        let row = sqlx::query(
+            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
+                    s.started_on,
+                    COUNT(j.id) AS entry_count,
+                    COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
+                        AS last_beat
+             FROM session s
+             LEFT JOIN journal_entry j ON j.session = s.id
+             WHERE s.id = ?
+             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars, s.started_on",
+        )
+        .bind(id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store)?;
+        row.as_ref().map(summary_from).transpose()
+    }
+
+    /// One grouped count over the session table, and nothing of a run's text or
+    /// its beats.
+    async fn run_counts(
+        &self,
+    ) -> Result<std::collections::BTreeMap<EntityId, usize>, SessionError> {
+        let rows = sqlx::query("SELECT bot, COUNT(*) AS runs FROM session GROUP BY bot")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store)?;
+        rows.iter()
+            .map(|row| {
+                Ok((
+                    EntityId(row.try_get::<String, _>("bot").map_err(store)?),
+                    row.try_get::<i64, _>("runs").map_err(store)? as usize,
+                ))
+            })
+            .collect()
+    }
+
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -2007,6 +2054,81 @@ mod tests {
     /// reading everything; the negative alone (nothing extra fetched) would
     /// pass on a build that answers zero for every count. Both, on the same
     /// two sessions.
+    /// **One run's summary and the runs counted per bot read no run in full.** The
+    /// reads exist so a caller that wants to know whose a run is, or how many
+    /// there are, does not pay for what any run said; a build that answered them
+    /// from the whole board would still answer correctly, and only this counter
+    /// tells the two apart. Paired with the answers themselves, because a read
+    /// that returned nothing reads no run either.
+    #[tokio::test]
+    async fn one_summary_and_the_per_bot_counts_read_no_run_in_full() {
+        let scratch = Scratch::new("session-one-summary");
+        let mut store = Dolt::start(&scratch.0.clone(), free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+        let mut ids = Vec::new();
+        for (bot, sid) in [
+            ("bot:gamma", "bz01"),
+            ("bot:gamma", "bz02"),
+            ("bot:delta", "bz03"),
+        ] {
+            let run = sessions
+                .begin(NewSession {
+                    timezone: None,
+                    bot: EntityId(bot.into()),
+                    sid: Sid(sid.into()),
+                    focus: "a run".into(),
+                    started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                    started_on: None,
+                })
+                .await
+                .expect("begin ok");
+            sessions
+                .append(
+                    &run.id,
+                    NewEntry::manual(
+                        "a beat",
+                        "2026-01-01T00:05:00Z".parse().expect("a fixed instant"),
+                        None,
+                    ),
+                )
+                .await
+                .expect("append ok");
+            ids.push(run.id);
+        }
+
+        let before = sessions.full_reads();
+        let one = sessions
+            .summary_of(&ids[2])
+            .await
+            .expect("summary ok")
+            .expect("the run exists");
+        let counts = sessions.run_counts().await.expect("count ok");
+        assert_eq!(
+            sessions.full_reads(),
+            before,
+            "neither read may fall back to reading a run in full"
+        );
+        assert_eq!(one.bot, EntityId("bot:delta".into()), "{one:?}");
+        assert_eq!(one.entry_count, 1, "{one:?}");
+        assert_eq!(
+            counts.get(&EntityId("bot:gamma".into())),
+            Some(&2),
+            "{counts:?}"
+        );
+        assert_eq!(
+            counts.get(&EntityId("bot:delta".into())),
+            Some(&1),
+            "{counts:?}"
+        );
+        store.stop().await;
+    }
+
     #[tokio::test]
     async fn summaries_of_answers_sessions_ofs_own_numbers_without_the_full_read() {
         let scratch = Scratch::new("session-summaries");

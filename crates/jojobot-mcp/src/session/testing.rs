@@ -510,6 +510,8 @@ impl Sessions for RefusingWindowClear {
 pub(crate) struct CountingSessions {
     inner: InMemorySessions,
     reads: std::sync::atomic::AtomicUsize,
+    /// How many times every run on the board was asked for as summaries.
+    board_summaries: std::sync::atomic::AtomicUsize,
 }
 
 impl CountingSessions {
@@ -517,6 +519,7 @@ impl CountingSessions {
         CountingSessions {
             inner,
             reads: std::sync::atomic::AtomicUsize::new(0),
+            board_summaries: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -531,6 +534,14 @@ impl CountingSessions {
         self.reads.load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// How many times every run on the board has been read as summaries, so far.
+    /// A read that answers for one bot, one run or the count of runs does not
+    /// move it.
+    pub(crate) fn board_summaries(&self) -> usize {
+        self.board_summaries
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     fn counted(&self, runs: Vec<Session>) -> Vec<Session> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         runs
@@ -541,6 +552,26 @@ impl CountingSessions {
 impl Sessions for CountingSessions {
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.inner.sessions_of(bot).await.map(|r| self.counted(r))
+    }
+    async fn all_summaries(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
+        self.board_summaries
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.inner.all_summaries().await
+    }
+    /// Forwarded, as the layers over a real store forward them: left to the
+    /// default, this double would answer from the whole board and count it.
+    async fn summary_of(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<jojobot_domain::session::SessionSummary>, SessionError> {
+        self.inner.summary_of(id).await
+    }
+    async fn run_counts(
+        &self,
+    ) -> Result<std::collections::BTreeMap<EntityId, usize>, SessionError> {
+        self.inner.run_counts().await
     }
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
         self.inner.all_sessions().await.map(|r| self.counted(r))

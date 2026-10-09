@@ -455,6 +455,29 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         .expect("all summaries answer");
     assert_eq!(everyone.len(), 2, "{everyone:?}");
     assert!(everyone.iter().all(|s| s.bot == delta), "{everyone:?}");
+    // **The two reads that stand for one run and for the number of runs**: a
+    // layer that left either to the default answers the same and reads every run
+    // in full, which the counter below is what tells apart.
+    let one = wired
+        .sessions
+        .summary_of(&busy.id)
+        .await
+        .expect("a summary answers")
+        .expect("the run exists");
+    assert_eq!(one.bot, delta, "{one:?}");
+    assert!(
+        one.focus.contains(piano.as_str()),
+        "a mention in a focus reads as the handle, not a stored id: {one:?}"
+    );
+    assert_eq!(
+        wired
+            .sessions
+            .run_counts()
+            .await
+            .expect("the counts answer"),
+        [(delta.clone(), 2)].into_iter().collect(),
+        "a renamed bot's runs are one count, under the handle it answers to now"
+    );
     assert!(
         wired
             .sessions
