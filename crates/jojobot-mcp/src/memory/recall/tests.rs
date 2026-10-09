@@ -6829,3 +6829,115 @@ async fn a_key_filtered_recall_falls_back_to_the_full_read_when_the_index_answer
         "a list one short of the ceiling is the whole answer, and it names no carrier: {whole}"
     );
 }
+
+/// **A recall that asks the index for its candidates believes it only while the
+/// memory half reads loaded.** An index that is behind the store may not hold a
+/// carrier the store holds, and the read of everyone cannot miss one. The key
+/// filter and the type question share the one guard.
+///
+/// The index here names a thing that does not carry the key and not the one that
+/// does. Loaded, the walk believes it and finds nothing; in each of the three
+/// states that read as behind, the carrier is found anyway.
+#[tokio::test]
+async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
+    use jojobot_domain::memory::search::{Behind, Coverage};
+
+    let memory = shared_memory();
+    let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+    let sid = writing_as(&setup);
+    setup
+        .declare_type(Parameters(DeclareTypeArgs {
+            name: "loud".into(),
+            fields: vec![FieldArgs {
+                key: "volume".into(),
+                holds: Some("text".into()),
+                folds: None,
+                required: false,
+                one_of: None,
+            }],
+            sid: Some(sid.clone()),
+        }))
+        .await
+        .expect("declare_type ok");
+    ensure(&setup, "thing:teapot").await;
+    ensure(&setup, "thing:the-couch").await;
+    capture_ok(
+        &setup,
+        CaptureArgs {
+            sid: Some(sid),
+            fields: Some([("volume".to_string(), "eleven".to_string())].into()),
+            ..capture_args("thing:teapot", "the dial goes to eleven")
+        },
+    )
+    .await;
+    let the_couch = captured(&memory, "thing:the-couch").await;
+    let hits = vec![Hit::Entity {
+        entity: the_couch,
+        doc_id: "doc-couch".into(),
+        edges: Vec::new(),
+        answers: None,
+    }];
+    let by_key = || RecallArgs {
+        kind: Some("thing".into()),
+        fields: Some(vec![KeyFilterArgs {
+            key: Some("volume".into()),
+            value: Some("eleven".into()),
+            compare: None,
+            scope: None,
+        }]),
+        ..of_nothing()
+    };
+    let by_type = || RecallArgs {
+        answers_type: Some("loud".into()),
+        ..of_nothing()
+    };
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        body["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .map(|o| o["id"].as_str().expect("id").to_string())
+            .collect()
+    };
+
+    for (coverage, believed) in [
+        (Coverage::Loaded, true),
+        (Coverage::Unread, false),
+        (Coverage::Partial(Behind::Unscanned), false),
+        (Coverage::Partial(Behind::Stale), false),
+    ] {
+        let reader = handler_on(
+            memory.clone(),
+            Arc::new(SpySearch::over_memory(coverage, hits.clone())),
+        );
+        for (asked, args) in [("key", by_key()), ("type", by_type())] {
+            let body = json_of(&reader.recall(Parameters(args)).await.expect("recall ok"));
+            let found = ids(&body);
+            // The type question reports whether its routed search hit the
+            // ceiling. A search that was not believed routed nothing, so it
+            // reports nothing rather than a cap of a list nobody used.
+            if asked == "type" {
+                assert_eq!(
+                    body["candidates_capped"],
+                    if believed {
+                        serde_json::json!(false)
+                    } else {
+                        serde_json::Value::Null
+                    },
+                    "{coverage:?}: {body}"
+                );
+            }
+            match believed {
+                true => assert!(
+                    found.is_empty(),
+                    "{asked}: a loaded index is believed, and it names no carrier: {body}"
+                ),
+                false => assert_eq!(
+                    found,
+                    ["thing:teapot"],
+                    "{asked}: an index that is behind ({coverage:?}) is not believed: {body}"
+                ),
+            }
+        }
+    }
+}

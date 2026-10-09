@@ -11,7 +11,7 @@ use jojobot_domain::attention;
 
 use super::*;
 use crate::session::session_declined;
-use jojobot_domain::memory::search::HeldField;
+use jojobot_domain::memory::search::{Coverage, HeldField};
 use jojobot_domain::memory::types::Compare;
 use jojobot_domain::memory::{entitlement, graph};
 use jojobot_domain::text;
@@ -2069,14 +2069,20 @@ impl Jojobot {
                 Ok(hits) => hits,
                 Err(e) => return memory_declined("recall", e),
             };
+            // **The candidates are believed only while the memory half reads
+            // loaded.** An index that is behind the store (never read, or
+            // holding an older version) may lack a carrier the store holds, and
+            // the read of everyone cannot miss one. It is asked after the search,
+            // which refreshes the half, so a first read that fills it is counted.
+            let believed = self.search.memory_coverage() == Coverage::Loaded;
             let capped = hit_candidate_ceiling(candidates.len(), CARRIER_CANDIDATES_LIMIT);
-            if type_only {
+            if type_only && believed {
                 candidates_capped = Some(capped);
             }
             // **A key filter's answer does not change with the index's depth**: a
             // candidate list cut at the ceiling would drop carriers the full read
             // finds, so a capped one is not used and the read of everyone stands.
-            if type_only || !capped {
+            if believed && (type_only || !capped) {
                 query.select.candidates = Some(
                     candidates
                         .into_iter()
