@@ -1608,6 +1608,254 @@ async fn a_bot_page_shows_the_mailbox_it_owns_and_the_mail_in_it() {
     ct.cancel();
 }
 
+// --- a page holds the newest of what it lists, and says what it left out ------
+
+/// A page of the browser as a logged-in reader sees it, over a board a case
+/// built, and nothing else.
+async fn page_over(board: Board, path: &str) -> String {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let body = read(&client, addr, path, &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    ct.cancel();
+    body
+}
+
+/// The count a page says it left out under `id`, or `None` when it says nothing.
+/// Read off the element's own attribute: the sentence around it is the page's
+/// wording and not what a case holds it to.
+fn left_out(body: &str, id: &str) -> Option<usize> {
+    let anchor = format!("id=\"{id}\" data-left-out=\"");
+    let rest = body.split_once(&anchor)?.1;
+    Some(
+        rest.split_once('"')
+            .expect("the attribute closes")
+            .0
+            .parse()
+            .expect("a count"),
+    )
+}
+
+/// `n` moments one minute apart, the first at the fixed instant.
+fn minute(n: usize) -> jiff::Timestamp {
+    FIXED_INSTANT + jiff::SignedDuration::from_secs(60 * n as i64)
+}
+
+/// Otto and the box it owns, with no mail in it and no run.
+async fn otto_with_nothing_yet() -> Board {
+    let memory = seeded_memory().await;
+    let bot = EntityId("bot:otto".into());
+    memory
+        .add_entity(NewEntity::new(bot.clone(), "Otto", "the fixture roster"))
+        .await
+        .expect("the bot is written");
+    let mailboxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    mailboxes
+        .create_mailbox(&MailboxName("otto".to_string()), &bot, None)
+        .await
+        .expect("the box opens");
+    Board {
+        memory,
+        mailboxes,
+        sessions: Arc::new(InMemorySessions::new()),
+    }
+}
+
+/// The page of a bot holding `n` messages, the first sent earliest.
+async fn otto_page_with_mail(n: usize) -> String {
+    let board = otto_with_nothing_yet().await;
+    for i in 1..=n {
+        board
+            .mailboxes
+            .post_message(NewMessage {
+                mailbox: MailboxName("otto".to_string()),
+                body: format!("body {i}"),
+                subject: Some(format!("mail-{i:02}")),
+                sender: "bot:gamma".to_string(),
+                sent_at: minute(i),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("the message is posted");
+    }
+    page_over(board, "/bot:otto/").await
+}
+
+/// **A bot's page holds the newest twenty messages, newest first, and says how
+/// many it left out.** Over the limit: the newest twenty are there and the five
+/// before them are not, and the count is five. At the limit: all twenty and no
+/// line, so a page that always said something would fail here, and a page that
+/// always cut would fail above.
+#[tokio::test]
+async fn a_bot_page_holds_the_newest_twenty_messages_and_counts_the_rest() {
+    let over = otto_page_with_mail(25).await;
+    for kept in 6..=25 {
+        assert!(
+            over.contains(&format!("mail-{kept:02}")),
+            "mail-{kept:02}: {over}"
+        );
+    }
+    for dropped in 1..=5 {
+        assert!(
+            !over.contains(&format!("mail-{dropped:02}")),
+            "mail-{dropped:02} is older than the twenty: {over}"
+        );
+    }
+    assert!(
+        over.find("mail-25") < over.find("mail-24"),
+        "the newest comes first: {over}"
+    );
+    assert_eq!(left_out(&over, "mailbox-left-out"), Some(5), "{over}");
+    assert!(
+        over.contains("25 new"),
+        "the counts above the table still count the whole box: {over}"
+    );
+
+    let at = otto_page_with_mail(20).await;
+    for kept in 1..=20 {
+        assert!(
+            at.contains(&format!("mail-{kept:02}")),
+            "mail-{kept:02}: {at}"
+        );
+    }
+    assert_eq!(left_out(&at, "mailbox-left-out"), None, "{at}");
+}
+
+/// The page of a bot holding `n` runs, each with one beat, the first earliest.
+async fn otto_page_with_runs(n: usize) -> String {
+    let board = otto_with_nothing_yet().await;
+    for i in 1..=n {
+        let run = board
+            .sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:otto".into()),
+                sid: Sid(format!("r{i:03}")),
+                focus: format!("focus-{i:02}"),
+                started_at: minute(i),
+                started_on: None,
+            })
+            .await
+            .expect("the run begins");
+        board
+            .sessions
+            .append(
+                &run.id,
+                NewEntry::manual(format!("beat-{i:02}"), minute(i), None),
+            )
+            .await
+            .expect("the beat is recorded");
+    }
+    page_over(board, "/bot:otto/").await
+}
+
+/// **A bot's page lists every run and writes out the chronologies of the newest
+/// twenty**, then says how many it left out. The table is one line a run, so it
+/// is the index of what exists; the chronologies are what grows.
+#[tokio::test]
+async fn a_bot_page_writes_out_the_newest_twenty_chronologies_and_counts_the_rest() {
+    let over = otto_page_with_runs(25).await;
+    let runs = section(&over, "sessions");
+    for every in 1..=25 {
+        assert!(
+            runs.contains(&format!("focus-{every:02}")),
+            "the table keeps a line for run {every}: {over}"
+        );
+    }
+    for kept in 6..=25 {
+        assert!(
+            over.contains(&format!("beat-{kept:02}")),
+            "beat-{kept:02}: {over}"
+        );
+    }
+    for dropped in 1..=5 {
+        assert!(
+            !over.contains(&format!("beat-{dropped:02}")),
+            "beat-{dropped:02} is in a run older than the twenty: {over}"
+        );
+    }
+    assert!(
+        over.find("Chronology of r025") < over.find("Chronology of r024"),
+        "the newest run comes first: {over}"
+    );
+    assert_eq!(left_out(&over, "sessions-left-out"), Some(5), "{over}");
+
+    let at = otto_page_with_runs(20).await;
+    for kept in 1..=20 {
+        assert!(
+            at.contains(&format!("beat-{kept:02}")),
+            "beat-{kept:02}: {at}"
+        );
+    }
+    assert_eq!(left_out(&at, "sessions-left-out"), None, "{at}");
+}
+
+/// The page of `person:alpha` holding `n` keys, written one day apart, the
+/// first earliest.
+async fn alpha_page_with_keys(n: usize) -> String {
+    let raw = InMemoryMemory::booted();
+    let clock = raw.clock_handle();
+    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(Arc::new(raw)));
+    seed(memory.as_ref()).await;
+    for i in 1..=n {
+        clock.stating(Date::constant(2026, 4, 1) + jiff::Span::new().days(i as i64));
+        let mut piece = NewFact::about(
+            EntityId("person:alpha".into()),
+            format!("wrote key {i}"),
+            Date::constant(2026, 4, 1),
+        );
+        piece.fields = [(format!("key-{i:02}"), format!("value-{i:02}"))]
+            .into_iter()
+            .collect();
+        memory.capture(piece).await.expect("the field is written");
+    }
+    page_over(seeded_board_over(memory).await, "/person:alpha/").await
+}
+
+/// **A page shows the forty keys written most recently, newest first, and says
+/// how many it left out.** The age is the moment of the write holding the value
+/// now, so a key written again moves up.
+#[tokio::test]
+async fn a_node_page_shows_the_forty_newest_keys_and_counts_the_rest() {
+    let over = alpha_page_with_keys(45).await;
+    let fields = section(&over, "fields");
+    for kept in 6..=45 {
+        assert!(
+            fields.contains(&format!("key-{kept:02}")),
+            "key-{kept:02}: {over}"
+        );
+    }
+    for dropped in 1..=5 {
+        assert!(
+            !fields.contains(&format!("key-{dropped:02}")),
+            "key-{dropped:02} is older than the forty: {over}"
+        );
+    }
+    assert!(
+        fields.find("key-45") < fields.find("key-44"),
+        "the newest comes first: {over}"
+    );
+    assert_eq!(left_out(&over, "fields-left-out"), Some(5), "{over}");
+
+    let at = alpha_page_with_keys(40).await;
+    let fields = section(&at, "fields");
+    for kept in 1..=40 {
+        assert!(
+            fields.contains(&format!("key-{kept:02}")),
+            "key-{kept:02}: {at}"
+        );
+    }
+    assert_eq!(left_out(&at, "fields-left-out"), None, "{at}");
+}
+
 // --- the operator's own mail ------------------------------------------------
 
 /// What the operator cases read back: the id of the one message left in the

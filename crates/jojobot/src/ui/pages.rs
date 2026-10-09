@@ -10,7 +10,9 @@ use axum::{
 };
 
 use jojobot_domain::attention;
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, graph, kinds, mention};
+use jojobot_domain::memory::{
+    Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention,
+};
 use jojobot_domain::text;
 
 use crate::AppState;
@@ -121,6 +123,27 @@ pub struct NodeQuery {
     pub(crate) history: Option<String>,
 }
 
+/// **How much of what grows a page holds before it says what it left out.** A
+/// page that listed everything would grow with the history of the thing it
+/// shows; the newest of each is what a reader came to look at, and the rest is
+/// one read away, which each section says.
+const FIELDS_SHOWN: usize = 40;
+/// The runs whose chronologies a bot's page writes out. The table above them
+/// keeps a line for every run.
+const RUNS_SHOWN: usize = 20;
+/// The messages of one box a bot's page writes out.
+const MAIL_SHOWN: usize = 20;
+
+/// **The line a section ends with when it showed fewer than it holds.** The count
+/// rides in an attribute so a reader of the markup, and a test, takes the number
+/// from the structure and not from the sentence around it.
+fn left_out_line(id: &str, left: usize, what: &str, where_read: &str) -> String {
+    format!(
+        "<p id=\"{id}\" data-left-out=\"{left}\">{left} {what} left out of this page. \
+         {where_read}</p>\n"
+    )
+}
+
 /// `/{path}` — one node: what sits below it, and the facts held there.
 ///
 /// **The path is the entity's ancestry, so there is one URL per entity.** A
@@ -173,6 +196,12 @@ pub async fn node(
         Ok(held) => held,
         Err(err) => return unreadable(err),
     };
+    // **When each key was written is what orders the section**, so it is read
+    // the way the keys are and fails the page the same way.
+    let ages = match state.memory.field_ages(&entity.id).await {
+        Ok(ages) => ages,
+        Err(err) => return unreadable(err),
+    };
 
     // Prose is the human half of the record — a charter, a portrait. Its
     // absence is ordinary, and a store that cannot be asked for it costs the
@@ -192,7 +221,7 @@ pub async fn node(
         trail(&handles)
     );
     body.push_str(&about(entity));
-    body.push_str(&fields_section(&held, &canonical));
+    body.push_str(&fields_section(&held, &ages, &entity.id, &canonical));
     // **A view is a question, so its page answers it.** It sits under the
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
@@ -287,12 +316,20 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
             .iter()
             .filter(|message| message.mailbox == box_.name)
             .collect();
-        mail.sort_by_key(|message| message.sent_at);
+        // **The newest first**, and the message's id breaks a tie so two
+        // readings of one page agree.
+        mail.sort_by(|a, b| {
+            b.sent_at
+                .cmp(&a.sent_at)
+                .then_with(|| b.id.as_str().cmp(a.id.as_str()))
+        });
 
         if mail.is_empty() {
             out.push_str("<p>Nothing has been left here.</p>\n");
             continue;
         }
+        let left = mail.len().saturating_sub(MAIL_SHOWN);
+        mail.truncate(MAIL_SHOWN);
         out.push_str(
             "<table id=\"mailbox\">\n<tr><th>Id</th><th>State</th><th>From</th><th>About</th>\
              <th>Sent</th><th>Outcome</th></tr>\n",
@@ -311,6 +348,14 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
             ));
         }
         out.push_str("</table>\n");
+        if left > 0 {
+            out.push_str(&left_out_line(
+                "mailbox-left-out",
+                left,
+                "older messages are",
+                "`search` with include_mail reads them, whatever their state.",
+            ));
+        }
     }
     out
 }
@@ -421,14 +466,21 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
 /// `sessions_of` is a read: it begins nothing, closes nothing and sweeps
 /// nothing. Booting is what starts a run, and this page is not a boot.
 async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
-    let mut runs = match state.sessions.sessions_of(bot).await {
+    // **The summaries are the table, and a run is read whole only when its
+    // chronology is written out**, so a bot with a long history costs a line a
+    // run and the chronologies of the newest few.
+    let mut runs = match state.sessions.summaries_of(bot).await {
         Ok(runs) => runs,
         Err(err) => return blind("Runs", "the session records", &err.to_string()),
     };
     if runs.is_empty() {
         return "<h2>Runs</h2>\n<p>This bot has never run.</p>\n".to_string();
     }
-    runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
+    runs.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.id.as_str().cmp(a.id.as_str()))
+    });
 
     let mut out = String::from(
         "<h2>Runs</h2>\n<table id=\"sessions\">\n\
@@ -442,7 +494,7 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
             escape(run.state.as_token()),
             escape(&run.focus),
             escape(&run.started_at.to_string()),
-            run.entries.len(),
+            run.entry_count,
         ));
     }
     out.push_str("</table>\n");
@@ -450,10 +502,15 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
     // The chronology is the record of the run, so it is on the page rather
     // than a click away. A beat jojobot wrote is marked apart from one the
     // session wrote, because they are different kinds of evidence.
-    for run in &runs {
-        if run.entries.is_empty() {
-            continue;
-        }
+    for summary in runs
+        .iter()
+        .filter(|run| run.entry_count > 0)
+        .take(RUNS_SHOWN)
+    {
+        let run = match state.sessions.read_session(&summary.id).await {
+            Ok(run) => run,
+            Err(err) => return blind("Runs", "the session records", &err.to_string()),
+        };
         out.push_str(&format!(
             "<h3>Chronology of {}</h3>\n<table>\n<tr><th>When</th><th>Beat</th><th>Entry</th></tr>\n",
             escape(run.sid.as_ref().map_or("", |sid| sid.as_str())),
@@ -468,16 +525,26 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
         }
         out.push_str("</table>\n");
     }
+    let with_beats = runs.iter().filter(|run| run.entry_count > 0).count();
+    if with_beats > RUNS_SHOWN {
+        out.push_str(&left_out_line(
+            "sessions-left-out",
+            with_beats - RUNS_SHOWN,
+            "older chronologies are",
+            "`recall` with kind session and prose reads them.",
+        ));
+    }
     out
 }
 
 /// A block somebody wrote — whole, and folded to its opening when it is long.
 ///
-/// **Nothing is left out.** The full text is inside the element, on this page:
-/// a window for reading your own instance that dropped the end of a record
-/// would be the wrong tool, and the fold is about scanning a page rather than
-/// about what it carries. So there is no marker saying where to get the rest —
-/// the rest is here.
+/// **Nothing of a block it writes is left out.** The full text is inside the
+/// element, on this page: a window for reading your own instance that dropped
+/// the end of a record would be the wrong tool, and the fold is about scanning
+/// a page rather than about what it carries. So there is no marker saying where
+/// to get the rest — the rest is here. Which records a section writes out at
+/// all is a different question, and a section that leaves some out says so.
 ///
 /// **The opening and the size are jojobot's existing answers, not new ones.**
 /// `BODY_DIGEST` is the strategy every other surface uses for the opening of a
@@ -575,12 +642,29 @@ fn about(entity: &Entity) -> String {
 /// vanished would leave a reader unable to tell a thing with no fields from a
 /// page that does not show them, which is the very confusion this section
 /// exists to end.
-fn fields_section(folded: &BTreeMap<String, String>, canonical: &str) -> String {
+fn fields_section(
+    folded: &BTreeMap<String, String>,
+    ages: &FieldAges,
+    entity: &EntityId,
+    canonical: &str,
+) -> String {
     if folded.is_empty() {
         return "<h2>Fields</h2>\n<p>Nothing is recorded on this.</p>\n".to_string();
     }
+    // **The newest write first, and a key with no moment after every key that
+    // has one**: absence is the store's answer where no moment was observed, and
+    // it is not turned into a day here. Ties fall to the key's name, so two
+    // readings of one page agree.
+    let mut keys: Vec<(&String, &String)> = folded.iter().collect();
+    keys.sort_by(|(a, _), (b, _)| {
+        ages.keys
+            .get(*b)
+            .cmp(&ages.keys.get(*a))
+            .then_with(|| a.cmp(b))
+    });
+    let left = keys.len().saturating_sub(FIELDS_SHOWN);
     let mut out = String::from("<h2>Fields</h2>\n<table id=\"fields\">\n");
-    for (key, value) in folded {
+    for (key, value) in keys.into_iter().take(FIELDS_SHOWN) {
         // **The key is a link to its own writes.** What a key holds now is one
         // answer and how it got there is the other, and a page that showed
         // only the first is a page where the second cannot be asked for.
@@ -593,6 +677,17 @@ fn fields_section(folded: &BTreeMap<String, String>, canonical: &str) -> String 
         ));
     }
     out.push_str("</table>\n");
+    if left > 0 {
+        out.push_str(&left_out_line(
+            "fields-left-out",
+            left,
+            "older keys are",
+            &format!(
+                "`recall` on {} reads every key this holds.",
+                escape(entity.as_str())
+            ),
+        ));
+    }
     out
 }
 
