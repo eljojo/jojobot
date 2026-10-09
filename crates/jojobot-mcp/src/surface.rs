@@ -668,6 +668,18 @@ fn capture_and_update_fact_define_the_day_arguments_in_the_same_words() {
     }
 }
 
+/// **`confirmed_by_user` says plainly that it is trusted and not checked.** The
+/// flag gates two promotions and nothing verifies that the operator said yes, so
+/// a caller must not read it as a proof.
+#[test]
+fn update_facts_confirmed_by_user_says_it_is_trusted_and_not_checked() {
+    let described = argument_description("update_fact", "confirmed_by_user");
+    assert!(
+        described.contains("trusted"),
+        "confirmed_by_user does not say it is trusted rather than checked: {described}"
+    );
+}
+
 /// **The orientation essay's list of kinds names `role`**, the kind a claimed
 /// role is made as, so a caller reading the list is not surprised by it in a
 /// listing.

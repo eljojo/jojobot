@@ -129,6 +129,9 @@ pub struct UpdateFactArgs {
     /// (inference or observation alike), and an open standing → settled. Set it only when the operator has actually
     /// confirmed the claim. Nothing else is gated on it — a fresh `capture`
     /// declares its provenance and its standing on honour.
+    ///
+    /// The flag is trusted, not checked: nothing verifies that the operator said
+    /// yes.
     #[serde(default)]
     pub(crate) confirmed_by_user: Option<bool>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
