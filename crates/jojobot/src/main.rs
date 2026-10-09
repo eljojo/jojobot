@@ -152,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         ui,
         clock: config.clock,
         push,
+        quiet_after: None,
     };
     // The pool every port above holds is only good for as long as this
     // process's own store is running. Kept alive for the rest of `main`

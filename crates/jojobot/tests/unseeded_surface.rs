@@ -50,6 +50,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     };
     // **A store with its records, and a process that never loaded the set.**
     // That is the state `main` tolerates and logs: the store was unreachable

@@ -38,9 +38,9 @@ async fn a_bot_that_carries_a_role_claims_it_at_every_boot() {
         first["session"]["claim"]["claimed_because"].is_string(),
         "{first}"
     );
-    let holder = first["session"]["sid"]
+    let holder = first["session"]["run"]
         .as_str()
-        .expect("a handle")
+        .expect("a run name")
         .to_string();
 
     // A second boot as Gamma is refused, and told who holds it.

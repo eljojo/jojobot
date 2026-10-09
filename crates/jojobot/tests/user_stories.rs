@@ -89,6 +89,8 @@ mod investigating;
 /// The three loops a person actually keeps, and the one with no cadence.
 #[path = "user_stories/keeping_up.rs"]
 mod keeping_up;
+#[path = "user_stories/session_key.rs"]
+mod session_key;
 
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]

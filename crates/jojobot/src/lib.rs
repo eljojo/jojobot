@@ -69,6 +69,11 @@ pub struct AppState {
     /// **Told after a post to the operator lands**, when the instance is set up
     /// to push to a phone. `None` pushes nothing.
     pub push: Option<Arc<dyn jojobot_domain::push::Nudge>>,
+    /// **How long a run must have gone without a write before its public name
+    /// can take it.** `None` is the lease, which is what every instance runs
+    /// with; a test of the other rules shortens it so it need not wait out the
+    /// lease, and the test of this rule leaves it.
+    pub quiet_after: Option<jiff::SignedDuration>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -97,6 +102,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     let registry = state.registry.clone();
     let clock = state.clock;
     let push = state.push.clone();
+    let quiet_after = state.quiet_after;
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
@@ -111,6 +117,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 registry.clone(),
             )
             .on_clock(clock)
+            .quiet_after_unless_default(quiet_after)
             .pushing(push.clone()))
         },
         LocalSessionManager::default().into(),

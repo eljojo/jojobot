@@ -2316,6 +2316,8 @@ async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
                 started_at: jiff::Timestamp::now(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("seeding a run");
@@ -2458,6 +2460,8 @@ async fn seed_runs(
                 started_at: jiff::Timestamp::now(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("seeding a run");

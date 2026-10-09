@@ -5190,7 +5190,7 @@ async fn a_bots_session_is_not_readable_by_a_different_bot() {
 
     let other_sid = jojobot
         .registry
-        .mint(&EntityId("bot:milhouse".into()), None)
+        .mint(&EntityId("bot:milhouse".into()))
         .expect("a free handle in a fresh registry")
         .to_string();
 
@@ -5248,7 +5248,7 @@ async fn browsing_runs_by_kind_finds_only_the_callers_own_and_counts_the_rest() 
 
     let other_sid = jojobot
         .registry
-        .mint(&EntityId("bot:milhouse".into()), None)
+        .mint(&EntityId("bot:milhouse".into()))
         .expect("a free handle in a fresh registry")
         .to_string();
     journal_entry(
@@ -5361,7 +5361,7 @@ async fn recall_reads_only_the_wanted_runs_chronology_not_every_ones() {
     for n in 0..5 {
         let sid = jojobot
             .registry
-            .mint(&EntityId("bot:otto".into()), None)
+            .mint(&EntityId("bot:otto".into()))
             .expect("a free handle in a fresh registry")
             .to_string();
         let receipt = journal_entry(&jojobot, &sid, &format!("run {n}'s own beat")).await;
@@ -5460,6 +5460,8 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
                 started_at: jiff::Timestamp::now(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("seeding a run");
@@ -5617,8 +5619,9 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     for _ in 0..2 {
         let other = jojobot
             .registry
-            .mint(&EntityId("bot:milhouse".into()), None)
+            .mint(&EntityId("bot:milhouse".into()))
             .expect("a free handle in a fresh registry")
+            .as_str()
             .to_string();
         let receipt = journal_entry(&jojobot, &other, "milhouse's own beat").await;
         theirs.push(format!(
@@ -5934,6 +5937,8 @@ async fn a_room_read_ages_on_the_bots_own_setting_and_names_where_it_came_from()
                     started_at: jiff::Timestamp::now(),
                     timezone: None,
                     started_on: None,
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("seeding a run");

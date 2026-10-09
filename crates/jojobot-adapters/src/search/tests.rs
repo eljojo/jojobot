@@ -2566,6 +2566,7 @@ async fn a_board_read_that_began_after_a_failure_clears_it() {
 fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session::Session {
     use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     Session {
+        key_hash: None,
         started_on: None,
         timezone: None,
         served_chars: 0,
@@ -2751,6 +2752,13 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
         _: &jojobot_domain::session::SessionId,
         _: jiff::Timestamp,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn set_key_hash(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+        _: &str,
     ) -> Result<(), jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
@@ -3196,6 +3204,7 @@ fn a_session_ingest_that_changes_nothing_writes_nothing() {
 fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::session::Session {
     use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     Session {
+        key_hash: None,
         started_on: None,
         timezone: None,
         served_chars: 0,

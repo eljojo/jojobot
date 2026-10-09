@@ -384,6 +384,8 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         started_at: at.parse().expect("a fixed instant"),
         timezone: None,
         started_on: None,
+        id: None,
+        key_hash: None,
     };
     let busy = wired
         .sessions

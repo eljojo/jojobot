@@ -336,7 +336,7 @@ async fn a_boot_that_sends_a_zone_other_than_the_instances_is_told_which_two() {
     let (resumed, _) = story
         .call(
             "start_here",
-            json!({"bot": "otto", "brief": true, "resume": sending.sid()}),
+            json!({"bot": "otto", "brief": true, "resume": sending.run()}),
         )
         .await;
     let resumed = resumed.json();

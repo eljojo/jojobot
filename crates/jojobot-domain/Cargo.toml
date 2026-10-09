@@ -18,6 +18,9 @@ async-trait = { workspace = true }
 # nothing about a fronted service crosses with it.
 getrandom = { workspace = true }
 serde = { workspace = true }
+# sha2: a run's key is stored as its SHA-256 and never as itself, and the hash
+# is a pure function of the key, so it lives beside the key's shape rules.
+sha2 = "0.10"
 jiff = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 # Optional, and only ever pulled in by the `testing` feature below: the shared

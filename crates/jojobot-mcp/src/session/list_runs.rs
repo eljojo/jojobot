@@ -99,15 +99,11 @@ impl Jojobot {
             .iter()
             .map(|session| {
                 let json = serde_json::json!({
-                    // **The handle the card was born with, read off the
-                    // record — never minted.** A registry mint is a write,
-                    // and this call promises to begin, close and sweep none
-                    // of a bot's runs. A card written before handles were
-                    // persisted carries none, and comes back `null` rather
-                    // than minted on the spot: honest about what this run
-                    // cannot yet be addressed by, rather than a side effect
-                    // a plain read must not have.
-                    "sid": session.sid.as_ref().map(|s| s.as_str()),
+                    // **The run's public name, read off the record — never
+                    // minted, and never a key.** A key is shown once, to the
+                    // run it opens. A card written before names were kept goes
+                    // by its own id.
+                    "run": session.sid.as_ref().map_or(session.id.as_str(), |s| s.as_str()),
                     "working_on": session.focus,
                     "state": session.state.as_token(),
                     "started_at": session.started_at.to_string(),
@@ -181,6 +177,8 @@ mod tests {
                 sid: fixture_sid(line!() + nth),
                 focus: focus.into(),
                 started_at: jiff::Timestamp::now(),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok")
@@ -289,13 +287,14 @@ mod tests {
                 .expect("list_runs ok"),
         );
         assert_eq!(body["count"], 1, "{body}");
-        assert!(
-            body["runs"][0]["sid"].is_null(),
-            "a card with no stored handle must not be minted one by a plain read: {body}"
+        assert_eq!(
+            body["runs"][0]["run"],
+            legacy.id.as_str(),
+            "a card with no stored name goes by its own id: {body}"
         );
         assert!(
-            jojobot.registry.addressing(&legacy.id).is_none(),
-            "list_runs must not have minted a handle for this card"
+            jojobot.registry.name_of_card(&legacy.id).is_none(),
+            "list_runs must not have registered a name for this card"
         );
     }
 
@@ -351,6 +350,8 @@ mod tests {
                 started_at: jiff::Timestamp::now()
                     - jojobot_domain::session::ABANDONED_AFTER
                     - jiff::SignedDuration::from_hours(1),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");

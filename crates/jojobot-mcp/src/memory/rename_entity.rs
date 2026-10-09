@@ -762,9 +762,14 @@ mod tests {
         // answer — and it resumes, with the OLD story intact.
         let resumed = boot_answering(&restarted, "sigma", &writer).await;
         assert_eq!(
+            run_of(&resumed),
+            Some(run_name(&jojobot, &writer)),
+            "the same run, still addressed by the same name after a restart: {resumed}",
+        );
+        assert_ne!(
             sid_of(&resumed).as_deref(),
             Some(writer.as_str()),
-            "the same handle, still addressing the same run after a restart: {resumed}",
+            "a resume hands the run a new key: {resumed}",
         );
         assert_eq!(
             resumed["session"]["session"]["chronology"][0]["text"], "before the rename",

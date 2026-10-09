@@ -180,6 +180,8 @@ async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed
             started_at: started,
             timezone: None,
             started_on: None,
+            id: None,
+            key_hash: None,
         })
         .await
         .expect("begin ok");
@@ -1387,6 +1389,8 @@ async fn a_journal_entry_written_before_the_closing_mark_reads_as_not_closing() 
             started_at: sessions::epoch(),
             timezone: None,
             started_on: None,
+            id: None,
+            key_hash: None,
         })
         .await
         .expect("begin ok");
@@ -1442,6 +1446,8 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
         started_at: sessions::epoch(),
         timezone: None,
         started_on: None,
+        id: None,
+        key_hash: None,
     };
     sessions_store
         .begin(begin("rfs1"))
@@ -5704,6 +5710,8 @@ async fn session_write_summary_answers_the_real_store() {
             started_at: started,
             timezone: None,
             started_on: None,
+            id: None,
+            key_hash: None,
         })
         .await
         .expect("begin ok");
@@ -5898,6 +5906,8 @@ async fn session_write_summary_answers_the_real_store() {
             started_at: started,
             timezone: None,
             started_on: None,
+            id: None,
+            key_hash: None,
         })
         .await
         .expect("begin ok");

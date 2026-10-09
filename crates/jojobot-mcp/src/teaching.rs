@@ -215,14 +215,16 @@ pub(crate) const CHECK_IN_DATE_TEACHING: &str = "A check-in's schedule is dated 
 /// handover should quote.
 pub(crate) const SESSION_ID_DOMAIN: &str = "session-id";
 
-/// **The sentence for [`SESSION_ID_DOMAIN`]**, naming the two real values so a
-/// caller sees its own ids reflected back and has nothing to work out. The
-/// `sid` is the one a resume offer lists and the one every call takes.
-pub(crate) fn session_id_teaching(sid: &str, session: &str) -> String {
+/// **The sentence for [`SESSION_ID_DOMAIN`]**, naming the run's name and the
+/// record the answer calls `session`, so a caller sees its own run reflected
+/// back and has nothing to work out. The name is what a resume offer lists;
+/// the key is what every call takes, and is never written anywhere.
+pub(crate) fn session_id_teaching(name: &str, session: &str) -> String {
     format!(
-        "Your `sid` {sid} and the `session` {session} in this answer are one run. `session` is \
-         the stored record of the run that `sid` addresses. Quote the `sid`: it is what every \
-         call takes and what a later boot offers when it asks you to resume."
+        "Your run is called {name}, and the `session` {session} in this answer is its stored \
+         record. Cite the run by its name, which is what a later boot offers when it asks you \
+         to resume. Your `sid` is the run's key: it is what every call takes, it is yours \
+         alone, and nothing you write should hold it."
     )
 }
 
@@ -1368,8 +1370,13 @@ mod tests {
             teachings,
             registry,
         );
+        let opened_name = run_name(&first, &opened);
         let picked_up = resumed(&second, "gamma").await;
-        assert_eq!(picked_up, opened, "a reconnect resumes the same handle");
+        assert_eq!(
+            run_name(&second, &picked_up),
+            opened_name,
+            "a reconnect resumes the same run"
+        );
 
         let again = capture_as(
             &second,
@@ -1887,9 +1894,10 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("a receipt naming its session: {first}"))
             .to_string();
+        let name = run_name(&jojobot, &sid);
         assert_ne!(
             session, sid,
-            "the case rests on the two ids being different strings"
+            "the case rests on the key and the session being different strings"
         );
         let told = |body: &serde_json::Value| -> bool {
             body["teaching"]
@@ -1897,7 +1905,7 @@ mod tests {
                 .map(|teaching| {
                     teaching.iter().any(|t| {
                         t.as_str()
-                            .is_some_and(|t| t.contains(&sid) && t.contains(&session))
+                            .is_some_and(|t| t.contains(&name) && t.contains(&session))
                     })
                 })
                 .unwrap_or(false)
@@ -1946,9 +1954,9 @@ mod tests {
         assert!(
             other["teaching"]
                 .as_array()
-                .map(|teaching| teaching
-                    .iter()
-                    .any(|t| t.as_str().is_some_and(|t| t.contains(&other_sid)
+                .map(|teaching| teaching.iter().any(|t| t
+                    .as_str()
+                    .is_some_and(|t| t.contains(&run_name(&jojobot, &other_sid))
                         && other["session"].as_str().is_some_and(|s| t.contains(s)))))
                 .unwrap_or(false),
             "a fresh session is told again, with its own two values: {other}"

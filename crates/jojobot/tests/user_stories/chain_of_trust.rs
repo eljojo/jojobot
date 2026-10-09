@@ -400,7 +400,8 @@ async fn a_code_goes_to_the_operator_alone_and_a_boot_that_presents_it_is_given_
         .await
         .says("\"state\":\"held\"")
         .says("\"right\":\"boot-as\"")
-        .says(&format!("\"holder\":\"{}\"", session.sid()))
+        .says(&format!("\"holder\":\"{}\"", session.run()))
+        .never_says(session.sid())
         .says("\"issuer\":\"person:lisa\"")
         .never_says("\"parent\"");
     s.call("recall", json!({"subject": challenge}))
@@ -495,7 +496,8 @@ async fn the_assistants_code_grants_the_root_which_turns_the_gate_on_and_dies_wi
         .says("\"state\":\"held\"")
         .says("\"right\":\"root\"")
         .says("\"issuer\":\"person:lisa\"")
-        .says(&format!("\"holder\":\"{}\"", assistant.sid()))
+        .says(&format!("\"holder\":\"{}\"", assistant.run()))
+        .never_says(assistant.sid())
         .never_says("\"parent\"");
 
     // ── the first root turned the gate on, for every named boot after it ────

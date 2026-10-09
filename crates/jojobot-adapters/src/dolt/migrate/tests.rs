@@ -100,6 +100,8 @@ const ALL_VERSIONS: &[&str] = &[
     "0071_session_charter_told_at",
     "0072_store_pass",
     "0073_push_outbox",
+    "0074_session_key_hash",
+    "0075_session_teaching_run_name",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

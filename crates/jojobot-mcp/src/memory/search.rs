@@ -979,8 +979,8 @@ impl Jojobot {
                 .count()
                 .into();
         }
-        if let Some(sid) = args.sid.as_deref() {
-            self.registry.note_shown(sid, &body);
+        if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
+            self.registry.note_shown(caller.sid.as_str(), &body);
         }
         json_result(&body)
     }
@@ -2998,7 +2998,7 @@ mod tests {
 
         let milhouse_sid = jojobot
             .registry
-            .mint(&EntityId("bot:milhouse".into()), None)
+            .mint(&EntityId("bot:milhouse".into()))
             .expect("a free handle in a fresh registry")
             .to_string();
         crate::session::testing::journal_entry(
@@ -3084,7 +3084,11 @@ mod tests {
         let sid = writing_as(&jojobot);
         let quiet = jojobot
             .registry
-            .mint_with(&EntityId("bot:otto".into()), None, || "tst3".to_string())
+            .mint_with(
+                &EntityId("bot:otto".into()),
+                || "tst3".to_string(),
+                jojobot_domain::session::mint_key,
+            )
             .expect("a second session")
             .to_string();
         let create = |sid: String| {

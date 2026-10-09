@@ -110,8 +110,60 @@ pub const SID_LEN: usize = 4;
 /// told apart where they are answered, because "you mistyped it" and "that
 /// session is gone" send a caller to different places.
 pub fn is_readable_sid(sid: &str) -> bool {
-    crate::handle::is_drawn(sid, SID_LEN)
+    crate::handle::is_drawn(sid, SID_LEN) || is_run_name(sid)
 }
+
+/// **How many characters a run's public name is.** The name is minted at the
+/// boot and is also the id of the run's record once the run writes, so it is
+/// the same length as every other drawn record id.
+pub const RUN_LEN: usize = 6;
+
+/// Whether this string has the shape of a run name minted at a boot. A run
+/// that began before names were minted keeps its four-character handle as its
+/// name, and [`is_readable_sid`] accepts both.
+pub fn is_run_name(name: &str) -> bool {
+    crate::handle::is_drawn(name, RUN_LEN)
+}
+
+/// **Every run key starts with this**, so a caller's value that is a key is
+/// told from a name without looking anything up, in the way a wrap code is
+/// told by its own prefix.
+pub const KEY_PREFIX: &str = "sk-";
+
+/// How many characters follow the prefix on a drawn key: 26 characters of a
+/// 32-letter alphabet, 130 bits.
+const KEY_DRAWN: usize = 26;
+
+/// **Draw a run key**: the prefix and 26 characters of OS entropy. The key is
+/// the run's secret and its only credential; it is never a name.
+pub fn mint_key() -> String {
+    format!("{KEY_PREFIX}{}", crate::handle::draw(KEY_DRAWN))
+}
+
+/// Whether this string has the shape of a run key. Shape only: a well-shaped
+/// key may still open nothing.
+pub fn is_key(value: &str) -> bool {
+    value
+        .strip_prefix(KEY_PREFIX)
+        .is_some_and(|rest| crate::handle::is_drawn(rest, KEY_DRAWN))
+}
+
+/// **The hash a run's key is stored and looked up by**: SHA-256 of the key,
+/// written as lowercase hex. No process key goes into it, because a key has to
+/// keep working across a restart.
+pub fn hash_key(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(key.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// **What a run's stored key hash says when its key was taken away.** A hash
+/// is 64 hex characters, so this word cannot be one. A run that never held a
+/// key (a run that began before keys existed) stores no hash at all, which is
+/// how it is told from a run whose key was voided.
+pub const KEY_VOID: &str = "void";
 
 /// One chronology entry's id — minted by the store (a comment id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -772,16 +824,24 @@ impl NewEntry {
     }
 }
 
-/// A session about to begin — everything but the card id, which the store mints.
+/// A session about to begin. The card id is the run's public name when the boot
+/// minted one ([`NewSession::id`]) and is minted by the store when it did not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSession {
     /// The bot this is one run of.
     pub bot: EntityId,
-    /// **The handle, minted before the card and stored on it.** Required, not
-    /// optional: a card born without one would be a session the registry could
-    /// never rebuild an address for, and the whole point of persisting it is
-    /// that a restart does not orphan handles.
+    /// **The run's public name, minted before the card and stored on it.**
+    /// Required, not optional: a card born without one would be a session the
+    /// registry could never rebuild an address for, and the whole point of
+    /// persisting it is that a restart does not orphan runs.
     pub sid: Sid,
+    /// **The id the card is born with**, when the boot minted the run's name
+    /// and the name is the card's id. `None` leaves the id to the store, as a
+    /// run of the older shape had it.
+    pub id: Option<SessionId>,
+    /// **The hash of the run's key**, written with the card so a restart does
+    /// not bring a run back without it. `None` is a run that holds no key.
+    pub key_hash: Option<String>,
     /// What it is working on, at the moment it begins.
     pub focus: String,
     /// When it began.
@@ -816,6 +876,11 @@ pub struct Session {
     /// minting-on-offer already exists.
     #[serde(default)]
     pub sid: Option<Sid>,
+    /// **The hash of the key this run holds**, or [`KEY_VOID`] once its key was
+    /// taken away, or `None` for a run that never held one. It is the lookup a
+    /// caller's key is matched by and it is never served: no read returns it.
+    #[serde(default)]
+    pub key_hash: Option<String>,
     /// The bot this is one run of.
     pub bot: EntityId,
     /// What it is working on now — current truth, rewritten in place.
@@ -1376,6 +1441,15 @@ pub trait Sessions: Send + Sync {
     /// said. [`SessionError::UnknownSession`] on a card that does not exist.
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError>;
 
+    /// **Write the hash of the key this run holds, or [`KEY_VOID`] when its key
+    /// is taken away.** The row is written before the call that rotated or
+    /// removed the key returns, so a restart cannot bring an old key back.
+    ///
+    /// Allowed on a closed run, because a wrap removes the key of a run that is
+    /// already closing, and a wrap code returns one to a run that is `wrapped`.
+    /// [`SessionError::UnknownSession`] on a card that does not exist.
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError>;
+
     /// **Keep that another identity rewrote `bot`'s charter**, and when. One
     /// record per bot, rewritten in place by the next change: the question it
     /// answers is whether the charter changed since a session was last handed
@@ -1769,6 +1843,7 @@ mod projection_tests {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let bot = EntityId("bot:gamma".into());
         let session = Session {
+            key_hash: None,
             id: SessionId("contract-gamma-run".into()),
             sid: None,
             bot: bot.clone(),
@@ -1959,6 +2034,36 @@ mod tests {
         assert_eq!(
             claim_role("gamma", None, None, now, threshold),
             LeaseClaim::Taken
+        );
+    }
+
+    /// **A key is told from a name by its shape alone, and the hash it is stored
+    /// by is pinned by its literal.** A key is the prefix and 26 drawn
+    /// characters; a name is 6 drawn characters (or the 4 an older build
+    /// minted). Neither is the other. The stored hash is SHA-256 in lowercase
+    /// hex with no process key, because a key has to keep working across a
+    /// restart: nothing outside this process declares that, and a record
+    /// written under another digest could not fail a test.
+    #[test]
+    fn a_key_is_told_from_a_name_and_its_hash_is_pinned() {
+        let key = mint_key();
+        assert!(is_key(&key), "{key}");
+        assert_eq!(key.len(), 3 + 26, "the prefix and 26 drawn characters");
+        assert!(key.starts_with("sk-"));
+        assert_ne!(key, mint_key(), "two keys are never the same");
+        assert!(!is_run_name(&key) && !is_key("k3m9qz") && !is_key("jm7z"));
+        assert!(is_run_name("k3m9qz") && !is_run_name(&key));
+        assert!(!is_key(&format!("{key}x")), "a longer value is not a key");
+        assert!(!is_key(&key.to_uppercase()), "a key is not corrected");
+
+        assert_eq!(
+            hash_key("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(hash_key(&key), hash_key(&key), "the hash is deterministic");
+        assert!(
+            KEY_VOID.len() != 64 && !KEY_VOID.bytes().all(|b| b.is_ascii_hexdigit()),
+            "the void sentinel cannot be a hash"
         );
     }
 
@@ -2235,6 +2340,7 @@ mod tests {
             closing: false,
         };
         let session = Session {
+            key_hash: None,
             timezone: None,
             started_on: None,
             served_chars: 0,
@@ -2281,6 +2387,8 @@ mod tests {
                 sid: Sid(format!("s{nth:03}")),
                 focus: focus.to_string(),
                 started_at: contract::epoch() - jiff::SignedDuration::from_hours(hours_ago),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed")
@@ -2429,6 +2537,9 @@ mod tests {
             ) -> Result<(), SessionError> {
                 self.0.set_charter_told(id, at).await
             }
+            async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+                self.0.set_key_hash(id, hash).await
+            }
             async fn note_charter_change(
                 &self,
                 bot: &EntityId,
@@ -2555,6 +2666,7 @@ mod tests {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let day = |text: &str| text.parse::<Date>().expect("a date");
         let run = |on: Date| Session {
+            key_hash: None,
             timezone: None,
             started_on: Some(on),
             served_chars: 0,
@@ -2615,6 +2727,7 @@ mod tests {
     fn staleness_is_measured_from_the_last_beat_or_the_start() {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let bare = Session {
+            key_hash: None,
             timezone: None,
             started_on: None,
             served_chars: 0,
@@ -2715,6 +2828,7 @@ mod tests {
     fn only_a_recently_abandoned_run_is_offered_back() {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let run = Session {
+            key_hash: None,
             timezone: None,
             started_on: None,
             served_chars: 0,

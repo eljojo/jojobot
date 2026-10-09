@@ -442,7 +442,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // else here, and every later session would be handed a run whose story was
     // already told.
     let told = story.session().await;
-    let told_sid = told.sid().to_string();
+    let told_sid = told.run().to_string();
     told.journal("did the thing, and said so").await;
     told.wrap("the work is over and this is the story of it")
         .await;
@@ -451,14 +451,21 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // which must still be offered. Without it, "the wrapped one is not offered"
     // passes on a build that offers nothing at all.
     let left_open = story.session().await;
-    let open_sid = left_open.sid().to_string();
+    let open_sid = left_open.run().to_string();
     left_open
         .journal("stopping here, and whoever picks this up starts from this line")
         .await;
 
     let offered = story.call("start_here", json!({"bot": "otto"})).await.0;
     offered.says(&open_sid);
-    offered.never_says(&told_sid);
+    // The wrapped run's name appears as the handover's source, so the claim is
+    // about what is OFFERED: it is not among the choices.
+    let choices = offered.json()["session"]["choices"].to_string();
+    assert!(choices.contains(&open_sid), "{choices}");
+    assert!(
+        !choices.contains(&told_sid),
+        "a wrapped run is offered to resume: {choices}"
+    );
 
     story.finish().await;
 }

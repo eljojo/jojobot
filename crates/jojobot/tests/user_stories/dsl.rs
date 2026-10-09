@@ -288,6 +288,14 @@ impl jojobot_domain::memory::Memory for Blindable {
     }
 }
 
+/// **When a served jojobot thinks it is, and how long a run must be quiet
+/// before its name can pick it up.** `None` is the lease an instance really
+/// runs with.
+struct Timing {
+    clock: jojobot_domain::clock::Clock,
+    quiet_after: Option<jiff::SignedDuration>,
+}
+
 impl Story {
     /// Serve a fresh jojobot whose memory store can be taken away — the same
     /// server every other story gets, wired over a [`Blindable`]. Hands back
@@ -453,6 +461,64 @@ impl Story {
         (Self::serve(bot, Self::wired(memory)).await, hand)
     }
 
+    /// **Serve a jojobot that runs with the lease an instance really has**: a
+    /// run can be picked up by its name only after it has been quiet for 45
+    /// minutes by the server's clock. The one story of that rule serves this.
+    pub async fn begin_on_the_real_lease(bot: &str) -> Self {
+        let bot = bot
+            .strip_prefix("bot:")
+            .expect("a bot handle carries its kind prefix");
+        let story = Self::spawn_with(
+            bot,
+            Self::wired(InMemoryMemory::booted()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Timing {
+                clock: jojobot_domain::clock::Clock::default(),
+                quiet_after: None,
+            },
+            false,
+            None,
+        )
+        .await;
+        story.stand_up_the_bot().await;
+        story
+    }
+
+    /// **Serve a jojobot on the real clock with a lease of its own length**, so
+    /// a story can wait out a lease of seconds rather than 45 minutes. The real
+    /// clock matters where a run must be quiet and still not swept: a stated
+    /// far-off day sweeps every run it meets, and the quiet rule never runs.
+    pub async fn begin_on_a_lease_of(bot: &str, lease: std::time::Duration) -> Self {
+        let bot = bot
+            .strip_prefix("bot:")
+            .expect("a bot handle carries its kind prefix");
+        let story = Self::spawn_with(
+            bot,
+            Self::wired(InMemoryMemory::booted()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Timing {
+                clock: jojobot_domain::clock::Clock::default(),
+                quiet_after: Some(
+                    jiff::SignedDuration::try_from(lease).expect("a lease is a duration"),
+                ),
+            },
+            false,
+            None,
+        )
+        .await;
+        story.stand_up_the_bot().await;
+        story
+    }
+
+    /// **The sessions store under this story's server**, for the one thing a
+    /// story cannot do through the surface: begin a run that has been quiet for
+    /// longer than the lease, without waiting for it.
+    pub fn sessions_store(&self) -> Arc<InMemorySessions> {
+        self.runs.clone()
+    }
+
     /// **The memory store under this story's server**, for a fixture too big
     /// to write through the served surface: each served write costs a commit
     /// of the index, so a world of thousands of records is seeded here and a
@@ -505,6 +571,27 @@ impl Story {
         .await
     }
 
+    /// **The same world served again on the lease an instance really runs
+    /// with, on another day.** What a run's key and its name do after the
+    /// server has been quiet toward it for longer than the lease: the day is the
+    /// server's own, so every run written before it reads as quiet.
+    pub async fn restarted_on_the_real_lease_pretending_it_is(&self, day: &str) -> Self {
+        let clock = jojobot_domain::clock::Clock::stating(day.parse().expect("a story's day"));
+        Self::spawn_with(
+            &self.bot,
+            self.store.clone(),
+            self.mail.clone(),
+            self.runs.clone(),
+            Timing {
+                clock,
+                quiet_after: None,
+            },
+            true,
+            None,
+        )
+        .await
+    }
+
     async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {
         Self::serve_on_clock(bot, store, jojobot_domain::clock::Clock::default()).await
     }
@@ -528,12 +615,45 @@ impl Story {
 
     /// **One server over a world**, and nothing about the world's contents.
     /// Called for a first boot and again for a restart.
+    ///
+    /// **A run can be picked up by its name the moment it is written**, so a
+    /// story that resumes does not wait out the lease. The one story that holds
+    /// the rule itself serves with [`Story::begin_on_the_real_lease`].
     async fn spawn(
         bot: &str,
         store: Arc<dyn jojobot_domain::memory::Memory>,
         mail_store: Arc<InMemoryMailboxes>,
         runs: Arc<InMemorySessions>,
         clock: jojobot_domain::clock::Clock,
+        inherited: bool,
+        push: Option<(
+            Arc<dyn jojobot_domain::push::Notifier>,
+            jojobot_domain::push::Policy,
+        )>,
+    ) -> Self {
+        Self::spawn_with(
+            bot,
+            store,
+            mail_store,
+            runs,
+            Timing {
+                clock,
+                quiet_after: Some(jiff::SignedDuration::ZERO),
+            },
+            inherited,
+            push,
+        )
+        .await
+    }
+
+    /// [`Story::spawn`] with the quiet period said: `None` is the lease an
+    /// instance really runs with.
+    async fn spawn_with(
+        bot: &str,
+        store: Arc<dyn jojobot_domain::memory::Memory>,
+        mail_store: Arc<InMemoryMailboxes>,
+        runs: Arc<InMemorySessions>,
+        timing: Timing,
         // **Whether this server INHERITS a world.** A restart scans the store
         // it was handed, exactly as the binary's boot does; a first boot over
         // an empty store does not, because a story about what a search says of
@@ -546,6 +666,7 @@ impl Story {
             jojobot_domain::push::Policy,
         )>,
     ) -> Self {
+        let Timing { clock, quiet_after } = timing;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let store_for_restart = store.clone();
@@ -620,6 +741,7 @@ impl Story {
             // serves: an operator who set nothing gets both lines.
             clock,
             push,
+            quiet_after,
         };
         let ct = CancellationToken::new();
         let app = build_app(state, ct.child_token());
@@ -856,7 +978,11 @@ impl Story {
             .as_str()
             .unwrap_or_else(|| panic!("boot handed back no handle: {booted}"))
             .to_string();
-        Session { client, sid }
+        let run = booted["session"]["run"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        Session { client, sid, run }
     }
 
     /// **A new session that works in a named zone**, on its own connection.
@@ -874,7 +1000,11 @@ impl Story {
             .as_str()
             .unwrap_or_else(|| panic!("boot in {zone} handed back no handle: {booted}"))
             .to_string();
-        Session { client, sid }
+        let run = booted["session"]["run"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        Session { client, sid, run }
     }
 
     /// **A new session that sends no zone**, with its boot answer, on its own
@@ -892,7 +1022,11 @@ impl Story {
             .as_str()
             .unwrap_or_else(|| panic!("boot with no zone handed back no handle: {booted}"))
             .to_string();
-        (booted, Session { client, sid })
+        let run = booted["session"]["run"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        (booted, Session { client, sid, run })
     }
 
     /// **A new session that says which DAY it is working in**, on its own
@@ -911,7 +1045,11 @@ impl Story {
             .as_str()
             .unwrap_or_else(|| panic!("boot on {day} handed back no handle: {booted}"))
             .to_string();
-        Session { client, sid }
+        let run = booted["session"]["run"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        Session { client, sid, run }
     }
 
     /// A new session's own boot, whole — the essay included. `.session()`
@@ -925,7 +1063,11 @@ impl Story {
             .as_str()
             .unwrap_or_else(|| panic!("boot handed back no handle: {booted}"))
             .to_string();
-        (booted, Session { client, sid })
+        let run = booted["session"]["run"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        (booted, Session { client, sid, run })
     }
 
     /// A session of ANOTHER bot on this same server — the other side of a
@@ -954,7 +1096,11 @@ impl Story {
             .as_str()
             .unwrap_or_else(|| panic!("boot handed back no handle: {booted}"))
             .to_string();
-        Session { client, sid }
+        let run = booted["session"]["run"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        Session { client, sid, run }
     }
 
     /// **Any verb, before there is a session to make it from.**
@@ -982,7 +1128,38 @@ impl Story {
         match body["session"]["sid"].as_str() {
             Some(sid) => {
                 let sid = sid.to_string();
-                (answer, Some(Session { client, sid }))
+                let run = body["session"]["run"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                (answer, Some(Session { client, sid, run }))
+            }
+            None => {
+                client.cancel().await.unwrap();
+                (answer, None)
+            }
+        }
+    }
+
+    /// **A call made before there is a session, whose answer may be either**:
+    /// for a story about two callers asking for one thing, where which of them
+    /// is refused is the very thing under test. Hands back the answer, and the
+    /// session when the answer carried a `sid`.
+    pub async fn call_either(&self, tool: &str, args: Value) -> (Answer, Option<Session>) {
+        let client = self.connect().await;
+        let body = call(&client, tool, args).await;
+        let answer = Answer {
+            what: format!("the answer from {tool}"),
+            body: body.to_string(),
+        };
+        match body["session"]["sid"].as_str() {
+            Some(sid) => {
+                let sid = sid.to_string();
+                let run = body["session"]["run"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                (answer, Some(Session { client, sid, run }))
             }
             None => {
                 client.cancel().await.unwrap();
@@ -1024,7 +1201,10 @@ impl Story {
 
 pub struct Session {
     client: Client,
+    /// The run's key: what rides every call.
     sid: String,
+    /// The run's public name: what records carry and a resume names.
+    run: String,
 }
 
 impl Session {
@@ -1134,6 +1314,12 @@ impl Session {
         &self.sid
     }
 
+    /// **This run's public name**, which records carry, an offer lists and a
+    /// resume names. Never a credential.
+    pub fn run(&self) -> &str {
+        &self.run
+    }
+
     /// **The tripwire for a gap the SURFACE has, rather than a record.**
     ///
     /// A gap marker says a capability is missing. Where the missing thing
@@ -1180,6 +1366,13 @@ impl Session {
             carrying.is_empty(),
             "jojobot now serves a verb whose name says {needle:?}: {carrying:?}"
         );
+    }
+
+    /// **Every verb the surface serves, by name**, as a client is given them.
+    /// For a claim that is about all of them at once.
+    pub async fn served_verbs(&self) -> Vec<String> {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        listed.tools.iter().map(|t| t.name.to_string()).collect()
     }
 
     /// **The tripwire for a gap whose capability will arrive as an ARGUMENT.**

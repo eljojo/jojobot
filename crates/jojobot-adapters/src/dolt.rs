@@ -1649,6 +1649,8 @@ pub(crate) mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -1741,6 +1743,8 @@ pub(crate) mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -1908,6 +1912,8 @@ pub(crate) mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");

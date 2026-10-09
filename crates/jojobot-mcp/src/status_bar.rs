@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(store_counts(&jojobot, &held).await, (1, 0, 0));
         let person = jojobot
             .registry
-            .mint(&EntityId("person:milhouse".into()), None)
+            .mint(&EntityId("person:milhouse".into()))
             .expect("a free handle")
             .as_str()
             .to_string();

@@ -25,7 +25,10 @@ use rmcp::handler::server::wrapper::Parameters;
 /// with `sid: None` instead of reaching for a builder. That is what keeps the
 /// default honest: a case about anonymity that went through a builder would
 /// carry an identity and pass while testing nothing.
-pub(crate) const TEST_SID: &str = "test";
+pub(crate) const TEST_SID: &str = "sk-testtesttesttesttesttestte";
+
+/// The public name of the run [`TEST_SID`] opens.
+pub(crate) const TEST_RUN: &str = "tsttst";
 
 /// A registry already holding [`TEST_SID`]. Seeded through `mint_with` so the
 /// handle is the one the builders expect; the registry is what `identified`
@@ -33,7 +36,11 @@ pub(crate) const TEST_SID: &str = "test";
 pub(crate) fn seeded_registry() -> Arc<sid::SessionRegistry> {
     let registry = Arc::new(sid::SessionRegistry::new());
     registry
-        .mint_with(&EntityId("bot:otto".into()), None, || TEST_SID.to_string())
+        .mint_with(
+            &EntityId("bot:otto".into()),
+            || TEST_RUN.to_string(),
+            || TEST_SID.to_string(),
+        )
         .expect("a free handle in a fresh registry");
     registry
 }
@@ -46,10 +53,12 @@ pub(crate) fn seeded_registry() -> Arc<sid::SessionRegistry> {
 /// Idempotent on purpose: a helper that minted a fresh handle per call would
 /// give each write its own session and break any test that counts beats.
 pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
-    if jojobot.registry.lookup(TEST_SID).is_none() {
-        let _ = jojobot
-            .registry
-            .mint_with(&EntityId("bot:otto".into()), None, || TEST_SID.to_string());
+    if jojobot.registry.lookup_key(TEST_SID).is_none() {
+        let _ = jojobot.registry.mint_with(
+            &EntityId("bot:otto".into()),
+            || TEST_RUN.to_string(),
+            || TEST_SID.to_string(),
+        );
     }
     TEST_SID.to_string()
 }
@@ -346,7 +355,7 @@ pub(crate) fn assert_error_word(label: &str, error: &McpError, word: Option<&str
 pub(crate) fn as_bot(jojobot: &Jojobot, bot: &str) -> String {
     jojobot
         .registry
-        .mint(&EntityId::new(EntityKind::BOT, bot), None)
+        .mint(&EntityId::new(EntityKind::BOT, bot))
         .expect("a free handle")
         .as_str()
         .to_string()
@@ -496,6 +505,7 @@ pub(crate) async fn boot_answering(
     name: &str,
     answer: &str,
 ) -> serde_json::Value {
+    let answer = &resume_answer(jojobot, answer);
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
@@ -517,6 +527,19 @@ pub(crate) async fn boot_answering(
     )
 }
 
+/// **What a resume answer is, whichever the case gave.** A case holding the key
+/// of the run it means to pick up names it by that key; a resume names a run by
+/// its public name, so the key is turned into the name it opens. Every other
+/// answer (`new`, a name, a wrap code) goes through as it is.
+fn resume_answer(jojobot: &Jojobot, answer: &str) -> String {
+    if jojobot_domain::session::is_key(answer)
+        && let Some(held) = jojobot.registry.lookup_key(answer)
+    {
+        return held.name.as_str().to_string();
+    }
+    answer.to_string()
+}
+
 /// Answer the choice a boot handed back, naming `today` and/or `timezone`
 /// on this same call — what a resume that moves the day, the zone, or
 /// neither actually sends.
@@ -527,6 +550,7 @@ pub(crate) async fn boot_answering_dated(
     today: Option<&str>,
     timezone: Option<&str>,
 ) -> serde_json::Value {
+    let answer = &resume_answer(jojobot, answer);
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
@@ -553,6 +577,24 @@ pub(crate) fn sid_of(body: &serde_json::Value) -> Option<String> {
     body["session"]["sid"].as_str().map(str::to_string)
 }
 
+/// **The public name of the run a key opens**, for the cases that compare what a
+/// record carries (a role's holder, a claim's session) with the run that wrote
+/// it. A key is never what a record carries.
+pub(crate) fn run_name(jojobot: &Jojobot, key: &str) -> String {
+    jojobot
+        .caller(Some(key))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| panic!("the key opens no run"))
+        .sid
+        .to_string()
+}
+
+/// The public name of the run a boot handed back, or `None` when it handed none.
+pub(crate) fn run_of(body: &serde_json::Value) -> Option<String> {
+    body["session"]["run"].as_str().map(str::to_string)
+}
+
 /// Boot as this bot and take the handle the door hands back.
 pub(crate) async fn booted(jojobot: &Jojobot, name: &str) -> String {
     sid_of(&boot(jojobot, name).await).unwrap_or_else(|| panic!("{name} booted without a handle"))
@@ -569,6 +611,7 @@ pub(crate) async fn booted_in(
     zone: &str,
     resume: Option<&str>,
 ) -> String {
+    let resume = resume.map(|answer| resume_answer(jojobot, answer));
     let body = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
@@ -578,7 +621,7 @@ pub(crate) async fn booted_in(
                 brief: Some(true),
                 skill: None,
                 section: None,
-                resume: resume.map(str::to_string),
+                resume,
                 sid: None,
                 today: None,
                 ask_for_code: None,

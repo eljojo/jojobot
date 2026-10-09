@@ -660,6 +660,8 @@ mod tests {
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -758,6 +760,8 @@ mod tests {
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -779,8 +783,13 @@ mod tests {
         );
 
         assert_eq!(
-            body["attempted"], sid,
-            "the refusal must name the caller's own sid: {body}"
+            body["attempted"],
+            run_name(&jojobot, &sid),
+            "the refusal must name the caller's own run: {body}"
+        );
+        assert!(
+            !body.to_string().contains(&sid),
+            "…and never repeat the key it was sent: {body}"
         );
         assert_ne!(
             body["attempted"],
@@ -1176,7 +1185,7 @@ mod tests {
         let fields = jojobot.memory.fields(&role).await.expect("fields ok");
         assert_eq!(
             fields.get("holder"),
-            Some(&sid),
+            Some(&run_name(&jojobot, &sid)),
             "the holder still holds: {fields:?}"
         );
     }

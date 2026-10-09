@@ -205,19 +205,19 @@ async fn a_server_acting_out_a_day_answers_in_that_day_without_being_told_the_da
             .as_array()
             .expect("list_runs answers with an array")
             .iter()
-            .find(|run| run["sid"] == sid)
+            .find(|run| run["run"] == sid)
             .unwrap_or_else(|| panic!("{sid} is not among this bot's own runs: {runs}"))["state"]
             .as_str()
             .expect("a state")
             .to_string()
     };
     assert_eq!(
-        state_of(sitting.sid()),
+        state_of(sitting.run()),
         "abandoned",
         "June's own run did not read back abandoned by its own address: {runs}",
     );
     assert_eq!(
-        state_of(later.sid()),
+        state_of(later.run()),
         "active",
         "July's own still-open run did not read back active, so the line above proves nothing \
          about telling states apart: {runs}",

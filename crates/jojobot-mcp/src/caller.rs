@@ -22,7 +22,9 @@ use super::*;
 /// jojobot looks the caller up rather than remembering them.
 #[derive(Debug, Clone)]
 pub(crate) struct Caller {
-    /// The handle itself, exactly as the caller passed it.
+    /// **The run's public name**, never the key the caller sent. The key proved
+    /// who is calling and is not kept: everything this call records, repeats or
+    /// compares names the run by this.
     pub(crate) sid: sid::Sid,
     /// The identity it belongs to. **Bound at boot and never switched**, which
     /// is what makes naming somebody else's session a refusal rather than a
@@ -98,7 +100,205 @@ pub(crate) fn handle_declined(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// Every token with the shape of a run key or a wrap code in `text`: the prefix
+/// and exactly the drawn characters after it. A longer run of characters does
+/// not matter, so a token pasted into the middle of a word is still found.
+fn collect_secret_tokens(text: &str, found: &mut Vec<String>) {
+    use jojobot_domain::handle::is_drawn;
+    for (prefix, drawn) in [(jojobot_domain::session::KEY_PREFIX, 26), ("wc-", 12)] {
+        let mut from = 0;
+        while let Some(at) = text[from..].find(prefix) {
+            let start = from + at + prefix.len();
+            let end = start + drawn;
+            if let Some(rest) = text.get(start..end)
+                && is_drawn(rest, drawn)
+            {
+                found.push(format!("{prefix}{rest}"));
+            }
+            from = from + at + prefix.len();
+        }
+    }
+}
+
+/// [`collect_secret_tokens`] over every string in a JSON value, object keys
+/// included.
+fn collect_secret_tokens_in(value: &serde_json::Value, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => collect_secret_tokens(text, found),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_secret_tokens_in(item, found);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, held) in fields {
+                collect_secret_tokens(key, found);
+                collect_secret_tokens_in(held, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// **The refusal for a key that stopped opening its run**, in the words of what
+/// ended it. It names the run by its public name and says when, and never
+/// repeats the key.
+fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
+    let run = retired.name.as_str();
+    let at = retired.at;
+    let how = match retired.by {
+        sid::RetiredBy::Resumed => format!(
+            "Run {run} was resumed at {at} as {}, and its key was replaced. Boot again with \
+             start_here to begin a run of your own.",
+            retired.bot
+        ),
+        sid::RetiredBy::Wrapped => format!(
+            "Run {run} wrapped at {at}, which ended its key. If you hold the wrap_code its wrap \
+             handed back, call start_here with your bot name and resume set to that code; \
+             otherwise boot again with start_here."
+        ),
+        sid::RetiredBy::Exchanged => format!(
+            "Run {run} was exchanged for a key at {at}, so its old name no longer opens it. \
+             Boot again with start_here."
+        ),
+    };
+    handle_declined("", format!("{NOTHING_RAN}. {how}"))
+}
+
 impl Jojobot {
+    /// **Exchange the old name of a run that began before keys existed for a
+    /// key, once.** A run live at the deploy holds no key, so its four-character
+    /// name was its only credential. Its first call with that name exchanges it:
+    /// the key comes back in the answer, the call does not run, and every later
+    /// bare name is refused. `None` when the value is not the old name of a run
+    /// that holds no key, which is every call but that one.
+    ///
+    /// Serialized under the bot's lock, with the store written before the key is
+    /// handed out, so two callers sending one name cannot both leave with a key.
+    pub(crate) async fn exchange_legacy_name(&self, raw: &str) -> Option<CallToolResult> {
+        let raw = raw.trim();
+        if !jojobot_domain::handle::is_drawn(raw, jojobot_domain::session::SID_LEN) {
+            return None;
+        }
+        let held = self.registry.lookup_name(raw)?;
+        if held.key != sid::KeyState::Legacy {
+            return None;
+        }
+        let gate = self.registry.gate(held.bot.as_str());
+        let _serialized = gate.lock().await;
+        let key = jojobot_domain::session::mint_key();
+        let hash = jojobot_domain::session::hash_key(&key);
+        let now = self.clock().now();
+        // Under the lock the run is taken again: the caller that lost the race
+        // finds it already exchanged and is refused as any bare name is.
+        let taken = self.registry.take_legacy(raw, hash.clone(), now)?;
+        if let Some(card) = &taken.card
+            && let Err(e) = self.sessions.set_key_hash(card, &hash).await
+        {
+            tracing::warn!(error = %e, session = %card, "a run's exchanged key could not be written");
+            self.registry.put_back_legacy(raw, &hash);
+            return Some(handle_declined(
+                "",
+                "Nothing ran, and no key was handed out: the session store refused the \
+                 exchange. Nothing was changed. Send the same call again, and if it persists a \
+                 person has to look at the store."
+                    .to_string(),
+            ));
+        }
+        let how: WayForward = format!(
+            "{NOTHING_RAN}. This run began before keys existed, so its name was its only \
+             credential. jojobot has exchanged it once, and the key is `sid` in this answer: send \
+             that on every call, starting with this one again. Run {} keeps its name, which \
+             opens nothing from now on.",
+            taken.name
+        )
+        .into();
+        let mut body = serde_json::json!({
+            "status": "blocked",
+            "attempted": "",
+            "wrote": false,
+            "exchanged": true,
+            "run": taken.name.as_str(),
+            "sid": key,
+        });
+        how.write_into(&mut body);
+        Some(CallToolResult::success(vec![ContentBlock::text(
+            body.to_string(),
+        )]))
+    }
+
+    /// **Refuse a call that writes a live secret into text.** Every string in
+    /// the arguments, keys and values alike, nested at any depth, is read for a
+    /// token that has the shape of a run key or of a wrap code. Only such a
+    /// token is hashed and looked up, among the live keys and the unspent wrap
+    /// codes; a string that merely has the length of one, a pasted digest say,
+    /// is not a token and is left alone. The `sid` and `resume` arguments are
+    /// where a key and a code belong and are not read.
+    ///
+    /// The refusal names the run by its public name. It is a guard against
+    /// accidents: it stops a key from being stored in a place others read, and
+    /// it does not make a secret out of a value that was already shown.
+    pub(crate) async fn refuse_a_live_secret(
+        &self,
+        arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Option<CallToolResult> {
+        let arguments = arguments?;
+        let mut tokens = Vec::new();
+        for (key, value) in arguments {
+            if key == "sid" || key == "resume" {
+                continue;
+            }
+            collect_secret_tokens(key, &mut tokens);
+            collect_secret_tokens_in(value, &mut tokens);
+        }
+        if tokens.is_empty() {
+            return None;
+        }
+        let mut leaked: Option<(String, &'static str)> = None;
+        for token in &tokens {
+            if jojobot_domain::session::is_key(token)
+                && let Some(held) = self.registry.lookup_key(token)
+            {
+                leaked = Some((held.name.as_str().to_string(), "key"));
+                break;
+            }
+        }
+        if leaked.is_none()
+            && tokens
+                .iter()
+                .any(|t| jojobot_domain::session::is_wrap_code(t))
+        {
+            // The codes a wrap handed out and nobody has used. A read that
+            // fails here lets the call through rather than inventing a refusal.
+            if let Ok(runs) = self.sessions.all_sessions().await {
+                'runs: for run in &runs {
+                    if let Some(jojobot_domain::session::WrapWindow::Offered(code)) =
+                        &run.wrap_window
+                        && tokens.iter().any(|t| t == code)
+                    {
+                        leaked = Some((
+                            run.sid
+                                .as_ref()
+                                .map_or(run.id.as_str(), |name| name.as_str())
+                                .to_string(),
+                            "wrap code",
+                        ));
+                        break 'runs;
+                    }
+                }
+            }
+        }
+        let (name, what) = leaked?;
+        Some(handle_declined(
+            "",
+            format!(
+                "{NOTHING_RAN}. This call holds the live {what} of run {name}, written into \
+                 text that others can read. Take it out and send the call again. A {what} is \
+                 a credential: it belongs in `sid` or `resume` and nowhere else."
+            ),
+        ))
+    }
+
     /// **What this call serializes on: the IDENTITY, not the handle.**
     ///
     /// The handle looks like the right key — it names exactly the run this call
@@ -123,9 +323,12 @@ impl Jojobot {
         let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
             return String::new();
         };
-        match self.registry.lookup(raw) {
+        // **A value that opens nothing keys on the empty string**, the one slot
+        // a call with no key shares. Keying it on itself would make a stranger's
+        // guess a map entry that is never removed.
+        match self.registry.lookup_key(raw) {
             Some(held) => held.bot.as_str().to_string(),
-            None => raw.to_string(),
+            None => String::new(),
         }
     }
 
@@ -135,30 +338,56 @@ impl Jojobot {
         let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
             return Ok(None);
         };
-        if !sid::is_readable(raw) {
+        // **Nothing the caller sent is repeated in any refusal here**, and nothing
+        // is allocated for it: a refusal names no session, and a value that
+        // opens nothing leaves no entry behind.
+        if !jojobot_domain::session::is_key(raw) {
+            // A name whose run was exchanged for a key says when, so the sitting
+            // that still sends the old name learns it is not the holder.
+            if let Some(at) = self
+                .registry
+                .lookup_name(raw)
+                .and_then(|held| held.exchanged_at)
+            {
+                return Err(handle_declined(
+                    "",
+                    format!(
+                        "{NOTHING_RAN}. That run's old name was exchanged for a key at {at}, \
+                         so the name opens nothing now. {ROUTE_TO_A_SID}"
+                    ),
+                ));
+            }
+            let how = if sid::is_readable(raw) {
+                "That is a session's name, and a name is not a key: it names a run and cannot \
+                 act as one. The key is the longer value start_here handed back in `sid`."
+            } else {
+                "That is not a key jojobot mints. The key is the value start_here handed back \
+                 in `sid`. jojobot will not correct one, because correcting it means guessing \
+                 whose session you meant."
+            };
             return Err(handle_declined(
-                raw,
-                format!(
-                    "{NOTHING_RAN}. '{raw}' is not a handle jojobot mints — those are {} \
-                 characters of 0-9 and a-z, with i, l, o and u left out because they read as \
-                 one another. jojobot will not correct one, because correcting it means \
-                 guessing whose session you meant.",
-                    jojobot_domain::session::SID_LEN,
-                ),
+                "",
+                format!("{NOTHING_RAN}. {how} {ROUTE_TO_A_SID}"),
             ));
         }
-        let Some(held) = self.registry.lookup(raw) else {
+        let Some(held) = self.registry.lookup_key(raw) else {
+            // **A key that used to open a run is told why it does not**, naming
+            // the run by its public name and the moment it stopped. A key this
+            // process never held is told only that it opens nothing.
+            if let Some(retired) = self.registry.retired(raw) {
+                return Err(retired_key_declined(&retired));
+            }
             return Err(handle_declined(
-                raw,
+                "",
                 format!(
-                    "{NOTHING_RAN}. That session is gone: '{raw}' is not a handle jojobot is \
-                 holding. {ROUTE_TO_A_SID} The work on the board is untouched, and it will be \
-                 offered back by what it was working on."
+                    "{NOTHING_RAN}. That key opens no session: jojobot is not holding it. \
+                 {ROUTE_TO_A_SID} The work on the board is untouched, and it will be offered \
+                 back by what it was working on."
                 ),
             ));
         };
         Ok(Some(Caller {
-            sid: sid::Sid(raw.to_string()),
+            sid: held.name,
             bot: held.bot,
             card: held.card,
             zone: held.zone,
@@ -335,11 +564,17 @@ impl Jojobot {
         let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
             return serde_json::Value::Null;
         };
-        if !sid::is_readable(raw) {
+        if !jojobot_domain::session::is_key(raw) {
             return "malformed".into();
         }
-        let Some(handle) = self.registry.lookup(raw) else {
-            return "gone".into();
+        let Some(handle) = self.registry.lookup_key(raw) else {
+            // A wrap takes the key away, so a wrapped run's key finds no run:
+            // the registry's record of why is what lets the probe still say
+            // the run is over rather than that the key never was.
+            return match self.registry.retired(raw) {
+                Some(retired) if retired.by == sid::RetiredBy::Wrapped => "wrapped".into(),
+                _ => "gone".into(),
+            };
         };
         // A lazy handle has no card yet — nothing has been written, so there
         // is no run state to report beyond "still addresses a session".
@@ -363,16 +598,13 @@ impl Jojobot {
         }
     }
 
-    /// Mint a handle, or turn the one failure into an answer rather than a 500.
-    pub(crate) fn mint_or_say_why(
-        &self,
-        bot: &EntityId,
-        card: Option<SessionId>,
-    ) -> Result<sid::Sid, CallToolResult> {
-        let minted = self.registry.mint(bot, card).inspect(|sid| {
+    /// Mint a run (its name and its key), or turn the one failure into an answer
+    /// rather than a 500.
+    pub(crate) fn mint_or_say_why(&self, bot: &EntityId) -> Result<sid::Minted, CallToolResult> {
+        let minted = self.registry.mint(bot).inspect(|run| {
             // A session is handed its bot's charter by the boot that mints it.
             self.registry
-                .note_charter_told(sid.as_str(), self.clock().now());
+                .note_charter_told(run.name.as_str(), self.clock().now());
         });
         minted.map_err(|_| {
             handle_declined(
@@ -384,18 +616,6 @@ impl Jojobot {
                     .to_string(),
             )
         })
-    }
-
-    /// The handle for a card that exists — the one it already has, or a new one.
-    pub(crate) fn handle_for(
-        &self,
-        bot: &EntityId,
-        card: &SessionId,
-    ) -> Result<sid::Sid, CallToolResult> {
-        match self.registry.addressing(card) {
-            Some(handle) => Ok(handle),
-            None => self.mint_or_say_why(bot, Some(card.clone())),
-        }
     }
 
     /// **The session this call writes to, resolved from the handle it carries.**
@@ -441,6 +661,15 @@ impl Jojobot {
             .begin(NewSession {
                 bot: caller.bot.clone(),
                 sid: caller.sid.clone(),
+                // **The name the boot minted is the card's id**, and the hash of
+                // the key lands on the card with it. A run of the older shape
+                // keeps the id the store mints and the key state it had.
+                id: jojobot_domain::session::is_run_name(caller.sid.as_str())
+                    .then(|| SessionId(caller.sid.as_str().to_string())),
+                key_hash: self
+                    .registry
+                    .lookup_name(caller.sid.as_str())
+                    .and_then(|held| held.key.to_stored()),
                 focus,
                 started_at: self.clock().now(),
                 timezone: caller.zone.clone(),
@@ -752,9 +981,9 @@ mod tests {
                 "{verb} minted a session for a handle nobody was given: {body}"
             );
             assert_eq!(body["wrote"], false);
-            assert_eq!(
-                body["attempted"], typo,
-                "{verb}: the refusal quotes it back: {body}"
+            assert!(
+                !body.to_string().contains(typo),
+                "{verb}: the refusal repeats what it was sent: {body}"
             );
             // **No candidates, and that is the difference from a name.** A bot
             // name is a thing jojobot can suggest neighbours for; a handle is
@@ -923,6 +1152,46 @@ mod tests {
         assert_eq!(live[0].entries.len(), 2);
     }
 
+    /// **A value that opens nothing leaves no gate slot behind.** The write
+    /// verbs queue on a slot keyed by the caller, and a key taken from the
+    /// caller's own string would turn every guess into an entry that is never
+    /// removed. A guess shaped like a key, a name that is real, a name that is
+    /// not and plain garbage all key on the one shared slot, so the five of
+    /// them add one entry between them, and the entry is what shows the counter
+    /// can move at all.
+    #[tokio::test]
+    async fn a_value_that_opens_nothing_leaves_no_gate_slot_behind() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let key = booted(&jojobot, "gamma").await;
+        let name = run_name(&jojobot, &key);
+        let before = jojobot.registry.gates_held();
+        for guess in [
+            jojobot_domain::session::mint_key(),
+            jojobot_domain::session::mint_key(),
+            name,
+            "zz9z".to_string(),
+            "garbage".to_string(),
+        ] {
+            let refused = json_of(
+                &jojobot
+                    .journal(Parameters(JournalArgs {
+                        entry: "x".into(),
+                        focus: None,
+                        sid: guess,
+                    }))
+                    .await
+                    .expect("journal answers"),
+            );
+            assert_eq!(refused["status"], "blocked", "{refused}");
+        }
+        assert_eq!(
+            jojobot.registry.gates_held(),
+            before + 1,
+            "the guesses share one slot between them"
+        );
+    }
+
     /// **A handle jojobot is not holding is refused by the write verbs, not
     /// quietly ignored.**
     ///
@@ -1065,14 +1334,14 @@ mod tests {
             ),
         ];
         for (verb, body) in &refusals {
-            assert_eq!(
-                body["attempted"], dead,
-                "{verb} must name the handle it refused: {body}"
+            assert!(
+                !body.to_string().contains(dead.as_str()),
+                "{verb} repeats the value it refused: {body}"
             );
             let how = body["how_to_proceed"].as_str().expect("advice");
             assert!(
-                how.contains("gone") && how.contains("start_here"),
-                "{verb} must say the session is gone and where to get another: {how}"
+                how.contains("start_here"),
+                "{verb} must say where to get a key: {how}"
             );
         }
 
@@ -1253,9 +1522,9 @@ mod tests {
                     "{verb} served a full answer for a handle that addresses nothing: {body}"
                 );
                 assert_eq!(body["wrote"], false, "{verb}: {body}");
-                assert_eq!(
-                    body["attempted"], bad,
-                    "{verb} must name the handle it refused: {body}"
+                assert!(
+                    !body.to_string().contains(bad),
+                    "{verb} repeats the value it refused: {body}"
                 );
                 assert!(
                     body[payload].is_null(),
@@ -1461,6 +1730,7 @@ mod begin_retry {
         let (jojobot, memory) = with_sessions_port_and_memory(store.clone());
         seed_bot(&memory, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
+        let name = run_name(&jojobot, &sid);
 
         let entry = |text: &str| JournalArgs {
             entry: text.into(),
@@ -1487,12 +1757,12 @@ mod begin_retry {
             .await
             .expect("read ok")
             .into_iter()
-            .filter(|s| s.sid.as_ref().is_some_and(|h| h.as_str() == sid))
+            .filter(|s| s.sid.as_ref().is_some_and(|h| h.as_str() == name))
             .collect();
         assert_eq!(
             live.len(),
             1,
-            "one sid must address one run — found {}: {live:?}",
+            "one name must address one run — found {}: {live:?}",
             live.len()
         );
     }

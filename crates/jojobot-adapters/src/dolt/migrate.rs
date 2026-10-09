@@ -573,6 +573,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0073_push_outbox.sql"),
         leaves: Leaves::Table("push_outbox"),
     },
+    Migration {
+        version: "0074_session_key_hash",
+        sql: include_str!("../../migrations/0074_session_key_hash.sql"),
+        leaves: Leaves::Column("session", "key_hash"),
+    },
+    Migration {
+        version: "0075_session_teaching_run_name",
+        sql: include_str!("../../migrations/0075_session_teaching_run_name.sql"),
+        leaves: Leaves::ColumnType("session_teaching", "sid", "varchar(64)"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

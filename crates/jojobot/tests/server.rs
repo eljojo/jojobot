@@ -101,6 +101,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     }
 }
 
@@ -127,6 +128,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     }
 }
 
@@ -260,6 +262,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
             ui: None,
             clock: jojobot_domain::clock::Clock::default(),
             push: None,
+            quiet_after: None,
         }
     }
 }
@@ -347,6 +350,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     }
 }
 
@@ -421,6 +425,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     }
 }
 

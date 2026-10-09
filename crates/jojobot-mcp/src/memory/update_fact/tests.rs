@@ -2170,7 +2170,7 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
         .expect("fields ok");
     assert_eq!(
         after.get("holder"),
-        Some(&sid),
+        Some(&run_name(&jojobot, &sid)),
         "the claim's own holder must survive all three refused attempts: {after:?}"
     );
 
@@ -2729,6 +2729,8 @@ async fn an_edit_into_a_room_counts_a_thought_that_aged_out_the_way_capture_does
                 started_at: jiff::Timestamp::now(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("seeding a run");
@@ -2782,6 +2784,8 @@ async fn an_edit_ages_a_thought_on_the_bots_own_ageing_setting() {
                     started_at: jiff::Timestamp::now(),
                     timezone: None,
                     started_on: None,
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("seeding a run");

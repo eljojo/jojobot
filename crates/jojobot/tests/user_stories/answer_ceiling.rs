@@ -297,10 +297,10 @@ async fn world(aged: bool) -> World {
     // Otto's runs: each opened beside the others and given a journal entry,
     // which is what makes a run exist, with a focus near the longest kept.
     // The world's own first run is otto's too, and the oldest.
-    let mut run_sids = vec![opening.sid().to_string()];
+    let mut run_sids = vec![opening.run().to_string()];
     for i in 0..RUNS {
         let run = first.as_bot("bot:otto").await;
-        run_sids.push(run.sid().to_string());
+        run_sids.push(run.run().to_string());
         run.call(
             "journal",
             json!({"entry": format!("sitting {i}"), "focus": filler(190, 3000 + i)}),
@@ -907,7 +907,7 @@ async fn a_walk_of_list_runs_returns_each_run_once_under_the_ceiling() {
             .as_array()
             .expect("a list")
             .iter()
-            .map(|r| r["sid"].as_str().expect("a handle").to_string())
+            .map(|r| r["run"].as_str().expect("a run name").to_string())
             .collect();
         assert!(!sids.is_empty(), "a part carries at least one run");
         seen.extend(sids);

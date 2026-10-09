@@ -122,19 +122,46 @@ impl Jojobot {
         let mut block = match resume {
             // ── the caller answered the offer ───────────────────────────────
             Some(answer) if answer.eq_ignore_ascii_case(sid::NEW) => {
-                let handle = self.mint_or_say_why(bot, None)?;
+                let run = self.mint_or_say_why(bot)?;
                 self.end_windows(&windows_open).await;
                 self.registry
-                    .set_zone(&handle, timezone.map(str::to_string));
-                self.registry.set_day(&handle, today);
+                    .set_zone(&run.name, timezone.map(str::to_string));
+                self.registry.set_day(&run.name, today);
                 // Bound to the identity with no session: the first write is
                 // what begins the card, exactly as a first boot's is. **The run
                 // that was offered is left running** — a new session never
                 // closes an old one.
-                self.fresh_block(handle)
+                self.fresh_block(run)
             }
             Some(answer) => {
-                let (handle, session) = self.resumable(bot, answer, &live).await?;
+                let (handle, session) = self
+                    .resumable(bot, answer, &live, offerable.as_ref())
+                    .await?;
+                // **The resume hands the run a new key**, written to its card
+                // before the call returns: the sitting that held the old one is
+                // refused from here on, and nobody else's key moves.
+                // **Every voucher the run holds is void first**, and a failure to
+                // void any of them refuses the resume: the old grants must not
+                // outlive the sitting that held them.
+                // **When the run last wrote, said to the one who took it over**,
+                // read before anything below touches the card.
+                let last_wrote = session.as_ref().map(|session| session.last_beat());
+                if let Err(failure) = self.void_vouchers_held_by(handle.as_str(), bot).await {
+                    tracing::warn!(
+                        step = failure.step, voided = failure.voided, run = %handle,
+                        "a resume could not void the run's vouchers"
+                    );
+                    return Err(handle_declined(
+                        "",
+                        format!(
+                            "No session was started, and run {handle} was not taken over: the \
+                             vouchers it holds could not all be voided, so none was issued and \
+                             the run is as it was. Try again, and if it persists a person has \
+                             to look at the store."
+                        ),
+                    ));
+                }
+                let key = self.rekey(&handle, sid::RetiredBy::Resumed).await?;
                 // **A resume that names a zone moves the run into it**, card
                 // included, because a run outlives a device hop and the zone it
                 // began in is not always the zone it is being worked in. A
@@ -176,12 +203,15 @@ impl Jojobot {
                     Some(session) => {
                         let mut block = serde_json::json!({
                             "available": true,
-                            "sid": handle.as_str(),
+                            "sid": key,
+                            "run": handle.as_str(),
                             "resumed": true,
+                            "last_wrote": last_wrote.map(|at| at.to_string()),
                             "session": session_json(&session),
                             "note": "you are resuming a session already in flight — its \
                                      chronology is above. Read it before you start: somebody \
-                                     (you, before a disconnect) was part way through something.",
+                                     (you, before a disconnect) was part way through something. \
+                                     `sid` is the run's new key; the one it had is closed.",
                         });
                         // **Only when THIS call named no day of its own.** A
                         // caller stating its own day is answered in that
@@ -193,25 +223,27 @@ impl Jojobot {
                             // creation and never moved by a resume that
                             // changes the day. Reading the row would let this
                             // note name a day no write will actually use.
-                            let live_day =
-                                self.registry.lookup(handle.as_str()).and_then(|h| h.day);
+                            let live_day = self
+                                .registry
+                                .lookup_name(handle.as_str())
+                                .and_then(|h| h.day);
                             crate::answer::note_resumed_day(&mut block, live_day);
                         }
                         block
                     }
-                    // A handle whose session was never written: theirs, still
-                    // good, and still nothing behind it.
-                    None => self.fresh_block(handle),
+                    // A run that never wrote: theirs, still good, and still
+                    // nothing behind it.
+                    None => self.fresh_block(sid::Minted { name: handle, key }),
                 }
             }
             // ── a first boot: the two branches ──────────────────────────────
             None if live.is_empty() && offerable.is_none() => {
-                let handle = self.mint_or_say_why(bot, None)?;
+                let run = self.mint_or_say_why(bot)?;
                 self.end_windows(&windows_open).await;
                 self.registry
-                    .set_zone(&handle, timezone.map(str::to_string));
-                self.registry.set_day(&handle, today);
-                self.fresh_block(handle)
+                    .set_zone(&run.name, timezone.map(str::to_string));
+                self.registry.set_day(&run.name, today);
+                self.fresh_block(run)
             }
             None => {
                 // Every live run, then the one stop worth bringing up. The
@@ -220,9 +252,15 @@ impl Jojobot {
                 let offered: Vec<&Session> = live.iter().chain(offerable.iter()).collect();
                 let mut choices = Vec::with_capacity(offered.len());
                 for session in offered {
-                    let handle = self.handle_for(bot, &session.id)?;
+                    let name = session
+                        .sid
+                        .as_ref()
+                        .map(|name| name.as_str().to_string())
+                        .unwrap_or_else(|| session.id.as_str().to_string());
                     let mut choice = serde_json::json!({
-                        "sid": handle.as_str(),
+                        // **The run's public name, never a key.** A key is shown
+                        // once, to the run it opens.
+                        "run": name,
                         // **What it was working on is the whole point of the
                         // offer.** A bot may have several runs at once, and a
                         // list of opaque handles is not a choice anybody can
@@ -265,10 +303,13 @@ impl Jojobot {
                     "session": serde_json::Value::Null,
                     "choices": choices,
                     "how_to_proceed": "This identity has work already in flight. Call start_here \
-                                       again with resume: the sid of the run you are picking up — \
+                                       again with resume: the name of the run you are picking up — \
                                        read what it was working on above — or resume: \"new\" for \
-                                       a fresh session. Nothing was closed and nothing was \
-                                       written; choosing new leaves the runs above running.",
+                                       a fresh session. Only a run that has been quiet for 45 \
+                                       minutes can be picked up by its name; a run still writing \
+                                       is continued with its own key. Nothing was closed and \
+                                       nothing was written; choosing new leaves the runs above \
+                                       running.",
                 })
             }
         };
@@ -460,9 +501,15 @@ impl Jojobot {
                 }));
             }
         };
+        // **A code is spent on its first use.** Only a window that is still
+        // OFFERED answers to one: using the code opens the window, and a code
+        // whose window is open is the spent one.
         let Some(wrapped) = runs.iter().find(|run| {
             run.state == SessionState::Wrapped
-                && run.wrap_window.as_ref().is_some_and(|w| w.code() == code)
+                && matches!(
+                    &run.wrap_window,
+                    Some(jojobot_domain::session::WrapWindow::Offered(held)) if held == code
+                )
         }) else {
             return Err(spent(
                 "That code is spent or unknown: its run was wrapped a second time, or a newer \
@@ -482,27 +529,32 @@ impl Jojobot {
                  wrapped.",
             ));
         }
-        let opened = match &wrapped.wrap_window {
-            Some(jojobot_domain::session::WrapWindow::Open(_)) => wrapped.clone(),
-            _ => match self
-                .sessions
-                .set_wrap_window(
-                    &wrapped.id,
-                    Some(jojobot_domain::session::WrapWindow::Open(code.to_string())),
-                )
-                .await
-            {
-                Ok(opened) => opened,
-                Err(e) => {
-                    tracing::warn!(error = %e, run = %wrapped.id, "a wrap window could not be opened");
-                    return Err(spent("The window could not be opened just now."));
-                }
-            },
+        let opened = match self
+            .sessions
+            .set_wrap_window(
+                &wrapped.id,
+                Some(jojobot_domain::session::WrapWindow::Open(code.to_string())),
+            )
+            .await
+        {
+            Ok(opened) => opened,
+            Err(e) => {
+                tracing::warn!(error = %e, run = %wrapped.id, "a wrap window could not be opened");
+                return Err(spent("The window could not be opened just now."));
+            }
         };
-        let handle = self.handle_for(bot, &opened.id)?;
+        // **The code returns a key for the run's one last change.** The run's
+        // key was taken away by the wrap; this one is new and is written to the
+        // card before the call returns.
+        let name = opened
+            .sid
+            .clone()
+            .unwrap_or_else(|| sid::Sid(opened.id.as_str().to_string()));
+        let key = self.rekey(&name, sid::RetiredBy::Wrapped).await?;
         Ok(serde_json::json!({
             "available": true,
-            "sid": handle.as_str(),
+            "sid": key,
+            "run": name.as_str(),
             "resumed": true,
             "session": session_json(&opened),
             "note": "this run is wrapped and takes writes once more, for one last change. It \
@@ -514,107 +566,174 @@ impl Jojobot {
 
     /// The block for a session with no card behind it yet — a first boot, or
     /// `new`, or a handle nothing has been written under.
-    pub(crate) fn fresh_block(&self, handle: sid::Sid) -> serde_json::Value {
+    pub(crate) fn fresh_block(&self, run: sid::Minted) -> serde_json::Value {
         serde_json::json!({
             "available": true,
-            "sid": handle.as_str(),
+            "sid": run.key,
+            "run": run.name.as_str(),
             "resumed": false,
             "session": serde_json::Value::Null,
-            "note": "a fresh session, and this is its sid. Nothing is written yet — the record \
-                     begins on your first journal entry or the first write you make, so a boot \
-                     that does nothing leaves nothing behind.",
+            "note": "a fresh session. `sid` is its key: send it on every call and tell it to \
+                     nobody. `run` is its name, which records may carry and which opens nothing. \
+                     Nothing is written yet — the record begins on your first journal entry or \
+                     the first write you make, so a boot that does nothing leaves nothing behind.",
         })
     }
 
-    /// Read an answer to the offer: the handle it names, and the live session it
+    /// Read an answer to the offer: the run it names, and the live session it
     /// addresses if it addresses one.
     ///
-    /// **Four refusals, and none of them is a correction.** A handle jojobot
-    /// could not have minted, one it is not holding, one that belongs to another
-    /// identity, and one whose session is closed or gone from the board. Each is
-    /// blocked in its own words, because a caller's next move differs in every
-    /// case — and none is repaired into a nearby handle, which would be jojobot
-    /// guessing which session somebody meant.
+    /// **A name is not a way in; it is a way to ask.** The answer succeeds only
+    /// for a run of this identity that has been quiet for a full lease by the
+    /// server's clock, because a run still writing belongs to whoever holds its
+    /// key. Every other case is refused in its own words, and none is repaired
+    /// into a nearby name, which would be jojobot guessing which session
+    /// somebody meant. **Nothing the caller sent is repeated in a refusal**:
+    /// the run is named by what the registry holds.
     pub(crate) async fn resumable(
         &self,
         bot: &EntityId,
         answer: &str,
         live: &[Session],
+        offerable: Option<&Session>,
     ) -> Result<(sid::Sid, Option<Session>), CallToolResult> {
+        // **A card on this bot's own board is a run the registry may not have
+        // met**: it was begun by another writer, or since the last rebuild. Its
+        // name is public, so it is taken in by the name it goes by.
+        for session in live.iter().chain(offerable) {
+            if session
+                .sid
+                .as_ref()
+                .map_or(session.id.as_str(), |n| n.as_str())
+                == answer
+                && session.bot == *bot
+            {
+                self.registry.adopt(session);
+            }
+        }
+        let again = "Call start_here with your bot name and no resume to see what there is.";
         if !sid::is_readable(answer) {
             return Err(handle_declined(
-                answer,
+                "",
                 format!(
-                    "No session was started. '{answer}' is not a handle jojobot mints — those are \
-                 {} characters of 0-9 and a-z, with i, l, o and u left out because they read \
-                 as one another. jojobot will not correct one, because correcting it means \
-                 guessing which session you meant. Call start_here with your bot name and no \
-                 resume to see what there is.",
-                    jojobot_domain::session::SID_LEN,
+                    "No session was started. That is not a run name jojobot mints, and a name \
+                 is not a key either. jojobot will not correct one, because correcting it \
+                 means guessing which session you meant. {again}"
                 ),
             ));
         }
-        let Some(held) = self.registry.lookup(answer) else {
+        let Some(held) = self.registry.lookup_name(answer) else {
             return Err(handle_declined(
-                answer,
+                "",
                 format!(
-                    "No session was started. That session is gone: '{answer}' is not a handle \
-                 this jojobot is holding — a handle whose run never wrote has nothing \
-                 to be recovered from. The work itself is untouched and still \
-                 readable. Call start_here with your bot name again and take the offer it \
-                 makes."
+                    "No session was started. No run goes by that name: this jojobot is not \
+                 holding one, and a run that never wrote has nothing to be recovered from. \
+                 The work itself is untouched and still readable. {again}"
                 ),
             ));
         };
         if held.bot != *bot {
             // Refused without naming whose it is, and without offering a way
             // to switch: disclosing the other identity would prime
-            // identity-switching as something an agent might do. A handle
-            // that is not yours is simply not yours; the way forward is your
-            // own session.
+            // identity-switching as something an agent might do. A run that is
+            // not yours is simply not yours; the way forward is your own
+            // session.
             return Err(handle_declined(
-                answer,
+                "",
                 format!(
-                    "No session was started. The handle '{answer}' is not yours — a session is \
-                     bound to its identity at boot and never switches. Call start_here as \
-                     '{bot}' with no resume to see what is."
+                    "No session was started. That run is not yours — a session is bound to \
+                     its identity at boot and never switches. Call start_here as '{bot}' with \
+                     no resume to see what is."
                 ),
             ));
         }
-        let handle = sid::Sid(answer.to_string());
+        let name = held.name.clone();
         let Some(card) = held.card else {
-            // Minted, never written under. Still theirs, still empty.
-            return Ok((handle, None));
+            // Minted, never written under: nothing records it and nothing says
+            // it went quiet, so a name cannot take it.
+            return Err(handle_declined(
+                "",
+                format!(
+                    "No session was started. Run {name} has not written anything, so there is \
+                     nothing to pick up and nothing says it went quiet. It is continued only \
+                     with its own key. {again}"
+                ),
+            ));
         };
+        let existing = match live.iter().find(|s| s.id == card) {
+            Some(session) => session.clone(),
+            None => match self.sessions.read_session(&card).await {
+                Ok(session) => session,
+                Err(SessionError::UnknownSession { .. }) => {
+                    return Err(handle_declined(
+                        "",
+                        format!(
+                            "No session was started. Run {name} is held by this jojobot, but \
+                             the session it names is not on the board any more. Nothing was \
+                             changed. {again}"
+                        ),
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, session = %card, "a session could not be read");
+                    return Err(handle_declined(
+                        "",
+                        "No session was started, and nothing was changed: the session store \
+                         refused. This is not something your call can fix by being different — \
+                         try again, and if it persists a person has to look at the store."
+                            .to_string(),
+                    ));
+                }
+            },
+        };
+        // **Quiet is the server's own reading.** The caller's `today` plays no
+        // part: a run acting out another day would otherwise age a live run into
+        // being takeable.
+        if !existing.state.is_terminal() {
+            // **A pick-up counts as a write**, so the second of two asks made
+            // together meets a run that was just taken.
+            let wrote = existing
+                .last_beat()
+                .max(held.taken_at.unwrap_or(jiff::Timestamp::MIN));
+            if self.clock().now().duration_since(wrote) < self.quiet_after {
+                let free_at = wrote + self.quiet_after;
+                return Err(handle_declined(
+                    "",
+                    format!(
+                        "No session was started. Run {name} wrote at {wrote}, so it is still \
+                         its own: only its key continues it. A run quiet for 45 minutes can be \
+                         picked up by its name, which for this one is from {free_at}."
+                    ),
+                ));
+            }
+        }
         if let Some(session) = live.iter().find(|s| s.id == card) {
-            return Ok((handle, Some(session.clone())));
+            return Ok((name, Some(session.clone())));
         }
         // **Not among the live runs, so it stopped — and stopping is not the
         // end.** Reopening is what makes "resume last session" always work, and
         // it is bounded by nothing but the state the run reached: the offer's
-        // age window governs what jojobot VOLUNTEERS, never what a handle
+        // age window governs what jojobot VOLUNTEERS, never what a name
         // someone kept can still reach.
         match self.sessions.reopen(&card).await {
-            Ok(session) => Ok((handle, Some(session))),
+            Ok(session) => Ok((name, Some(session))),
             // The one end that is the last word: a run which told its story
             // is over, and its chronology stands as the record of what
             // happened.
             Err(SessionError::Closed { state, .. }) => Err(handle_declined(
-                answer,
+                "",
                 format!(
-                    "No session was started. '{answer}' addresses a session that is {state} — its \
-                 story has been told, so this end is the last word, except through the \
-                 wrap_code its wrap handed back: pass that code as resume for one last \
-                 change. Its chronology stands as the record of what happened. Call \
-                 start_here with your bot name and no resume to begin the next run."
+                    "No session was started. Run {name} is {state} — its story has been told, \
+                 so this end is the last word, except through the wrap_code its wrap handed \
+                 back: pass that code as resume for one last change. Its chronology stands as \
+                 the record of what happened. {again}"
                 ),
             )),
             Err(SessionError::UnknownSession { .. }) => Err(handle_declined(
-                answer,
+                "",
                 format!(
-                    "No session was started. '{answer}' is a handle jojobot is holding, but the \
-                 session it addresses is not on the board any more. Nothing was changed. Call \
-                 start_here with your bot name and no resume to see what is there."
+                    "No session was started. Run {name} is held by this jojobot, but the \
+                 session it names is not on the board any more. Nothing was changed. {again}"
                 ),
             )),
             // **Degrades the way the rest of a boot degrades**: nothing was
@@ -624,16 +743,51 @@ impl Jojobot {
             Err(e) => {
                 tracing::warn!(error = %e, session = %card, "a session could not be reopened");
                 Err(handle_declined(
-                    answer,
-                    format!(
-                        "No session was started, and nothing was changed. '{answer}' addresses a \
-                     session that stopped, and jojobot could not reopen it: the session store \
-                     refused. This is not something your call can fix by being different — \
-                     try again, and if it persists a person has to look at the store."
-                    ),
+                    "",
+                    "No session was started, and nothing was changed. That run stopped, and \
+                     jojobot could not reopen it: the session store refused. This is not \
+                     something your call can fix by being different — try again, and if it \
+                     persists a person has to look at the store."
+                        .to_string(),
                 ))
             }
         }
+    }
+
+    /// **Give a run a new key**, writing it to the card before it is returned.
+    ///
+    /// The old key stops opening the run at once and is remembered as retired
+    /// with `by`, so the sitting that holds it is told why. If the card cannot
+    /// be written nothing changes and the call is refused: a key the store does
+    /// not hold would be brought back by the next restart.
+    pub(crate) async fn rekey(
+        &self,
+        name: &sid::Sid,
+        by: sid::RetiredBy,
+    ) -> Result<String, CallToolResult> {
+        let key = jojobot_domain::session::mint_key();
+        let hash = jojobot_domain::session::hash_key(&key);
+        if let Some(card) = self
+            .registry
+            .lookup_name(name.as_str())
+            .and_then(|h| h.card)
+            && let Err(e) = self.sessions.set_key_hash(&card, &hash).await
+        {
+            tracing::warn!(error = %e, session = %card, "a run's new key could not be written");
+            return Err(handle_declined(
+                "",
+                "No session was started, and no key was handed out: the session store \
+                 refused the new key. Nothing was changed. Try again, and if it persists a \
+                 person has to look at the store."
+                    .to_string(),
+            ));
+        }
+        self.registry.set_key(
+            name,
+            sid::KeyState::Held(hash),
+            Some((self.clock().now(), by)),
+        );
+        Ok(key)
     }
 }
 
@@ -666,6 +820,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
 
         let sid = booted_in(&jojobot, "gamma", "Europe/Madrid", None).await;
+        let name = run_name(&jojobot, &sid);
         // The record is lazy, so a write is what puts the run on it.
         journal_entry(&jojobot, &sid, "started").await;
 
@@ -675,14 +830,14 @@ mod tests {
                 .await
                 .expect("list ok")
                 .into_iter()
-                .find(|s| s.sid.as_ref().map(|h| h.as_str()) == Some(sid.as_str()))
+                .find(|s| s.sid.as_ref().map(|h| h.as_str()) == Some(name.as_str()))
                 .expect("the run is on the record")
                 .timezone
         };
         assert_eq!(zone_on_record().await.as_deref(), Some("Europe/Madrid"));
 
         // Picked up somewhere else, naming the new zone.
-        booted_in(&jojobot, "gamma", "America/New_York", Some(&sid)).await;
+        let sid = booted_in(&jojobot, "gamma", "America/New_York", Some(&sid)).await;
         assert_eq!(
             zone_on_record().await.as_deref(),
             Some("America/New_York"),
@@ -725,7 +880,9 @@ mod tests {
         assert_eq!(day_of(&sid).await, "2026-03-15");
 
         // `today` alone moves the day.
-        boot_answering_dated(&jojobot, "gamma", &sid, Some("2026-04-01"), None).await;
+        let sid =
+            sid_of(&boot_answering_dated(&jojobot, "gamma", &sid, Some("2026-04-01"), None).await)
+                .expect("a resume hands back the run's new key");
         assert_eq!(
             day_of(&sid).await,
             "2026-04-01",
@@ -733,7 +890,10 @@ mod tests {
         );
 
         // `timezone` alone must not clear a day this call never named.
-        boot_answering_dated(&jojobot, "gamma", &sid, None, Some("Europe/Madrid")).await;
+        let sid = sid_of(
+            &boot_answering_dated(&jojobot, "gamma", &sid, None, Some("Europe/Madrid")).await,
+        )
+        .expect("a resume hands back the run's new key");
         assert_eq!(
             day_of(&sid).await,
             "2026-04-01",
@@ -741,7 +901,8 @@ mod tests {
         );
 
         // Naming neither keeps both.
-        boot_answering_dated(&jojobot, "gamma", &sid, None, None).await;
+        let sid = sid_of(&boot_answering_dated(&jojobot, "gamma", &sid, None, None).await)
+            .expect("a resume hands back the run's new key");
         assert_eq!(
             day_of(&sid).await,
             "2026-04-01",
@@ -765,7 +926,9 @@ mod tests {
         journal_entry(&jojobot, &sid, "started").await;
 
         // Move the day.
-        boot_answering_dated(&jojobot, "gamma", &sid, Some("2026-04-01"), None).await;
+        let sid =
+            sid_of(&boot_answering_dated(&jojobot, "gamma", &sid, Some("2026-04-01"), None).await)
+                .expect("a resume hands back the run's new key");
 
         // Resume again, naming no day of its own: the note must read the
         // moved day.
@@ -775,8 +938,9 @@ mod tests {
             .unwrap_or_else(|| panic!("a day note: {resumed}"));
         assert!(noted.contains("2026-04-01"), "{noted}");
 
-        // And a capture on this same sid, naming no day, must land on that
-        // same day.
+        // And a capture on this same run, naming no day, must land on that
+        // same day. The resume gave the run a new key; the old one is closed.
+        let sid = sid_of(&resumed).expect("a resume hands back the run's new key");
         let mut args = capture_args("milhouse", "after the moved day");
         args.sid = Some(sid.clone());
         args.recorded_at = None;
@@ -890,7 +1054,7 @@ mod tests {
             .as_array()
             .map(|cs| {
                 cs.iter()
-                    .filter_map(|c| c["sid"].as_str())
+                    .filter_map(|c| c["run"].as_str())
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -929,6 +1093,8 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "the week-long piece of work".into(),
                 started_at: now - jiff::SignedDuration::from_hours(96),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -958,6 +1124,8 @@ mod tests {
                 sid: Sid("t002".into()),
                 focus: "a same-day errand".into(),
                 started_at: now - jiff::SignedDuration::from_hours(48),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -1027,6 +1195,8 @@ mod tests {
                         sid: Sid(sid),
                         focus: "a piece of work".into(),
                         started_at: hours(started),
+                        id: None,
+                        key_hash: None,
                     })
                     .await
                     .expect("begin ok");
@@ -1110,6 +1280,8 @@ mod tests {
                         sid: Sid(sid),
                         focus: "a piece of work".into(),
                         started_at: hours(started),
+                        id: None,
+                        key_hash: None,
                     })
                     .await
                     .expect("begin ok")
@@ -1229,8 +1401,12 @@ mod tests {
         let body = boot(&jojobot, "gamma").await;
         let handle = sid_of(&body).unwrap_or_else(|| panic!("a handle comes back: {body}"));
         assert!(
-            sid::is_readable(&handle),
-            "…and it is a readable one: {handle}"
+            jojobot_domain::session::is_key(&handle),
+            "…and it is a key: {handle}"
+        );
+        assert!(
+            sid::is_readable(&run_of(&body).expect("the run is named")),
+            "…beside a readable name: {body}"
         );
         assert_eq!(body["session"]["resumed"], false);
         assert!(
@@ -1274,6 +1450,8 @@ mod tests {
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
                     started_on: None,
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("begin ok");
@@ -1303,7 +1481,7 @@ mod tests {
             ["chasing the flaky test", "reading the hand-off"]
         );
         for choice in choices {
-            let handle = choice["sid"].as_str().expect("each option is addressable");
+            let handle = choice["run"].as_str().expect("each option is addressable");
             assert!(
                 sid::is_readable(handle),
                 "{handle} is not a readable handle"
@@ -1332,21 +1510,27 @@ mod tests {
                 focus: "reading the hand-off".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
 
         let offered = boot(&jojobot, "gamma").await;
-        let offer = offered["session"]["choices"][0]["sid"]
+        let offer = offered["session"]["choices"][0]["run"]
             .as_str()
             .expect("one option")
             .to_string();
 
         let resumed = boot_answering(&jojobot, "gamma", &offer).await;
         assert_eq!(
-            sid_of(&resumed).as_deref(),
+            run_of(&resumed).as_deref(),
             Some(offer.as_str()),
-            "{resumed}"
+            "the run keeps its name: {resumed}"
+        );
+        assert!(
+            sid_of(&resumed).is_some_and(|key| jojobot_domain::session::is_key(&key)),
+            "…and is handed a key: {resumed}"
         );
         assert_eq!(resumed["session"]["resumed"], true);
         assert_eq!(
@@ -1358,12 +1542,12 @@ mod tests {
         // given, so a caller who boots twice before answering is not looking at
         // two addresses for one run.
         assert_eq!(
-            boot(&jojobot, "gamma").await["session"]["choices"][0]["sid"],
+            boot(&jojobot, "gamma").await["session"]["choices"][0]["run"],
             offer.as_str()
         );
 
         let fresh = boot_answering(&jojobot, "gamma", sid::NEW).await;
-        let minted = sid_of(&fresh).unwrap_or_else(|| panic!("new mints one: {fresh}"));
+        let minted = run_of(&fresh).unwrap_or_else(|| panic!("new mints one: {fresh}"));
         assert_ne!(
             minted, offer,
             "choosing new is a different session: {fresh}"
@@ -1384,14 +1568,14 @@ mod tests {
         );
     }
 
-    /// **A handle survives the process that minted it, because the card holds
-    /// it.** This is the restart cliff closed: the registry is rebuilt from the
-    /// board before anything is served, so the handle a caller wrote down
-    /// yesterday still addresses its run today.
+    /// **A run survives the process that minted it, because the card holds its
+    /// name and the hash of its key.** This is the restart cliff closed: the
+    /// registry is rebuilt from the board before anything is served, so the key
+    /// a caller wrote down yesterday still opens its run today.
     ///
-    /// It matters beyond convenience. The sid is the address every later verb
-    /// carries, so a handle that died with the process meant a deploy silently
-    /// re-pointed every agent at nothing.
+    /// It matters beyond convenience. The key is the credential every later
+    /// verb carries, so a key that died with the process meant a deploy
+    /// silently re-pointed every agent at nothing.
     #[tokio::test]
     async fn a_handle_written_on_the_card_survives_a_restart() {
         let store = Arc::new(InMemorySessions::new());
@@ -1414,8 +1598,13 @@ mod tests {
             .expect("a card");
         assert_eq!(
             card.sid.as_ref().map(|s| s.as_str()),
-            Some(handle.as_str()),
-            "the card carries the handle the door handed out: {card:?}"
+            Some(run_name(&jojobot, &handle).as_str()),
+            "the card carries the name the door handed out: {card:?}"
+        );
+        assert_eq!(
+            card.key_hash.as_deref(),
+            Some(jojobot_domain::session::hash_key(&handle).as_str()),
+            "…and the hash of the key, never the key: {card:?}"
         );
 
         // A restart: same board, an empty registry, filled from the board before
@@ -1429,11 +1618,17 @@ mod tests {
         );
         let restarted = connection_sharing(memory, store.clone(), rebuilt);
 
+        // The key still opens the run it opened before the restart.
+        assert_eq!(
+            run_name(&restarted, &handle),
+            run_name(&jojobot, &handle),
+            "the same key, still opening the same run"
+        );
         let resumed = boot_answering(&restarted, "gamma", &handle).await;
         assert_eq!(
-            sid_of(&resumed).as_deref(),
-            Some(handle.as_str()),
-            "the same handle, still addressing the same run: {resumed}"
+            run_of(&resumed),
+            Some(run_name(&jojobot, &handle)),
+            "the same run, still addressed by the same name: {resumed}"
         );
         assert_eq!(resumed["session"]["session"]["id"], card.id.as_str());
         assert_eq!(
@@ -1464,7 +1659,10 @@ mod tests {
 
         // Picked up again, stating a different day — the device hop a
         // resume's `today` argument is for.
-        boot_answering_dated(&jojobot, "gamma", &handle, Some("2026-04-01"), None).await;
+        let handle = sid_of(
+            &boot_answering_dated(&jojobot, "gamma", &handle, Some("2026-04-01"), None).await,
+        )
+        .expect("a resume hands back the run's new key");
 
         // A restart: same board, an empty registry, filled from the board
         // before the first request.
@@ -1521,9 +1719,14 @@ mod tests {
         assert!(sid::is_readable(stored.as_str()));
         assert_eq!(
             stored.as_str(),
-            door_gave.as_str(),
-            "…and it is the caller's OWN handle, because the sid rides the write: jojobot no \
+            run_name(&client.call(), &door_gave),
+            "…and it is the caller's OWN run, because the key rides the write: jojobot no \
              longer has to guess which of several booted agents is writing"
+        );
+        assert_eq!(
+            card.key_hash.as_deref(),
+            Some(jojobot_domain::session::hash_key(&door_gave).as_str()),
+            "…and the card holds the hash of the key the door handed out, never the key"
         );
 
         // The card's own handle is what survives a restart and addresses the run.
@@ -1540,16 +1743,16 @@ mod tests {
             .expect("read ok");
         assert_eq!(rebuilt.rebuild_from(&board).recovered, 1);
         assert_eq!(
-            rebuilt.lookup(stored.as_str()).expect("held").card,
+            rebuilt.lookup_name(stored.as_str()).expect("held").card,
             Some(card.id.clone())
         );
     }
 
-    /// **A card written before handles were persisted carries none**, and that
-    /// is not a broken card: the boot that offers it mints one on the spot. The
-    /// migration is a no-op *only because* minting-on-offer already exists —
-    /// stated here so nobody later "simplifies" the offer into requiring a
-    /// stored handle.
+    /// **A card written before names were persisted carries none**, and that is
+    /// not a broken card: it goes by its own id, holds no key, and is offered
+    /// by that name. The migration is a no-op *only because* the id already is
+    /// a public name — stated here so nobody later "simplifies" the offer into
+    /// requiring a stored name.
     #[tokio::test]
     async fn a_card_with_no_stored_handle_is_offered_one_on_the_spot() {
         let store = Arc::new(InMemorySessions::new());
@@ -1566,6 +1769,8 @@ mod tests {
                 focus: "from before handles were stored".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -1577,13 +1782,21 @@ mod tests {
             .expect("read ok");
         assert_eq!(
             registry.rebuild_from(&board).recovered,
-            0,
-            "a card with no handle contributes none"
+            1,
+            "a card with no stored name is taken in under its own id"
+        );
+        assert_eq!(
+            registry
+                .lookup_name(legacy.id.as_str())
+                .expect("held under its id")
+                .key,
+            sid::KeyState::Legacy,
+            "…holding no key"
         );
 
         let offered = boot(&jojobot, "gamma").await;
         let choice = &offered["session"]["choices"][0];
-        let minted = choice["sid"]
+        let minted = choice["run"]
             .as_str()
             .expect("a handle, minted on the spot");
         assert!(sid::is_readable(minted));
@@ -1614,7 +1827,9 @@ mod tests {
     async fn a_handle_that_never_reached_a_card_is_blocked_after_a_rebuild() {
         let client = NoAffinity::new();
         make_bot(&client.call(), "gamma").await;
-        let handle = sid_of(&boot(&client.call(), "gamma").await).expect("a handle");
+        let booted_run = boot(&client.call(), "gamma").await;
+        let handle = run_of(&booted_run).expect("a run name");
+        let key = sid_of(&booted_run).expect("a key");
 
         // Same stores, new process: the registry is what a restart empties, and
         // filling it back from the board is what a restart then does.
@@ -1658,14 +1873,26 @@ mod tests {
                 .await
                 .expect("a dead handle is an answer, not a protocol failure"),
         );
-        assert_eq!(body["attempted"], handle);
+        assert!(
+            !body.to_string().contains(&key),
+            "the refusal repeats nothing it was sent: {body}"
+        );
         let how = body["how_to_proceed"].as_str().expect("advice");
         assert!(
-            how.contains("gone") && how.contains("start_here"),
-            "that session is gone; boot again: {how}"
+            how.contains("No run goes by that name") && how.contains("start_here"),
+            "that run is gone; boot again: {how}"
         );
 
-        // An unreadable handle is refused too — never repaired into a near one.
+        // The key of that run opens nothing either.
+        let by_key = restarted
+            .caller(Some(&key))
+            .expect_err("the key opens nothing");
+        assert!(
+            !format!("{by_key:?}").contains(&key),
+            "the refusal repeats nothing it was sent"
+        );
+
+        // An unreadable name is refused too — never repaired into a near one.
         let mistyped = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
@@ -1685,7 +1912,10 @@ mod tests {
                 .await
                 .expect("an unreadable handle is an answer too"),
         );
-        assert_eq!(mistyped["attempted"], "k3fo");
+        assert!(
+            !mistyped.to_string().contains("k3fo"),
+            "the refusal repeats nothing it was sent: {mistyped}"
+        );
     }
 
     /// **A handle is bound to its identity at boot and never switches.** Naming
@@ -1698,7 +1928,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;
 
-        let gammas = sid_of(&boot(&jojobot, "gamma").await).expect("a handle");
+        let gammas = run_of(&boot(&jojobot, "gamma").await).expect("a run name");
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -1762,6 +1992,8 @@ mod tests {
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
                     started_on: None,
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("begin ok");
@@ -1772,7 +2004,7 @@ mod tests {
             .as_array()
             .expect("the offer")
             .iter()
-            .map(|c| c["sid"].as_str().expect("a handle"))
+            .map(|c| c["run"].as_str().expect("a handle"))
             .collect();
         assert_eq!(handles.len(), 2);
         assert_ne!(handles[0], handles[1], "identical work, different handles");
@@ -1822,7 +2054,7 @@ mod tests {
         let resumed = boot_answering(
             &jojobot,
             "gamma",
-            choice["sid"].as_str().expect("an addressable option"),
+            choice["run"].as_str().expect("an addressable option"),
         )
         .await;
         assert_eq!(resumed["session"]["resumed"], true);
@@ -1869,10 +2101,8 @@ mod tests {
         assert!(sid_of(&booted).is_some());
 
         // The caller kept the handle from when this process issued it.
-        let held = registry
-            .for_card(&EntityId("bot:gamma".into()), &ancient.id)
-            .expect("a handle");
-        let resumed = boot_answering(&jojobot, "gamma", held.as_str()).await;
+        let held = registry.mint_on_card(&EntityId("bot:gamma".into()), ancient.id.clone());
+        let resumed = boot_answering(&jojobot, "gamma", held.name.as_str()).await;
         assert_eq!(
             resumed["session"]["resumed"], true,
             "age bounds what is volunteered, never what a handle reaches: {resumed}"
@@ -1901,6 +2131,8 @@ mod tests {
                 focus: "still going".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -1942,6 +2174,8 @@ mod tests {
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(2),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -1956,9 +2190,7 @@ mod tests {
             "a told story is not on offer: {booted}"
         );
 
-        let held = registry
-            .for_card(&EntityId("bot:gamma".into()), &told.id)
-            .expect("a handle");
+        let held = registry.mint_on_card(&EntityId("bot:gamma".into()), told.id.clone());
         let refused = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -1968,7 +2200,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     section: None,
-                    resume: Some(held.as_str().into()),
+                    resume: Some(held.name.as_str().into()),
                     sid: None,
                     today: None,
                     ask_for_code: None,
@@ -2027,7 +2259,7 @@ mod tests {
         let resumed = boot_answering(
             &second,
             "gamma",
-            choice["sid"].as_str().expect("an addressable option"),
+            choice["run"].as_str().expect("an addressable option"),
         )
         .await;
         assert_eq!(resumed["session"]["resumed"], true);
@@ -2112,7 +2344,7 @@ mod tests {
                 .expect("the boot call is ok"),
         );
         assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
-        let holder_sid = sid_of(&claimed).expect("a handle");
+        let holder_run = run_of(&claimed).expect("a run name");
 
         let second = connection_sharing(memory, store, registry);
         let offered = boot(&second, "gamma").await;
@@ -2121,7 +2353,7 @@ mod tests {
             "the choice comes first: {offered}"
         );
         let choice = &offered["session"]["choices"][0];
-        assert_eq!(choice["sid"], holder_sid, "{offered}");
+        assert_eq!(choice["run"], holder_run, "{offered}");
         assert_eq!(choice["working_on"], "claimed the dev-dispatch role");
     }
 
@@ -2250,6 +2482,8 @@ mod tests {
                 focus: "the run that wrapped".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2288,6 +2522,8 @@ mod tests {
                 focus: "left open two days ago".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2371,6 +2607,8 @@ mod tests {
                 focus: "the newer run".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2410,6 +2648,8 @@ mod tests {
                 focus: "something from the day before yesterday".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2448,7 +2688,7 @@ mod tests {
         let resumed = boot_answering(
             &jojobot,
             "gamma",
-            choice["sid"].as_str().expect("an addressable option"),
+            choice["run"].as_str().expect("an addressable option"),
         )
         .await;
         assert_eq!(resumed["session"]["session"]["id"], stale.id.as_str());
@@ -2554,6 +2794,8 @@ mod tests {
                 focus: "something from the day before yesterday".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2660,6 +2902,8 @@ mod tests {
                 focus: "long over".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2695,6 +2939,8 @@ mod tests {
                 focus: "still going".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2706,7 +2952,7 @@ mod tests {
         let resumed = boot_answering(
             &jojobot,
             "gamma",
-            booted["session"]["choices"][0]["sid"]
+            booted["session"]["choices"][0]["run"]
                 .as_str()
                 .expect("an option"),
         )
@@ -2828,6 +3074,8 @@ mod tests {
                     focus: "from the day before yesterday".into(),
                     started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
                     started_on: None,
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("begin ok");
@@ -2951,8 +3199,8 @@ mod tests {
             if let Some(choices) = booted_answer["session"]["choices"].as_array() {
                 for choice in choices {
                     assert_eq!(
-                        choice["sid"].as_str(),
-                        Some(sid.as_str()),
+                        choice["run"].as_str(),
+                        Some(run_name(&jojobot, &sid).as_str()),
                         "boot_first={boot_first}: the offer minted a second handle for a run that \
                          already has one: {choice}"
                     );
@@ -3242,6 +3490,8 @@ mod tests {
                 focus: "a run still going".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -3280,6 +3530,8 @@ mod tests {
                 focus: "the newer run".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -3295,5 +3547,79 @@ mod tests {
             window_of(counting.store(), &wrapped).await.is_none(),
             "…and the older run's window ended"
         );
+    }
+
+    /// **A resume whose revocation fails is refused, issues no key, and leaves
+    /// the run exactly as it was.** The listing, a read and a write of the
+    /// run's vouchers each fail in turn. The sitting that holds the old key
+    /// goes on working with it, the voucher it holds is still held, and once the
+    /// store answers again the same resume goes through and the old key stops
+    /// opening the run.
+    #[tokio::test]
+    async fn a_resume_whose_vouchers_cannot_all_be_voided_issues_no_key() {
+        use crate::session::scripted::Scripted;
+        use jojobot_domain::voucher::{Voucher, VoucherState};
+        for step in ["list", "read", "write"] {
+            let scripted = Arc::new(Scripted::over(Arc::new(InMemoryMemory::seeded())));
+            let jojobot = Jojobot::new(
+                scripted.clone(),
+                Arc::new(crate::memory::testing::SpySearch::default()),
+                Arc::new(InMemoryMailboxes::knowing_any_owner()),
+                Arc::new(InMemorySessions::new()),
+                Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                seeded_registry(),
+            );
+            name_the_operator(&jojobot, "milhouse").await;
+            make_bot(&jojobot, "gamma").await;
+            let key = booted(&jojobot, "gamma").await;
+            journal_entry(&jojobot, &key, "started").await;
+            let name = run_name(&jojobot, &key);
+            let held = Voucher {
+                right: "boot-as".into(),
+                target: "bot:gamma".into(),
+                holder: name.clone(),
+                issuer: "person:milhouse".into(),
+                parent: None,
+                state: VoucherState::Held,
+            };
+            let day = jiff::civil::date(2026, 10, 9);
+            let grant = jojobot.issue_voucher(&held, day).await.expect("issued");
+            scripted.script(|s| match step {
+                "list" => s.listing_fails_for = Some(EntityKind::VOUCHER),
+                "read" => s.recall_fails_for = Some(grant.clone()),
+                _ => s.update_fails = true,
+            });
+
+            let refused = boot_answering(&jojobot, "gamma", &name).await;
+            assert_eq!(refused["status"], "blocked", "{step}: {refused}");
+            assert!(
+                refused["session"]["sid"].is_null() && refused.get("sid").is_none(),
+                "{step}: a refused resume handed out a key: {refused}"
+            );
+            assert!(
+                !refused.to_string().contains(&key),
+                "{step}: the refusal repeats the key"
+            );
+            // The sitting that holds the key goes on, and the voucher is as it was.
+            journal_entry(&jojobot, &key, "still here").await;
+            let state = jojobot.memory.fields(&grant).await.expect("fields")["state"].clone();
+            assert_eq!(state, "held", "{step}");
+
+            // The positive: the same resume, once the store answers.
+            scripted.script(|s| *s = Default::default());
+            let taken = boot_answering(&jojobot, "gamma", &name).await;
+            let new_key = taken["session"]["sid"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{step}: the resume goes through: {taken}"))
+                .to_string();
+            assert_ne!(new_key, key, "{step}");
+            let state = jojobot.memory.fields(&grant).await.expect("fields")["state"].clone();
+            assert_eq!(state, "void", "{step}");
+            assert!(
+                jojobot.caller(Some(&key)).is_err(),
+                "{step}: the old key still opens the run"
+            );
+            assert_eq!(run_name(&jojobot, &new_key), name, "{step}");
+        }
     }
 }

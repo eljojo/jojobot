@@ -34,7 +34,7 @@ pub(crate) use jojobot_domain::session::testing::InMemorySessions;
 /// than a handle.
 pub(crate) async fn resumed(jojobot: &Jojobot, name: &str) -> String {
     let offered = boot(jojobot, name).await;
-    let choice = offered["session"]["choices"][0]["sid"]
+    let choice = offered["session"]["choices"][0]["run"]
         .as_str()
         .unwrap_or_else(|| panic!("{name} was offered nothing to resume: {offered}"))
         .to_string();
@@ -47,10 +47,8 @@ pub(crate) async fn resumed(jojobot: &Jojobot, name: &str) -> String {
 pub(crate) fn as_run(jojobot: &Jojobot, bot: &str, card: &SessionId) -> String {
     jojobot
         .registry
-        .mint(&EntityId::new(EntityKind::BOT, bot), Some(card.clone()))
-        .expect("a free handle")
-        .as_str()
-        .to_string()
+        .mint_on_card(&EntityId::new(EntityKind::BOT, bot), card.clone())
+        .key
 }
 
 /// Close a session the way the sweep would, and put its last beat far
@@ -69,6 +67,8 @@ pub(crate) async fn abandoned_run(
             sid: Sid(format!("t{:03}", hours_ago.rem_euclid(1000))),
             focus: focus.into(),
             started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago),
+            id: None,
+            key_hash: None,
         })
         .await
         .expect("begin ok");
@@ -269,6 +269,9 @@ impl Sessions for CommitsThenFails {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash).await
+    }
 
     async fn note_charter_change(
         &self,
@@ -389,6 +392,9 @@ impl Sessions for RefusingFocus {
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
     }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash).await
+    }
 
     async fn note_charter_change(
         &self,
@@ -485,6 +491,9 @@ impl Sessions for RefusingWindowClear {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
+    }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash).await
     }
 
     async fn note_charter_change(
@@ -638,6 +647,9 @@ impl Sessions for CountingSessions {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash).await
+    }
 
     async fn note_charter_change(
         &self,
@@ -731,6 +743,9 @@ impl Sessions for RefusingAppend {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
+    }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash).await
     }
 
     async fn note_charter_change(
@@ -888,6 +903,9 @@ impl Sessions for RefusingClose {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash).await
+    }
 
     async fn note_charter_change(
         &self,
@@ -1001,6 +1019,9 @@ impl Sessions for Yielding {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
+    }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash).await
     }
 
     async fn note_charter_change(

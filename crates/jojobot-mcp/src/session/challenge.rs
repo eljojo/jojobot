@@ -433,11 +433,12 @@ impl Jojobot {
     /// is spent first, so a failure after it costs a new request and never lets
     /// one code be used twice. The bot the code is for decides the voucher: the
     /// assistant is given the root, every other bot its own `boot-as`. The
-    /// operator issues it, and the session that booted holds it.
+    /// operator issues it, and the session that booted holds it, by its public
+    /// name: `run` is never the key.
     pub(crate) async fn redeem_code(
         &self,
         verified: &Verified,
-        sid: &str,
+        run: &str,
         today: Date,
     ) -> Result<serde_json::Value, MemoryError> {
         let operator = self
@@ -471,7 +472,7 @@ impl Jojobot {
         let granted = Voucher {
             right: right.to_string(),
             target: verified.bot.to_string(),
-            holder: sid.to_string(),
+            holder: run.to_string(),
             issuer: operator.to_string(),
             parent: None,
             state: VoucherState::Held,
@@ -1007,12 +1008,14 @@ mod tests {
     async fn a_wrap_voids_every_voucher_its_run_holds_and_no_other() {
         let (jojobot, _) = scripted_instance().await;
         let sid = booted_sid(&jojobot).await;
+        // A voucher names its holder by the run's public name, never the key.
+        let name = run_name(&jojobot, &sid);
         let mut ids = Vec::new();
         for (right, holder, state) in [
-            (voucher::ROOT, sid.as_str(), VoucherState::Held),
-            ("boot-as", sid.as_str(), VoucherState::Held),
-            ("claim-role", sid.as_str(), VoucherState::Issued),
-            ("boot-as", sid.as_str(), VoucherState::Spent),
+            (voucher::ROOT, name.as_str(), VoucherState::Held),
+            ("boot-as", name.as_str(), VoucherState::Held),
+            ("claim-role", name.as_str(), VoucherState::Issued),
+            ("boot-as", name.as_str(), VoucherState::Spent),
             ("boot-as", "someone-else", VoucherState::Held),
         ] {
             let held = Voucher {
@@ -1039,6 +1042,39 @@ mod tests {
         assert_eq!(wrapped["session"]["state"], "wrapped", "{wrapped}");
     }
 
+    /// **Nothing writes `VoucherState::Escrow` yet, so the void leaves it be.**
+    /// Escrow is a voucher surrendered to a successor, which a void must not
+    /// take back; the state exists in the domain and no verb moves a voucher
+    /// into it. This pins what the void does with one anyway, so the day
+    /// something does write it this case is the one that has to be read: the
+    /// card wants a voucher a run holds to end with the run, and an escrowed one
+    /// is by definition not held by it.
+    #[tokio::test]
+    async fn a_voucher_in_escrow_is_left_alone_because_nothing_writes_escrow_yet() {
+        let (jojobot, _) = scripted_instance().await;
+        let sid = booted_sid(&jojobot).await;
+        let name = run_name(&jojobot, &sid);
+        let mut ids = Vec::new();
+        for state in [VoucherState::Escrow, VoucherState::Held] {
+            let held = Voucher {
+                right: "boot-as".into(),
+                target: "bot:gamma".into(),
+                holder: name.clone(),
+                issuer: "person:milhouse".into(),
+                parent: None,
+                state,
+            };
+            ids.push(jojobot.issue_voucher(&held, day()).await.expect("issued"));
+        }
+        let wrapped = wrap(&jojobot, &sid).await;
+        let mut states = Vec::new();
+        for id in &ids {
+            states.push(jojobot.memory.fields(id).await.expect("fields")["state"].clone());
+        }
+        assert_eq!(states, ["escrow", "void"], "{states:?}");
+        assert_eq!(wrapped["trust"]["vouchers_voided"], 1, "{wrapped}");
+    }
+
     /// **A wrap that cannot revoke stops, and says which step failed.** The
     /// listing, a read and a write each fail in turn. The wrap is refused, the
     /// run stays active, nothing it held is claimed to have ended, and once the
@@ -1051,7 +1087,7 @@ mod tests {
             let held = Voucher {
                 right: "boot-as".into(),
                 target: "bot:gamma".into(),
-                holder: sid.clone(),
+                holder: run_name(&jojobot, &sid),
                 issuer: "person:milhouse".into(),
                 parent: None,
                 state: VoucherState::Held,

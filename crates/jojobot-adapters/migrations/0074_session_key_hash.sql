@@ -1,0 +1,13 @@
+-- The hash of the key a run holds.
+--
+-- **A run's key is its only credential and is stored as its SHA-256, never as
+-- itself.** The hash is what a caller's key is looked up by, so it survives a
+-- restart; the key cannot be read back from it. NULL is a run that never held
+-- a key (a run that began before keys existed). The word `void` is a run whose
+-- key was taken away, which cannot be a hash, so the two are told apart.
+--
+-- Nothing reads it out to a caller. It is written with the card at its birth
+-- and rewritten, before the call that rotates or removes a key returns. The
+-- index and the column are one statement, so an interrupted start cannot leave
+-- one without the other.
+ALTER TABLE session ADD COLUMN key_hash VARCHAR(64) NULL, ADD INDEX by_key_hash (key_hash);

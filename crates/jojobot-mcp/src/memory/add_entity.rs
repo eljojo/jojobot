@@ -591,9 +591,9 @@ impl Jojobot {
                 // **A creation that sits beside a thing this session was shown
                 // is asked about it, once.** Only a creation that landed gets
                 // here, so a guard refusal never doubles up with this.
-                if let Some(sid) = args.sid.as_deref()
+                if let Ok(Some(asking)) = self.caller(args.sid.as_deref())
                     && let Some(noticed) = self.registry.consult_creation(
-                        sid,
+                        asking.sid.as_str(),
                         entity.id.as_str(),
                         entity.id.kind().map_or("", |kind| kind.as_token()),
                         &entity.name,
@@ -1511,7 +1511,11 @@ mod tests {
         let reader = writing_as(&jojobot);
         let writer = jojobot
             .registry
-            .mint_with(&EntityId("bot:otto".into()), None, || "tst2".to_string())
+            .mint_with(
+                &EntityId("bot:otto".into()),
+                || "tst2".to_string(),
+                jojobot_domain::session::mint_key,
+            )
             .expect("a second session")
             .to_string();
         created(&jojobot, &reader, "place", "wonder-wharf", "Wonder Wharf").await;
@@ -1564,7 +1568,11 @@ mod tests {
         let merger = writing_as(&jojobot);
         let reader = jojobot
             .registry
-            .mint_with(&EntityId("bot:otto".into()), None, || "tst2".to_string())
+            .mint_with(
+                &EntityId("bot:otto".into()),
+                || "tst2".to_string(),
+                jojobot_domain::session::mint_key,
+            )
             .expect("a second session")
             .to_string();
         created(&jojobot, &merger, "thing", "teapot", "Mill Race Weir").await;

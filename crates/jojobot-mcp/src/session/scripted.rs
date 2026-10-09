@@ -323,6 +323,13 @@ impl jojobot_domain::session::Sessions for UnreachableRuns {
     ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
         self.0.begin(new).await
     }
+    async fn set_key_hash(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        hash: &str,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.set_key_hash(id, hash).await
+    }
     async fn append(
         &self,
         id: &jojobot_domain::session::SessionId,

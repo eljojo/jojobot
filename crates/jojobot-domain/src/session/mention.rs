@@ -385,6 +385,9 @@ impl Sessions for Mentioning {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash).await
+    }
 
     /// **Both handles are stored as the badges they wear**, as a run's `bot`
     /// is, so a rename of the bot or of the identity that rewrote its charter
@@ -462,6 +465,8 @@ mod tests {
                 started_at: epoch(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -568,6 +573,8 @@ mod tests {
                 started_at: epoch(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -587,6 +594,8 @@ mod tests {
                 started_at: epoch(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -650,6 +659,8 @@ mod tests {
         let begin = |bot: &crate::memory::EntityId, sid: &str| NewSession {
             bot: bot.clone(),
             sid: super::super::Sid(sid.to_string()),
+            id: None,
+            key_hash: None,
             focus: "a run".into(),
             started_at: epoch(),
             timezone: None,
@@ -694,6 +705,8 @@ mod tests {
                 started_at: epoch(),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -721,6 +734,8 @@ mod tests {
             started_at: epoch(),
             timezone: None,
             started_on: None,
+            id: None,
+            key_hash: None,
         };
         let refused = |what: &str, outcome: Result<(), SessionError>| {
             assert!(

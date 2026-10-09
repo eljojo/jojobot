@@ -199,12 +199,13 @@ mod tests {
         );
         assert_eq!(held["carried_session"], "held", "{held}");
 
-        // Well-formed and never minted — the shape every handle takes once the
+        // Well-formed and never minted — the shape every key takes once the
         // process holding it has gone.
+        let never_minted = jojobot_domain::session::mint_key();
         let lost = json_of(
             &jojobot
                 .ping(Parameters(PingArgs {
-                    sid: Some("2gf7".into()),
+                    sid: Some(never_minted.clone()),
                 }))
                 .await
                 .expect("ping answers"),
@@ -228,7 +229,7 @@ mod tests {
         let mistyped = json_of(
             &jojobot
                 .ping(Parameters(PingArgs {
-                    sid: Some("2GF7".into()),
+                    sid: Some(never_minted.to_uppercase()),
                 }))
                 .await
                 .expect("ping answers"),

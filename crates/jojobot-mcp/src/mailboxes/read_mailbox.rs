@@ -1293,7 +1293,7 @@ mod tests {
         // handle to a person, and the guard has to hold if something does.
         let person = jojobot
             .registry
-            .mint(&EntityId("person:milhouse".into()), None)
+            .mint(&EntityId("person:milhouse".into()))
             .expect("a free handle")
             .as_str()
             .to_string();

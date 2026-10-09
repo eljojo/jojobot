@@ -171,6 +171,11 @@ pub struct Jojobot {
     /// A field because the handler is built per connection, so a decision read
     /// once at startup has to reach every handler the factory makes after it.
     clock: jojobot_domain::clock::Clock,
+    /// **How long a run must have gone without a write before its name can
+    /// take it.** A full lease unless a test shortens it, because a case about
+    /// resuming a run it wrote a moment ago would otherwise wait forty-five
+    /// minutes. See [`Jojobot::quiet_after`].
+    quiet_after: jiff::SignedDuration,
     /// **Told after a post to the operator lands**, when this instance pushes.
     /// `None` is an instance with no push service set up.
     push: Option<Arc<dyn jojobot_domain::push::Nudge>>,
@@ -286,6 +291,15 @@ impl Jojobot {
             registry,
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
+            // **A lease in every build that serves, and nothing in this crate's
+            // own unit cases**, which resume a run they wrote a moment ago and
+            // would otherwise each wait forty-five minutes. The cases that hold
+            // the rule itself set the lease back with [`Jojobot::quiet_after`].
+            quiet_after: if cfg!(test) {
+                jiff::SignedDuration::ZERO
+            } else {
+                jojobot_domain::session::LEASE_FRESHNESS
+            },
             push: None,
         }
     }
@@ -303,6 +317,26 @@ impl Jojobot {
     #[must_use]
     pub fn on_clock(self, clock: jojobot_domain::clock::Clock) -> Self {
         Self { clock, ..self }
+    }
+
+    /// **The same handler, with a different quiet period** for resuming a run
+    /// by its name. The default is the lease and nothing but a test changes it.
+    #[must_use]
+    pub fn quiet_after(self, quiet_after: jiff::SignedDuration) -> Self {
+        Self {
+            quiet_after,
+            ..self
+        }
+    }
+
+    /// [`Jojobot::quiet_after`] when one is given, and the handler as it is when
+    /// none is, so a composition root passes what its configuration holds.
+    #[must_use]
+    pub fn quiet_after_unless_default(self, quiet_after: Option<jiff::SignedDuration>) -> Self {
+        match quiet_after {
+            Some(quiet_after) => self.quiet_after(quiet_after),
+            None => self,
+        }
     }
 
     /// What this handler asks when it needs to know if something is owed.
@@ -426,6 +460,23 @@ impl ServerHandler for Jojobot {
         let structured = context
             .protocol_version()
             .is_some_and(|revision| revision >= ProtocolVersion::V_2026_07_28);
+        // **The one call that exchanges an old name for a key**, ahead of every
+        // verb: it is the same for all of them, and the answer is the key.
+        if let Some(raw) = sid.as_deref()
+            && let Some(exchanged) = self.exchange_legacy_name(raw).await
+        {
+            let mut answered: CallToolResponse = exchanged.into();
+            self.finish(&mut answered, None, structured).await;
+            return Ok(answered);
+        }
+        // **A live secret written into text is refused before any verb reads
+        // it**, so no verb has to remember to, including the next one somebody
+        // writes. The arguments are read once, here.
+        if let Some(refused) = self.refuse_a_live_secret(request.arguments.as_ref()).await {
+            let mut answered: CallToolResponse = refused.into();
+            self.finish(&mut answered, sid.as_deref(), structured).await;
+            return Ok(answered);
+        }
         if let Some(refused) = self
             .unimplemented_arguments(&request)
             .or_else(|| self.missing_arguments(&request))

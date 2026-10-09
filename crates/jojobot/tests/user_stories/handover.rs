@@ -28,7 +28,7 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
     first
         .fact("person:milhouse", "keeps the council's spare barriers")
         .await;
-    let sid = first.sid().to_string();
+    let sid = first.run().to_string();
     first
         .wrap(
             "the spare barriers are Milhouse's, not the council's. Whoever picks this up should ask \
@@ -61,7 +61,7 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
         .as_array()
         .map(|cs| {
             cs.iter()
-                .filter_map(|c| c["sid"].as_str())
+                .filter_map(|c| c["run"].as_str())
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -74,12 +74,11 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
 }
 
 /// "I stopped twice without wrapping. Which one do I pick up?" The offer a boot
-/// hands back names every run it offers, each by the sid that `resume` takes,
-/// beside what the run was working on. Resuming by one of those sids lands on
-/// that run and no other, and the offer hands out no sid of its own until one is
-/// picked.
+/// hands back names every run it offers, each by the name that `resume` takes,
+/// beside what the run was working on. Resuming by one of those names lands on
+/// that run and no other, and the offer hands out no key until one is picked.
 #[tokio::test]
-async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
+async fn the_resume_offer_names_each_run_and_resuming_by_one_lands() {
     let story = Story::begin("bot:otto").await;
     let first = story.session().await;
     first
@@ -95,7 +94,7 @@ async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
             json!({"entry": "priced the barriers", "focus": "pricing the replacement barriers"}),
         )
         .await;
-    let (first_sid, second_sid) = (first.sid().to_string(), second.sid().to_string());
+    let (first_sid, second_sid) = (first.run().to_string(), second.run().to_string());
     assert_ne!(first_sid, second_sid, "two runs, not the same one twice");
 
     // The boot offers both, each by its sid and beside its focus.
@@ -114,7 +113,7 @@ async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
     let working_on = |sid: &str| {
         choices
             .iter()
-            .find(|c| c["sid"] == sid)
+            .find(|c| c["run"] == sid)
             .unwrap_or_else(|| panic!("{sid} is not named in the offer: {offer}"))["working_on"]
             .clone()
     };
@@ -138,11 +137,11 @@ async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
         .await;
     let resumed = resumed.json();
     assert_eq!(
-        resumed["session"]["sid"], first_sid,
-        "resuming by a sid from the offer lands on that run: {resumed}"
+        resumed["session"]["run"], first_sid,
+        "resuming by a name from the offer lands on that run: {resumed}"
     );
     assert_ne!(
-        resumed["session"]["sid"], second_sid,
+        resumed["session"]["run"], second_sid,
         "and not on the other: {resumed}"
     );
     story.finish().await;

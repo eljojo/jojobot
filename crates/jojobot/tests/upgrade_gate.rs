@@ -378,18 +378,32 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     // second changed nothing the first left.
     assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
     assert_no_stored_record_is_over_the_ceiling(&surface, &git_ref, &handles).await;
+    // **The recorded holder began before keys existed**, so the name it was
+    // known by is exchanged once for a key, and every call below carries the key.
+    let role_key = exchange_the_recorded_run(&surface, &git_ref, &role_holder).await;
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
-    assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_holder).await;
-    assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
-        .await;
+    assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_key).await;
+    assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
+        &surface,
+        &git_ref,
+        &role_holder,
+        &role_key,
+    )
+    .await;
     assert_the_voucher_kind_arrives_and_no_voucher_exists(&surface, &git_ref).await;
     surface.finish().await;
     third.stop().await;
 
     // The role is now claim-shaped, with the claim the holder's write made. A
     // fourth boot is the restart of the deployed server over it.
-    assert_a_claim_shaped_lease_renews_in_place(&state_dir, store_port, &git_ref, &role_holder)
-        .await;
+    assert_a_claim_shaped_lease_renews_in_place(
+        &state_dir,
+        store_port,
+        &git_ref,
+        &role_holder,
+        &role_key,
+    )
+    .await;
     drop(scratch);
 }
 
@@ -460,6 +474,42 @@ async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it() 
         store.stop().await;
         drop(scratch);
     }
+}
+
+/// **A run an older build began holds no key, and its first call with its old
+/// name is exchanged once for one.** The exchange answer is a refusal that
+/// carries the key and runs nothing; the same name sent again is turned away
+/// and hands out nothing; and the key opens the run. Returns the key.
+async fn exchange_the_recorded_run(surface: &Surface, git_ref: &str, role_holder: &str) -> String {
+    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
+    let first = surface
+        .call(
+            "journal",
+            json!({"entry": "the first call with the old name", "sid": role_holder}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&first).unwrap_or_else(|_| fail("the exchange answer", &first));
+    let key = match (parsed["exchanged"] == true, parsed["sid"].as_str()) {
+        (true, Some(key)) if key != role_holder => key.to_string(),
+        _ => fail("the old name was not exchanged for a key", &first),
+    };
+    let again = surface
+        .call(
+            "journal",
+            json!({"entry": "the old name again", "sid": role_holder}),
+        )
+        .await;
+    if again.contains("\"exchanged\":true") || !again.contains("\"status\":\"blocked\"") {
+        fail("a second bare name was not turned away", &again);
+    }
+    let opened = surface
+        .call("list_runs", json!({"sid": key, "limit": 5}))
+        .await;
+    if opened.contains("\"status\":\"blocked\"") || !opened.contains(role_holder) {
+        fail("the key did not open the recorded run", &opened);
+    }
+    key
 }
 
 /// **The store of a restored fixture, brought up with no binary over it**, so
@@ -1433,6 +1483,7 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
     store_port: u16,
     git_ref: &str,
     role_holder: &str,
+    role_key: &str,
 ) {
     let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
     let database_dir = state_dir.join("db").join("jojobot");
@@ -1493,7 +1544,7 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
     let beat = surface
         .call(
             "journal",
-            json!({"entry": "renewed after the restart", "sid": role_holder}),
+            json!({"entry": "renewed after the restart", "sid": role_key}),
         )
         .await;
     if beat.contains("\"status\":\"blocked\"") {
@@ -1741,6 +1792,7 @@ async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
     surface: &Surface,
     git_ref: &str,
     role_holder: &str,
+    role_key: &str,
 ) {
     let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
     let rival = |label: &'static str| async move {
@@ -1769,7 +1821,7 @@ async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
     let beat = surface
         .call(
             "journal",
-            json!({"entry": "worked on after the upgrade", "sid": role_holder}),
+            json!({"entry": "worked on after the upgrade", "sid": role_key}),
         )
         .await;
     if beat.contains("\"status\":\"blocked\"") {
@@ -1810,7 +1862,7 @@ async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
 async fn assert_what_a_real_store_holds_reads_back(
     surface: &Surface,
     git_ref: &str,
-    role_holder: &str,
+    role_key: &str,
 ) {
     let fail = |what: &str, body: &str| -> ! {
         panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
@@ -1869,7 +1921,7 @@ async fn assert_what_a_real_store_holds_reads_back(
     let read = surface
         .call(
             "read_mailbox",
-            json!({"counts_only": true, "sid": role_holder}),
+            json!({"counts_only": true, "sid": role_key}),
         )
         .await;
     let counted = json_of("the mailbox counts", &read);
@@ -1882,10 +1934,7 @@ async fn assert_what_a_real_store_holds_reads_back(
         _ => fail("one quarantined message", &read),
     };
     let read = surface
-        .call(
-            "read_message",
-            json!({"message_id": id, "sid": role_holder}),
-        )
+        .call("read_message", json!({"message_id": id, "sid": role_key}))
         .await;
     if json_of("the quarantined message", &read)["status"] != "blocked"
         || !read.contains("recorded as unreadable")
@@ -2719,10 +2768,11 @@ async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
+    let role_key = exchange_the_recorded_run(&surface, &git_ref, &role_holder).await;
     let beat = surface
         .call(
             "journal",
-            json!({"entry": "worked on after the upgrade", "sid": role_holder}),
+            json!({"entry": "worked on after the upgrade", "sid": role_key}),
         )
         .await;
     if beat.contains("\"status\":\"blocked\"") {
@@ -3399,10 +3449,11 @@ async fn an_old_message_carrying_the_address_shape_reads_back_as_written() {
         .expect("the recorded role holder")
         .trim()
         .to_string();
+    let role_key = exchange_the_recorded_run(&surface, &git_ref, &role_holder).await;
     let read = surface
         .call(
             "read_message",
-            json!({"message_id": "0ldquot", "sid": role_holder}),
+            json!({"message_id": "0ldquot", "sid": role_key}),
         )
         .await;
     let message: serde_json::Value =

@@ -1203,6 +1203,8 @@ mod tests {
                 focus: "reading the hand-off".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -1215,7 +1217,7 @@ mod tests {
             offering["identity"]["charter_elided"], false,
             "an unanswered boot ships it, and says it did: {offering}"
         );
-        let offer = offering["session"]["choices"][0]["sid"]
+        let offer = offering["session"]["choices"][0]["run"]
             .as_str()
             .expect("one option")
             .to_string();

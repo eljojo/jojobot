@@ -173,14 +173,14 @@ async fn a_bot_rewriting_its_own_charter_and_a_session_booted_after_a_change_are
     story.finish().await;
 }
 
-/// The `sid` of the one run of gamma a second boot offers back.
+/// The name of the one run of gamma a second boot offers back.
 fn offered(door: &Answer) -> String {
     let choices = door.json()["session"]["choices"]
         .as_array()
         .cloned()
         .unwrap_or_default();
     assert_eq!(choices.len(), 1, "one run to pick up: {}", door.raw());
-    choices[0]["sid"]
+    choices[0]["run"]
         .as_str()
         .unwrap_or_else(|| panic!("the offer names no run: {}", door.raw()))
         .to_string()
@@ -334,7 +334,7 @@ async fn a_charter_read_before_the_run_had_a_card_is_remembered_by_the_card_it_m
                 .as_str()
                 .is_some_and(|f| f.contains("second charter"))
         })
-        .and_then(|choice| choice["sid"].as_str())
+        .and_then(|choice| choice["run"].as_str())
         .unwrap_or_else(|| panic!("the run that journalled is offered back: {}", door.raw()))
         .to_string();
     let (_, resumed) = again

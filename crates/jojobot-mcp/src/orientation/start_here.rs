@@ -617,7 +617,8 @@ mod tests {
 
         // Well-formed and never minted — the shape every handle takes once the
         // process holding it has gone.
-        let lost = orienting(Some("2gf7".into())).await;
+        let never_minted = jojobot_domain::session::mint_key();
+        let lost = orienting(Some(never_minted.clone())).await;
         assert_eq!(lost["carried_session"], "gone", "{lost}");
         assert_ne!(
             lost["status"], "blocked",
@@ -634,7 +635,7 @@ mod tests {
         // look at what it sent, which is the one that gets it back to the
         // session still sitting there. Read beside `lost` above: the two must
         // not collapse into one word in either direction.
-        let mistyped = orienting(Some("2GF7".into())).await;
+        let mistyped = orienting(Some(never_minted.to_uppercase())).await;
         assert_eq!(mistyped["carried_session"], "malformed", "{mistyped}");
         assert_ne!(
             mistyped["status"], "blocked",
@@ -1291,7 +1292,8 @@ mod tests {
             "a held role frees when its lease ends: {second}"
         );
         assert_eq!(
-            second["session"]["claim"]["holder"], holder_sid,
+            second["session"]["claim"]["holder"],
+            run_name(&jojobot, &holder_sid),
             "the refusal names who holds it: {second}"
         );
         assert!(
@@ -1307,7 +1309,7 @@ mod tests {
             .as_str()
             .unwrap_or_default();
         assert!(
-            how.contains(holder_sid.as_str()) && how.contains(until),
+            how.contains(run_name(&jojobot, &holder_sid).as_str()) && how.contains(until),
             "the way forward names the holder and the day it lapses: {how}"
         );
     }
@@ -1339,7 +1341,6 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        let holder_sid = sid_of(&first).expect("a handle");
 
         // The same claimant, naming the same role again: not refused.
         let renewed = json_of(
@@ -1351,7 +1352,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     section: None,
-                    resume: Some(holder_sid.clone()),
+                    resume: Some(run_of(&first).expect("a run name")),
                     sid: None,
                     today: None,
                     ask_for_code: None,
@@ -1489,7 +1490,11 @@ mod tests {
             "the intervening write must have renewed the claim, or a rival 3000s after the \
              original claim would find it stale: {rival}"
         );
-        assert_eq!(rival["session"]["claim"]["holder"], holder_sid, "{rival}");
+        assert_eq!(
+            rival["session"]["claim"]["holder"],
+            run_name(&at(3000), &holder_sid),
+            "{rival}"
+        );
     }
 
     /// **A poll of one's OWN mailbox, made with one's own sid, renews that
@@ -1604,7 +1609,11 @@ mod tests {
                 rival["session"]["claim"]["status"], "refused",
                 "a poll (counts_only: {counts_only}) must renew the holder's claim: {rival}"
             );
-            assert_eq!(rival["session"]["claim"]["holder"], holder, "{rival}");
+            assert_eq!(
+                rival["session"]["claim"]["holder"],
+                run_name(&world.at(0), &holder),
+                "{rival}"
+            );
         }
 
         // Control 1: a holder that does nothing at all goes stale.

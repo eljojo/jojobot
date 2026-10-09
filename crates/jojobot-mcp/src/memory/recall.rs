@@ -2971,8 +2971,8 @@ impl Jojobot {
             }
         }
         fit_recall(&mut body, args.offset.map_or(0, |o| o as usize));
-        if let Some(sid) = args.sid.as_deref() {
-            self.registry.note_shown(sid, &body);
+        if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
+            self.registry.note_shown(caller.sid.as_str(), &body);
         }
         json_result(&body)
     }

@@ -445,20 +445,20 @@ async fn a_filter_that_leaves_out_my_own_runs_says_how_many_apart_from_those_wit
     story.finish().await;
 }
 
-/// "Which of my runs was that one?" A run's sid is a field of the run, so its
+/// "Which of my runs was that one?" A run's name is a field of the run, so its
 /// owner filters on it and reads it back, and the same value is what
 /// `start_here` takes as `resume`. Another bot filtering on the same value finds
 /// nothing and is never shown the value.
 #[tokio::test]
-async fn a_runs_sid_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
+async fn a_runs_name_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
     otto.add("bot:epsilon", "Epsilon").await;
     otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
-    let sid = otto.sid().to_string();
+    let sid = otto.run().to_string();
 
-    // Read back: the run carries the sid it was written under.
+    // Read back: the run carries the name it was written under.
     let plain = my_past_runs(&otto).await;
     assert_eq!(
         runs_found(&plain)[0]["fields"]["sid"],
@@ -516,7 +516,7 @@ async fn a_runs_sid_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
 
     // And the value answers which run to resume.
     let resumed = story.session_on("2026-10-12", Some(&sid)).await;
-    assert_eq!(resumed.sid(), sid, "the sid resumes the run it names");
+    assert_eq!(resumed.run(), sid, "the name resumes the run it names");
     story.finish().await;
 }
 
@@ -626,28 +626,33 @@ async fn a_run_that_stated_its_day_is_placed_on_that_day_and_one_that_stated_non
     story.finish().await;
 }
 
-/// "I tried the sid as the run's handle." The handle of a run is not its sid, and
-/// the refusal says which read finds a run by the sid held, rather than sending
-/// the caller to create an entity.
+/// "I tried the run's name as its handle." A run's name is also the id of its
+/// record, so the handle of a run IS `session:` and its name, and a read of it
+/// answers. The key is the other thing: written into the subject it is a live
+/// credential in text, and the call is refused naming the run.
 #[tokio::test]
-async fn naming_a_run_by_its_sid_is_refused_with_the_read_that_finds_it() {
+async fn a_run_is_found_by_its_name_as_a_session_handle_and_never_by_its_key() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
     otto.journal("otto inspected the east gorge").await;
+
+    // The positive: the name is the record's id.
+    let found = otto
+        .call(
+            "recall",
+            json!({"subject": format!("session:{}", otto.run())}),
+        )
+        .await;
+    found.says(otto.run());
+
+    // The negative: the key in the subject is refused, and the answer does not
+    // repeat it.
     let refused = otto
         .refused(
             "recall",
             json!({"subject": format!("session:{}", otto.sid())}),
         )
-        .await
-        .json();
-    let way = refused["how_to_proceed"].as_str().unwrap_or_default();
-    for named in ["kind", "session", "fields", "sid"] {
-        assert!(way.contains(named), "the way on names {named}: {refused}");
-    }
-    assert!(
-        !way.contains("add_entity"),
-        "a run is not created by hand: {refused}"
-    );
+        .await;
+    refused.says(otto.run()).never_says(otto.sid());
     story.finish().await;
 }

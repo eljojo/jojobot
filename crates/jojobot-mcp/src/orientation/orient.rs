@@ -399,7 +399,10 @@ impl Jojobot {
         // none keeps the zone it holds, and the boot's own days (a rule's
         // staleness, the day a claim is dated) are read in it too.
         let held_zone = match (timezone, resume) {
-            (None, Some(sid)) => self.registry.lookup(sid).and_then(|handle| handle.zone),
+            (None, Some(sid)) => self
+                .registry
+                .lookup_name(sid)
+                .and_then(|handle| handle.zone),
             _ => None,
         };
         let frame = timezone.or(held_zone.as_deref()).or(instance_zone.name());
@@ -512,11 +515,17 @@ impl Jojobot {
         // choice came back instead) decides nothing — there is no claimant
         // yet, and the caller answers the choice, then names the role again.
         if let (Some(bot), Some(role)) = (bot, claim) {
+            // **The claimant is the run's public NAME**, which a role's holder
+            // may carry and anybody may read; the key only proves the call.
             let sid = session
                 .get("sid")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
-            if let Some(sid) = sid {
+            let run = session
+                .get("run")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            if let (Some(sid), Some(run)) = (sid, run) {
                 let now = self.clock().now();
                 let today_or_clock = today.unwrap_or_else(|| self.clock().today_in(&frame_zone()));
                 // **Its own gate, taken fresh.** `attach`'s gate is already
@@ -527,7 +536,7 @@ impl Jojobot {
                 let gate = self.registry.gate(bot.as_str());
                 let _serialized = gate.lock().await;
                 let outcome = self
-                    .decide_role_claim(bot, role, &sid, now, today_or_clock)
+                    .decide_role_claim(bot, role, &run, now, today_or_clock)
                     .await;
                 // **A GRANTED claim has done something, so its session record
                 // is written now, through the same lazy path any first write
@@ -543,15 +552,15 @@ impl Jojobot {
                                 .await
                             {
                                 tracing::warn!(
-                                    error = ?e, %sid, role,
+                                    error = ?e, %run, role,
                                     "a granted role claim could not materialize its session \
                                      record"
                                 );
                             }
                         }
                         Err(_) => tracing::warn!(
-                            %sid, role,
-                            "a granted role claim's own sid did not resolve to a caller"
+                            %run, role,
+                            "a granted role claim's own key did not resolve to a caller"
                         ),
                     }
                 }
@@ -575,14 +584,18 @@ impl Jojobot {
                 .get("sid")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            // **The voucher's holder is the run's public NAME**, as a role's is:
+            // a voucher record is readable by anybody, and the key must never
+            // be written into one. The key only proves this call.
+            let run = session.get("run").and_then(|v| v.as_str());
             let mut redeemed = None;
-            if let (Some(verified), Some(sid)) = (redeem, sid.as_deref()) {
+            if let (Some(verified), Some(_), Some(run)) = (redeem, sid.as_deref(), run) {
                 let day = today.unwrap_or_else(|| self.clock().today_in(&frame_zone()));
-                redeemed = Some(match self.redeem_code(verified, sid, day).await {
+                redeemed = Some(match self.redeem_code(verified, run, day).await {
                     Ok(granted) => granted,
                     Err(e) => {
                         tracing::warn!(
-                            error = %crate::session::challenge::loggable(&e), sid,
+                            error = %crate::session::challenge::loggable(&e), run,
                             "a verified code could not be spent"
                         );
                         serde_json::json!({
@@ -631,7 +644,7 @@ impl Jojobot {
             let run_zone = session
                 .get("sid")
                 .and_then(|v| v.as_str())
-                .and_then(|sid| self.registry.lookup(sid))
+                .and_then(|key| self.registry.lookup_key(key))
                 .and_then(|handle| handle.zone);
             match (timezone, resumed, run_zone.as_deref()) {
                 (Some(sent), _, _) => zone_answer(Some(sent), ZoneFrom::Session, &instance_zone),

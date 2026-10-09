@@ -54,10 +54,21 @@ impl InMemorySessions {
         }
     }
 
+    /// **An id of the shape the real store draws**: six characters of the
+    /// drawn alphabet, here counted rather than drawn so a case reads the same
+    /// on every run. A card's id is also a run's public name when the card was
+    /// born without one, so it has to be a name that passes the shape check.
     fn mint(&self) -> String {
         let mut next = self.next_id.lock().expect("id lock");
         *next += 1;
-        next.to_string()
+        let alphabet = crate::handle::ALPHABET;
+        let mut left = *next as usize;
+        let mut out = [alphabet[0]; super::RUN_LEN];
+        for slot in out.iter_mut().rev() {
+            *slot = alphabet[left % alphabet.len()];
+            left /= alphabet.len();
+        }
+        String::from_utf8(out.to_vec()).expect("the alphabet is ascii")
     }
 
     /// The refusal every verb that writes to a session owes: a closed session
@@ -143,9 +154,30 @@ impl Sessions for InMemorySessions {
         {
             return Ok(held.clone());
         }
+        // **A name the boot minted is the card's id**, and a card that already
+        // wears that id is not a retry of this run: the id is refused rather
+        // than shared, as the real store refuses a duplicate key.
+        let id = match new.id {
+            Some(id) => {
+                if self
+                    .sessions
+                    .lock()
+                    .expect("session lock")
+                    .iter()
+                    .any(|s| s.id == id)
+                {
+                    return Err(SessionError::InvalidEntry(format!(
+                        "session '{id}' already exists, so it cannot begin again"
+                    )));
+                }
+                id
+            }
+            None => SessionId(self.mint()),
+        };
         let session = Session {
-            id: SessionId(self.mint()),
+            id,
             sid: Some(new.sid),
+            key_hash: new.key_hash,
             bot: new.bot,
             focus: new.focus.trim().to_string(),
             started_at: new.started_at,
@@ -320,6 +352,18 @@ impl Sessions for InMemorySessions {
         Ok(())
     }
 
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at_index = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
+                attempted: id.to_string(),
+            }
+        })?;
+        sessions[at_index].key_hash = Some(hash.to_string());
+        Ok(())
+    }
+
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
@@ -418,6 +462,8 @@ pub mod contract {
                 started_at: at(at_offset),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed")
@@ -463,6 +509,8 @@ pub mod contract {
                 started_at: at(0),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("beginning again under a live handle is not an error");
@@ -825,6 +873,8 @@ pub mod contract {
                 started_at: at(70),
                 timezone: Some("Europe/Madrid".to_string()),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run may be born in a zone");
@@ -866,6 +916,8 @@ pub mod contract {
                 started_at: at(71),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run may name no zone");
@@ -1296,6 +1348,8 @@ pub mod contract {
                     started_at: at(0),
                     timezone: None,
                     started_on: None,
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .is_err(),
@@ -1322,6 +1376,8 @@ pub mod contract {
                 started_at: at(0),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect_err("a handwritten sid is not a handle this build mints");
@@ -1455,6 +1511,8 @@ pub mod contract {
                 started_at: at(80),
                 timezone: None,
                 started_on: Some(day("2026-03-15")),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run may say which day it is in");
@@ -1496,6 +1554,8 @@ pub mod contract {
                 started_at: at(82),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run need not say which day it is in");
@@ -1535,6 +1595,8 @@ pub mod contract {
                 started_at: at(90),
                 timezone: None,
                 started_on: Some(day("2026-03-15")),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run may be born stating a day");
@@ -1580,6 +1642,8 @@ pub mod contract {
                 started_at: at(91),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run may have no moved day");
@@ -1850,7 +1914,101 @@ pub mod contract {
         );
     }
 
+    /// **A run's key is stored as its hash, beside the card.** A run born with a
+    /// hash reads it back, a run born without one reads `None` (the keyless run
+    /// an older build left), the hash can be replaced, replaced by the void
+    /// sentinel on a run that has wrapped, and a run that does not exist is a
+    /// miss. The card is born with the id the boot minted for it when one is
+    /// given.
+    pub async fn a_runs_key_hash_is_stored_with_the_card_and_can_be_replaced(store: &dyn Sessions) {
+        let keyless = begin(store, "gamma", "an older run", 0).await;
+        assert_eq!(
+            keyless.key_hash, None,
+            "a run born without a key holds none"
+        );
+
+        let name = SessionId("k3m9qz".into());
+        let keyed = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: Sid("k3m9qz".into()),
+                id: Some(name.clone()),
+                key_hash: Some("hash-one".into()),
+                focus: "a keyed run".into(),
+                started_at: at(1),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin with an id and a hash");
+        assert_eq!(keyed.id, name, "the card is born with the minted id");
+        assert_eq!(keyed.key_hash.as_deref(), Some("hash-one"));
+        assert_eq!(
+            store
+                .read_session(&name)
+                .await
+                .expect("read")
+                .key_hash
+                .as_deref(),
+            Some("hash-one"),
+            "…and a read gives it back"
+        );
+
+        store
+            .set_key_hash(&name, "hash-two")
+            .await
+            .expect("a key is replaced");
+        assert_eq!(
+            store
+                .read_session(&name)
+                .await
+                .expect("read")
+                .key_hash
+                .as_deref(),
+            Some("hash-two")
+        );
+        let listed = store.all_sessions().await.expect("all");
+        let hashes: Vec<Option<&str>> = listed
+            .iter()
+            .filter(|run| run.id == name || run.id == keyless.id)
+            .map(|run| run.key_hash.as_deref())
+            .collect();
+        assert!(
+            hashes.contains(&Some("hash-two")) && hashes.contains(&None),
+            "the board carries each card's hash: {hashes:?}"
+        );
+
+        // A wrap ends the key, and it does so on a run that is already closed.
+        store
+            .close(&name, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        store
+            .set_key_hash(&name, super::super::KEY_VOID)
+            .await
+            .expect("a wrapped run's key is voided");
+        assert_eq!(
+            store
+                .read_session(&name)
+                .await
+                .expect("read")
+                .key_hash
+                .as_deref(),
+            Some(super::super::KEY_VOID)
+        );
+
+        let miss = store
+            .set_key_hash(&SessionId("999999".into()), "hash-three")
+            .await
+            .expect_err("no such run");
+        assert!(
+            matches!(miss, SessionError::UnknownSession { .. }),
+            "{miss:?}"
+        );
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
+        a_runs_key_hash_is_stored_with_the_card_and_can_be_replaced(&fresh()).await;
         a_begun_session_is_active_and_empty(&fresh()).await;
         beginning_twice_under_one_handle_yields_one_run(&fresh()).await;
         the_chronology_accrues_oldest_first(&fresh()).await;

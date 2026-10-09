@@ -47,6 +47,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     };
     // The store is fine and the set is not loaded — what `main` tolerates when
     // the store was unreachable at startup, and serves anyway.

@@ -588,7 +588,11 @@ mod tests {
             .expect("children ok");
         assert!(children.contains(&role), "{children:?}");
         let fields = jojobot.memory.fields(&role).await.expect("fields ok");
-        assert_eq!(fields.get("holder"), Some(&sid), "{fields:?}");
+        assert_eq!(
+            fields.get("holder"),
+            Some(&run_name(&jojobot, &sid)),
+            "{fields:?}"
+        );
         assert!(
             fields
                 .get("claimed_at")
@@ -616,7 +620,8 @@ mod tests {
             .collect();
         assert_eq!(ids, vec!["role:dev-dispatch"], "{under_gamma}");
         assert_eq!(
-            under_gamma["objects"][0]["fields"]["holder"], sid,
+            under_gamma["objects"][0]["fields"]["holder"],
+            run_name(&jojobot, &sid),
             "{under_gamma}"
         );
 
@@ -690,7 +695,13 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let first = booted(&jojobot, "gamma", None).await;
         let sid = sid_of(&first).expect("a handle");
-        an_old_shape_claim(&jojobot, "bot:gamma", "dev-dispatch", &sid).await;
+        an_old_shape_claim(
+            &jojobot,
+            "bot:gamma",
+            "dev-dispatch",
+            &run_name(&jojobot, &sid),
+        )
+        .await;
         let role = EntityId("role:dev-dispatch".into());
         assert!(
             matches!(
@@ -703,7 +714,11 @@ mod tests {
         crate::session::testing::journal_entry(&jojobot, &sid, "did some of the work").await;
 
         let moved = jojobot.memory.fields(&role).await.expect("fields ok");
-        assert_eq!(moved.get("holder"), Some(&sid), "{moved:?}");
+        assert_eq!(
+            moved.get("holder"),
+            Some(&run_name(&jojobot, &sid)),
+            "{moved:?}"
+        );
         assert!(moved.contains_key("claimed_at"), "{moved:?}");
         let bot = EntityId("bot:gamma".into());
         let old = jojobot.memory.fields(&bot).await.expect("fields ok");
@@ -731,7 +746,11 @@ mod tests {
         );
         let rival = booted(&jojobot, "gamma", Some("dev-dispatch")).await;
         assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
-        assert_eq!(rival["session"]["claim"]["holder"], sid, "{rival}");
+        assert_eq!(
+            rival["session"]["claim"]["holder"],
+            run_name(&jojobot, &sid),
+            "{rival}"
+        );
     }
 
     /// **A wrap releases a role claimed in the old shape, and the role is free at
@@ -744,7 +763,13 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let first = booted(&jojobot, "gamma", None).await;
         let sid = sid_of(&first).expect("a handle");
-        an_old_shape_claim(&jojobot, "bot:gamma", "dev-dispatch", &sid).await;
+        an_old_shape_claim(
+            &jojobot,
+            "bot:gamma",
+            "dev-dispatch",
+            &run_name(&jojobot, &sid),
+        )
+        .await;
 
         let before = booted(&jojobot, "gamma", Some("dev-dispatch")).await;
         assert_eq!(before["session"]["claim"]["status"], "refused", "{before}");
@@ -764,7 +789,7 @@ mod tests {
             .fields(&EntityId("role:dev-dispatch".into()))
             .await
             .expect("fields ok");
-        assert_eq!(role.get("holder"), sid_of(&after).as_ref(), "{role:?}");
+        assert_eq!(role.get("holder"), run_of(&after).as_ref(), "{role:?}");
     }
 
     /// **No caller writes a role object's holder or claim moment, by any verb.**
@@ -842,7 +867,11 @@ mod tests {
             .fields(&EntityId("role:dev-dispatch".into()))
             .await
             .expect("fields ok");
-        assert_eq!(fields.get("holder"), Some(&sid), "{fields:?}");
+        assert_eq!(
+            fields.get("holder"),
+            Some(&run_name(&jojobot, &sid)),
+            "{fields:?}"
+        );
         assert_eq!(fields.get("agent").map(String::as_str), Some("an-agent-id"));
     }
 
@@ -1034,7 +1063,10 @@ mod tests {
         );
 
         let object = EntityId("role:kappa".into());
-        let held = jojobot.roles_held_by(&alpha, &sid).await.expect("read");
+        let held = jojobot
+            .roles_held_by(&alpha, &run_name(&jojobot, &sid))
+            .await
+            .expect("read");
         assert_eq!(
             held.iter().map(|h| h.role.as_str()).collect::<Vec<_>>(),
             vec!["kappa"],
@@ -1042,7 +1074,9 @@ mod tests {
         );
         let before = jojobot.memory.fields(&object).await.expect("fields");
         let later = jiff::Timestamp::now() + jiff::SignedDuration::from_mins(10);
-        jojobot.renew_role_claims(&alpha, &sid, later).await;
+        jojobot
+            .renew_role_claims(&alpha, &run_name(&jojobot, &sid), later)
+            .await;
         let after = jojobot.memory.fields(&object).await.expect("fields");
         assert_ne!(
             after.get("claimed_at"),
@@ -1052,7 +1086,9 @@ mod tests {
 
         let rival = booted(&jojobot, "gamma", Some("kappa")).await;
         assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
-        jojobot.release_role_claims(&alpha, &sid).await;
+        jojobot
+            .release_role_claims(&alpha, &run_name(&jojobot, &sid))
+            .await;
         let released = jojobot.memory.fields(&object).await.expect("fields");
         assert_eq!(released.get("holder"), None, "{released:?}");
     }

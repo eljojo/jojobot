@@ -88,9 +88,9 @@ A record's content is a claim, not a transcript, so a quote by address does not 
 ### Teaching `session_id_teaching` (with a sample sid and session)
 
 ```text
-Your `sid` a1b2 and the `session` c3d4 in this answer are one run.
-`session` is the stored record of the run that `sid` addresses.
-Quote the `sid`: it is what every call takes and what a later boot offers when it asks you to resume.
+Your run is called a1b2, and the `session` c3d4 in this answer is its stored record.
+Cite the run by its name, which is what a later boot offers when it asks you to resume.
+Your `sid` is the run's key: it is what every call takes, it is yours alone, and nothing you write should hold it.
 ```
 
 ### Teaching `field_shadows_argument_teaching` (with a sample key and verb)

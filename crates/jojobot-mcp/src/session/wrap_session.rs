@@ -178,10 +178,36 @@ impl Jojobot {
                 )]));
             }
         };
-        let wrapped = match self.sessions.close(&session, SessionState::Wrapped).await {
-            Ok(wrapped) => wrapped,
-            Err(e) => return session_declined(e, caller.sid.as_str()),
+        // **A run the first attempt already closed is not closed again.** The
+        // attempt that landed the close and then could not end the key left the
+        // run wrapped with a live key; closing a wrapped run is refused, so the
+        // retry would never reach the key without this.
+        let already_closed = before
+            .as_ref()
+            .filter(|read| read.state == SessionState::Wrapped && !read.takes_writes());
+        let wrapped = match already_closed {
+            Some(closed) => closed.clone(),
+            None => match self.sessions.close(&session, SessionState::Wrapped).await {
+                Ok(wrapped) => wrapped,
+                Err(e) => return session_declined(e, caller.sid.as_str()),
+            },
         };
+        // **A wrap takes the run's key away**, and the card is written before
+        // the call returns: a restart must not bring a closed run's key back.
+        // The wrap's story and close have landed, so a store that refuses this
+        // write is reported as the refusal it is and a retry finishes it.
+        if let Err(e) = self
+            .sessions
+            .set_key_hash(&session, jojobot_domain::session::KEY_VOID)
+            .await
+        {
+            return session_declined(e, caller.sid.as_str());
+        }
+        self.registry.set_key(
+            &caller.sid,
+            sid::KeyState::Void,
+            Some((self.clock().now(), sid::RetiredBy::Wrapped)),
+        );
         // **A wrapped session releases every role it held.** Best-effort and
         // after the close: the wrap itself already landed, and releasing a
         // lease is not what a caller telling its story asked for.
@@ -377,7 +403,8 @@ mod tests {
             "wrapping one session must not release a DIFFERENT session's role: {rival_on_other}"
         );
         assert_eq!(
-            rival_on_other["session"]["claim"]["holder"], other_sid,
+            rival_on_other["session"]["claim"]["holder"],
+            run_name(&jojobot, &other_sid),
             "{rival_on_other}"
         );
     }
@@ -416,13 +443,16 @@ mod tests {
                 .expect("start_here ok"),
         );
         let holder_sid = sid_of(&claimed).expect("a handle");
+        // Read before the wrap: a wrap takes the key away, and the name is all
+        // that is left to cite the run by.
+        let holder_name = run_name(&jojobot, &holder_sid);
         assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
         let bot = EntityId("bot:gamma".into());
 
         // The positive: a live holder's renewal is accepted, so a rival is
         // still refused afterwards.
         jojobot
-            .renew_role_claims(&bot, &holder_sid, jiff::Timestamp::now())
+            .renew_role_claims(&bot, &holder_name, jiff::Timestamp::now())
             .await;
         let rival = json_of(
             &jojobot
@@ -442,7 +472,7 @@ mod tests {
 
         // The write that was in flight renews now.
         jojobot
-            .renew_role_claims(&bot, &holder_sid, jiff::Timestamp::now())
+            .renew_role_claims(&bot, &holder_name, jiff::Timestamp::now())
             .await;
         let fresh = json_of(
             &jojobot
@@ -479,6 +509,62 @@ mod tests {
             )
             .is_empty(),
             "lease bookkeeping read as a rule"
+        );
+    }
+
+    /// **A wrap whose close landed but whose key could not be ended is finished
+    /// by the same call again.** The first attempt is put on the record the way
+    /// it leaves it: the story told, the run wrapped, the key still live. The
+    /// retry ends the key and hands back the code; without that it would be
+    /// refused for closing a run twice and the key would stay live for good.
+    #[tokio::test]
+    async fn a_wrap_that_closed_the_run_but_not_its_key_is_finished_by_a_retry() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let card = SessionId(
+            journal_entry(&jojobot, &sid, "started").await["session"]
+                .as_str()
+                .expect("the run it landed in")
+                .to_string(),
+        );
+        store
+            .append(
+                &card,
+                NewEntry::manual("done", jiff::Timestamp::now(), None).closing(None),
+            )
+            .await
+            .expect("the first attempt told the story");
+        store
+            .close(&card, SessionState::Wrapped)
+            .await
+            .expect("…and closed the run");
+        assert!(
+            jojobot.caller(Some(&sid)).is_ok(),
+            "the first attempt left the key live"
+        );
+
+        let retried = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "done".into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        assert_ne!(retried["status"], "blocked", "{retried}");
+        assert!(retried["wrap_code"].is_string(), "{retried}");
+        assert!(
+            jojobot.caller(Some(&sid)).is_err(),
+            "the retry ended the key"
+        );
+        let entries = store.read_session(&card).await.expect("read").entries;
+        assert_eq!(
+            entries.iter().filter(|e| e.text == "done").count(),
+            1,
+            "the story was told once"
         );
     }
 
@@ -677,6 +763,9 @@ mod tests {
             "the fixture is only a control if the oldest beat was really left out: {session}"
         );
 
+        // The wrap took the run's key away, so the way back is read from a later
+        // run of the same bot, which is how a bot reads its own past runs.
+        let reader = booted(&jojobot, "gamma").await;
         let recalled = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
@@ -695,7 +784,7 @@ mod tests {
                     follow: None,
                     overdue: None,
                     near: None,
-                    sid: Some(sid),
+                    sid: Some(reader),
                     history: None,
                     history_record: None,
                     history_most: None,
@@ -888,6 +977,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
         journal_entry(&jojobot, &sid, "read the hand-off").await;
+        let name = run_name(&jojobot, &sid);
         jojobot
             .wrap_session(Parameters(WrapSessionArgs {
                 story: "done".into(),
@@ -900,11 +990,10 @@ mod tests {
             assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
             assert_eq!(body["wrote"], false);
             let how = body["how_to_proceed"].as_str().expect("advice");
-            // This end is the last word because the run told its story —
-            // that, not a published account, is what makes this refusal
-            // different from the one an abandoned run gets.
+            // The wrap took the key away: the refusal names the run it was
+            // and the route back, which is the wrap code.
             assert!(
-                how.contains("story has been told"),
+                how.contains(name.as_str()) && how.contains("wrap_code"),
                 "{verb} has to say why: {how}"
             );
             assert!(
@@ -981,6 +1070,7 @@ mod tests {
         );
 
         journal_entry(&jojobot, &sid, "read the hand-off").await;
+        let name = run_name(&jojobot, &sid);
         jojobot
             .wrap_session(Parameters(WrapSessionArgs {
                 story: "done".into(),
@@ -994,7 +1084,7 @@ mod tests {
             assert_eq!(body["wrote"], false, "{verb}: {body}");
             let how = body["how_to_proceed"].as_str().expect("advice");
             assert!(
-                how.contains("story has been told"),
+                how.contains(name.as_str()) && how.contains("wrap_code"),
                 "{verb} has to say why: {how}"
             );
         };
@@ -1168,7 +1258,10 @@ mod tests {
             "declare_type",
         );
 
-        let recalled = json_of(
+        // The wrap took the key away, so a read that carries it is refused
+        // like every other call — and the same read with no session still
+        // answers, which is what keeps the refusal from reading as an outage.
+        let with_the_old_key = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
                     sid: Some(sid.clone()),
@@ -1177,9 +1270,22 @@ mod tests {
                 .await
                 .expect("recall answers rather than failing the protocol"),
         );
+        assert_eq!(
+            with_the_old_key["status"], "blocked",
+            "a read under a key the wrap ended must be refused: {with_the_old_key}"
+        );
+        let anonymous = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: None,
+                    ..recall_args("bot:gamma")
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        );
         assert_ne!(
-            recalled["status"], "blocked",
-            "a read after wrap must still answer: {recalled}"
+            anonymous["status"], "blocked",
+            "a read with no session must still answer: {anonymous}"
         );
     }
 
@@ -1290,6 +1396,8 @@ mod tests {
                 focus: "their run".into(),
                 started_at: jiff::Timestamp::now(),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");

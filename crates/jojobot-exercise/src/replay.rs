@@ -55,6 +55,10 @@ pub struct Sitting {
 /// kept. A sitting with no calls is kept with none: silence and a capture that
 /// failed must not read alike.
 pub fn read_stream(stream: &str) -> Vec<Sitting> {
+    // **Nothing past this line holds a secret a server issued.** A recording
+    // is a file that outlives the run it came from, and a key or a wrap code in
+    // it would still open a run if the instance it came from were still up.
+    let stream = scrub_secrets(stream);
     let events: Vec<Value> = stream
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
@@ -115,6 +119,48 @@ pub fn read_stream(stream: &str) -> Vec<Sitting> {
         }
     }
     sittings
+}
+
+/// The characters a server draws its handles and secrets from.
+const DRAWN: &str = "0123456789abcdefghjkmnpqrstvwxyz";
+
+/// **The secrets of a stream, replaced by stand-ins that keep their shape.**
+/// A run key is `sk-` and 26 drawn characters, a wrap code `wc-` and 12. Each
+/// distinct secret becomes the same stand-in wherever it appears, and two
+/// secrets never share one, so a replay that maps a recorded key to the key it
+/// minted still pairs them. The stand-in is a count written in the drawn
+/// characters, so it is shaped like a secret and opens nothing.
+pub fn scrub_secrets(stream: &str) -> String {
+    let mut stand_ins: HashMap<String, String> = HashMap::new();
+    let mut out = String::with_capacity(stream.len());
+    let mut at = 0;
+    while at < stream.len() {
+        let rest = &stream[at..];
+        let secret = [("sk-", 26usize), ("wc-", 12usize)]
+            .iter()
+            .find_map(|(prefix, drawn)| {
+                let body = rest.strip_prefix(prefix)?.get(..*drawn)?;
+                body.chars()
+                    .all(|c| DRAWN.contains(c))
+                    .then(|| (*prefix, *drawn, &rest[..prefix.len() + drawn]))
+            });
+        match secret {
+            Some((prefix, drawn, found)) => {
+                let next = stand_ins.len();
+                let stand_in = stand_ins
+                    .entry(found.to_string())
+                    .or_insert_with(|| format!("{prefix}{:0>width$}", next, width = drawn));
+                out.push_str(stand_in);
+                at += found.len();
+            }
+            None => {
+                let c = rest.chars().next().expect("not at the end");
+                out.push(c);
+                at += c.len_utf8();
+            }
+        }
+    }
+    out
 }
 
 /// The content blocks of one event, which is where calls and answers live.
@@ -218,6 +264,17 @@ pub const MINTS: &[Mint] = &[
     Mint {
         verb: Some("start_here"),
         path: "session.choices[].sid",
+        kind: IdKind::Sid,
+    },
+    // **A run's public name**, which a later boot sends back as `resume`.
+    Mint {
+        verb: Some("start_here"),
+        path: "session.run",
+        kind: IdKind::Sid,
+    },
+    Mint {
+        verb: Some("start_here"),
+        path: "session.choices[].run",
         kind: IdKind::Sid,
     },
     Mint {
@@ -396,11 +453,23 @@ fn is_mint_point(verb: &str, path: &str) -> bool {
 /// dates and handles are not.
 fn looks_minted(leaf: &str) -> bool {
     leaf.contains('#')
+        || is_secret_shaped(leaf)
         || ((4..=8).contains(&leaf.len())
             && leaf
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
             && leaf.chars().any(|c| c.is_ascii_digit()))
+}
+
+/// Whether a leaf has the shape of a run key (`sk-` and 26 drawn characters) or
+/// of a wrap code (`wc-` and 12). The same two shapes [`scrub_secrets`] hides.
+fn is_secret_shaped(leaf: &str) -> bool {
+    [("sk-", 26usize), ("wc-", 12usize)]
+        .iter()
+        .any(|(prefix, drawn)| {
+            leaf.strip_prefix(prefix)
+                .is_some_and(|body| body.len() == *drawn && body.chars().all(|c| DRAWN.contains(c)))
+        })
 }
 
 /// Every string leaf of `value` with its path, arrays marked `[]` after their
@@ -1101,6 +1170,124 @@ mod tests {
 
         assert_eq!(rewritten, json!({"sid": "ab12"}));
         assert_eq!(orphans, 0, "recall does not mint a session");
+    }
+
+    // ── secrets in a recording ──────────────────────────────────────────────
+
+    /// A key and a wrap code in the shapes a server mints: observed from the
+    /// boot answer and the wrap receipt, not invented.
+    const KEY_ONE: &str = "sk-7fh3m9qz2k4r8tvn5xb1c6dwae";
+    const KEY_TWO: &str = "sk-0a1b2c3d4e5f6g7h8j9k0m1n2p";
+    const CODE: &str = "wc-4fk8m2qr7t3z";
+
+    /// **A recording holds no key and no wrap code, and the stand-ins still
+    /// pair.** The same secret is the same stand-in wherever it appears, two
+    /// secrets are two stand-ins, the stand-ins keep the shape so the table's
+    /// scan still reads them as minted, and words that merely begin the same way
+    /// are left alone.
+    #[test]
+    fn a_stream_is_read_with_its_keys_and_wrap_codes_replaced_by_stand_ins_that_pair() {
+        let stream = stream_of(&[
+            boundary("s"),
+            called("t1", "start_here", json!({"bot": "assistant"})),
+            answered(
+                "t1",
+                &format!(r#"{{"session":{{"sid":"{KEY_ONE}","run":"jm7z4k"}}}}"#),
+            ),
+            called(
+                "t2",
+                "journal",
+                json!({"sid": KEY_ONE, "entry": "sk-short and wc-too-short"}),
+            ),
+            answered(
+                "t2",
+                &format!(r#"{{"wrap_code":"{CODE}","other":"{KEY_TWO}"}}"#),
+            ),
+            called("t3", "recall", json!({"sid": KEY_TWO})),
+            answered("t3", r#"{}"#),
+        ]);
+
+        let sittings = read_stream(&stream);
+        let calls = &sittings[0].calls;
+
+        let text = serde_json::to_string(&json!({
+            "inputs": calls.iter().map(|c| c.input.clone()).collect::<Vec<_>>(),
+            "answers": calls.iter().map(|c| c.answer.clone()).collect::<Vec<_>>(),
+        }))
+        .unwrap();
+        for secret in [KEY_ONE, KEY_TWO, CODE] {
+            assert!(!text.contains(secret), "{secret} was kept: {text}");
+        }
+        let first = calls[1].input["sid"].as_str().unwrap().to_string();
+        let second = calls[2].input["sid"].as_str().unwrap().to_string();
+        assert_ne!(first, second, "two keys are two stand-ins");
+        assert!(
+            calls[0].answer.as_deref().unwrap().contains(&first),
+            "the key a boot handed back and the key a call sent are one stand-in"
+        );
+        assert!(is_secret_shaped(&first) && is_secret_shaped(&second));
+        assert_eq!(
+            calls[1].input["entry"], "sk-short and wc-too-short",
+            "words that only begin the same way are not secrets"
+        );
+    }
+
+    /// **A key that flows outside the table is named, and one inside it is
+    /// not.** A key is 29 characters, past the length the scan used to read as
+    /// minted, so a verb that handed one back at a path the table lacks was
+    /// invisible to it.
+    #[test]
+    fn the_scan_reads_a_key_as_minted_and_a_run_name_the_table_knows_is_not_reported() {
+        let stream = stream_of(&[
+            boundary("s"),
+            called("t1", "start_here", json!({"bot": "assistant"})),
+            answered(
+                "t1",
+                &format!(
+                    r#"{{"session":{{"sid":"{KEY_ONE}","run":"jm7z4k"}},"reserve":"{KEY_TWO}"}}"#
+                ),
+            ),
+            called("t2", "journal", json!({"sid": KEY_ONE})),
+            answered("t2", r#"{}"#),
+            called(
+                "t3",
+                "start_here",
+                json!({"bot": "assistant", "resume": "jm7z4k"}),
+            ),
+            answered("t3", r#"{}"#),
+            called("t4", "recall", json!({"sid": KEY_TWO})),
+            answered("t4", r#"{}"#),
+        ]);
+
+        let found = unmapped_ids(&read_stream(&stream));
+
+        assert_eq!(found, vec!["start_here.reserve (1 use)"]);
+    }
+
+    /// **The boot's key and the run's name are both mint points**, so a replay
+    /// pairs each recorded value with the one its own server minted and a resume
+    /// by name finds the run.
+    #[test]
+    fn a_boots_key_and_name_are_each_mapped_to_the_ones_the_replay_minted() {
+        let mut map = IdMap::default();
+        let replayed_key = "sk-vvvvvvvvvvvvvvvvvvvvvvvvvv";
+        map.learn(
+            "start_here",
+            &serde_json::from_str(&format!(
+                r#"{{"session":{{"sid":"{KEY_ONE}","run":"jm7z4k"}}}}"#
+            ))
+            .unwrap(),
+            Some(&json!({"session": {"sid": replayed_key, "run": "zz99zz"}})),
+        );
+
+        let (rewritten, orphans) =
+            map.rewrite(&json!({"sid": KEY_ONE, "resume": "jm7z4k", "other": KEY_TWO}));
+
+        assert_eq!(
+            rewritten,
+            json!({"sid": replayed_key, "resume": "zz99zz", "other": KEY_TWO})
+        );
+        assert_eq!(orphans, 0);
     }
 
     // ── the stale-table scan ────────────────────────────────────────────────

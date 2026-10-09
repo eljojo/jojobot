@@ -324,6 +324,8 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             focus: "Reading the survey".to_string(),
             started_at: FIXED_INSTANT,
             started_on: None,
+            id: None,
+            key_hash: None,
         })
         .await
         .expect("the run begins");
@@ -456,6 +458,7 @@ async fn spawn_jojobot_serving(
         ui: Some(Arc::new(ui)),
         clock: jojobot_domain::clock::Clock::default(),
         push: None,
+        quiet_after: None,
     };
 
     let ct = CancellationToken::new();
@@ -1752,6 +1755,8 @@ async fn otto_page_with_runs(n: usize) -> String {
                 focus: format!("focus-{i:02}"),
                 started_at: minute(i),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("the run begins");

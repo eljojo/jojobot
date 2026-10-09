@@ -368,6 +368,7 @@ mod tests {
         let body = boot_answering_dated(&jojobot, "otto", &sid, None, None).await;
         assert_eq!(body["timezone"]["zone"], own, "{body}");
         assert_eq!(body["timezone"]["from"], "run", "{body}");
+        let sid = sid_of(&body).expect("a resume hands back the run's new key");
         assert_eq!(stamped_with_no_date(&jojobot, &sid).await, day_in(own));
     }
 

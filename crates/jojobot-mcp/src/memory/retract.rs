@@ -838,7 +838,7 @@ mod tests {
             .expect("fields ok");
         assert_eq!(
             after.get("holder"),
-            Some(&sid),
+            Some(&run_name(&jojobot, &sid)),
             "the claim's own holder must survive the refused retraction: {after:?}"
         );
 

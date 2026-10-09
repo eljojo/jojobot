@@ -78,7 +78,7 @@ impl Jojobot {
         // Re-read the caller inside the gate: a racing write may have
         // materialized the card since, and beginning a second one here is the
         // fork this lock exists to prevent.
-        let Ok(Some(caller)) = self.caller(Some(caller.sid.as_str())) else {
+        let Ok(Some(caller)) = self.caller(sid) else {
             return;
         };
         let Ok(session) = self

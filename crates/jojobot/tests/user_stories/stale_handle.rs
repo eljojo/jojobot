@@ -16,10 +16,11 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// The handle jojobot could have minted and never did — a session that is
-/// gone, rather than a string that was never a handle. Spelled here so both
-/// stories send the same thing and a reader can see it is well-formed.
-const LOST: &str = "zzzz";
+/// The key jojobot could have minted and never did — a session that is gone,
+/// rather than a string that was never a key. Spelled here so both stories send
+/// the same thing and a reader can see it is well-formed: the prefix and 26
+/// characters of the drawn alphabet.
+const LOST: &str = "sk-zzzzzzzzzzzzzzzzzzzzzzzzzz";
 
 #[tokio::test]
 async fn a_write_on_a_handle_the_server_no_longer_holds_is_told_where_to_get_another() {
@@ -47,13 +48,13 @@ async fn a_write_on_a_handle_the_server_no_longer_holds_is_told_where_to_get_ano
         .refused("journal", json!({"entry": "back at it", "sid": LOST}))
         .await;
 
-    // The refusal has to do three things: say nothing was written, name the
-    // handle it turned away so the caller can tell which of its strings is
-    // stale, and say where the next one comes from. A refusal that only said
-    // "no" would leave a session guessing whether jojobot was down.
+    // The refusal has to do three things: say nothing was written, say that the
+    // key opens nothing without repeating it, and say where the next one comes
+    // from. A refusal that only said "no" would leave a session guessing
+    // whether jojobot was down.
     refusal
         .says("\"wrote\":false")
-        .says(&format!("\"attempted\":\"{LOST}\""))
+        .never_says(LOST)
         // …and where the next handle comes from. The verb is named, not the
         // sentence around it: the wording is free to improve.
         .says("start_here");
@@ -125,7 +126,7 @@ async fn a_read_on_a_lost_handle_is_refused_while_one_with_no_handle_is_served()
         .await;
     refusal
         .says("\"wrote\":false")
-        .says(&format!("\"attempted\":\"{LOST}\""))
+        .never_says(LOST)
         // The way back is the door here too.
         .says("start_here")
         // Refused means refused: the claim it would have served is not in the

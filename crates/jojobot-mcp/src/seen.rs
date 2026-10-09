@@ -72,6 +72,12 @@ pub(crate) struct Ledger {
 }
 
 impl Ledger {
+    /// Whether the ledger holds anything for this session.
+    #[cfg(test)]
+    pub(crate) fn knows(&self, sid: &str) -> bool {
+        self.sessions.contains_key(sid)
+    }
+
     /// Count one call this session made.
     pub(crate) fn tick(&mut self, sid: &str) {
         if let Some(session) = self.sessions.get_mut(sid) {

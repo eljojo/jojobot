@@ -164,7 +164,7 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
             }),
         )
         .await;
-    let stopped = interrupted.sid().to_string();
+    let stopped = interrupted.run().to_string();
 
     // The next boot does not start a fresh run over the top of it. It offers
     // the one that stopped, says what that run was working on so two of them
@@ -192,9 +192,14 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     resumed.says("\"resumed\":true");
     let s = picked_up.expect("answering the offer hands back the handle");
     assert_eq!(
-        s.sid(),
+        s.run(),
         stopped,
         "resuming continues that run rather than minting one beside it"
+    );
+    assert_ne!(
+        s.sid(),
+        interrupted.sid(),
+        "…and hands the run a new key, closing the one it had"
     );
     s.wrap("finished what the run before it started").await;
 

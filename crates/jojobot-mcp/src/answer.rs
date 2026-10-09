@@ -211,8 +211,8 @@ pub(crate) fn nothing_for(verb: &str) -> &'static str {
 /// a run in flight, so naming the door alone sends a caller to a dead end.
 pub(crate) const ROUTE_TO_A_SID: &str = "Call start_here with your bot name; if you were not told \
     one, call start_here with no bot, which boots nobody and lists the bots you could boot as. A \
-    bot with a run in flight is handed a choice and no handle: call start_here again with \
-    resume set to the sid of the run you are picking up, or to \"new\" for a fresh session.";
+    bot with a run in flight is handed a choice and no key: call start_here again with \
+    resume set to the name of the run you are picking up, or to \"new\" for a fresh session.";
 
 impl From<&str> for WayForward {
     fn from(text: &str) -> Self {
@@ -416,8 +416,8 @@ impl Jojobot {
         // Before the answer is counted and before it moves: what is charged to
         // the session and what ships are the same text.
         strip_nulls_from(answered);
-        if let Some(sid) = sid {
-            self.registry.note_call(sid);
+        if let Ok(Some(caller)) = self.caller(sid) {
+            self.registry.note_call(caller.sid.as_str());
         }
         self.record_served(answered, sid).await;
         if structured {
@@ -1116,16 +1116,22 @@ mod tests {
         let jojobot = handler();
         let handed_sid = jojobot
             .registry
-            .mint_with(&EntityId("bot:milhouse".into()), None, || {
-                "svmm".to_string()
-            })
+            .mint_with(
+                &EntityId("bot:milhouse".into()),
+                || "svmm".to_string(),
+                jojobot_domain::session::mint_key,
+            )
             .expect("a free handle")
-            .0;
+            .key;
         let untouched_sid = jojobot
             .registry
-            .mint_with(&EntityId("bot:gamma".into()), None, || "svbt".to_string())
+            .mint_with(
+                &EntityId("bot:gamma".into()),
+                || "svbt".to_string(),
+                jojobot_domain::session::mint_key,
+            )
             .expect("a free handle")
-            .0;
+            .key;
 
         jojobot
             .journal(Parameters(JournalArgs {

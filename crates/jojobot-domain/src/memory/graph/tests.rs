@@ -437,6 +437,7 @@ fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
     let _booted = crate::memory::testing::InMemoryMemory::booted();
     use crate::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     crate::session::projected(&Session {
+        key_hash: None,
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),

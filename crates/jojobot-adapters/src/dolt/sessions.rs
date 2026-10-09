@@ -246,8 +246,8 @@ impl DoltSessions {
         id: &SessionId,
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
-            "SELECT id, sid, bot, focus, started_at, state, timezone, started_on, served_chars,
-                    stated_day, wrap_window, charter_told_at
+            "SELECT id, sid, key_hash, bot, focus, started_at, state, timezone, started_on,
+                    served_chars, stated_day, wrap_window, charter_told_at
              FROM session WHERE id = ?",
         )
         .bind(id.as_str())
@@ -438,6 +438,9 @@ fn session_from(
     let id: String = row.try_get("id").map_err(store)?;
     Ok(Session {
         sid: readable_sid(sid, &id),
+        key_hash: row
+            .try_get::<Option<String>, _>("key_hash")
+            .map_err(store)?,
         id: SessionId(id),
         timezone: row
             .try_get::<Option<String>, _>("timezone")
@@ -712,21 +715,40 @@ impl Sessions for DoltSessions {
             return Ok(session);
         }
 
-        let id = SessionId(
-            mint(
-                &mut tx,
-                &self.draw,
-                "SELECT 1 FROM session WHERE id = ?",
-                None,
-            )
-            .await?,
-        );
+        // **A name the boot minted is the card's id**, and an id some card
+        // already wears is refused rather than shared: the key is the table's.
+        let id = match new.id {
+            Some(id) => {
+                validate_session_id(&id)?;
+                let taken: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
+                    .bind(id.as_str())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(store)?;
+                if taken.is_some() {
+                    return Err(SessionError::InvalidEntry(format!(
+                        "session '{id}' already exists, so it cannot begin again"
+                    )));
+                }
+                id
+            }
+            None => SessionId(
+                mint(
+                    &mut tx,
+                    &self.draw,
+                    "SELECT 1 FROM session WHERE id = ?",
+                    None,
+                )
+                .await?,
+            ),
+        };
         sqlx::query(
-            "INSERT INTO session (id, sid, bot, focus, started_at, state, timezone, started_on)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO session (id, sid, key_hash, bot, focus, started_at, state, timezone, started_on)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id.as_str())
         .bind(new.sid.as_str())
+        .bind(new.key_hash.as_deref())
         .bind(new.bot.as_str())
         .bind(new.focus.trim())
         .bind(stamp(new.started_at))
@@ -1056,6 +1078,22 @@ impl Sessions for DoltSessions {
         Ok(session)
     }
 
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // Existence only, never refused on a closed session: see the trait.
+        self.exists(&mut tx, id).await?;
+        sqlx::query("UPDATE session SET key_hash = ? WHERE id = ?")
+            .bind(hash)
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        // No `append_session_write`: a hash is never indexed or served.
+        tx.commit().await.map_err(store)?;
+        Ok(())
+    }
+
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -1218,6 +1256,8 @@ mod tests {
                     sid: Sid(sid.into()),
                     focus: "a run".into(),
                     started_at: at.parse().expect("a fixed instant"),
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("begin ok")
@@ -1315,6 +1355,8 @@ mod tests {
                     sid: Sid(sid.into()),
                     focus: "a run".into(),
                     started_at: at.parse().expect("a fixed instant"),
+                    id: None,
+                    key_hash: None,
                 })
                 .await
                 .expect("begin ok")
@@ -1449,6 +1491,8 @@ mod tests {
                 sid: Sid(bad.into()),
                 focus: "a run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                id: None,
+                key_hash: None,
             })
             .await;
         assert!(
@@ -1513,6 +1557,8 @@ mod tests {
                 sid: Sid("gd01".into()),
                 focus: "an ordinary run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a well-formed sid is not refused");
@@ -1569,6 +1615,8 @@ mod tests {
                 focus: "a run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -1646,6 +1694,8 @@ mod tests {
                 focus: "a run whose boundaries cannot be marked".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("a run starts even when its boundary cannot be marked");
@@ -1726,6 +1776,8 @@ mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -1816,6 +1868,8 @@ mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -1912,6 +1966,8 @@ mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -1923,6 +1979,8 @@ mod tests {
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin should succeed");
@@ -1993,6 +2051,8 @@ mod tests {
                 focus: "a sitting with real beats".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2082,6 +2142,8 @@ mod tests {
                     timezone: None,
                     bot: EntityId(bot.into()),
                     sid: Sid(sid.into()),
+                    id: None,
+                    key_hash: None,
                     focus: "a run".into(),
                     started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                     started_on: None,
@@ -2150,6 +2212,8 @@ mod tests {
                 focus: "a busy run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: Some("2025-03-30".parse().expect("a day")),
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2174,6 +2238,8 @@ mod tests {
                 focus: "a run with nothing journalled".into(),
                 started_at: "2026-01-02T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2266,6 +2332,8 @@ mod tests {
                 focus: "a long-running sitting".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");
@@ -2290,6 +2358,8 @@ mod tests {
                 focus: "a run with nothing journalled yet".into(),
                 started_at: "2026-01-02T00:00:00Z".parse().expect("a fixed instant"),
                 started_on: None,
+                id: None,
+                key_hash: None,
             })
             .await
             .expect("begin ok");

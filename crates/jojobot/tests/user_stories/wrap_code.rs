@@ -34,6 +34,21 @@ async fn runs(who: &Session) -> HashMap<String, String> {
         .collect()
 }
 
+/// Every run of the bot as `focus -> state`, read off the store itself. A wrap
+/// takes the run's key away, and a boot of the bot to read with would end the
+/// window the story is about, so the wrapped run is read here.
+async fn runs_in_the_store(story: &Story) -> HashMap<String, String> {
+    use jojobot_domain::session::Sessions;
+    story
+        .sessions_store()
+        .all_sessions()
+        .await
+        .expect("the store reads")
+        .into_iter()
+        .map(|run| (run.focus, run.state.as_token().to_string()))
+        .collect()
+}
+
 /// A beat that names the run, so the run can be found in `list_runs` by what it
 /// was working on.
 async fn working_on(who: &Session, focus: &str, entry: &str) {
@@ -59,7 +74,7 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
         .as_str()
         .unwrap_or_else(|| panic!("a wrap hands back a code: {wrapped}"))
         .to_string();
-    assert_ne!(code, first.sid(), "the code is not the sid: {wrapped}");
+    assert_ne!(code, first.sid(), "the code is not the key: {wrapped}");
     let route = wrapped.to_string();
     assert!(
         route.contains("start_here") && route.contains("resume"),
@@ -67,23 +82,30 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
     );
 
     // The positive the refusals below depend on: the run is wrapped, and
-    // writing under its sid is refused until the code is used.
-    assert_eq!(runs(&first).await["the run that wraps twice"], "wrapped");
+    // writing under its key is refused until the code is used. The wrap took
+    // the key away, so the run is read off the store.
+    let held = runs_in_the_store(&story).await;
+    assert_eq!(
+        held.get("the run that wraps twice").map(String::as_str),
+        Some("wrapped"),
+        "{held:?}"
+    );
     first
         .refused("journal", json!({"entry": "an afterthought"}))
         .await
         .says("\"wrote\":false");
 
     // ── the code reopens the same run, and it stays wrapped ─────────────────
-    let before = runs(&first).await.len();
+    let before = runs_in_the_store(&story).await.len();
     let (reopened, again) = story
         .call(
             "start_here",
             json!({"bot": "otto", "brief": true, "resume": code}),
         )
         .await;
-    let again = again.expect("the code hands back the wrapped run's sid");
-    assert_eq!(again.sid(), first.sid(), "the same sid, not a new run");
+    let again = again.expect("the code hands back a key for the wrapped run");
+    assert_eq!(again.run(), first.run(), "the same run, not a new one");
+    assert_ne!(again.sid(), first.sid(), "…under a new key");
     assert_eq!(
         reopened.json()["session"]["session"]["state"],
         "wrapped",
@@ -95,7 +117,10 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
         "a last change, after the wrap",
     )
     .await;
-    let after = runs(&again).await;
+    // **The code was spent by the use that landed above**, so a second
+    // presentation is turned away while the run is still reopened.
+    story_refuses_a_code(&again, &code).await;
+    let after = runs_in_the_store(&story).await;
     assert_eq!(after.len(), before, "no run was started: {after:?}");
     assert_eq!(
         after["the run that wraps twice"], "wrapped",
@@ -114,7 +139,10 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
         second.get("wrap_code").is_none(),
         "the second wrap mints no new code: {second}"
     );
-    let history = again
+    // The second wrap ended the key, so the history is read by a later run of
+    // the bot, the way a bot reads its own past.
+    let reader = story.session().await;
+    let history = reader
         .call("recall", json!({"kind": "session", "prose": true}))
         .await
         .json();
