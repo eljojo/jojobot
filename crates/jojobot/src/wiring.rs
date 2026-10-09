@@ -527,6 +527,26 @@ pub async fn boot_store_pushing(
         ),
     }
 
+    // **Links a fold of an older build left on the forwarding row, repointed at
+    // the thing it ended in.** Runs after the pass above, which makes the link
+    // table agree with the writes it reads. Marked finished once it has
+    // committed, so it is made once and never repeated.
+    match linking.migrate_forwarded_links().await {
+        Ok(report) if report.settled => {
+            tracing::info!("store: links on forwarding rows: already done");
+        }
+        Ok(report) => tracing::info!(
+            repointed = report.repointed,
+            "store: repointed the field links that named a folded thing onto the thing it \
+             ended in"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            "FIELD LINKS ON FORWARDING ROWS NOT REPOINTED — a field that names a folded thing \
+             still names the row that forwards. Nothing was lost; a restart repeats the pass."
+        ),
+    }
+
     // **Wrapped in the decorators the story harness shares too** — see this
     // module's own doc for why this is two stages rather than one. The search
     // projection sits in FRONT of the store, so every write through the port

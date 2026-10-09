@@ -14353,6 +14353,266 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     );
 }
 
+/// What a thing HOLDS under one key, read the way a caller reads it: the
+/// folded value off a walk's own object, and the entities that same key
+/// reaches when it is walked by its name from the thing.
+async fn held_and_walked<M: Memory>(
+    store: &M,
+    holder: &EntityId,
+    key: &str,
+) -> (Option<String>, Vec<EntityId>) {
+    let walked = graph::walk(
+        store,
+        &[],
+        &graph::GraphQuery {
+            select: graph::Selection {
+                subject: Some(holder.clone()),
+                ..graph::Selection::default()
+            },
+            include: graph::Include {
+                facts: false,
+                prose: false,
+                stood_for: false,
+            },
+            follow: Some(graph::Follow {
+                along: graph::Along::Relation(key.to_string()),
+                direction: Some(graph::Direction::Out),
+                ..graph::Follow::hop()
+            }),
+            history: None,
+        },
+    )
+    .await
+    .expect("the holder walks by its reference key")
+    .objects;
+    let root = walked.first().expect("the holder is the root of the walk");
+    (
+        root.fields.get(key).cloned(),
+        root.connected.iter().map(|c| c.entity.id.clone()).collect(),
+    )
+}
+
+/// 🚨 **A field that names the folded side follows the fold to the survivor.**
+///
+/// A field whose value is a handle is a link (rule 374), stored as the
+/// target's permanent id. `merge` repoints edges, refs and parents; a third
+/// thing's reference key that named the duplicate must now name the survivor,
+/// both in the value a read folds and in the walk by the key's name. A
+/// reference that names the duplicate afterwards is a link to a husk.
+///
+/// **Paired**: a holder pointing at an unrelated thing keeps its value, and
+/// a merge where nothing points at the duplicate changes no holder.
+pub async fn a_fold_repoints_a_reference_field_naming_the_folded_side<M: Memory>(store: &M) {
+    store
+        .declare_type(DeclaredType::new(
+            "contract-fieldlink-pointing",
+            vec![Field::required(
+                "contract_fieldlink_points_at",
+                ValueType::Reference,
+            )],
+        ))
+        .await
+        .expect("the declaration lands");
+    let key = "contract_fieldlink_points_at";
+    let survivor = EntityId("thing:contract-fieldlink-survivor".into());
+    let duplicate = EntityId("thing:contract-fieldlink-duplicate".into());
+    let other = EntityId("thing:contract-fieldlink-other".into());
+    let holder = EntityId::person("person:contract-fieldlink-holder");
+    let bystander = EntityId::person("person:contract-fieldlink-bystander");
+    for (id, name) in [
+        (&survivor, "Fieldlink Survivor"),
+        (&duplicate, "Fieldlink Duplicate"),
+        (&other, "Fieldlink Other"),
+        (&holder, "Fieldlink Holder"),
+        (&bystander, "Fieldlink Bystander"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let pointing_at = |target: &EntityId| -> std::collections::BTreeMap<String, String> {
+        [(key.to_string(), target.to_string())]
+            .into_iter()
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: pointing_at(&duplicate),
+            ..NewFact::about(holder.clone(), "points at the duplicate", date(2026, 9, 1))
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: pointing_at(&other),
+            ..NewFact::about(bystander.clone(), "points at another", date(2026, 9, 1))
+        }),
+    )
+    .await;
+
+    // **Before the fold the link is on the duplicate**, so the survivor
+    // below is the fold's doing and not the fixture's.
+    let (before, walked) = held_and_walked(store, &holder, key).await;
+    assert_eq!(
+        before.as_deref(),
+        Some(duplicate.as_str()),
+        "the fixture did not point at the duplicate, so the fold proves nothing",
+    );
+    assert_eq!(walked, vec![duplicate.clone()]);
+
+    store
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 9, 2),
+            &other_caller(),
+        )
+        .await
+        .expect("the fold lands");
+
+    let (held, walked) = held_and_walked(store, &holder, key).await;
+    assert_eq!(
+        held.as_deref(),
+        Some(survivor.as_str()),
+        "a field naming the folded side still names it after the fold",
+    );
+    assert_eq!(
+        walked,
+        vec![survivor.clone()],
+        "walking the key by name from the holder does not reach the survivor",
+    );
+    let pointing_here = |target: EntityId| async move {
+        store
+            .referring_to(&target)
+            .await
+            .expect("a store answers who points here")
+            .iter()
+            .map(|fact| fact.subject.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pointing_here(survivor.clone()).await, vec![holder.clone()]);
+    // The merge's own account names what it folded, so the folded side is
+    // still pointed at by the survivor's account — and by nothing the holder
+    // wrote.
+    assert!(
+        !pointing_here(duplicate.clone()).await.contains(&holder),
+        "the holder's record still points at the folded side",
+    );
+
+    // **The pair**: a link at some other thing did not move.
+    let (kept, walked) = held_and_walked(store, &bystander, key).await;
+    assert_eq!(kept.as_deref(), Some(other.as_str()));
+    assert_eq!(walked, vec![other.clone()]);
+}
+
+/// 🚨 **A list of references keeps its order through a fold, and names the
+/// survivor once.**
+///
+/// A list that held the folded side in the middle holds the survivor in the
+/// same place. A list that held BOTH sides holds the survivor once, at the place
+/// the first of them had. **Paired** with a list that names neither, which comes
+/// through unchanged.
+pub async fn a_fold_repoints_a_list_of_references_and_names_the_survivor_once<M: Memory>(
+    store: &M,
+) {
+    store
+        .declare_type(DeclaredType::new(
+            "contract-fieldlink-listing",
+            vec![Field::listing(
+                "contract_fieldlink_list_points_at",
+                ValueType::Reference,
+            )],
+        ))
+        .await
+        .expect("the declaration lands");
+    let key = "contract_fieldlink_list_points_at";
+    let survivor = EntityId("thing:contract-relinked-keeper".into());
+    let duplicate = EntityId("thing:contract-relinked-spare".into());
+    let first = EntityId("thing:contract-relinked-first".into());
+    let last = EntityId("thing:contract-relinked-last".into());
+    let middle = EntityId::person("person:contract-relinked-middle");
+    let both = EntityId::person("person:contract-relinked-both");
+    let neither = EntityId::person("person:contract-relinked-neither");
+    for (id, name) in [
+        (&survivor, "Relinked Survivor"),
+        (&duplicate, "Relinked Duplicate"),
+        (&first, "Relinked First"),
+        (&last, "Relinked Last"),
+        (&middle, "Relinked Middle"),
+        (&both, "Relinked Both"),
+        (&neither, "Relinked Neither"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let listing = |targets: &[&EntityId]| -> std::collections::BTreeMap<String, String> {
+        [(
+            key.to_string(),
+            targets
+                .iter()
+                .map(|target| target.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )]
+        .into_iter()
+        .collect()
+    };
+    for (holder, targets) in [
+        (&middle, vec![&first, &duplicate, &last]),
+        (&both, vec![&duplicate, &first, &survivor]),
+        (&neither, vec![&first, &last]),
+    ] {
+        capture(
+            store,
+            state(NewFact {
+                fields: listing(&targets),
+                ..NewFact::about(holder.clone(), "lists some of them", date(2026, 9, 1))
+            }),
+        )
+        .await;
+    }
+
+    store
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 9, 2),
+            &other_caller(),
+        )
+        .await
+        .expect("the fold lands");
+
+    let expected = |targets: &[&EntityId]| {
+        targets
+            .iter()
+            .map(|target| target.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (held, walked) = held_and_walked(store, &middle, key).await;
+    assert_eq!(
+        held.as_deref(),
+        Some(expected(&[&first, &survivor, &last]).as_str()),
+        "the survivor does not stand where the folded side stood",
+    );
+    assert_eq!(walked.len(), 3, "the walk reaches {walked:?}");
+    assert!(walked.contains(&survivor) && !walked.contains(&duplicate));
+    let (held, walked) = held_and_walked(store, &both, key).await;
+    assert_eq!(
+        held.as_deref(),
+        Some(expected(&[&survivor, &first]).as_str()),
+        "a list naming both sides names the survivor once, where the first of them stood",
+    );
+    assert_eq!(walked.len(), 2, "the walk reaches {walked:?}");
+    let (held, _) = held_and_walked(store, &neither, key).await;
+    assert_eq!(
+        held.as_deref(),
+        Some(expected(&[&first, &last]).as_str()),
+        "a list naming neither side changed",
+    );
+}
+
 /// **A session-kind handle is refused by `add_entity`, never written.**
 ///
 /// `validate_write_subject` already refuses a memory write onto a session's
@@ -15675,6 +15935,8 @@ macro_rules! all_cases {
         $m!(a_fold_carries_the_lineage_that_points_at_what_it_moved($store));
         $m!(a_fold_moves_the_duplicates_names_to_the_survivor($store));
         $m!(a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side($store));
+        $m!(a_fold_repoints_a_reference_field_naming_the_folded_side($store));
+        $m!(a_fold_repoints_a_list_of_references_and_names_the_survivor_once($store));
         $m!(a_walk_from_a_folded_handle_says_where_it_went($store));
         $m!(a_claims_lineage_is_walkable_from_its_source($store));
         $m!(a_folded_value_says_who_backs_it($store));

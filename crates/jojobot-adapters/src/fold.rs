@@ -401,6 +401,15 @@ impl Memory for Folded {
         caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
         let _forget = self.forgetting_ages();
+        // **Who points at the folded side, read before the fold** — after it
+        // their links name the survivor and the question has no answer. Each
+        // holder's cached fields name the folded handle until it is read again.
+        let mut holders: Vec<EntityId> = Vec::new();
+        for fact in self.inner.referring_to(folded).await? {
+            if !holders.contains(&fact.subject) {
+                holders.push(fact.subject);
+            }
+        }
         let done = self
             .inner
             .merge(folded, survivor, reason, date, caller)
@@ -413,6 +422,11 @@ impl Memory for Folded {
         // entry sends the next read to the store, which is the answer, the
         // way a rename does it.
         self.cache.write().expect("fold lock").remove(folded);
+        for holder in holders.iter().filter(|h| *h != folded) {
+            if let Err(source) = self.refresh(holder).await {
+                return Err(fold_behind(Landed::Merge(Box::new(done)), source));
+            }
+        }
         match self.refresh(survivor).await {
             Ok(()) => Ok(done),
             Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),

@@ -575,6 +575,7 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
     assert_eq!(
         finished,
         [
+            "field links on forwarding rows",
             "field value lowering",
             "mail mentions",
             "message sender column",
@@ -869,6 +870,111 @@ async fn an_unreadable_loop_an_older_build_left_is_stamped_by_the_first_boot_and
         .log
         .iter()
         .any(|line| line.contains("due days: already stamped"));
+    second.stop().await;
+    assert!(settled, "the second boot says the pass is already done");
+    drop(scratch);
+}
+
+const FORWARDED_HOLDER: &str = "thing:upgrade-fixture-holder";
+const FORWARDED_FOLDED: &str = "thing:upgrade-fixture-husk";
+const FORWARDED_SURVIVOR: &str = "thing:upgrade-fixture-heir";
+
+/// **A field that names a folded thing, stored the way a build that did not
+/// sweep field links left it**: the holder's value is the folded thing's id
+/// behind the mark, the folded row forwards, and the link table has no row for
+/// it. Written below the surface into the recorded schema.
+async fn plant_a_link_on_a_forwarding_row(pool: &sqlx::MySqlPool) {
+    for (handle, badge, name, merged_into) in [
+        (FORWARDED_HOLDER, "hold01", "A Recorded Holder", None),
+        (
+            FORWARDED_FOLDED,
+            "husk01",
+            "A Recorded Husk",
+            Some(FORWARDED_SURVIVOR),
+        ),
+        (FORWARDED_SURVIVOR, "heir01", "A Recorded Heir", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
+                                 archived_reason, archived_at)
+             VALUES (?, 'thing', ?, 'test', NULL, NULL, 'on-demand', '', ?, ?, NULL, NULL)",
+        )
+        .bind(handle)
+        .bind(name)
+        .bind(badge)
+        .bind(merged_into)
+        .execute(pool)
+        .await
+        .expect("the entity lands");
+    }
+    sqlx::query(
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status, recorded_at,
+                           edge_shape, edge_object, event_kind, derived_from, derived_from_id,
+                           inserted_at, stale_after, happened_at, happened_through)
+         VALUES ('hold01', 'f1', 'points at a thing that was folded away', NULL,
+                 'testimony', 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL,
+                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+    )
+    .execute(pool)
+    .await
+    .expect("the holder's record lands");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+         VALUES ('hold01', 'upgrade_fixture_forwarded', 1, ?, 'f1')",
+    )
+    .bind(jojobot_domain::memory::marked_stored_handle("husk01"))
+    .execute(pool)
+    .await
+    .expect("the holder's field lands");
+}
+
+/// **A link an older fold left on a forwarding row is repointed by the first
+/// boot at the thing it ended in, found by the served read, and left alone by
+/// the next boot.** The link table has no row for the planted value, so this also
+/// holds the order of the two passes: the pass that fills the table runs first.
+#[tokio::test]
+async fn a_link_an_older_fold_left_on_a_forwarding_row_is_repointed_by_the_first_boot() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "forwarded-link").await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_link_on_a_forwarding_row(store.pool()).await;
+    store.stop().await;
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let repointed = first
+        .log
+        .iter()
+        .filter(|line| line.contains("repointed the field links that named a folded thing"))
+        .count();
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read = surface
+        .call("recall", json!({"subject": FORWARDED_HOLDER}))
+        .await;
+    first.stop().await;
+    assert_eq!(
+        repointed, 1,
+        "the first boot repointed the one link and said so"
+    );
+    let read: serde_json::Value = serde_json::from_str(&read)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
+    assert_eq!(
+        read["objects"][0]["fields"]["upgrade_fixture_forwarded"], FORWARDED_SURVIVOR,
+        "recorded at {git_ref}: the holder's field still names the folded thing: {read}"
+    );
+
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    let settled = second
+        .log
+        .iter()
+        .any(|line| line.contains("links on forwarding rows: already done"));
     second.stop().await;
     assert!(settled, "the second boot says the pass is already done");
     drop(scratch);

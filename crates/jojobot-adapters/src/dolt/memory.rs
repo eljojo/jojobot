@@ -71,6 +71,19 @@ pub struct FieldLinkReport {
     pub disagreed: bool,
 }
 
+/// **What the pass that repoints links off forwarding rows did.**
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ForwardedLinkReport {
+    /// Field writes whose value linked to a forwarding row and now links to the
+    /// thing it ended in.
+    pub repointed: usize,
+    /// The pass had finished at an earlier boot, so this one read nothing.
+    pub settled: bool,
+}
+
+/// **The name the repointing of links off forwarding rows is marked under.**
+const FORWARDED_LINKS_PASS: &str = "field links on forwarding rows";
+
 /// **The name the lowering of plain handle text under undeclared keys is marked
 /// under** in `store_pass`. The link table's repair is not part of it: that is
 /// a derived index and it heals itself.
@@ -478,6 +491,75 @@ impl DoltMemory {
                 unresolved.join("; "),
             )))
         }
+    }
+
+    /// **Links a fold left on the forwarding row, repointed at the thing the fold
+    /// ended in.** A build that swept edges, refs and parents at a fold but not
+    /// field values left every field that named the folded side naming a row that
+    /// only forwards (rule 374). This repairs the ones already stored; a fold made
+    /// by this build does it itself.
+    ///
+    /// **One transaction, so an interruption leaves nothing half done**, and the
+    /// pass is marked finished only after the commit. A second run finds no link
+    /// on a forwarding row, so it is idempotent as well. A forwarding row whose
+    /// survivor was folded in turn is followed to the end of the chain. The link
+    /// table is read, so this runs after [`migrate_field_links`](Self::migrate_field_links)
+    /// has made it agree with the writes.
+    pub async fn migrate_forwarded_links(&self) -> Result<ForwardedLinkReport, MemoryError> {
+        let mut report = ForwardedLinkReport::default();
+        if super::finished_passes(&self.pool)
+            .await
+            .contains(FORWARDED_LINKS_PASS)
+        {
+            report.settled = true;
+            return Ok(report);
+        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let declared = Self::types_in(&mut tx).await?;
+        let rows: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, badge, merged_into FROM entity")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let by_handle: std::collections::HashMap<&str, (&str, Option<&str>)> = rows
+            .iter()
+            .map(|(id, badge, into)| {
+                (
+                    id.as_str(),
+                    (badge.as_deref().unwrap_or(id.as_str()), into.as_deref()),
+                )
+            })
+            .collect();
+        for (handle, (from, into)) in &by_handle {
+            let mut at = *into;
+            let mut end = None;
+            let mut looped = true;
+            // A chain is as long as the rows at most; a longer walk is a loop.
+            for _ in 0..=by_handle.len() {
+                let Some(name) = at else {
+                    looped = false;
+                    break;
+                };
+                let Some((key, onward)) = by_handle.get(name) else {
+                    looped = false;
+                    break;
+                };
+                end = Some(*key);
+                at = *onward;
+            }
+            let Some(to) = end else { continue };
+            if looped || to == *from {
+                tracing::warn!(
+                    handle,
+                    "store: a forwarding row loops back on itself; its links are left"
+                );
+                continue;
+            }
+            report.repointed += Self::repoint_field_links(&mut tx, &declared, from, to).await?;
+        }
+        tx.commit().await.map_err(store)?;
+        super::finish_pass(&self.pool, FORWARDED_LINKS_PASS).await;
+        Ok(report)
     }
 
     /// **Lower the plain handle text left under undeclared keys, and bring the
@@ -2803,6 +2885,79 @@ impl DoltMemory {
         Ok(touched)
     }
 
+    /// **Every field write whose value links to `from` is rewritten to link to
+    /// `to`**, and its link rows with it (rule 374). A field naming a thing is
+    /// stored as the thing's permanent id, and a folded thing only forwards, so a
+    /// link left on it points at a husk. A list that already named `to` keeps one
+    /// item for it. Answers how many writes it rewrote.
+    ///
+    /// Runs inside the caller's transaction, over the rows that transaction can
+    /// see, so a fold's own moved writes are swept with the rest.
+    async fn repoint_field_links(
+        tx: &mut Transaction<'_, MySql>,
+        declared: &[DeclaredType],
+        from: &str,
+        to: &str,
+    ) -> Result<usize, MemoryError> {
+        let held: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT DISTINCT entity, `key`, ordinal FROM field_link WHERE target = ?",
+        )
+        .bind(from)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut repointed = 0;
+        for (entity, key, ordinal) in held {
+            let value: Option<String> = sqlx::query_scalar(
+                "SELECT value FROM field_write WHERE entity = ? AND `key` = ? AND ordinal = ?",
+            )
+            .bind(&entity)
+            .bind(&key)
+            .bind(ordinal)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?
+            .flatten();
+            let Some(value) = value else { continue };
+            let Some(now) =
+                jojobot_domain::memory::repoint_field_value(&key, &value, declared, from, to)
+            else {
+                continue;
+            };
+            sqlx::query(
+                "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
+            )
+            .bind(&now)
+            .bind(&entity)
+            .bind(&key)
+            .bind(ordinal)
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+            sqlx::query("DELETE FROM field_link WHERE entity = ? AND `key` = ? AND ordinal = ?")
+                .bind(&entity)
+                .bind(&key)
+                .bind(ordinal)
+                .execute(&mut **tx)
+                .await
+                .map_err(store)?;
+            for target in jojobot_domain::memory::field_link_targets(&key, &now, declared) {
+                sqlx::query(
+                    "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&entity)
+                .bind(&key)
+                .bind(ordinal)
+                .bind(&target)
+                .execute(&mut **tx)
+                .await
+                .map_err(store)?;
+            }
+            repointed += 1;
+        }
+        Ok(repointed)
+    }
+
     /// **Move the duplicate's field writes onto the survivor, in the order they
     /// were made.**
     ///
@@ -4833,6 +4988,19 @@ impl Memory for DoltMemory {
                 .await
                 .map_err(store)?;
         }
+
+        // **A field naming the folded side links to the survivor now** (rule
+        // 374): a field value is stored as the permanent id the folded side
+        // wears, and the writes this sweep reads include the ones that moved
+        // above.
+        let declared = Self::types_in(&mut tx).await?;
+        Self::repoint_field_links(
+            &mut tx,
+            &declared,
+            folded_key.as_str(),
+            survivor_key.as_str(),
+        )
+        .await?;
 
         // **`entity.parent` names a different row and is stored as the
         // badge it wears** (rule 268), so this compares against the folded

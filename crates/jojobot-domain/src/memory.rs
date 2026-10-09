@@ -3754,6 +3754,64 @@ pub fn field_link_targets(key: &str, value: &str, declared: &[types::DeclaredTyp
     targets
 }
 
+/// **The value of one stored field write with every link to `from` pointing at
+/// `to` instead**, or `None` when the value links to no such thing.
+///
+/// A fold uses it: a field naming the folded side is a link (rule 374), and it
+/// must name the survivor afterwards. An item keeps its own spelling, so a
+/// marked id stays marked and a bare id under a declared reference stays bare.
+/// **A list that already held `to` loses the repointed item**, so it never
+/// names the same thing twice; the remaining items keep their order. Only the
+/// items [`field_link_targets`] reads as links are touched, so loose prose under
+/// a reference key is left as it was written.
+pub fn repoint_field_value(
+    key: &str,
+    value: &str,
+    declared: &[types::DeclaredType],
+    from: &str,
+    to: &str,
+) -> Option<String> {
+    if !field_link_targets(key, value, declared)
+        .iter()
+        .any(|id| id == from)
+    {
+        return None;
+    }
+    let reference = declared
+        .iter()
+        .filter_map(|d| d.field(key))
+        .find(|f| f.holds == types::ValueType::Reference);
+    let items: Vec<String> = match reference {
+        Some(field) => field.items(value).into_iter().map(str::to_string).collect(),
+        None => value.split(',').map(str::to_string).collect(),
+    };
+    let mut kept: Vec<String> = Vec::with_capacity(items.len());
+    let mut seen: Vec<String> = Vec::with_capacity(items.len());
+    for item in items {
+        let item = item.trim().to_string();
+        let marked = stored_handle_id(&item).is_some();
+        let id = stored_handle_id(&item).unwrap_or(&item).to_string();
+        let (id, item) = if id == from {
+            (
+                to.to_string(),
+                if marked {
+                    marked_stored_handle(to)
+                } else {
+                    to.to_string()
+                },
+            )
+        } else {
+            (id, item)
+        };
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        kept.push(item);
+    }
+    Some(kept.join(", "))
+}
+
 /// **Whether any field of a record names `target`**, the question
 /// [`Memory::referring_to`] asks of every record.
 ///

@@ -6835,6 +6835,211 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
     store.stop().await;
 }
 
+/// **A link a fold of an older build left on the forwarding row is repointed at
+/// the thing the fold ended in, once, and a second run finds nothing.**
+///
+/// The old shape is written back by hand, off the raw columns: nothing outside
+/// this process declares the stored spelling of a link, and a build that folded
+/// before field links were swept left exactly these rows. A forwarding row whose
+/// survivor was folded in turn is followed to the end of the chain, and a holder
+/// of an undeclared key (stored behind the mark) is repointed with a declared
+/// one. A holder of an unrelated thing keeps its link.
+#[tokio::test]
+async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
+    let scratch = Scratch::new("forwarded-links");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forwarded_links")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    memory
+        .declare_type(DeclaredType::new(
+            "contract-forwarded",
+            vec![Field::required("forwarded_points_at", ValueType::Reference)],
+        ))
+        .await
+        .expect("the declaration lands");
+
+    let alpha = EntityId("thing:contract-forwarded-alpha".into());
+    let beta = EntityId("thing:contract-forwarded-beta".into());
+    let gamma = EntityId("thing:contract-forwarded-gamma".into());
+    let bystander = EntityId("thing:contract-forwarded-bystander".into());
+    let declared_holder = EntityId("person:contract-forwarded-declared".into());
+    let marked_holder = EntityId("person:contract-forwarded-marked".into());
+    let steady_holder = EntityId("person:contract-forwarded-steady".into());
+    for (id, name) in [
+        (&alpha, "Forwarded Alpha"),
+        (&beta, "Forwarded Beta"),
+        (&gamma, "Forwarded Gamma"),
+        (&bystander, "Forwarded Bystander"),
+        (&declared_holder, "Forwarded Declared"),
+        (&marked_holder, "Forwarded Marked"),
+        (&steady_holder, "Forwarded Steady"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    let mut written = Vec::new();
+    for (holder, key, target) in [
+        (&declared_holder, "forwarded_points_at", &beta),
+        (&marked_holder, "forwarded_note_link", &beta),
+        (&steady_holder, "forwarded_points_at", &bystander),
+    ] {
+        written.push(
+            memory
+                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                    fields: [(key.to_string(), target.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(holder.clone(), "points at a thing", date(2026, 9, 1))
+                }))
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("the claim lands"),
+        );
+    }
+
+    // Beta is folded into alpha, then alpha into gamma: a chain two rows long.
+    memory
+        .merge(
+            &beta,
+            &alpha,
+            None,
+            date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the first fold lands");
+    memory
+        .merge(
+            &alpha,
+            &gamma,
+            None,
+            date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the second fold lands");
+
+    // **Written back to what a build that did not sweep field links stored**:
+    // both holders name beta, in the spelling each key is stored in, with the
+    // link row the write implies.
+    let beta_badge = badge_of(&pool, beta.as_str()).await;
+    let gamma_badge = badge_of(&pool, gamma.as_str()).await;
+    let marked = jojobot_domain::memory::marked_stored_handle(&beta_badge);
+    for (holder, key, spelling) in [
+        (&declared_holder, "forwarded_points_at", beta_badge.clone()),
+        (&marked_holder, "forwarded_note_link", marked.clone()),
+    ] {
+        let badge = badge_of(&pool, holder.as_str()).await;
+        sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ?")
+            .bind(&spelling)
+            .bind(&badge)
+            .bind(key)
+            .execute(&pool)
+            .await
+            .expect("the old shape is written");
+        sqlx::query("DELETE FROM field_link WHERE entity = ? AND `key` = ?")
+            .bind(&badge)
+            .bind(key)
+            .execute(&pool)
+            .await
+            .expect("the link row is dropped");
+        sqlx::query("INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, 1, ?)")
+            .bind(&badge)
+            .bind(key)
+            .bind(&beta_badge)
+            .execute(&pool)
+            .await
+            .expect("the old link row is written");
+    }
+    assert!(
+        memory
+            .referring_to(&beta)
+            .await
+            .expect("answers")
+            .iter()
+            .any(|f| f.address() == written[0].address()),
+        "the fixture left no link on the forwarding row, so the pass below proves nothing",
+    );
+
+    let report = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass runs");
+    assert_eq!(report.repointed, 2, "{report:?}");
+    assert!(!report.settled, "{report:?}");
+
+    let held = |holder: &EntityId| {
+        let holder = holder.clone();
+        let memory = memory.clone();
+        async move { memory.fields(&holder).await.expect("fields read") }
+    };
+    assert_eq!(
+        held(&declared_holder).await.get("forwarded_points_at"),
+        Some(&gamma.to_string()),
+        "a declared reference is followed to the end of the chain",
+    );
+    assert_eq!(
+        held(&marked_holder).await.get("forwarded_note_link"),
+        Some(&gamma.to_string()),
+        "so is a handle under a key nobody declared",
+    );
+    assert_eq!(
+        held(&steady_holder).await.get("forwarded_points_at"),
+        Some(&bystander.to_string()),
+        "a link at some other thing did not move",
+    );
+    let to_gamma: Vec<String> = sqlx::query_scalar(
+        "SELECT entity FROM field_link WHERE target = ? AND `key` LIKE 'forwarded_%' ORDER BY entity",
+    )
+    .bind(&gamma_badge)
+    .fetch_all(&pool)
+    .await
+    .expect("the link table reads");
+    assert_eq!(
+        to_gamma.len(),
+        2,
+        "both links moved with their rows: {to_gamma:?}"
+    );
+    let on_beta: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM field_link WHERE target = ? AND `key` LIKE 'forwarded_%'",
+    )
+    .bind(&beta_badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the link table reads");
+    assert_eq!(on_beta, 0, "nothing still links to the forwarding row");
+
+    // **Marked finished, and idempotent without the mark**: a run that lost its
+    // marker finds no link left to repoint.
+    let again = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("a second pass runs");
+    assert!(again.settled && again.repointed == 0, "{again:?}");
+    sqlx::query("DELETE FROM store_pass WHERE name = 'field links on forwarding rows'")
+        .execute(&pool)
+        .await
+        .expect("the marker is dropped");
+    let rerun = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("a pass without its marker runs");
+    assert!(!rerun.settled && rerun.repointed == 0, "{rerun:?}");
+
+    store.stop().await;
+}
+
 /// **A rewrite of testimony belongs to the session that wrote it, over the real
 /// store, and the session is kept in the write's own column.**
 ///

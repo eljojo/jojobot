@@ -2976,6 +2976,8 @@ impl Memory for InMemoryMemory {
             return Err(err);
         }
 
+        // **Read before the locks below are taken**, as the held facts are.
+        let declared = self.declarations();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
 
@@ -3059,6 +3061,19 @@ impl Memory for InMemoryMemory {
                     *target = survivor_key.clone();
                 }
             }
+            // And a field naming the folded side, in the copy of the record's
+            // fields the row carries beside the writes (rule 374).
+            for (key, value) in fact.fields.iter_mut() {
+                if let Some(repointed) = super::super::repoint_field_value(
+                    key,
+                    value,
+                    &declared,
+                    folded_key.as_str(),
+                    survivor_key.as_str(),
+                ) {
+                    *value = repointed;
+                }
+            }
         }
         // A lineage pointer at a moved row follows it to its new address.
         for fact in facts.iter_mut() {
@@ -3091,6 +3106,20 @@ impl Memory for InMemoryMemory {
                     if let Some((_, now)) = moved.iter().find(|(was, _)| was == &write.fact) {
                         write.fact = now.clone();
                     }
+                }
+                // **A field that names the folded side names the survivor
+                // now** (rule 374): the value is stored as the id the folded
+                // side wears, and the folded side only forwards.
+                if let Some(value) = &write.value
+                    && let Some(repointed) = super::super::repoint_field_value(
+                        &write.key,
+                        value,
+                        &declared,
+                        folded_key.as_str(),
+                        survivor_key.as_str(),
+                    )
+                {
+                    write.value = Some(repointed);
                 }
             }
         }
