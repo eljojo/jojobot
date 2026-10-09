@@ -118,6 +118,14 @@ impl Jojobot {
         {
             return memory_declined("update_entity", refused);
         }
+        // **A bot's name and aliases ride in its own boot**, which a boot never
+        // declines: an edit that takes the floor over the ceiling is refused.
+        if let Some(refused) = self
+            .refuses_a_boot_floor_for_relabelling(&handle, &patch)
+            .await
+        {
+            return memory_declined("update_entity", refused);
+        }
         let sets = args.sets.clone().filter(|sets| !sets.is_empty());
         let mut claim = None;
         let mut fold_behind = None;
@@ -176,6 +184,14 @@ impl Jojobot {
                     )
                 };
                 if let Some(refused) = self.refuses_a_new_claim_too_big_to_read(&first, None).await
+                {
+                    return memory_declined("update_entity", refused);
+                }
+                // **A star or a seat count set here is a capture's**: the claim
+                // is measured as the boot it would leave, as `capture` does.
+                if let Some(refused) = self
+                    .refuses_a_boot_floor_for_capture(&first, &caller.bot)
+                    .await
                 {
                     return memory_declined("update_entity", refused);
                 }

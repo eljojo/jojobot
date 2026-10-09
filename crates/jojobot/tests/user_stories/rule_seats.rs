@@ -287,6 +287,93 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     story.finish().await;
 }
 
+/// **An edit to a bot is held to the boot ceiling as a capture is.** The seat
+/// count `update_entity` sets on a bot, and the name and aliases it changes,
+/// ride in that bot's boot, so a write that takes the floor over is refused
+/// naming the overage, and the same edit shrinking the floor lands.
+#[tokio::test]
+async fn an_edit_to_a_bot_that_would_take_its_boot_over_the_ceiling_is_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:epsilon", "Epsilon").await;
+    // Eight starred rules at the default five seats: the floor fits, so every
+    // one of these lands.
+    let rule = "w ".repeat(1000);
+    for n in 0..8 {
+        s.call(
+            "capture",
+            json!({
+                "subject": "bot:epsilon",
+                "content": format!("{n} {rule}"),
+                "fields": {"starred": "true"},
+            }),
+        )
+        .await;
+    }
+    // Then a charter that takes the boot to the ceiling and not past it, so
+    // every write below that grows the floor by any amount crosses it, and
+    // the refusal can only be the floor's.
+    fill_the_ceiling_with_a_charter(&s, "bot:epsilon").await;
+    let carried = |booted: serde_json::Value| booted["identity"]["rules"].as_array().unwrap().len();
+
+    // ── a seat count set through update_entity ──────────────────────────────
+    let refusal = s
+        .refused(
+            "update_entity",
+            json!({"handle": "bot:epsilon", "sets": {"rule_seats": "8"}}),
+        )
+        .await;
+    refusal.says("floor_parts").says("\"wrote\":false");
+    assert!(
+        refusal.json()["over"].as_u64().unwrap_or(0) > 0,
+        "{}",
+        refusal.raw()
+    );
+    let (booted, _) = story
+        .call("start_here", json!({"bot": "epsilon", "brief": true}))
+        .await;
+    assert_eq!(
+        carried(booted.json()),
+        5,
+        "the refused count changed nothing"
+    );
+
+    // ── aliases and a name, which a boot carries beside the bot ─────────────
+    s.refused(
+        "update_entity",
+        json!({"handle": "bot:epsilon", "aliases": ["Another Name"]}),
+    )
+    .await
+    .says("floor_parts")
+    .says("\"wrote\":false");
+    s.refused(
+        "update_entity",
+        json!({"handle": "bot:epsilon", "name": "Epsilon Prime"}),
+    )
+    .await
+    .says("floor_parts")
+    .says("\"wrote\":false");
+
+    // ── the paired positives: an edit that lowers the floor, or leaves it ───
+    s.call(
+        "update_entity",
+        json!({"handle": "bot:epsilon", "sets": {"rule_seats": "3"}}),
+    )
+    .await;
+    let (booted, _) = story
+        .call("start_here", json!({"bot": "epsilon", "brief": true}))
+        .await;
+    assert_eq!(carried(booted.json()), 3, "the lower count landed");
+    s.call(
+        "update_entity",
+        json!({"handle": "bot:epsilon", "aliases": ["Another Name"]}),
+    )
+    .await;
+
+    s.wrap("held edits to a bot to the boot ceiling").await;
+    story.finish().await;
+}
+
 /// **The ceiling a boot may not cross**, as the refusal itself states it.
 const BOOT_CEILING: u64 = 28_000;
 

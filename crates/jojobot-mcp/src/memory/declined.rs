@@ -584,6 +584,15 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          shorter source in the same call: they are what the new bot's boot \
                          carries."
                 ),
+                // **An edit to a bot may carry a name, aliases, a star or a
+                // seat count**, so it is told the cheaper cut first and the
+                // rest after.
+                "update_entity" => format!(
+                    "Nothing was written: {e}. The largest part of the floor is {largest}; \
+                         floor_parts lists every part. Send a shorter name or shorter aliases, \
+                         or: {}",
+                    crate::orientation::floor::ways_down(subject),
+                ),
                 // **Three ways down, and the caller picks the one that
                 // costs least.** Which rules are starred and how many seats
                 // a bot has are data, so none of them is chosen for the

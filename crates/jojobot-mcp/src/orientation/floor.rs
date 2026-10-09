@@ -167,6 +167,7 @@ impl Jojobot {
         seats: usize,
         charter: Option<&str>,
         creating: Option<&Entity>,
+        relabelled: Option<&Entity>,
     ) -> Option<Floor> {
         let mut index = self.memory.list_entities(None).await;
         // **A bot that does not exist yet is measured as it will exist once its
@@ -175,6 +176,13 @@ impl Jojobot {
         // counts it.
         if let (Some(creating), Ok(listed)) = (creating, index.as_mut()) {
             listed.push(creating.clone());
+        }
+        // **A bot being renamed or re-aliased is measured as the entity the edit
+        // leaves**: its name and aliases ride in its own boot.
+        if let (Some(relabelled), Ok(listed)) = (relabelled, index.as_mut())
+            && let Some(slot) = listed.iter_mut().find(|e| e.id == relabelled.id)
+        {
+            *slot = relabelled.clone();
         }
         let entity = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
         let charter = match charter {
@@ -303,7 +311,7 @@ impl Jojobot {
         };
         let in_force_after = rules_in_force(would_be);
         let after = self
-            .boot_floor_if(bot, &in_force_after, seats_after, None, creating)
+            .boot_floor_if(bot, &in_force_after, seats_after, None, creating, None)
             .await?;
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
@@ -314,7 +322,7 @@ impl Jojobot {
                 parts: Vec::new(),
             },
             None => {
-                self.boot_floor_if(bot, &rules_in_force(&current), seats_now, None, None)
+                self.boot_floor_if(bot, &rules_in_force(&current), seats_now, None, None, None)
                     .await?
             }
         };
@@ -333,13 +341,48 @@ impl Jojobot {
         let seats = rule_seats_of(&self.memory.fields(bot).await.unwrap_or_default());
         let in_force = rules_in_force(&held);
         let after = self
-            .boot_floor_if(bot, &in_force, seats, Some(prose.trim()), None)
+            .boot_floor_if(bot, &in_force, seats, Some(prose.trim()), None, None)
             .await?;
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
         let before = self
-            .boot_floor_if(bot, &in_force, seats, None, None)
+            .boot_floor_if(bot, &in_force, seats, None, None, None)
+            .await?;
+        Self::over_the_ceiling(bot, after, &before, 0)
+    }
+
+    /// **The floor check for a bot's name or aliases**, run before an edit
+    /// lands. They ride in the bot's own boot, so the edit is measured as the
+    /// entity it leaves, against the entity as it stands; only an edit that
+    /// grows the floor past the ceiling is refused.
+    pub(crate) async fn refuses_a_boot_floor_for_relabelling(
+        &self,
+        bot: &EntityId,
+        patch: &jojobot_domain::memory::EntityPatch,
+    ) -> Option<MemoryError> {
+        if bot.kind() != Some(EntityKind::BOT) || (patch.name.is_none() && patch.aliases.is_none())
+        {
+            return None;
+        }
+        let mut relabelled = self.memory.scan_entity(bot).await.ok()??.entity?;
+        if let Some(name) = &patch.name {
+            relabelled.name = name.clone();
+        }
+        if let Some(aliases) = &patch.aliases {
+            relabelled.aliases = aliases.clone();
+        }
+        let held = self.memory.recall(bot).await.ok()?;
+        let seats = rule_seats_of(&self.memory.fields(bot).await.unwrap_or_default());
+        let in_force = rules_in_force(&held);
+        let after = self
+            .boot_floor_if(bot, &in_force, seats, None, None, Some(&relabelled))
+            .await?;
+        if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
+            return None;
+        }
+        let before = self
+            .boot_floor_if(bot, &in_force, seats, None, None, None)
             .await?;
         Self::over_the_ceiling(bot, after, &before, 0)
     }
@@ -361,7 +404,7 @@ impl Jojobot {
             };
             let seats = rule_seats_of(&self.memory.fields(&bot.id).await.unwrap_or_default());
             if let Some(floor) = self
-                .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None, None)
+                .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None, None, None)
                 .await
             {
                 floors.push((bot.id.clone(), floor.total));
@@ -543,7 +586,7 @@ mod tests {
                 .expect("the bot's claims");
             let rules = jojobot_domain::memory::rules_in_force(&held);
             let total = jojobot
-                .boot_floor_if(&EntityId("bot:gamma".into()), &rules, 5, None, None)
+                .boot_floor_if(&EntityId("bot:gamma".into()), &rules, 5, None, None, None)
                 .await
                 .expect("the floor")
                 .total;
@@ -634,7 +677,7 @@ mod tests {
             let bot = &bot;
             async move {
                 jojobot
-                    .boot_floor_if(bot, &[fact], 5, None, None)
+                    .boot_floor_if(bot, &[fact], 5, None, None, None)
                     .await
                     .expect("the floor")
                     .total
@@ -793,7 +836,7 @@ mod tests {
             let bot = &bot;
             async move {
                 jojobot
-                    .boot_floor_if(bot, &[fact], 5, None, None)
+                    .boot_floor_if(bot, &[fact], 5, None, None, None)
                     .await
                     .expect("the floor")
                     .total
