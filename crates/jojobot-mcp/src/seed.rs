@@ -124,8 +124,8 @@ pub fn shipped_types() -> Vec<DeclaredType> {
         DeclaredType::shipped(
             "trip",
             vec![
-                Field::required("departs_from", ValueType::Reference),
-                Field::required("arrives_at", ValueType::Reference),
+                Field::pointing_at("departs_from", EntityKind::PLACE).needed(),
+                Field::pointing_at("arrives_at", EntityKind::PLACE).needed(),
                 Field::required("leaves_on", ValueType::Date),
                 Field::required("returns_on", ValueType::Date),
             ],
@@ -363,6 +363,17 @@ mod tests {
             .collect()
     }
 
+    /// Each key with the whole token it is declared as, which `keys` cannot
+    /// show: it names the value type alone, so a reference narrowed to a kind
+    /// reads as a plain one.
+    fn spelled(declared: &DeclaredType) -> Vec<String> {
+        declared
+            .fields
+            .iter()
+            .map(|f| format!("{}: {}", f.key, f.holds_token()))
+            .collect()
+    }
+
     /// **A fresh instance arrives holding the types the software ships**, whole
     /// — every key, in order, holding what it was declared to hold.
     ///
@@ -408,12 +419,12 @@ mod tests {
         // from either end rather than a pair of strings.
         let trip = stored(&memory, "trip").await;
         assert_eq!(
-            keys(&trip),
+            spelled(&trip),
             vec![
-                ("departs_from", "reference"),
-                ("arrives_at", "reference"),
-                ("leaves_on", "date"),
-                ("returns_on", "date"),
+                "departs_from: reference:place",
+                "arrives_at: reference:place",
+                "leaves_on: date",
+                "returns_on: date",
             ],
         );
         assert_eq!(trip.origin, Origin::Shipped);
@@ -502,12 +513,12 @@ mod tests {
             .expect("the store takes");
 
         assert_eq!(
-            keys(&stored(&memory, "trip").await),
+            spelled(&stored(&memory, "trip").await),
             vec![
-                ("departs_from", "reference"),
-                ("arrives_at", "reference"),
-                ("leaves_on", "date"),
-                ("returns_on", "date"),
+                "departs_from: reference:place",
+                "arrives_at: reference:place",
+                "leaves_on: date",
+                "returns_on: date",
             ],
             "this build's keys reached an instance that was already running",
         );

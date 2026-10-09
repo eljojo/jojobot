@@ -197,6 +197,107 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 }
 
 #[tokio::test]
+async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add(
+        "event:gorge-safety-inspection",
+        "The Gorge Safety Inspection",
+    )
+    .await;
+    s.add("event:moe-open-mic", "The Moe Open Mic").await;
+    s.add("event:otto-benefit-show", "The Otto Benefit Show")
+        .await;
+    s.add("place:springfield", "Springfield").await;
+    s.add("place:daredevil-gorge", "The Daredevil Gorge").await;
+    s.add("pet:santas-little-helper", "Santa's Little Helper")
+        .await;
+
+    // The paired positive: a trip from one place to another is a trip.
+    s.event_with(
+        "event:gorge-safety-inspection",
+        "four days up the gorge",
+        json!({
+            "departs_from": "place:springfield",
+            "arrives_at": "place:daredevil-gorge",
+            "leaves_on": "2026-09-03",
+            "returns_on": "2026-09-07",
+        }),
+        &[],
+    )
+    .await;
+    // Either end can be the pet. A declared type refuses no write, so both land.
+    s.event_with(
+        "event:moe-open-mic",
+        "the dog came along as the start",
+        json!({
+            "departs_from": "pet:santas-little-helper",
+            "arrives_at": "place:springfield",
+            "leaves_on": "2026-09-03",
+            "returns_on": "2026-09-07",
+        }),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "event:otto-benefit-show",
+        "the dog came along as the end",
+        json!({
+            "departs_from": "place:springfield",
+            "arrives_at": "pet:santas-little-helper",
+            "leaves_on": "2026-09-03",
+            "returns_on": "2026-09-07",
+        }),
+        &[],
+    )
+    .await;
+
+    let described = s
+        .call("search", json!({ "answers_type": "trip", "limit": 50 }))
+        .await
+        .json();
+    let mistyped_of = |id: &str| -> Vec<serde_json::Value> {
+        let hit = described["results"]
+            .as_array()
+            .and_then(|hits| hits.iter().find(|h| h["id"] == id))
+            .unwrap_or_else(|| panic!("{id} answers the trip type: {described}"));
+        hit["answers_type"]["mistyped"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{id} states what it holds badly: {hit}"))
+            .clone()
+    };
+    assert!(
+        mistyped_of("event:gorge-safety-inspection").is_empty(),
+        "place to place holds both ends well: {described}"
+    );
+    assert_eq!(
+        mistyped_of("event:moe-open-mic"),
+        vec![json!({
+            "key": "departs_from",
+            "declared": "reference:place",
+            "value": "pet:santas-little-helper",
+        })],
+        "the answer names the key, the kind it wanted and what it holds"
+    );
+    assert_eq!(
+        mistyped_of("event:otto-benefit-show"),
+        vec![json!({
+            "key": "arrives_at",
+            "declared": "reference:place",
+            "value": "pet:santas-little-helper",
+        })],
+    );
+
+    let strict = s
+        .call("search", json!({ "fits_type": "trip", "limit": 50 }))
+        .await;
+    strict.says("event:gorge-safety-inspection");
+    strict.never_says("event:moe-open-mic");
+    strict.never_says("event:otto-benefit-show");
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_writes_under_them() {
     // **A session that was told nothing.** The boot lists the shipped types by
     // name only, so the first question it can ask is `answers_type: trip`, and
@@ -241,7 +342,7 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
         let name = key["key"].as_str().expect("a key has a name");
         let value = match key["holds"].as_str().expect("a key says what it holds") {
             "date" => "2026-09-03",
-            "reference" => "place:springfield",
+            "reference:place" => "place:springfield",
             other => panic!("a trip key holds {other}, which this story cannot write"),
         };
         fields.insert(name.to_string(), json!(value));
