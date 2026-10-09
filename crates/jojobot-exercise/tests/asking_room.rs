@@ -126,7 +126,7 @@ async fn ride(room: &Surface, sid: &str, bike: &str, km: &str) {
         sid,
         "capture",
         json!({"subject": format!("thing:{bike}"), "content": format!("rode {km} km"),
-               "provenance": "testimony", "fields": {"km": km}}),
+               "provenance": "testimony", "sets": {"km": km}}),
     )
     .await;
 }
@@ -163,7 +163,7 @@ async fn part_of_the_move(room: &Surface, sid: &str, part: &str, status: &str, s
         sid,
         "capture",
         json!({"subject": format!("work:{part}"), "content": said,
-               "provenance": "testimony", "fields": {"status": status}}),
+               "provenance": "testimony", "sets": {"status": status}}),
     )
     .await;
 }
@@ -199,7 +199,7 @@ async fn january(room: &Surface, sid: &str) {
             sid,
             "capture",
             json!({"subject": "view:my-bikes", "content": format!("what makes a bike mine: {key} is {value}"),
-                   "provenance": "testimony", "fields": {"key": key, "value": value}}),
+                   "provenance": "testimony", "sets": {"key": key, "value": value}}),
         )
         .await;
     }
@@ -210,7 +210,7 @@ async fn january(room: &Surface, sid: &str) {
             "capture",
             json!({"subject": format!("thing:{bike}"), "content": format!("one of my bikes; rode {km} km"),
                    "provenance": "testimony",
-                   "fields": {"category": "bike", "owned": "yes", "km": km}}),
+                   "sets": {"category": "bike", "owned": "yes", "km": km}}),
         )
         .await;
     }
@@ -227,7 +227,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "event:goodbye-party", "content": "a goodbye party at home on 13 June",
-               "provenance": "testimony", "fields": {"planned_for": "2026-06-13"}}),
+               "provenance": "testimony", "sets": {"planned_for": "2026-06-13"}}),
     )
     .await;
     journalled(
@@ -257,7 +257,7 @@ async fn february(room: &Surface, sid: &str) {
         json!({"subject": "event:chain-and-pads",
                "content": "the gravel bike went into Costington's for a new chain and new brake pads",
                "provenance": "testimony",
-               "fields": {"mechanic": "person:kenny", "work": "new chain and new brake pads",
+               "sets": {"mechanic": "person:kenny", "work": "new chain and new brake pads",
                           "bike": "thing:gravel-bike", "shop": "org:costingtons"}}),
     )
     .await;
@@ -299,7 +299,7 @@ async fn march(room: &Surface, sid: &str) {
         json!({"subject": "project:the-move",
                "content": "decided to move to Quahog by the end of October",
                "provenance": "testimony",
-               "fields": {"status": "now", "destination": "place:quahog", "due_by": "2026-10-31"}}),
+               "sets": {"status": "now", "destination": "place:quahog", "due_by": "2026-10-31"}}),
     )
     .await;
     for (part, name) in [
@@ -324,7 +324,7 @@ async fn march(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "work:the-movers", "content": "the movers quoted 1,800",
-               "provenance": "testimony", "fields": {"status": "next", "quote": "1800"}}),
+               "provenance": "testimony", "sets": {"status": "next", "quote": "1800"}}),
     )
     .await;
     part_of_the_move(room, sid, "the-vet-certificate", "next", "still to do").await;
@@ -385,7 +385,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:fat-bike", "content": "bought a fat bike",
-               "provenance": "testimony", "fields": {"category": "bike", "owned": "yes"}}),
+               "provenance": "testimony", "sets": {"category": "bike", "owned": "yes"}}),
     )
     .await;
     for _ in 0..4 {
@@ -418,7 +418,7 @@ async fn may(room: &Surface, sid: &str) {
         json!({"subject": "event:wheel-truing",
                "content": "the road bike went into Costington's and the wheel was trued",
                "provenance": "testimony",
-               "fields": {"mechanic": "person:token", "work": "trued the wheel",
+               "sets": {"mechanic": "person:token", "work": "trued the wheel",
                           "bike": "thing:road-bike", "shop": "org:costingtons"}}),
     )
     .await;
@@ -501,7 +501,7 @@ async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
         "capture",
         json!({"subject": "event:goodbye-party",
                "content": "the party went great, though we ran out of chairs for ten minutes",
-               "provenance": "testimony", "fields": {"held_on": "2026-06-13"}}),
+               "provenance": "testimony", "sets": {"held_on": "2026-06-13"}}),
     )
     .await;
     check_in(
@@ -530,7 +530,7 @@ async fn august(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:road-bike", "content": "sold the road bike to Stan; it is Stan's now",
-               "provenance": "testimony", "fields": {"owned": "no", "sold_to": "person:stan"}}),
+               "provenance": "testimony", "sets": {"owned": "no", "sold_to": "person:stan"}}),
     )
     .await;
     part_of_the_move(
@@ -574,7 +574,7 @@ async fn september(room: &Surface, sid: &str) {
         json!({"subject": "event:new-tyres",
                "content": "the gravel bike went into Costington's again for new tyres",
                "provenance": "testimony",
-               "fields": {"mechanic": "person:kenny", "work": "new tyres",
+               "sets": {"mechanic": "person:kenny", "work": "new tyres",
                           "bike": "thing:gravel-bike", "shop": "org:costingtons"}}),
     )
     .await;
@@ -648,7 +648,7 @@ async fn answered(room: &Surface, sid: &str, subject: &str, slot: &str, answer: 
         sid,
         "capture",
         json!({"subject": subject, "content": format!("the answer to question {slot}"),
-               "provenance": "testimony", "fields": {format!("answer_{slot}"): answer}}),
+               "provenance": "testimony", "sets": {format!("answer_{slot}"): answer}}),
     )
     .await;
 }

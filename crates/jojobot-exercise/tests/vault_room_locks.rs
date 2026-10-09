@@ -112,7 +112,7 @@ async fn write_status(surface: &Surface, sid: &str, subject: &str, status: &str)
             "subject": subject,
             "content": format!("{subject} is {status}"),
             "provenance": "testimony",
-            "fields": {"status": status},
+            "sets": {"status": status},
         }),
     )
     .await
@@ -129,7 +129,7 @@ async fn write_instance(surface: &Surface, sid: &str, fields: serde_json::Value)
             "subject": "topic:instance",
             "content": "how this instance words its statuses",
             "provenance": "testimony",
-            "fields": fields,
+            "sets": fields,
         }),
     )
     .await;
@@ -176,7 +176,7 @@ async fn file_the_projects_under_columns_that_hold_the_operators_words(
             "subject": "project:atlas",
             "content": "the columns this board uses",
             "provenance": "testimony",
-            "fields": {"columns": "someday, considering, next, doing, now, waiting, done"},
+            "sets": {"columns": "someday, considering, next, doing, now, waiting, done"},
         }),
     )
     .await;
@@ -336,7 +336,7 @@ async fn write_kitchen_floor_status(surface: &Surface, sid: &str, status: &str) 
             "subject": "project:kitchen-floor",
             "content": format!("the kitchen floor is {status}"),
             "provenance": "testimony",
-            "fields": {"status": status},
+            "sets": {"status": status},
         }),
     )
     .await;
@@ -394,7 +394,7 @@ async fn write_piano_check_in(surface: &Surface, sid: &str, date: &str, said: &s
             "subject": "rhythm:sit-at-the-piano",
             "content": said,
             "provenance": "testimony",
-            "fields": {"last_check_in": date},
+            "sets": {"last_check_in": date},
         }),
     )
     .await;
@@ -652,7 +652,7 @@ fn saying_for(route: Route, machine: &str, words: &str) -> serde_json::Value {
         }
         Route::Mention => said["content"] = json!(format!("{words} @{machine}")),
         Route::Ref => said["refs"] = json!([machine]),
-        Route::Field => said["fields"] = json!({"for": machine}),
+        Route::Field => said["sets"] = json!({"for": machine}),
         Route::Prose => {}
     }
     said
@@ -875,7 +875,7 @@ async fn file_the_ticket_deadline(
             "subject": subject,
             "content": "Tickets for the fair stop selling on 10 October.",
             "provenance": "testimony",
-            "fields": fields,
+            "sets": fields,
         }),
     )
     .await;
@@ -1076,7 +1076,7 @@ async fn the_year_with_a_drive_the_laptop_cannot_read(surface: &Surface, sid: &s
         json!({
             "content": "goes with the server when it goes",
             "provenance": "testimony",
-            "fields": {"for": "machine:omicron"},
+            "sets": {"for": "machine:omicron"},
         }),
     )
     .await;

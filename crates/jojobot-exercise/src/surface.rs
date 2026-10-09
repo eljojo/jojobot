@@ -260,7 +260,7 @@ impl Seed {
             "capture".to_string(),
             json!({
                 "subject": subject, "content": content,
-                "provenance": "testimony", "fields": fields,
+                "provenance": "testimony", "sets": fields,
             }),
         ));
         Ok(self)

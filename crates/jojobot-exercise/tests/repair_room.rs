@@ -146,7 +146,7 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
             "capture",
             json!({"subject": "promise:return-the-wrench",
                    "content": "On loan; it has to go back.",
-                   "provenance": "testimony", "fields": {key: "2026-11-03"}}),
+                   "provenance": "testimony", "sets": {key: "2026-11-03"}}),
         )
         .await;
     } else if undone != Some(Undone::Unfiled) {
@@ -155,7 +155,7 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
             sid,
             "capture",
             json!({"subject": "thing:kettle", "content": "On loan; it has to go back.",
-                   "provenance": "testimony", "fields": {key: "2026-11-03"}}),
+                   "provenance": "testimony", "sets": {key: "2026-11-03"}}),
         )
         .await;
     }
@@ -166,7 +166,7 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
             sid,
             "capture",
             json!({"subject": "person:homer", "content": "Allergic to peanuts.",
-                   "provenance": "testimony", "fields": {"allergy": "peanuts"}}),
+                   "provenance": "testimony", "sets": {"allergy": "peanuts"}}),
         )
         .await;
     }

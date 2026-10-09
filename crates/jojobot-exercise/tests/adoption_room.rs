@@ -105,7 +105,7 @@ async fn worked_under_the_shipped_keys(room: &Surface, sid: &str) {
             "subject": "thing:floor-pump",
             "content": "On loan; it has to go back.",
             "provenance": "testimony",
-            "fields": {"runs_out": "2026-11-03"},
+            "sets": {"runs_out": "2026-11-03"},
         }),
     )
     .await;
@@ -117,7 +117,7 @@ async fn worked_under_the_shipped_keys(room: &Surface, sid: &str) {
             "subject": "event:wagstaff-fair",
             "content": "The tickets have to be sorted by a day.",
             "provenance": "testimony",
-            "fields": {"decide_by": "2026-10-20"},
+            "sets": {"decide_by": "2026-10-20"},
         }),
     )
     .await;
@@ -331,7 +331,7 @@ async fn the_loan_as_a_promise(room: &Surface, sid: &str, key: &str) {
             "subject": "promise:return-the-wrench",
             "content": "On loan; it has to go back.",
             "provenance": "testimony",
-            "fields": {key: "2026-11-03"},
+            "sets": {key: "2026-11-03"},
         }),
     )
     .await;
@@ -356,7 +356,7 @@ async fn the_loan_lock_holds_for_a_promise_and_reds_when_the_promise_has_an_inve
                 "subject": "event:wagstaff-fair",
                 "content": "The tickets have to be sorted by a day.",
                 "provenance": "testimony",
-                "fields": {"decide_by": "2026-10-20"},
+                "sets": {"decide_by": "2026-10-20"},
             }),
         )
         .await;
@@ -378,7 +378,7 @@ async fn the_loan_lock_holds_for_a_promise_and_reds_when_the_promise_has_an_inve
                 "subject": "event:wagstaff-fair",
                 "content": "The tickets have to be sorted by a day.",
                 "provenance": "testimony",
-                "fields": {"decide_by": "2026-10-20"},
+                "sets": {"decide_by": "2026-10-20"},
             }),
         )
         .await;
@@ -411,7 +411,7 @@ async fn the_loan_lock_reds_under_an_invented_key_and_the_decision_lock_holds() 
                 "subject": "thing:floor-pump",
                 "content": "On loan; it has to go back.",
                 "provenance": "testimony",
-                "fields": {"guarantee_expires": "2026-11-03"},
+                "sets": {"guarantee_expires": "2026-11-03"},
             }),
         )
         .await;
@@ -423,7 +423,7 @@ async fn the_loan_lock_reds_under_an_invented_key_and_the_decision_lock_holds() 
                 "subject": "event:wagstaff-fair",
                 "content": "The tickets have to be sorted by a day.",
                 "provenance": "testimony",
-                "fields": {"decide_by": "2026-10-20"},
+                "sets": {"decide_by": "2026-10-20"},
             }),
         )
         .await;
@@ -450,7 +450,7 @@ async fn the_decision_lock_reds_under_an_invented_key_and_the_loan_lock_holds() 
                 "subject": "thing:floor-pump",
                 "content": "On loan; it has to go back.",
                 "provenance": "testimony",
-                "fields": {"runs_out": "2026-11-03"},
+                "sets": {"runs_out": "2026-11-03"},
             }),
         )
         .await;
@@ -462,7 +462,7 @@ async fn the_decision_lock_reds_under_an_invented_key_and_the_loan_lock_holds() 
                 "subject": "event:wagstaff-fair",
                 "content": "The tickets have to be sorted by a day.",
                 "provenance": "testimony",
-                "fields": {"needed_by": "2026-10-20"},
+                "sets": {"needed_by": "2026-10-20"},
             }),
         )
         .await;

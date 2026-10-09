@@ -171,7 +171,7 @@ async fn needle_hygiene_reads_the_answer_a_phase_end_lock_kept() {
         .call(
             "capture",
             json!({"subject": "person:milhouse", "content": "a first value",
-                   "provenance": "testimony", "fields": {"stage": "alpha-one"}, "sid": &sid}),
+                   "provenance": "testimony", "sets": {"stage": "alpha-one"}, "sid": &sid}),
         )
         .await;
     assert!(!first.contains("blocked"), "{first}");
@@ -193,7 +193,7 @@ async fn needle_hygiene_reads_the_answer_a_phase_end_lock_kept() {
         .call(
             "capture",
             json!({"subject": "person:milhouse", "content": "a second value",
-                   "provenance": "testimony", "fields": {"stage": "alpha-two"}, "sid": &sid}),
+                   "provenance": "testimony", "sets": {"stage": "alpha-two"}, "sid": &sid}),
         )
         .await;
     assert!(!second.contains("blocked"), "{second}");

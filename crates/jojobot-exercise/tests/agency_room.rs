@@ -186,7 +186,7 @@ async fn january(lab: &mut Lab, wrong: Wrong) {
         CAMPAIGN,
         "Launch on 12 October and it never moves. Copy by 1 March, design by 15 April, \
          production by 1 July, media booked by 15 August. One market, Alpha.",
-        json!({"fields": fields}),
+        json!({"sets": fields}),
     )
     .await;
     // The contact report that falls due tomorrow.
@@ -213,7 +213,7 @@ async fn january(lab: &mut Lab, wrong: Wrong) {
             &sid,
             "promise:return-the-desk",
             "Send Krusty a contact report.",
-            json!({"fields": {"promised_by": "2026-01-16"}}),
+            json!({"sets": {"promised_by": "2026-01-16"}}),
         )
         .await;
     }
@@ -291,7 +291,7 @@ async fn may(lab: &mut Lab, wrong: Wrong) {
         &sid,
         CAMPAIGN,
         "Copy landed on 15 March, two weeks late. Design is now due 6 May.",
-        json!({"fields": fields}),
+        json!({"sets": fields}),
     )
     .await;
     let pulled = if is(wrong, 2) {
@@ -407,7 +407,7 @@ async fn september(lab: &mut Lab, wrong: Wrong) {
         CAMPAIGN,
         "Print inventory has a cancellation deadline of 30 September. Production slipped to \
          21 September. The stations need materials by 25 September.",
-        json!({"fields": fields}),
+        json!({"sets": fields}),
     )
     .await;
     // The requirement is taken back. The claim is the one May wrote. The wrong
@@ -484,7 +484,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
         &sid,
         CAMPAIGN,
         "The answer to budget_truth.",
-        json!({"fields": {"budget_truth": if is(wrong, 0) { "200" } else { "150" }}}),
+        json!({"sets": {"budget_truth": if is(wrong, 0) { "200" } else { "150" }}}),
     )
     .await;
     // Who owns what. Each deliverable is a thing of its own that holds the
@@ -505,7 +505,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
         &sid,
         "work:handcart",
         "The film, owned by Milhouse with the copy by Nelson.",
-        json!({"fields": {"owners": owner(1, "person:milhouse", "Milhouse"),
+        json!({"sets": {"owners": owner(1, "person:milhouse", "Milhouse"),
                           "copy_by": owner(2, "person:nelson", "Nelson")}}),
     )
     .await;
@@ -513,14 +513,14 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
         &sid,
         "work:first-mix",
         "Print ads, owned by Milhouse.",
-        json!({"fields": {"owners": owner(3, "person:milhouse", "Milhouse")}}),
+        json!({"sets": {"owners": owner(3, "person:milhouse", "Milhouse")}}),
     )
     .await;
     lab.say(
         &sid,
         "work:phi",
         "Social, owned by Nelson.",
-        json!({"fields": {"owners": owner(4, "person:nelson", "Nelson")}}),
+        json!({"sets": {"owners": owner(4, "person:nelson", "Nelson")}}),
     )
     .await;
     if is(wrong, 5) {
@@ -529,7 +529,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
             &sid,
             CAMPAIGN,
             "The launch event is owned by Ralph.",
-            json!({"fields": {"owners": "person:ralph"}}),
+            json!({"sets": {"owners": "person:ralph"}}),
         )
         .await;
         // Ralph's print booking, filed under a key that names the inventory and
@@ -539,7 +539,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
             &sid,
             "work:first-mix",
             "Ralph booked the print inventory.",
-            json!({"fields": {"print_inventory": "person:ralph"}}),
+            json!({"sets": {"print_inventory": "person:ralph"}}),
         )
         .await;
     } else {
@@ -547,7 +547,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
             &sid,
             "work:sigma",
             "The launch event, owned by Ralph.",
-            json!({"fields": {"owners": "person:ralph"}}),
+            json!({"sets": {"owners": "person:ralph"}}),
         )
         .await;
     }
@@ -603,7 +603,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
             &sid,
             subject,
             &format!("The answer to {key}."),
-            json!({"fields": {*key: value}}),
+            json!({"sets": {*key: value}}),
         )
         .await;
     }
@@ -618,7 +618,7 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
         &sid,
         APP,
         "The answer to split_bill.",
-        json!({"fields": {"split_bill": split}}),
+        json!({"sets": {"split_bill": split}}),
     )
     .await;
     lab.ends("Phase 4", 4).await;
@@ -1214,7 +1214,7 @@ async fn december_the_heads_words_opening_the_value_hold_the_decision_slot() {
         &sid,
         APP,
         "The answer to menu_first.",
-        json!({"fields": {"menu_first": "A menu we have not synced is an order for nothing, said Homer; Martin's hard-coded menu was turned down"}}),
+        json!({"sets": {"menu_first": "A menu we have not synced is an order for nothing, said Homer; Martin's hard-coded menu was turned down"}}),
     )
     .await;
     lab.ends("Phase 4", 4).await;
@@ -1232,7 +1232,7 @@ async fn done_slot_after_writing(value: &str) -> (bool, String) {
         &sid,
         CAMPAIGN,
         "The answer to spot_done.",
-        json!({"fields": {"spot_done": value}}),
+        json!({"sets": {"spot_done": value}}),
     )
     .await;
     lab.ends("Phase 4", 4).await;
@@ -1276,7 +1276,7 @@ async fn december_landed_with_the_suite_in_lower_case_holds_the_landed_slot() {
         &sid,
         APP,
         "The answer to app_landed.",
-        json!({"fields": {"app_landed": "login a1b2c3d, verified by the loginflowsuite; menu sync c0ffee1"}}),
+        json!({"sets": {"app_landed": "login a1b2c3d, verified by the loginflowsuite; menu sync c0ffee1"}}),
     )
     .await;
     lab.ends("Phase 4", 4).await;
@@ -1345,7 +1345,7 @@ async fn may_the_answer_linking_martin_by_a_mention_holds_the_attribution_lock()
 async fn may_the_answer_holding_martin_in_a_key_holds_the_attribution_lock() {
     let (held, said) = martin_answer_after_writing(
         "Splitting a bill needs payments, so it moves after payments.",
-        json!({"fields": {"answered_by": "person:martin"}}),
+        json!({"sets": {"answered_by": "person:martin"}}),
     )
     .await;
     assert!(held, "{said}");
@@ -1396,7 +1396,7 @@ async fn december_the_third_format_as_a_numeral_holds_the_undelivered_slot() {
         &sid,
         CAMPAIGN,
         "The answer to undelivered.",
-        json!({"fields": {"undelivered": "the Beta disclaimer, the 3rd station format and the print ads"}}),
+        json!({"sets": {"undelivered": "the Beta disclaimer, the 3rd station format and the print ads"}}),
     )
     .await;
     lab.ends("Phase 4", 4).await;
@@ -1418,7 +1418,7 @@ async fn december_an_undelivered_slot_missing_two_things_says_both() {
         &sid,
         CAMPAIGN,
         "The answer to undelivered.",
-        json!({"fields": {"undelivered": "the Beta disclaimer"}}),
+        json!({"sets": {"undelivered": "the Beta disclaimer"}}),
     )
     .await;
     lab.ends("Phase 4", 4).await;

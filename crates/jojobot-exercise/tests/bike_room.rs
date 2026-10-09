@@ -250,7 +250,7 @@ async fn worked_the_goal(room: &Surface, sid: &str) {
             "subject": "thing:gravel-bike",
             "content": "annual service",
             "provenance": "testimony",
-            "fields": {"done_on": "2026-08-11", "work": "chain, cables"},
+            "sets": {"done_on": "2026-08-11", "work": "chain, cables"},
         }),
     )
     .await;
@@ -262,7 +262,7 @@ async fn worked_the_goal(room: &Surface, sid: &str) {
             "subject": "thing:gravel-bike",
             "content": "the year's tally for 2026",
             "provenance": "testimony",
-            "fields": {"km": "4100", "year": "2026"},
+            "sets": {"km": "4100", "year": "2026"},
         }),
     )
     .await;
@@ -335,7 +335,7 @@ async fn every_check_holds_for_a_route_nobody_predicted() {
             "subject": "thing:gravel-bike",
             "content": "back from the shop",
             "provenance": "testimony",
-            "fields": {"serviced_on": "2026-08-11"},
+            "sets": {"serviced_on": "2026-08-11"},
         }),
     )
     .await;
@@ -361,7 +361,7 @@ async fn every_check_holds_for_a_route_nobody_predicted() {
             "content": "the distance this year",
             "provenance": "testimony",
             "derived_from": newest,
-            "fields": {"km": "4100"},
+            "sets": {"km": "4100"},
         }),
     )
     .await;
@@ -444,7 +444,7 @@ async fn the_locks_that_measure_reachability_fail_on_a_room_written_in_prose() {
             "subject": "thing:gravel-bike",
             "content": "this year's riding",
             "provenance": "testimony",
-            "fields": {"distance_this_year": "4100"},
+            "sets": {"distance_this_year": "4100"},
         }),
     )
     .await;

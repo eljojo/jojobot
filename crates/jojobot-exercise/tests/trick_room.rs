@@ -259,7 +259,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "rhythm:water-the-fern",
                 "away until the twentieth",
-                json!({"check_in": "snoozed", "fields": {"snoozed_until": "2026-11-20"}}),
+                json!({"check_in": "snoozed", "sets": {"snoozed_until": "2026-11-20"}}),
             )
             .await
         }
@@ -305,7 +305,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
             sid,
             "promise:return-the-desk",
             "Not to be reminded about before the day.",
-            json!({"fields": {"promised_by": day, "regarding": "thing:folding-chairs"}}),
+            json!({"sets": {"promised_by": day, "regarding": "thing:folding-chairs"}}),
         )
         .await;
     } else {
@@ -363,7 +363,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
         sid,
         "thing:standing-desk",
         "The warranty runs out.",
-        json!({"fields": {key: "2026-12-03"}}),
+        json!({"sets": {key: "2026-12-03"}}),
     )
     .await;
     match sitting.desk {
@@ -373,7 +373,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "thing:standing-desk",
                 "The warranty runs out, corrected.",
-                json!({"fields": {key: "2026-12-10"}}),
+                json!({"sets": {key: "2026-12-10"}}),
             )
             .await
         }
@@ -407,7 +407,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "thing:tau",
                 "The refund window on the tickets closes.",
-                json!({"fields": {"runs_out": "2026-12-01"}}),
+                json!({"sets": {"runs_out": "2026-12-01"}}),
             )
             .await
         }
@@ -426,7 +426,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "promise:return-the-wrench",
                 "Claim the refund before the window closes.",
-                json!({"fields": {"promised_by": "2026-12-01", "regarding": "thing:tau"}}),
+                json!({"sets": {"promised_by": "2026-12-01", "regarding": "thing:tau"}}),
             )
             .await
         }
@@ -436,7 +436,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "person:bart",
                 "Bought tickets for the show on 2026-11-14.",
-                json!({"fields": {"runs_out": "2026-12-01"}}),
+                json!({"sets": {"runs_out": "2026-12-01"}}),
             )
             .await
         }
@@ -446,7 +446,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "thing:tau",
                 "The refund window closes on 2026-12-01.",
-                json!({"fields": {"refund_by": "2026-12-01"}}),
+                json!({"sets": {"refund_by": "2026-12-01"}}),
             )
             .await
         }
@@ -1331,7 +1331,7 @@ async fn a_repair_after_the_brief_does_not_hide_a_pause_that_missed_the_loop() {
         &sid,
         "rhythm:water-the-fern",
         "away until the twentieth",
-        json!({"check_in": "snoozed", "fields": {"snoozed_until": "2026-11-20"}}),
+        json!({"check_in": "snoozed", "sets": {"snoozed_until": "2026-11-20"}}),
     )
     .await;
     let live = surface

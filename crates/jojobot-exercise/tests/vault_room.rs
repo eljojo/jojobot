@@ -355,7 +355,7 @@ async fn the_ticket_deadline_lock_reds_when_filed_on_the_wrong_subject() {
         &sid,
         "capture",
         json!({"subject": "person:louise", "content": "mentioned tickets stop selling 10 October",
-               "provenance": "testimony", "fields": {"runs_out": "2026-10-10"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2026-10-10"}}),
     )
     .await;
     let boundaries: Vec<Boundary> = Vec::new();
@@ -380,7 +380,7 @@ async fn the_ticket_deadline_lock_holds_once_filed_on_the_fair() {
         &sid,
         "capture",
         json!({"subject": "event:wagstaff-fair", "content": "Louise mentioned tickets stop selling 10 October",
-               "provenance": "testimony", "fields": {"runs_out": "2026-10-10"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2026-10-10"}}),
     )
     .await;
     let boundaries: Vec<Boundary> = Vec::new();
@@ -479,7 +479,7 @@ async fn january(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "machine:theta", "content": "bought 2026-01-10 from Globex, two years of cover from that day",
                "provenance": "testimony", "shape": "about", "object": "org:globex",
-               "fields": {"runs_out": "2028-01-10"}}),
+               "sets": {"runs_out": "2028-01-10"}}),
     )
     .await;
     did(
@@ -487,7 +487,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:glasses", "content": "there is a spare pair in the hall drawer",
-               "provenance": "testimony", "fields": {"spare": "hall drawer"}}),
+               "provenance": "testimony", "sets": {"spare": "hall drawer"}}),
     )
     .await;
     did(
@@ -495,7 +495,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "considering the flat-pack kit, or building one",
-               "provenance": "testimony", "fields": {"status": "next"}}),
+               "provenance": "testimony", "sets": {"status": "next"}}),
     )
     .await;
     did(
@@ -503,7 +503,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:kitchen-floor", "content": "considering",
-               "provenance": "testimony", "fields": {"status": "next"}}),
+               "provenance": "testimony", "sets": {"status": "next"}}),
     )
     .await;
     did(
@@ -511,7 +511,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "place:ocean-avenue", "content": "38 minutes on 2026-01-08, my way to work",
-               "provenance": "testimony", "fields": {"minutes": "38"}}),
+               "provenance": "testimony", "sets": {"minutes": "38"}}),
     )
     .await;
 }
@@ -530,7 +530,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:standing-desk", "content": "came on the 6th; thirty days to send it back if I don't get on with it",
-               "provenance": "testimony", "fields": {"runs_out": "2026-03-08"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2026-03-08"}}),
     )
     .await;
     did(
@@ -538,7 +538,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "place:wonder-wharf", "content": "the bridge is shut so I went in by the wharf road Friday the 6th — 52 minutes, never again",
-               "provenance": "testimony", "fields": {"minutes": "52"}}),
+               "provenance": "testimony", "sets": {"minutes": "52"}}),
     )
     .await;
     did(
@@ -554,7 +554,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:house-keys", "content": "Teddy has had a set since the lockout last year",
-               "provenance": "testimony", "fields": {"spare": "Teddy"}}),
+               "provenance": "testimony", "sets": {"spare": "Teddy"}}),
     )
     .await;
     did(
@@ -562,7 +562,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "still can't decide; the kit's on offer again",
-               "provenance": "testimony", "fields": {"status": "next"}}),
+               "provenance": "testimony", "sets": {"status": "next"}}),
     )
     .await;
     did(
@@ -589,7 +589,7 @@ async fn march(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:boots", "content": "from Costington's on the 8th, a year's guarantee on the soles",
-               "provenance": "testimony", "fields": {"runs_out": "2027-03-08"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2027-03-08"}}),
     )
     .await;
     did(
@@ -624,7 +624,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:backup-drive", "content": "bought Friday the 17th, formatted for the server — the laptop cannot read it",
-               "provenance": "testimony", "fields": {"for": "machine:omicron"}}),
+               "provenance": "testimony", "sets": {"for": "machine:omicron"}}),
     )
     .await;
     did(
@@ -632,7 +632,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:kitchen-floor", "content": "happening — Gene's mate is booked for June",
-               "provenance": "testimony", "fields": {"status": "now"}}),
+               "provenance": "testimony", "sets": {"status": "now"}}),
     )
     .await;
     did(
@@ -640,7 +640,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "place:ocean-avenue", "content": "41 minutes on Tuesday the 14th",
-               "provenance": "testimony", "fields": {"minutes": "41"}}),
+               "provenance": "testimony", "sets": {"minutes": "41"}}),
     )
     .await;
     did(
@@ -660,7 +660,7 @@ async fn may(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:the-furnace", "content": "Mr. Plow serviced it on the 6th — one free service a year, but it has to be used before 1 February or it lapses",
-               "provenance": "testimony", "fields": {"runs_out": "2027-02-01"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2027-02-01"}}),
     )
     .await;
     did(
@@ -676,7 +676,7 @@ async fn may(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "went round it again with Linda; nothing decided",
-               "provenance": "testimony", "fields": {"status": "next"}}),
+               "provenance": "testimony", "sets": {"status": "next"}}),
     )
     .await;
 }
@@ -703,7 +703,7 @@ async fn june(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:laptop-dock", "content": "bought Thursday the 11th — only works with Theta",
-               "provenance": "testimony", "fields": {"for": "machine:theta"}}),
+               "provenance": "testimony", "sets": {"for": "machine:theta"}}),
     )
     .await;
     did(
@@ -731,7 +731,7 @@ async fn july(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:kitchen-floor", "content": "done",
-               "provenance": "testimony", "fields": {"status": "done"}}),
+               "provenance": "testimony", "sets": {"status": "done"}}),
     )
     .await;
     did(
@@ -747,7 +747,7 @@ async fn july(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "thing:mobile-phone", "content": "new phone on the 10th, from Globex again, two years of cover",
                "provenance": "testimony", "shape": "about", "object": "org:globex",
-               "fields": {"runs_out": "2028-07-10"}}),
+               "sets": {"runs_out": "2028-07-10"}}),
     )
     .await;
     did(
@@ -755,7 +755,7 @@ async fn july(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "place:ocean-avenue", "content": "36 minutes on Tuesday the 14th",
-               "provenance": "testimony", "fields": {"minutes": "36"}}),
+               "provenance": "testimony", "sets": {"minutes": "36"}}),
     )
     .await;
     did(
@@ -783,7 +783,7 @@ async fn august(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "Louise says just buy the kit; still torn",
-               "provenance": "testimony", "fields": {"status": "next"}}),
+               "provenance": "testimony", "sets": {"status": "next"}}),
     )
     .await;
     did(
@@ -791,7 +791,7 @@ async fn august(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "event:wagstaff-fair", "content": "Louise mentioned tickets stop selling 10 October",
-               "provenance": "testimony", "fields": {"runs_out": "2026-10-10"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2026-10-10"}}),
     )
     .await;
     did(
@@ -812,7 +812,7 @@ async fn september(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "event:wagstaff-fair", "content": "still need the food-handling certificate — offered by @org:quahog-community-college",
                "provenance": "testimony", "shape": "about", "object": "org:quahog-community-college",
-               "fields": {"status": "active"}}),
+               "sets": {"status": "active"}}),
     )
     .await;
     did(
@@ -827,7 +827,7 @@ async fn september(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "event:capital-city-trip", "content": "Linda and I are going to Capital City, booked yesterday",
-               "provenance": "testimony", "fields": {"leaves_on": "2026-11-12", "returns_on": "2026-11-22"}}),
+               "provenance": "testimony", "sets": {"leaves_on": "2026-11-12", "returns_on": "2026-11-22"}}),
     )
     .await;
     did(
@@ -835,7 +835,7 @@ async fn september(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "place:ocean-avenue", "content": "40 minutes on Wednesday the 9th",
-               "provenance": "testimony", "fields": {"minutes": "40"}}),
+               "provenance": "testimony", "sets": {"minutes": "40"}}),
     )
     .await;
     did(
@@ -892,7 +892,7 @@ async fn november(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "event:capital-city-trip", "content": "four days out — need someone to feed @pet:snowball twice a day since Teddy can't do it, allergic",
                "provenance": "testimony", "shape": "about", "object": "pet:snowball",
-               "fields": {"status": "active"}}),
+               "sets": {"status": "active"}}),
     )
     .await;
     did(
@@ -908,7 +908,7 @@ async fn november(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:glasses", "content": "checked again — the spare is still in the hall drawer",
-               "provenance": "inference", "fields": {"spare": "hall drawer"}}),
+               "provenance": "inference", "sets": {"spare": "hall drawer"}}),
     )
     .await;
     did(
@@ -917,7 +917,7 @@ async fn november(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "thing:house-keys", "content": "the spare set is with @person:teddy",
                "provenance": "testimony", "shape": "connection", "object": "person:teddy",
-               "fields": {"status": "active"}}),
+               "sets": {"status": "active"}}),
     )
     .await;
 }
@@ -957,7 +957,7 @@ async fn later_december(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:swim", "content": "the pool won't reopen before then, so leaving this until it does",
-               "provenance": "testimony", "fields": {"resumes_on": "2027-04-01"}}),
+               "provenance": "testimony", "sets": {"resumes_on": "2027-04-01"}}),
     )
     .await;
     did(
@@ -965,7 +965,7 @@ async fn later_december(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "still going round on this — giving myself a deadline to decide",
-               "provenance": "testimony", "fields": {"decide_by": "2027-01-15"}}),
+               "provenance": "testimony", "sets": {"decide_by": "2027-01-15"}}),
     )
     .await;
     // **Dropping a schedule is `update_fact`'s `clear_fields`, not a fresh
@@ -1026,7 +1026,7 @@ async fn the_overdue_count_lock_answers_as_december_left_the_room() {
         &later,
         "capture",
         json!({"subject": "thing:tau", "content": "a window that runs out next summer",
-               "provenance": "testimony", "fields": {"runs_out": "2027-06-30"}}),
+               "provenance": "testimony", "sets": {"runs_out": "2027-06-30"}}),
     )
     .await;
     let now = surface.call("recall", asked).await;
