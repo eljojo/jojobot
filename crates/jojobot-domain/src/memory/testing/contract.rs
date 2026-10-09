@@ -21,7 +21,6 @@ pub mod thread_ceiling;
 
 pub use base::*;
 pub use chart_head::*;
-pub use known_defects::*;
 pub use mentioning::*;
 pub use operator_key::*;
 pub use role_claims::*;

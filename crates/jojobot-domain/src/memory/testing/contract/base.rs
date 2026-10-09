@@ -12587,6 +12587,78 @@ pub async fn the_newest_write_wins_however_old_the_record_it_landed_in<M: Memory
     );
 }
 
+/// **A deadline written on a claim about a person, because the claim describes
+/// one occasion, must not make the person owed.**
+///
+/// What is owed is found by the keys a thing holds, never by its kind, so a key
+/// that passed from a claim onto the person it is about would make the person owed
+/// after that day: one occasion's deadline would become the person's. A claim's
+/// keys stay on the claim, and this holds that.
+///
+/// **Three answers, and each covers how the others pass on a build that is
+/// wrong.** The claim still reads back with its deadline, which says the write
+/// landed and the key was not simply refused. The same key in a bare map IS
+/// owed after its day, which says the read understands the key and the negative
+/// below is not passing because nothing is ever owed. And the person, whose
+/// folded fields are what the owed read is handed, is not owed once the day has
+/// passed.
+///
+/// **It states only the outcome and not a mechanism**: a build that stops the key
+/// at the claim passes, and so would one that gave a person a way to say which
+/// keys are theirs.
+pub async fn a_deadline_on_a_claim_about_a_person_does_not_make_the_person_owed<M: Memory>(
+    store: &M,
+) {
+    let person = EntityId::person("person:contract-occasion-deadline");
+    let day = date(2026, 6, 1);
+    let after = date(2026, 6, 2);
+    let deadline = (crate::attention::RUNS_OUT.to_string(), day.to_string());
+
+    let claim = capture(
+        store,
+        NewFact {
+            fields: [deadline.clone()].into(),
+            ..NewFact::about(
+                person.clone(),
+                "has a coupon in the drawer for one visit",
+                date(2026, 5, 1),
+            )
+        },
+    )
+    .await;
+
+    // The claim keeps the deadline it was written with.
+    let read = store
+        .recall(&person)
+        .await
+        .expect("recall should succeed")
+        .into_iter()
+        .find(|f| f.id == claim.id)
+        .expect("the claim reads back");
+    assert_eq!(
+        read.fields.get(crate::attention::RUNS_OUT),
+        Some(&deadline.1),
+        "the deadline on the claim did not survive the write"
+    );
+
+    // The control: the read owes this key after its day, over a bare map.
+    let carriers = crate::attention::shipped();
+    let carriers: Vec<&dyn crate::attention::Carrier> =
+        carriers.iter().map(|c| c.as_ref()).collect();
+    let bare: std::collections::BTreeMap<String, String> = [deadline].into();
+    assert!(
+        crate::attention::owed(&carriers, &bare).owed_on(after),
+        "the owed read does not understand `runs_out`, so the answer below means nothing"
+    );
+
+    // The defect: the person, whose folded fields the owed read is handed.
+    let folded = store.fields(&person).await.expect("fields should succeed");
+    assert!(
+        !crate::attention::owed(&carriers, &folded).owed_on(after),
+        "a person is owed because ONE claim about them carries a deadline for one occasion: {folded:?}"
+    );
+}
+
 /// **A cleared key stays cleared, and an older record does not put it
 /// back.**
 ///
