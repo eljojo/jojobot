@@ -858,6 +858,7 @@ const ROSTER: &[&str] = &[
     "role:lambda",
     "role:laundry",
     "role:omega",
+    "role:sigma",
     "role:upgrade-fixture-holder",
     "thing:contract-cleared-key",
     "thing:contract-clear-off-address",
