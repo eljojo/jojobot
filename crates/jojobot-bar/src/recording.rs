@@ -154,7 +154,7 @@ fn verdict_word(verdict: Verdict) -> &'static str {
 
 /// **Write a file so that it exists whole or not at all**: under a temporary
 /// name in the same directory, then renamed over the real one.
-fn write_whole(dir: &Path, name: &str, text: &str) -> io::Result<()> {
+pub(crate) fn write_whole(dir: &Path, name: &str, text: &str) -> io::Result<()> {
     let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     fs::write(&temporary, text)?;
     fs::rename(&temporary, dir.join(name)).inspect_err(|_| {
@@ -162,7 +162,7 @@ fn write_whole(dir: &Path, name: &str, text: &str) -> io::Result<()> {
     })
 }
 
-fn json_string(text: &str) -> String {
+pub(crate) fn json_string(text: &str) -> String {
     let mut out = String::from("\"");
     for c in text.chars() {
         match c {
@@ -180,7 +180,7 @@ fn json_string(text: &str) -> String {
 }
 
 /// An object from keys and values already written as JSON, in the order given.
-fn json_object(fields: &[(&str, String)]) -> String {
+pub(crate) fn json_object(fields: &[(&str, String)]) -> String {
     let body: Vec<String> = fields
         .iter()
         .map(|(key, value)| format!("{}:{value}", json_string(key)))

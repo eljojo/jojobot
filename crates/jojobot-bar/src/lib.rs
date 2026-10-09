@@ -10,10 +10,12 @@
 //! anywhere in it is a summary of a workspace that did not compile, not one
 //! that compiled and passed everything.
 
+mod calls;
 mod history;
 mod known_reds;
 mod recording;
 pub mod sweep;
+pub use calls::{CALL_USAGE, Call, parse_call, write_call};
 pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
 pub use recording::{HISTORY_DIR_VARIABLE, Run, RunHeader, history_root, iso_utc, run_id};

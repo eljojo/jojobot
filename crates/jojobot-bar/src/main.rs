@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::{
-    FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
+    CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
     TEST_JOBS_VARIABLE, grown_files, history_root, iso_utc, jobs_limit, load_known_reds,
-    oversized_files, parse_job, render_size_report, run_id, summarize_test_output, test_healthy,
-    test_jobs,
+    oversized_files, parse_call, parse_job, render_size_report, run_id, summarize_test_output,
+    test_healthy, test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -64,10 +64,11 @@ fn main() -> ExitCode {
         Some("check") => run_check(&known),
         Some("narrow") => run_narrow(&args[1..], &known),
         Some("rooms") => run_rooms(&args[1..], &known),
+        Some("call") => run_call(&args[1..]),
         _ => {
             eprintln!(
                 "usage: bar check | bar narrow --crate <name> [--filter <substring>] \
-                 | bar rooms --test <name> [--test <name> ...]"
+                 | bar rooms --test <name> [--test <name> ...] | bar call ..."
             );
             return ExitCode::from(2);
         }
@@ -330,6 +331,34 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// **`bar call --test <name> --call flake|defect --by <handle>`: write down a
+/// person's judgement of a red** in the history directory. It runs no test and
+/// changes no verdict.
+fn run_call(args: &[String]) -> std::io::Result<ExitCode> {
+    let call = match parse_call(args) {
+        Ok(call) => call,
+        Err(reason) => {
+            eprintln!("bar call: {reason}\n{CALL_USAGE}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+    let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
+    let home = std::env::var("HOME").ok();
+    let Some(root) = history_root(variable.as_deref(), home.as_deref()) else {
+        eprintln!("bar call: {HISTORY_DIR_VARIABLE} and HOME are both unset");
+        return Ok(ExitCode::from(2));
+    };
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    write_call(&root, &call, &iso_utc(seconds), std::process::id())?;
+    println!(
+        "recorded: {} is called a {} by {}",
+        call.test, call.call, call.by
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// **Open this run's history, or say why not.** A history that cannot be
