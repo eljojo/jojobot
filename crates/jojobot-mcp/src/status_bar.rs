@@ -12,12 +12,14 @@
 //! whichever verb somebody wrote in a hurry** — which is the verb whose caller
 //! most needs telling.
 //!
-//! # One entrant, and the list is the failure mode
+//! # Two entrants, and the list is the failure mode
 //!
-//! It ships carrying waiting mail and nothing else. "Information when
-//! relevant" is an open slot, and the way it goes wrong is a registry of
-//! reportable facts that grows because growing is what registries do. A second
-//! entrant earns its place on evidence that a caller acted wrongly without it.
+//! It ships carrying waiting mail (`mail_waiting`) and a charter another
+//! identity rewrote (`charter_changed`, with the call that reads it).
+//! "Information when relevant" is an open slot, and the way it goes wrong is a
+//! registry of reportable facts that grows because growing is what registries
+//! do. A third entrant earns its place on evidence that a caller acted wrongly
+//! without it.
 //!
 //! # It says what is true for the caller, never how jojobot knows
 //!

@@ -116,8 +116,8 @@ then the keys.
     asks      overdue, when the question is what has fallen due.
 
 Anything you send beside the name wins, so a view is a starting point rather
-than a cage: `recall  view: "loops"  facts: true` is the shipped question with
-one thing changed.
+than a cage: `recall  view: "colleagues"  charter: true` is the shipped question
+with one thing added, and each charter comes back with it.
 
 ## 2. 🚨 A capability arrives as an ARGUMENT on a verb you already know
 
@@ -136,15 +136,29 @@ do.
 
 - **which objects** — `subject` (one handle), `kind`, `answers_type`, or
   `fields` (a key and its value)
-- **what of each** — `facts`, `prose`, `charter`, `fields`, `history`
+- **what of each** — `facts`, `prose`, `charter`, `keys` (which of each object's
+  fields come back) and `history`
 - **where to walk** — `follow`, which takes an edge or a key that holds a
   handle, in either direction
 
-*Which people are in Springfield* is a `kind` plus a `follow` on the location
-edge. *Which visits cost more than fifty* is a key filter on the record.
-*Which friends have eaten three donuts* is a key filter on the THING — the same
-key, folded. Those two are different questions and the difference is whose value
-you are asking about.
+*Which people are in Springfield* is a walk inward from the place:
+
+    recall  subject: "place:springfield"  follow: {"shape": "location", "direction": "in"}
+
+`follow` reaches out from what you selected and does not narrow it, so a `kind`
+of person plus a `follow` lists every person.
+
+*Which visits cost more than fifty* is a key filter on the record. `scope:
+record` asks about the occasions, and `compare` orders the value: `greater` and
+`less` need the key declared a number, `before` and `after` a date, and
+`equals` needs nothing.
+
+    declare_type  name: "visit"  fields: [{"key": "cost", "holds": "number"}]
+    recall  fields: [{"key": "cost", "compare": "greater", "value": "50", "scope": "record"}]
+
+*Which friends have eaten three donuts* is the same filter with the default
+`scope`, which asks the THING — the value the key holds now. The two are
+different questions and the difference is whose value you are asking about.
 
 **Selection chooses; traversal reaches.** If you find yourself walking to narrow
 something down, you wanted a filter.
@@ -194,15 +208,16 @@ a source.
    its review consensus, its own menu, or the seller's own catalog. A review
    consensus is one rating with a high count, or two or more independent
    sources that agree. An aggregator page, a "top ten" page and a web-search
-   result are not its own source. Do not give the operator the name of a
-   candidate whose own source you have not read.
+   result are not its own source. Do not recommend a candidate whose own
+   source you have not read. Step 4 says how to name one as unchecked.
 
 3. Give options with their sources. For each candidate, give the name, the
    signal from its own source, and the link. The operator chooses. You may
    name your preference only if its source is on the same line.
 
-4. If you cannot read a source, say so. Say that you have not checked, and
-   give the link. The operator can then check it before they act.
+4. If you cannot read a source, name that candidate only as unchecked. Say
+   that you have not checked it, and give the link. The operator can then check
+   it before they act.
 
 ## Limit
 
@@ -239,8 +254,8 @@ was meant to settle.
 `counts_from` is the date this cycle counts from. jojobot writes it. The
 rhythm falls due `cadence_days` after it.
 
-Write the loop with `add_entity` as soon as the operator names one, and put in
-the keys the operator gave you. `cadence_days` and `advances_from` go together
+Write the loop with `add_entity` as soon as the operator names one, and put the
+keys the operator gave you in `sets`. `cadence_days` and `advances_from` go together
 or not at all. A write that holds one without the other is refused. A loop with
 neither is allowed, and you write it at once.
 
@@ -252,8 +267,8 @@ A loop with neither key has no schedule, and it is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
 
 A loop with both keys falls due only once a check-in opens it. A loop that has
-never been checked in on is not late. Check in on it, dated the day it last
-happened, and the check-in opens it.
+never been checked in on is not late. Check in on it, with `recorded_at` set to
+the day it last happened, and the check-in opens it.
 
 ## How to find what is due
 
@@ -290,7 +305,9 @@ the promises alone.
 clear it: a write that sends it is refused. Write the day on the thing that
 carries it (`promised_by` on a promise, `runs_out`, `decide_by`, or a loop's
 cadence), and jojobot keeps `due_on` current. To move a day, change that key.
-To take it away, clear that key.
+To take `runs_out` or `decide_by` away, clear that key. A promise is the exception: it
+cannot lose `promised_by`, and a write that takes it off is refused. End a
+promise with `ended` instead.
 
 ## Keep the pressure low
 
@@ -298,8 +315,9 @@ Offer a rhythm in one line at the start of a session. Then do the work the
 operator opened the session for. If the operator does not take the offer,
 stop. Do not offer the same rhythm again in the same window.
 
-Remove a rhythm that the operator finds stressful. Remove it with the
-operator. Add a new rhythm with the operator. Do not add one alone.
+Archive a rhythm that the operator finds stressful, with `archive_entity` and the
+reason. Archive it with the operator. Add a new rhythm with the operator. Do not
+add one alone.
 
 ## How to close one
 
@@ -325,8 +343,8 @@ jojobot writes `outcome`, `last_check_in` and `counts_from` itself. Do not
 compute them and do not send them. Put what the check measured in `fields`.
 
 A loop whose last run already happened, before this session opened it, is
-opened the same way: capture a check-in on it, dated the day it last ran, and
-jojobot works the rest of the schedule out from there. Give the loop its
+opened the same way: capture a check-in on it, with `recorded_at` set to the day
+it last ran, and jojobot works the rest of the schedule out from there. Give the loop its
 cadence first — `cadence_days` and `advances_from` are set by whoever picks
 them, as above, and no check-in can state them, so a loop that holds neither is
 refused until it does. A snooze does not open a loop, because it moves nothing and there is
@@ -451,7 +469,7 @@ sentence.
 finished, and the answer names the words that govern and the write that binds
 it. `owner` is the handle of the person who does the work.
 `waiting_on` is the handle of the person whose move it is. When that person is
-the operator, their handle is the one the boot names on its operator line.
+the operator, their handle is the `operator` the boot names.
 `depends_on` lists
 the handles of the work that must come first, separated by commas. A work item
 or a project at `done` is not owed, and its dates stay on it, so do not clear a
@@ -460,11 +478,13 @@ date to quiet finished work.
     capture  subject: "work:sigma"  fields: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
 
 A project may add statuses of its own. Write the whole list on the project, in
-the order you want it, under `columns`. The work filed under that project may
-then take any word on the list. A project that is not filed under a project
+the order you want it, under `columns`. The list has to hold all five shipped
+words, `someday`, `next`, `now`, `waiting` and `done`, in any order. A list that
+drops one is refused. The work filed under that project may then take any word on
+the list. A project that is not filed under a project
 takes its own list for its own status. A project filed under a project keeps
-that project's list, and a list of its own does not widen it. The list always
-keeps the shipped words. A word outside the list lands, counts as not finished,
+that project's list, and a list of its own does not widen it. A word outside the
+list lands, counts as not finished,
 and the answer names the list and the project that holds it. The instance's own
 record lists `columns` for every project. That list adds words beside the shipped
 five and need not repeat them. A `status_word/<word>` key on it, set to a shipped
@@ -508,24 +528,27 @@ const EVIDENCE: &str = r#"# evidence
 
 Each claim you write has two properties, and a later reader needs both.
 
-The first property is who backs the claim. The operator told you, or you
-worked it out.
+The first property is who backs the claim, written as `provenance`. `testimony`
+means the operator said or confirmed it. `observation` means you read it in a
+system of record, and you say which in `read_from`. `inference` means you worked
+it out, and it is the default.
 
-The second property is how settled the claim is. It is settled, or it is
-still open. These properties are independent. The operator can tell you
-something and say that they are not sure of it. That claim is theirs, and it
-is still open. Do not record the operator's own doubt as your guess.
+The second property is how settled the claim is, written as `standing`. It is
+`settled`, or it is `open`. These properties are independent. The operator can
+tell you something and say that they are not sure of it. That claim is
+`testimony`, and it is `open`. Do not record the operator's own doubt as your
+guess.
 
 ## Mark a claim you worked out
 
-If you cannot point to the operator's words, you worked the claim out. Mark
-it. You are rewarded for confident structure, and this is why an unmarked
-guess is a risk: the next session reads it with the authority of a statement
+If you cannot point to the operator's words or to a system of record you read,
+you worked the claim out. Write it as `inference`. The risk is a guess filed as
+the operator's word: the next session reads it with the authority of a statement
 the operator made.
 
-Marking who worked it out is not the same as marking how settled it is. A
-claim you worked out starts open. A claim the operator states and hedges is
-also open, and it is still theirs.
+Marking who backs a claim is not the same as marking how settled it is. A claim
+you worked out starts `open`. An `observation` is `settled` as read. A claim the
+operator states and hedges is also `open`, and it is still theirs.
 
 ## What another bot told you
 
@@ -537,9 +560,10 @@ read it at its own source.
 
 ## Four rules
 
-1. Only the operator settles a claim. Write claims that you worked out.
-   Do not change one to a claim the operator made. Only the operator
-   confirms.
+1. Only the operator settles a claim you worked out. Write what you worked
+   out as `inference`. Do not change one to `testimony`. Only the operator
+   confirms. An `observation` needs no confirmation, because it is settled as
+   read and it names where it was read.
 
 2. Do not put both kinds in one list. A confirmed item makes an unconfirmed
    item beside it look confirmed. Keep them in separate groups. Do not put
@@ -997,6 +1021,7 @@ mod tests {
         "drafted",
         "next",
         "now",
+        "operator",
         "owner",
         "promise",
         "promised_by",
@@ -1201,16 +1226,19 @@ mod tests {
 
     /// **The status section says where the operator's handle is read.** `owner`
     /// and `waiting_on` take a person's handle, and for the operator that handle
-    /// is the one the boot names on its operator line. Without the sentence a
+    /// is the `operator` the boot names. Without the sentence a
     /// session guesses a handle for the one person every project answers to.
     /// Pinned on the two words only that sentence carries.
     #[test]
-    fn the_projects_procedure_says_the_operators_handle_is_on_the_boots_operator_line() {
+    fn the_projects_procedure_says_the_operators_handle_is_the_operator_the_boot_names() {
         let section = projects_section("Where a piece of work stands");
         assert!(
-            names(&section, "operator") && names(&section, "boot"),
-            "the status section does not say the operator's handle is the one the boot names: \
-             {section}"
+            section.contains(&format!(
+                "`{}`",
+                crate::orientation::instance_zone::INSTANCE_OPERATOR_KEY
+            )) && names(&section, "boot"),
+            "the status section does not say the operator's handle is the `operator` the boot \
+             names: {section}"
         );
     }
 
@@ -1289,5 +1317,229 @@ mod tests {
             assert!(when.contains(seen), "{when}");
         }
         assert!(entry.get("body").is_none(), "the index ships no body");
+    }
+
+    /// The paragraph of a skill that names `needle`, found by the identifier.
+    fn paragraph_naming<'a>(text: &'a str, needle: &str) -> &'a str {
+        text.split("\n\n")
+            .find(|paragraph| paragraph.contains(needle))
+            .unwrap_or_else(|| panic!("no paragraph names {needle:?}"))
+    }
+
+    /// **The evidence procedure names the two properties by the keys they are
+    /// written under and by the values each takes.** It said the backing is "the
+    /// operator told you, or you worked it out", which is two of the three
+    /// provenances, and never named `provenance` or `standing` at all. The values
+    /// are read off the engine, so a fourth one reaches this case.
+    #[test]
+    fn the_evidence_procedure_names_provenance_and_standing_and_every_value_they_take() {
+        use jojobot_domain::memory::{Provenance, Standing};
+        let text = body("evidence");
+        let opening = text
+            .split("\n## ")
+            .next()
+            .expect("the evidence procedure has an opening");
+        for key in ["provenance", "standing"] {
+            assert!(
+                opening.contains(&format!("`{key}`")),
+                "the evidence opening does not name `{key}`: {opening}"
+            );
+        }
+        let provenances = [
+            Provenance::Testimony,
+            Provenance::Observation,
+            Provenance::Inference,
+        ];
+        for token in provenances.map(Provenance::as_token) {
+            assert!(
+                opening.contains(&format!("`{token}`")),
+                "the evidence opening does not name the `{token}` provenance: {opening}"
+            );
+        }
+        for token in [Standing::Settled, Standing::Open].map(Standing::as_token) {
+            assert!(
+                opening.contains(&format!("`{token}`")),
+                "the evidence opening does not name the `{token}` standing: {opening}"
+            );
+        }
+    }
+
+    /// **The first rule says whose claim the operator settles, and that an
+    /// observation is settled as read.** "Only the operator settles a claim"
+    /// contradicted the section above it, where an observation reads back
+    /// settled. Pinned on the two provenances the rule has to tell apart.
+    #[test]
+    fn the_evidence_rule_on_settling_names_both_the_inference_and_the_observation() {
+        let rule = paragraph_naming(body("evidence"), "1. ");
+        for token in ["inference", "observation"] {
+            assert!(
+                rule.contains(&format!("`{token}`")),
+                "the rule on settling does not name `{token}`: {rule}"
+            );
+        }
+        assert!(
+            !body("evidence").contains("rewarded"),
+            "the evidence procedure still describes the reader as rewarded"
+        );
+    }
+
+    /// **The recommend procedure lets a candidate be named only as unchecked.**
+    /// Step 2 forbade naming any candidate whose source was unread and step 4
+    /// told the reader to say it had not checked and give the link, so no
+    /// reader could meet both. Both steps now name the one state that reconciles
+    /// them.
+    #[test]
+    fn the_recommend_steps_that_read_a_source_and_that_cannot_both_name_unchecked() {
+        let text = body("recommend");
+        for step in ["2. ", "4. "] {
+            let paragraph = paragraph_naming(text, step);
+            assert!(
+                names(paragraph, "unchecked"),
+                "step {step}does not name an unchecked candidate: {paragraph}"
+            );
+        }
+    }
+
+    /// **A date a promise carries is not cleared; the promise is ended.** The
+    /// rhythms procedure said to take any of the due days away by clearing its
+    /// key, and a promise that loses `promised_by` is refused. The paragraph that
+    /// says how to take a day away names `ended` and the key a promise keeps.
+    #[test]
+    fn the_rhythms_procedure_does_not_tell_a_session_to_clear_a_promises_day() {
+        let paragraph = paragraph_naming(body("rhythms"), "To move a day");
+        for word in ["promised_by", "ended"] {
+            assert!(
+                paragraph.contains(&format!("`{word}`")),
+                "the paragraph on moving and taking away a day does not name `{word}`: \
+                 {paragraph}"
+            );
+        }
+    }
+
+    /// **The rhythms procedure puts the keys of a new loop in `sets` and names
+    /// the verb that takes a loop away, and the date argument of a check-in.**
+    /// `add_entity` takes the thing's keys in `sets`; "put in the keys" named no
+    /// argument. A loop is removed with `archive_entity`, and a check-in on a loop
+    /// that already ran is dated with `recorded_at`. All three are read against
+    /// what the surface publishes.
+    #[test]
+    fn the_rhythms_procedure_names_sets_archive_entity_and_recorded_at() {
+        let published = crate::arguments::published_argument_names();
+        let text = body("rhythms");
+        let writes = paragraph_naming(text, "`add_entity`");
+        assert!(writes.contains("`sets`"), "{writes}");
+        let removes = paragraph_naming(text, "stressful");
+        assert!(removes.contains("`archive_entity`"), "{removes}");
+        let backdated = paragraph_naming(text, "already happened");
+        assert!(backdated.contains("`recorded_at`"), "{backdated}");
+        for argument in ["sets", "recorded_at"] {
+            assert!(
+                published.contains(argument),
+                "the surface publishes no `{argument}`"
+            );
+        }
+    }
+
+    /// **Every argument the asking procedure names is one the surface takes.**
+    /// It taught `fields` for what comes back, which is `keys`, and left out
+    /// `compare` and `scope`, which the question it answers needs. The worked
+    /// calls and the words in backticks are read as the projects scan reads
+    /// them, and the three that were missing are pinned by name.
+    #[test]
+    fn the_asking_procedure_names_no_argument_the_surface_does_not_take() {
+        let published = crate::arguments::published_argument_names();
+        let text = body("asking");
+        let verbs: std::collections::BTreeSet<String> = crate::Jojobot::tool_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        let mut named = std::collections::BTreeSet::new();
+        // The worked calls only: an indented line that opens with a verb the
+        // surface publishes. The other indented lines list keys and their
+        // meanings, and a word of theirs followed by a colon is not a call.
+        let calls = text.lines().filter(|l| {
+            l.starts_with("    ")
+                && l.split_whitespace()
+                    .next()
+                    .is_some_and(|first| verbs.contains(first))
+        });
+        for line in calls {
+            let mut bare = String::new();
+            let (mut quoted, mut depth) = (false, 0usize);
+            for c in line.chars() {
+                match c {
+                    '"' => quoted = !quoted,
+                    '{' | '[' if !quoted => depth += 1,
+                    '}' | ']' if !quoted => depth = depth.saturating_sub(1),
+                    _ if !quoted && depth == 0 => bare.push(c),
+                    _ => {}
+                }
+            }
+            for word in bare.split_whitespace() {
+                if let Some(argument) = word.strip_suffix(':') {
+                    named.insert(argument.to_string());
+                }
+            }
+        }
+        for argument in &named {
+            assert!(
+                published.contains(argument.as_str()),
+                "the asking procedure's worked calls name `{argument}`, which no verb publishes"
+            );
+        }
+        let axes = text
+            .split("\n## ")
+            .find(|section| section.starts_with("3. When no view fits"))
+            .expect("the asking procedure has a section on saying the shape");
+        for argument in ["keys", "compare", "scope"] {
+            assert!(
+                axes.contains(&format!("`{argument}`")),
+                "the section on saying the shape does not name `{argument}`: {axes}"
+            );
+            assert!(
+                published.contains(argument),
+                "the surface publishes no `{argument}`"
+            );
+        }
+    }
+
+    /// **The question about the people in a place is taught as a walk inward from
+    /// the place.** `follow` reaches from what was selected and does not narrow
+    /// it, so "a kind plus a follow" lists every person. The paragraph names the
+    /// subject it walks from and the two arguments of the walk.
+    #[test]
+    fn the_asking_procedure_teaches_the_people_in_a_place_as_a_walk_from_the_place() {
+        // The question, its worked call and the sentence after it are three
+        // paragraphs; the walk is all of them up to the next question.
+        let text = body("asking");
+        let from = text
+            .find("*Which people are in Springfield*")
+            .expect("the asking procedure asks which people are in Springfield");
+        let to = text[from..]
+            .find("*Which visits")
+            .expect("the next question follows");
+        let paragraph = &text[from..from + to];
+        for word in ["subject", "follow", "shape", "direction"] {
+            assert!(
+                names(paragraph, word),
+                "the paragraph on the people in a place does not name `{word}`: {paragraph}"
+            );
+        }
+    }
+
+    /// **A project's list of columns has to hold the five shipped words, and the
+    /// section says so.** A list that drops one is refused. The words are read
+    /// off the engine, and the paragraph that teaches the key names each.
+    #[test]
+    fn the_projects_procedure_says_a_projects_columns_hold_every_shipped_word() {
+        use jojobot_domain::memory::kinds;
+        let paragraph = paragraph_naming(body("projects"), "A project may add statuses");
+        for status in kinds::WORK_STATUSES {
+            assert!(
+                paragraph.contains(&format!("`{status}`")),
+                "the paragraph on a project's columns does not name `{status}`: {paragraph}"
+            );
+        }
     }
 }

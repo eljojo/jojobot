@@ -159,6 +159,9 @@ mod shared_word;
 /// One charter, and a session never learns which half the build supplied.
 #[path = "user_stories/shipping.rs"]
 mod shipping;
+/// The skills' worked calls, sent as printed.
+#[path = "user_stories/skill_calls.rs"]
+mod skill_calls;
 #[path = "user_stories/sourcing.rs"]
 mod sourcing;
 #[path = "user_stories/spotlight.rs"]
