@@ -310,15 +310,19 @@ async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_a
 
     // ── a session whose first reads are not empty shipped-type reads ────────
     let t = story.session().await;
-    t.add("event:gorge-survey", "The Gorge Survey").await;
+    t.add(
+        "event:gorge-safety-inspection",
+        "The Gorge Safety Inspection",
+    )
+    .await;
     t.add("place:springfield", "Springfield").await;
-    t.add("place:north-gorge", "The North Gorge").await;
+    t.add("place:daredevil-gorge", "The Daredevil Gorge").await;
     t.event_with(
-        "event:gorge-survey",
+        "event:gorge-safety-inspection",
         "four days up the gorge",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "place:north-gorge",
+            "arrives_at": "place:daredevil-gorge",
             "leaves_on": "2026-09-03",
             "returns_on": "2026-09-07",
         }),
@@ -329,7 +333,10 @@ async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_a
         .call("recall", json!({ "answers_type": "trip" }))
         .await
         .json();
-    assert_eq!(held["objects"][0]["id"], "event:gorge-survey", "{held}");
+    assert_eq!(
+        held["objects"][0]["id"], "event:gorge-safety-inspection",
+        "{held}"
+    );
     assert!(
         held.get("teaching").is_none(),
         "an answer that holds something teaches nothing about an empty one: {held}"
