@@ -12,7 +12,7 @@
 
 use jiff::civil::Date;
 use jojobot_domain::memory::{
-    EntityId, EntityKind, Guarded, MemoryError, NewEntity, NewFact, guard,
+    EntityId, EntityKind, Guarded, Landed, MemoryError, NewEntity, NewFact, guard,
 };
 use jojobot_domain::voucher::Voucher;
 
@@ -70,11 +70,20 @@ impl Jojobot {
                 fields: fields.clone(),
                 ..NewFact::about(id.clone(), content.clone(), today)
             };
-            match self
+            // **A creation that landed behind the fold is a creation.** The error
+            // carries what was written, so it is read as the write it reports.
+            let attempt = match self
                 .memory
                 .add_entity_with_first_claim(new.clone(), first.clone())
-                .await?
+                .await
             {
+                Err(MemoryError::FoldBehind {
+                    landed: Landed::Creation(_),
+                    ..
+                }) => return Ok(id),
+                other => other?,
+            };
+            match attempt {
                 Guarded::Written(_) => return Ok(id),
                 Guarded::Blocked {
                     attempted,
@@ -93,10 +102,14 @@ impl Jojobot {
                         override_token: Some(token),
                         ..new
                     };
-                    if let Guarded::Written(_) =
-                        self.memory.add_entity_with_first_claim(new, first).await?
-                    {
-                        return Ok(id);
+                    match self.memory.add_entity_with_first_claim(new, first).await {
+                        Ok(Guarded::Written(_))
+                        | Err(MemoryError::FoldBehind {
+                            landed: Landed::Creation(_),
+                            ..
+                        }) => return Ok(id),
+                        Ok(Guarded::Blocked { .. }) => {}
+                        Err(e) => return Err(e),
                     }
                 }
             }

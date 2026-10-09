@@ -592,7 +592,8 @@ async fn a_newer_request_replaces_the_older_code_and_three_wrong_codes_void_a_ch
                 json!({"bot": "marge", "challenge": second, "code": "00000000"}),
             )
             .await
-            .says("\"wrote\":false")
+            .says("\"wrote\":true")
+            .says("\"recorded\"")
             .never_says(&second_code);
     }
     s.call("recall", json!({"subject": second}))
@@ -607,7 +608,9 @@ async fn a_newer_request_replaces_the_older_code_and_three_wrong_codes_void_a_ch
             json!({"bot": "marge", "challenge": second, "code": "00000000"}),
         )
         .await
-        .says("ask for a new code");
+        .says("ask for a new code")
+        .says("\"challenge_state\":\"void\"")
+        .says("\"wrong_tries\":3");
     s.call("recall", json!({"subject": second}))
         .await
         .says("\"state\":\"void\"");
@@ -759,6 +762,64 @@ async fn no_code_is_made_without_an_operator_or_a_bot_and_no_bot_writes_a_challe
     s.call("recall", json!({"subject": challenge}))
         .await
         .says("\"state\":\"issued\"");
+
+    story.finish().await;
+}
+
+/// "The assistant's run is wrapped. Can a code ride in on its wrap code?"
+///
+/// **A wrap code reopens a closed run for one last change, and takes no code.**
+/// A code presented beside one is refused before anything is checked, so it is
+/// not spent, and no root is given to a run that is already over.
+#[tokio::test]
+async fn a_wrap_code_reopening_takes_no_code_and_spends_none() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    an_instance_with_an_operator(&s).await;
+
+    // ── marge boots and wraps; a wrap code comes back ───────────────────────
+    let marge = story.as_bot("bot:marge").await;
+    let wrap_code = marge
+        .call("wrap_session", json!({"story": "a sitting"}))
+        .await
+        .field("wrap_code");
+
+    // ── a code beside the wrap code is refused and nothing is spent ─────────
+    let (challenge, code) = ask_and_read(&story, "marge").await;
+    story
+        .refused_at_the_door(
+            "start_here",
+            json!({
+                "bot": "marge", "challenge": challenge, "code": code, "resume": wrap_code,
+            }),
+        )
+        .await
+        .says("wrap code")
+        .says("\"wrote\":false")
+        .never_says(&code);
+    s.call("recall", json!({"subject": challenge}))
+        .await
+        .says("\"state\":\"issued\"")
+        .says("\"wrong_tries\":\"0\"");
+    s.list("voucher").await.number("/count", 0);
+
+    // ── the wrap code alone still reopens the run, and the code still works ──
+    let (reopened, again) = story
+        .call("start_here", json!({"bot": "marge", "resume": wrap_code}))
+        .await;
+    assert!(
+        again.is_some(),
+        "the wrap code reopens the run: {}",
+        reopened.raw()
+    );
+    let (_, booted) = story
+        .call(
+            "start_here",
+            json!({"bot": "marge", "challenge": challenge, "code": code, "resume": "new"}),
+        )
+        .await;
+    assert!(booted.is_some(), "the unspent code boots a new run");
+    s.list("voucher").await.number("/count", 1);
 
     story.finish().await;
 }

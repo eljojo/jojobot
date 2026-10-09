@@ -581,7 +581,10 @@ impl Jojobot {
                 redeemed = Some(match self.redeem_code(verified, sid, day).await {
                     Ok(granted) => granted,
                     Err(e) => {
-                        tracing::warn!(error = %e, sid, "a verified code could not be spent");
+                        tracing::warn!(
+                            error = %crate::session::challenge::loggable(&e), sid,
+                            "a verified code could not be spent"
+                        );
                         serde_json::json!({
                             "error": "The code was checked but the voucher could not be \
                                       written. Ask for a new code.",
@@ -591,11 +594,27 @@ impl Jojobot {
             }
             let mut trust = self.trust_of_a_boot(redeemed).await;
             if let (Some(_), None, Some(obj)) = (redeem, sid.as_deref(), trust.as_object_mut()) {
+                // **Why nothing was spent**, as a word a caller branches on: the
+                // boot was handed a choice, or the session store was down and no
+                // run was started. The two have different next steps.
+                let unavailable = session.get("available") == Some(&serde_json::json!(false));
                 obj.insert(
                     "code".into(),
-                    "not spent: this boot was handed a choice and no handle. Answer it with \
-                     `resume` and send the same challenge and code."
-                        .into(),
+                    if unavailable {
+                        serde_json::json!({
+                            "spent": false,
+                            "because": "session_store_unavailable",
+                            "next": "No run was started, so the code is still good. Send the \
+                                     same challenge and code again in a moment.",
+                        })
+                    } else {
+                        serde_json::json!({
+                            "spent": false,
+                            "because": "choice_offered",
+                            "next": "This boot was handed a choice and no handle. Answer it \
+                                     with `resume` and send the same challenge and code.",
+                        })
+                    },
                 );
             }
             if let Some(obj) = session.as_object_mut() {

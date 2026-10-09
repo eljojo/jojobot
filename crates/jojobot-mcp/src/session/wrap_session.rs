@@ -154,8 +154,10 @@ impl Jojobot {
         // lease is not what a caller telling its story asked for.
         self.release_role_claims(&caller.bot, caller.sid.as_str())
             .await;
-        // **A root lasts one session**: wrapping voids the roots this run holds.
-        self.void_roots_held_by(caller.sid.as_str(), &caller.bot)
+        // **A root lasts one session**: wrapping voids the roots this run holds,
+        // and the receipt below says how many, or that it could not.
+        let roots = self
+            .void_roots_held_by(caller.sid.as_str(), &caller.bot)
             .await;
         // **The handle outlives the run it named, and stops addressing it.** The
         // registry keeps the mapping — re-issuing a wrapped run's handle would
@@ -170,6 +172,23 @@ impl Jojobot {
             "session": session_json(&wrapped),
             "entry": entry_receipt_json(&entry),
         });
+        if (roots.voided > 0 || roots.failed)
+            && let Some(obj) = receipt.as_object_mut()
+        {
+            let mut trust = serde_json::Map::new();
+            if roots.voided > 0 {
+                trust.insert("roots_voided".into(), roots.voided.into());
+            }
+            if roots.failed {
+                trust.insert(
+                    "roots_not_voided".into(),
+                    "A root this run held could not be checked or voided just now, so it may \
+                     still be held. Nothing retries this: tell the operator or the EM."
+                        .into(),
+                );
+            }
+            obj.insert("trust".into(), trust.into());
+        }
         // **The first wrap hands back the code that reopens this run for one
         // last change.** Best-effort: the wrap has landed, and a store that
         // cannot keep the window costs the caller the code, not the wrap.

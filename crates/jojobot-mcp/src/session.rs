@@ -19,6 +19,8 @@ pub mod journal;
 pub mod list_runs;
 pub mod role_write;
 #[cfg(test)]
+pub(crate) mod scripted;
+#[cfg(test)]
 pub mod testing;
 pub mod voucher_write;
 pub mod wire;

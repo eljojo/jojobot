@@ -23,6 +23,8 @@ use jojobot_domain::challenge::{
     self, CODE_LEN, Challenge, ChallengeState, MAX_WRONG, Redemption, WINDOW, decide_redemption,
 };
 use jojobot_domain::mailbox::NewMessage;
+#[cfg(test)]
+use jojobot_domain::memory::NewFact;
 use jojobot_domain::memory::{EntityId, EntityKind, FactAddress, FactPatch, MemoryError};
 use jojobot_domain::voucher::{self, Voucher, VoucherState};
 use rmcp::{ErrorData as McpError, model::CallToolResult};
@@ -44,6 +46,18 @@ pub(crate) struct Verified {
     address: FactAddress,
     /// The bot the code is for.
     pub(crate) bot: EntityId,
+}
+
+/// **An error as a log line may carry it.** A write that landed behind the fold
+/// reports the fact it wrote, and that fact holds the code's hash, so the
+/// error's own text is never logged.
+pub(crate) fn loggable(e: &MemoryError) -> String {
+    match e {
+        MemoryError::FoldBehind { source, .. } => {
+            format!("the write landed but the fold could not be refreshed afterward: {source}")
+        }
+        other => other.to_string(),
+    }
 }
 
 /// Lower-case hex of the bytes.
@@ -97,8 +111,10 @@ impl Jojobot {
         else {
             return Ok(None);
         };
-        let folded = self.memory.fields(handle).await?;
-        Ok(Challenge::from_fields(&folded).map(|read| (claim.address(), read)))
+        // **Read off the claim itself, never off the fold.** The fold is a
+        // projection that can lag a write that landed, and a challenge that
+        // reads `issued` after its third wrong code is a code that works twice.
+        Ok(Challenge::from_fields(&claim.fields).map(|read| (claim.address(), read)))
     }
 
     /// **Set keys on a challenge's claim**, as the bot it is for.
@@ -108,7 +124,8 @@ impl Jojobot {
         bot: &EntityId,
         fields: impl IntoIterator<Item = (&'static str, String)>,
     ) -> Result<(), MemoryError> {
-        self.memory
+        let written = self
+            .memory
             .update_fact(
                 address,
                 FactPatch {
@@ -120,8 +137,14 @@ impl Jojobot {
                 },
                 bot,
             )
-            .await
-            .map(|_| ())
+            .await;
+        match written {
+            Ok(_) => Ok(()),
+            // **A write that landed is a write**, whatever the fold says: the
+            // claim is read back from the claim, so the next read sees it.
+            Err(MemoryError::FoldBehind { .. }) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     /// **Ask for a code for `bot`.** The code goes into the operator's box and
@@ -162,8 +185,12 @@ impl Jojobot {
             Err(e) => return Ok(self.ask_failed(bot, &e)),
         };
         for entity in standing.into_iter().filter(|e| e.archived.is_none()) {
-            let Ok(Some((address, held))) = self.read_challenge(&entity.id).await else {
-                continue;
+            // **A challenge that cannot be read fails the ask.** Making a new one
+            // beside it would leave two standing, and both codes would work.
+            let (address, held) = match self.read_challenge(&entity.id).await {
+                Ok(Some(read)) => read,
+                Ok(None) => continue,
+                Err(e) => return Ok(self.ask_failed(bot, &e)),
             };
             if &held.bot == bot && held.state == ChallengeState::Issued {
                 let state = ChallengeState::Replaced.as_token().to_string();
@@ -248,7 +275,7 @@ impl Jojobot {
 
     /// The refusal for a store that could not be read while a code was asked for.
     fn ask_failed(&self, bot: &EntityId, e: &MemoryError) -> CallToolResult {
-        tracing::warn!(error = %e, %bot, "a code could not be asked for");
+        tracing::warn!(error = %loggable(e), %bot, "a code could not be asked for");
         handle_declined(
             bot.as_str(),
             WayForward::memory_store_failure(
@@ -312,22 +339,39 @@ impl Jojobot {
                 if let Err(e) = self.write_challenge(&address, bot, fields).await {
                     return Err(self.ask_failed(bot, &e));
                 }
-                Err(handle_declined(
-                    handle.as_str(),
-                    if void {
-                        format!(
-                            "That code is not right, and {MAX_WRONG} wrong codes void the \
-                             challenge. {anew}"
-                        )
-                    } else {
-                        format!(
-                            "That code is not right. Check it against the operator's message. \
-                             {} more wrong codes void the challenge, and then you must ask for \
-                             a new code.",
-                            MAX_WRONG - tries
-                        )
+                // **The boot is refused, and a write was made**: the wrong code
+                // was counted, and the third voided the challenge. The answer
+                // says both rather than "nothing was written".
+                let mut body = serde_json::json!({
+                    "status": "blocked",
+                    "attempted": handle.as_str(),
+                    "wrote": true,
+                    "recorded": {
+                        "wrong_tries": tries,
+                        "challenge_state": if void {
+                            ChallengeState::Void.as_token()
+                        } else {
+                            ChallengeState::Issued.as_token()
+                        },
                     },
-                ))
+                });
+                WayForward::from(if void {
+                    format!(
+                        "That code is not right, and {MAX_WRONG} wrong codes void the \
+                         challenge. {anew}"
+                    )
+                } else {
+                    format!(
+                        "That code is not right. Check it against the operator's message. {} \
+                         more wrong codes void the challenge, and then you must ask for a new \
+                         code.",
+                        MAX_WRONG - tries
+                    )
+                })
+                .write_into(&mut body);
+                Err(CallToolResult::success(vec![crate::ContentBlock::text(
+                    body.to_string(),
+                )]))
             }
             Redemption::Spent => Err(handle_declined(
                 handle.as_str(),
@@ -366,6 +410,18 @@ impl Jojobot {
             .instance_operator()
             .await
             .ok_or_else(|| MemoryError::InvalidFact("no person is the operator".into()))?;
+        // **The challenge is read again at the spend.** Between the check and
+        // here a newer request may have replaced it, or a wrong code may have
+        // voided it; only a challenge still standing is spent.
+        let standing = matches!(
+            self.read_challenge(&verified.handle).await?,
+            Some((_, held)) if held.state == ChallengeState::Issued
+        );
+        if !standing {
+            return Err(MemoryError::InvalidFact(
+                "the challenge is no longer standing".into(),
+            ));
+        }
         let state = ChallengeState::Redeemed.as_token().to_string();
         self.write_challenge(
             &verified.address,
@@ -402,8 +458,10 @@ impl Jojobot {
     /// voucher, as every store does before the first root, is open.
     pub(crate) async fn gate_is_on(&self) -> Result<bool, MemoryError> {
         for entity in self.memory.list_entities(Some(EntityKind::VOUCHER)).await? {
-            let fields = self.memory.fields(&entity.id).await?;
-            if fields.get(voucher::RIGHT).map(String::as_str) == Some(voucher::ROOT) {
+            let claim = self.voucher_claim(&entity.id).await?;
+            if let Some((_, fields)) = claim
+                && fields.get(voucher::RIGHT).map(String::as_str) == Some(voucher::ROOT)
+            {
                 return Ok(true);
             }
         }
@@ -428,7 +486,7 @@ impl Jojobot {
                          first code for the assistant turns the gate on.",
             }),
             Err(e) => {
-                tracing::warn!(error = %e, "the gate could not be read at a boot");
+                tracing::warn!(error = %loggable(&e), "the gate could not be read at a boot");
                 serde_json::json!({
                     "gate": "unreadable",
                     "note": "The vouchers could not be read just now.",
@@ -441,21 +499,51 @@ impl Jojobot {
         trust
     }
 
+    /// **A voucher's claim**, with the keys it was written with. Read off the
+    /// claim, for the reason [`Jojobot::read_challenge`] is: the fold can lag.
+    async fn voucher_claim(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<(FactAddress, std::collections::BTreeMap<String, String>)>, MemoryError>
+    {
+        let facts = self.memory.recall(id).await?;
+        Ok(facts
+            .iter()
+            .find(|fact| fact.fields.contains_key(voucher::RIGHT))
+            .map(|claim| (claim.address(), claim.fields.clone())))
+    }
+
     /// **A root lasts one session**: wrapping voids every root the wrapping
-    /// session holds. Best-effort and after the close, like the release of a
-    /// role: the wrap already landed. A voucher that is not a root, or is held by
-    /// another session, is left alone.
-    pub(crate) async fn void_roots_held_by(&self, sid: &str, bot: &EntityId) {
+    /// session holds. After the close, like the release of a role: the wrap
+    /// already landed. A voucher that is not a root, or is held by another
+    /// session, is left alone.
+    ///
+    /// **The outcome is said, never silent.** A listing, a read or a write that
+    /// failed leaves the root held, and the wrap's receipt must not claim
+    /// otherwise.
+    pub(crate) async fn void_roots_held_by(&self, sid: &str, bot: &EntityId) -> RootsVoided {
+        let mut outcome = RootsVoided::default();
         let listed = match self.memory.list_entities(Some(EntityKind::VOUCHER)).await {
             Ok(listed) => listed,
             Err(e) => {
-                tracing::warn!(error = %e, sid, "a wrapped session's roots could not be listed");
-                return;
+                tracing::warn!(
+                    error = %loggable(&e), sid, "a wrapped session's roots could not be listed"
+                );
+                outcome.failed = true;
+                return outcome;
             }
         };
         for entity in listed {
-            let Ok(fields) = self.memory.fields(&entity.id).await else {
-                continue;
+            let (address, fields) = match self.voucher_claim(&entity.id).await {
+                Ok(Some(claim)) => claim,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %loggable(&e), sid, "a voucher of a wrapped session could not be read"
+                    );
+                    outcome.failed = true;
+                    continue;
+                }
             };
             let held = fields.get(voucher::HOLDER).map(String::as_str) == Some(sid)
                 && fields.get(voucher::RIGHT).map(String::as_str) == Some(voucher::ROOT)
@@ -464,19 +552,10 @@ impl Jojobot {
             if !held {
                 continue;
             }
-            let Ok(facts) = self.memory.recall(&entity.id).await else {
-                continue;
-            };
-            let Some(claim) = facts
-                .iter()
-                .find(|fact| fact.fields.contains_key(voucher::RIGHT))
-            else {
-                continue;
-            };
             let voided = self
                 .memory
                 .update_fact(
-                    &claim.address(),
+                    &address,
                     FactPatch {
                         fields: [(
                             voucher::STATE.to_string(),
@@ -488,11 +567,27 @@ impl Jojobot {
                     bot,
                 )
                 .await;
-            if let Err(e) = voided {
-                tracing::warn!(error = %e, sid, "a wrapped session's root could not be voided");
+            match voided {
+                Ok(_) | Err(MemoryError::FoldBehind { .. }) => outcome.voided += 1,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %loggable(&e), sid, "a wrapped session's root could not be voided"
+                    );
+                    outcome.failed = true;
+                }
             }
         }
+        outcome
     }
+}
+
+/// **What a wrap did to the roots its run held.**
+#[derive(Debug, Default)]
+pub(crate) struct RootsVoided {
+    /// How many roots were voided.
+    pub(crate) voided: usize,
+    /// Whether any listing, read or write failed, so some root may still be held.
+    pub(crate) failed: bool,
 }
 
 #[cfg(test)]
@@ -501,6 +596,7 @@ mod tests {
     use crate::harness::*;
     use crate::orientation::start_here::OrientArgs;
     use rmcp::handler::server::wrapper::Parameters;
+    use std::sync::Arc;
     use std::time::Duration;
 
     fn boot_with_code(bot: &str, challenge: &str, code: &str) -> OrientArgs {
@@ -617,5 +713,337 @@ mod tests {
             body["status"], "blocked",
             "no such challenge is refused: {body}"
         );
+    }
+
+    // ── the Codex read of 22a8c631: nine findings, each with its case ────────
+
+    use crate::orientation::start_here::OrientArgs as Args;
+    use crate::session::WrapSessionArgs;
+    use crate::session::scripted::{Scripted, UnreachableRuns};
+    use jojobot_domain::memory::testing::InMemoryMemory;
+
+    fn day() -> Date {
+        jiff::civil::date(2026, 10, 9)
+    }
+
+    /// A handler over a store that misbehaves on cue, an operator and a bot
+    /// called `gamma`.
+    async fn scripted_instance() -> (Jojobot, Arc<Scripted>) {
+        let scripted = Arc::new(Scripted::over(Arc::new(InMemoryMemory::seeded())));
+        let jojobot = Jojobot::new(
+            scripted.clone(),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        crate::mailboxes::testing::name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        (jojobot, scripted)
+    }
+
+    /// Ask for a code for `gamma` as the engine does, and read it out of the
+    /// operator's box. Returns the challenge's handle and the code.
+    async fn asked(jojobot: &Jojobot) -> (EntityId, String) {
+        let answer = jojobot
+            .ask_for_code(&EntityId("bot:gamma".into()), day())
+            .await
+            .expect("ask answers");
+        let body = json_of(&answer);
+        let handle = EntityId(
+            body["challenge"]["handle"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a challenge was made: {body}"))
+                .to_string(),
+        );
+        let mut mail = jojobot.mailboxes.scan_messages().await.expect("scan ok");
+        mail.sort_by_key(|message| message.sent_at);
+        let code = mail
+            .iter()
+            .rev()
+            .find_map(|message| message.body.split("Code: ").nth(1))
+            .and_then(|rest| rest.split_whitespace().next())
+            .expect("the code is in the mail")
+            .to_string();
+        (handle, code)
+    }
+
+    fn gamma() -> EntityId {
+        EntityId("bot:gamma".into())
+    }
+
+    /// **P1: the state of a challenge is read from the claim, never from the
+    /// fold.** The third wrong code lands and voids the challenge, but the fold
+    /// has not caught up and still says `issued` with two tries. The right code
+    /// presented next is refused, because the claim says void.
+    #[tokio::test]
+    async fn a_wrong_code_that_landed_behind_a_lagging_fold_still_voids_the_challenge() {
+        let (jojobot, scripted) = scripted_instance().await;
+        let (handle, code) = asked(&jojobot).await;
+        for _ in 0..2 {
+            let refused = jojobot
+                .verify_code(&gamma(), handle.as_str(), "00000000")
+                .await;
+            assert!(refused.is_err());
+        }
+        scripted.script(|s| {
+            s.fold_lags_after_update = true;
+            s.update_reports_fold_behind = true;
+        });
+        let third = jojobot
+            .verify_code(&gamma(), handle.as_str(), "00000000")
+            .await;
+        let refusal = json_of(&third.err().expect("a wrong code is refused"));
+        assert_eq!(
+            refusal["recorded"]["challenge_state"], "void",
+            "a write that landed behind the fold is still a write: {refusal}"
+        );
+        scripted.script(|s| s.update_reports_fold_behind = false);
+        let right = jojobot.verify_code(&gamma(), handle.as_str(), &code).await;
+        assert!(
+            right.is_err(),
+            "the right code was accepted for a challenge the third wrong code voided"
+        );
+        let facts = jojobot.memory.recall(&handle).await.expect("recall ok");
+        let claim = facts
+            .iter()
+            .find(|fact| fact.fields.contains_key("code_hash"))
+            .expect("the claim");
+        assert_eq!(claim.fields["state"], "void", "{:?}", claim.fields);
+    }
+
+    /// **P1: asking for a code holds the redeem lock.** Two asks for one bot
+    /// that ran side by side would each scan, each create, and leave two codes
+    /// redeemable. The case holds the lock itself: the ask does not finish while
+    /// it is held, and does once it is released.
+    #[tokio::test]
+    async fn asking_for_a_code_waits_for_the_redeem_lock() {
+        let (jojobot, _) = scripted_instance().await;
+        let ask = || Args {
+            ask_for_code: Some(true),
+            bot: Some("gamma".into()),
+            ..boot_with_code("gamma", "", "")
+        };
+        let ask = ask();
+        let held = jojobot.registry.redeem_lock().lock().await;
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(300),
+            jojobot.start_here(Parameters(ask)),
+        )
+        .await;
+        assert!(waiting.is_err(), "an ask went through a held lock");
+        drop(held);
+        let again = Args {
+            ask_for_code: Some(true),
+            bot: Some("gamma".into()),
+            ..boot_with_code("gamma", "", "")
+        };
+        let answered = tokio::time::timeout(
+            Duration::from_secs(5),
+            jojobot.start_here(Parameters(again)),
+        )
+        .await
+        .expect("the lock is free")
+        .expect("start_here answers");
+        assert!(json_of(&answered)["challenge"]["handle"].is_string());
+    }
+
+    /// **P1: the spend re-reads the challenge.** A code was verified, then a
+    /// newer request replaced its challenge. Spending the verified code is
+    /// refused, no voucher is written and the challenge stays replaced.
+    #[tokio::test]
+    async fn a_verified_code_is_not_spent_once_a_newer_request_replaced_its_challenge() {
+        let (jojobot, _) = scripted_instance().await;
+        let (handle, code) = asked(&jojobot).await;
+        let verified = jojobot
+            .verify_code(&gamma(), handle.as_str(), &code)
+            .await
+            .unwrap_or_else(|_| panic!("the right code verifies"));
+        let _ = asked(&jojobot).await;
+        let spent = jojobot.redeem_code(&verified, "abcd", day()).await;
+        assert!(spent.is_err(), "a replaced challenge was spent: {spent:?}");
+        let vouchers = jojobot
+            .memory
+            .list_entities(Some(EntityKind::VOUCHER))
+            .await
+            .expect("list ok");
+        assert!(vouchers.is_empty(), "{vouchers:?}");
+        let fields = jojobot.memory.fields(&handle).await.expect("fields ok");
+        assert_eq!(fields["state"], "replaced", "{fields:?}");
+    }
+
+    /// **P2: an ask that cannot read the standing challenge makes no second
+    /// one.** The read fails, and creating a new challenge would leave two issued.
+    #[tokio::test]
+    async fn an_ask_that_cannot_read_the_standing_challenge_makes_no_second_one() {
+        let (jojobot, scripted) = scripted_instance().await;
+        let (first, _) = asked(&jojobot).await;
+        scripted.script(|s| s.recall_fails_for = Some(first.clone()));
+        let refused = jojobot
+            .ask_for_code(&gamma(), day())
+            .await
+            .expect("ask answers");
+        assert_eq!(
+            json_of(&refused)["status"],
+            "blocked",
+            "{}",
+            json_of(&refused)
+        );
+        scripted.script(|s| s.recall_fails_for = None);
+        let standing = jojobot
+            .memory
+            .list_entities(Some(EntityKind::CHALLENGE))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            standing.len(),
+            1,
+            "a second challenge was made: {standing:?}"
+        );
+        let fields = jojobot.memory.fields(&first).await.expect("fields ok");
+        assert_eq!(fields["state"], "issued", "{fields:?}");
+    }
+
+    /// **P2: a voucher that landed behind the fold is reported as written.**
+    #[tokio::test]
+    async fn a_voucher_that_landed_behind_the_fold_is_reported_as_written() {
+        let (jojobot, scripted) = scripted_instance().await;
+        let (handle, code) = asked(&jojobot).await;
+        let verified = jojobot
+            .verify_code(&gamma(), handle.as_str(), &code)
+            .await
+            .unwrap_or_else(|_| panic!("the right code verifies"));
+        scripted.script(|s| s.creation_reports_fold_behind = true);
+        let granted = jojobot
+            .redeem_code(&verified, "abcd", day())
+            .await
+            .expect("a voucher that landed is a voucher written");
+        let id = granted["voucher"].as_str().expect("the voucher is named");
+        let fields = jojobot
+            .memory
+            .fields(&EntityId(id.into()))
+            .await
+            .expect("the voucher is there");
+        assert_eq!(fields["state"], "held");
+    }
+
+    /// **P3: no log line carries the hash.** An error that reports a landed fact
+    /// would print its fields, the code's hash among them.
+    #[test]
+    fn the_logged_form_of_an_error_leaves_the_hash_out() {
+        let fact = crate::orientation::floor::prospective_fact(
+            &NewFact {
+                fields: [("code_hash".to_string(), "deadbeef".repeat(8))].into(),
+                ..NewFact::about(EntityId("challenge:abcd".into()), "a code", day())
+            },
+            1,
+            None,
+        );
+        let behind = MemoryError::FoldBehind {
+            landed: jojobot_domain::memory::Landed::Fact(Box::new(fact)),
+            behind: jojobot_domain::memory::search::Behind::Stale,
+            source: Box::new(MemoryError::Store("the fold's re-read failed".into())),
+        };
+        assert!(behind.to_string().contains("deadbeef"), "the premise holds");
+        assert!(
+            !loggable(&behind).contains("deadbeef"),
+            "{}",
+            loggable(&behind)
+        );
+        let plain = MemoryError::Store("the store is down".into());
+        assert_eq!(loggable(&plain), plain.to_string());
+    }
+
+    /// **P2: a wrap that could not void a root says so, and one that did says
+    /// how many.** The receipt never claims a root died when it could not be
+    /// listed.
+    #[tokio::test]
+    async fn a_wrap_names_the_roots_it_voided_and_the_failure_when_it_could_not() {
+        for failing in [false, true] {
+            let (jojobot, scripted) = scripted_instance().await;
+            let booted = json_of(
+                &jojobot
+                    .start_here(Parameters(Args {
+                        resume: Some("new".into()),
+                        ..boot_with_code("gamma", "", "")
+                    }))
+                    .await
+                    .expect("boot answers"),
+            );
+            let sid = sid_of(&booted).expect("a handle");
+            let root = Voucher {
+                right: voucher::ROOT.into(),
+                target: "bot:gamma".into(),
+                holder: sid.clone(),
+                issuer: "person:milhouse".into(),
+                parent: None,
+                state: VoucherState::Held,
+            };
+            let id = jojobot.issue_voucher(&root, day()).await.expect("issued");
+            if failing {
+                scripted.script(|s| s.listing_fails_for = Some(EntityKind::VOUCHER));
+            }
+            let wrapped = json_of(
+                &jojobot
+                    .wrap_session(Parameters(WrapSessionArgs {
+                        story: "done".into(),
+                        sid,
+                    }))
+                    .await
+                    .expect("wrap answers"),
+            );
+            scripted.script(|s| s.listing_fails_for = None);
+            let state = jojobot.memory.fields(&id).await.expect("fields")["state"].clone();
+            if failing {
+                assert_eq!(state, "held", "the root cannot have died: {state}");
+                assert!(
+                    wrapped["trust"]["roots_not_voided"].is_string(),
+                    "the receipt is silent about a root it could not void: {wrapped}"
+                );
+                assert!(wrapped["trust"]["roots_voided"].is_null(), "{wrapped}");
+            } else {
+                assert_eq!(state, "void");
+                assert_eq!(wrapped["trust"]["roots_voided"], 1, "{wrapped}");
+                assert!(wrapped["trust"]["roots_not_voided"].is_null(), "{wrapped}");
+            }
+        }
+    }
+
+    /// **P3: a boot whose session store is down says that, not that it was
+    /// handed a choice.** The code is not spent either way.
+    #[tokio::test]
+    async fn a_coded_boot_names_an_unavailable_session_store() {
+        let memory = Arc::new(InMemoryMemory::seeded());
+        let jojobot = Jojobot::new(
+            memory,
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(UnreachableRuns(
+                jojobot_domain::session::testing::InMemorySessions::new(),
+            )),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        crate::mailboxes::testing::name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        let (handle, code) = asked(&jojobot).await;
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(boot_with_code("gamma", handle.as_str(), &code)))
+                .await
+                .expect("boot answers"),
+        );
+        assert_eq!(booted["session"]["available"], false, "{booted}");
+        assert_eq!(
+            booted["session"]["trust"]["code"]["spent"], false,
+            "{booted}"
+        );
+        assert_eq!(
+            booted["session"]["trust"]["code"]["because"], "session_store_unavailable",
+            "{booted}"
+        );
+        let fields = jojobot.memory.fields(&handle).await.expect("fields ok");
+        assert_eq!(fields["state"], "issued", "nothing was spent: {fields:?}");
     }
 }

@@ -391,16 +391,28 @@ impl Jojobot {
                     .to_string(),
             ));
         }
+        // **A wrap code reopens a wrapped run for one last change and takes no
+        // code**: a run that is already closed must not be handed a root. Refused
+        // before the code is checked, so nothing is spent.
+        if presented.is_some() && resume.is_some_and(jojobot_domain::session::is_wrap_code) {
+            return Ok(misused(
+                "a wrap code reopens a wrapped run for one last change, and a run that is \
+                 closed is given no voucher. Nothing was spent. Reopen with the wrap code alone, \
+                 or boot a new run with bot, challenge and code."
+                    .to_string(),
+            ));
+        }
+        // **Held from the ask or the check of a code to the spending of it**, so
+        // two asks cannot both stand and two boots presenting one code cannot
+        // both be given a voucher.
+        let _redeeming = match (asking, presented) {
+            (false, None) => None,
+            _ => Some(self.registry.redeem_lock().lock().await),
+        };
         if asking && let Some(bot) = bot.as_ref() {
             let day = today.unwrap_or_else(|| self.clock().today_in(&jiff::tz::TimeZone::UTC));
             return self.ask_for_code(bot, day).await;
         }
-        // **Held from the check of the code to the spending of it**, so two boots
-        // presenting one code cannot both be given a voucher.
-        let _redeeming = match presented {
-            Some(_) => Some(self.registry.redeem_lock().lock().await),
-            None => None,
-        };
         let verified = match (bot.as_ref(), reference, presented) {
             (Some(bot), Some(reference), Some(code)) => {
                 match self.verify_code(bot, reference, code).await {
