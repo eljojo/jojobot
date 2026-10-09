@@ -324,6 +324,7 @@ impl Jojobot {
                         obj.insert(key.into(), value);
                     }
                 }
+                crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
                 json_result(&body)
             }
             // **A parent refusal is not a near miss, and saying it is offers

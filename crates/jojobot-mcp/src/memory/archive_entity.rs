@@ -96,6 +96,7 @@ impl Jojobot {
                 .into_iter()
                 .collect(),
         );
+        crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
         json_result(&body)
     }
 }
@@ -156,6 +157,7 @@ impl Jojobot {
             };
             object.insert("recorded_as".into(), recorded_as.into());
         }
+        crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
         json_result(&body)
     }
 }

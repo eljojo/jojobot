@@ -771,3 +771,147 @@ async fn a_merge_account_that_fits_beside_the_survivor_but_not_beside_the_merged
 
     story.finish().await;
 }
+
+/// **A thing made before the guard, whose aliases are already past one answer.**
+/// The store is written under the server and the server is started again over it,
+/// as a store from an older build is. The first story is returned with the
+/// second: dropping it ends the stores the second reads.
+async fn a_thing_whose_aliases_are_past_one_answer(
+    seed: usize,
+    count: usize,
+) -> (Story, Story, String) {
+    use jojobot_domain::memory::{EntityId, EntityKind, Guarded, NewEntity};
+
+    let first = Story::begin("bot:otto").await;
+    let id = EntityId::new(EntityKind::THING, word(seed));
+    let mut full = NewEntity::new(id.clone(), format!("Spot {}", word(seed)), "user-named");
+    full.aliases = aliases(seed, count);
+    let added = first.memory_store().add_entity(full).await;
+    assert!(matches!(added, Ok(Guarded::Written(_))), "{added:?}");
+    let story = first.restarted().await;
+    (first, story, id.as_str().to_string())
+}
+
+/// **A receipt that left the aliases out says so and says how to read them.**
+fn assert_the_aliases_were_left_out(receipt: &Value, handle: &str, count: usize) {
+    assert_eq!(receipt["alternateName"], Value::Null, "{receipt}");
+    assert_eq!(receipt["alternateName_elided"], true, "{receipt}");
+    assert_eq!(receipt["alternateName_count"], count, "{receipt}");
+    assert!(
+        receipt["how_to_read"]
+            .as_str()
+            .is_some_and(|how| how.contains("recall") && how.contains(handle)),
+        "the receipt names the read that returns the aliases: {receipt}"
+    );
+}
+
+/// "I renamed a thing that carries a very long list of aliases. Does the
+/// receipt hand the whole list back?"
+///
+/// **The receipt of a rename names the new handle and leaves the aliases out
+/// when they would take it past one answer.** The thing is one a store holds
+/// from before the guard: its list is already past an answer, and the rename
+/// moves the handle and nothing else.
+#[tokio::test]
+async fn a_rename_receipt_leaves_out_aliases_past_one_answer_and_names_the_new_handle() {
+    let (_first, story, handle) = a_thing_whose_aliases_are_past_one_answer(130_000, 190).await;
+    let otto = story.session().await;
+    let to = format!("thing:{}", word(130_001));
+
+    let receipt = otto
+        .call("rename_entity", json!({"handle": handle, "to": to}))
+        .await
+        .json();
+
+    assert_eq!(
+        receipt["id"],
+        to.as_str(),
+        "the receipt names the change: {receipt}"
+    );
+    assert_the_aliases_were_left_out(&receipt, &to, 190);
+}
+
+/// "I put away a thing that carries a very long list of aliases. Does the
+/// receipt hand the whole list back?"
+#[tokio::test]
+async fn an_archive_receipt_leaves_out_aliases_past_one_answer_and_names_the_archive() {
+    let (_first, story, handle) = a_thing_whose_aliases_are_past_one_answer(131_000, 190).await;
+    let otto = story.session().await;
+
+    let receipt = otto
+        .call(
+            "archive_entity",
+            json!({"handle": handle, "reason": "put away"}),
+        )
+        .await
+        .json();
+
+    assert_eq!(
+        receipt["archived"]["reason"], "put away",
+        "the receipt names the change: {receipt}"
+    );
+    assert_the_aliases_were_left_out(&receipt, &handle, 190);
+}
+
+/// "I brought back a thing that carries a very long list of aliases. Does the
+/// receipt hand the whole list back?"
+#[tokio::test]
+async fn a_restore_receipt_leaves_out_aliases_past_one_answer_and_says_it_restored() {
+    let (_first, story, handle) = a_thing_whose_aliases_are_past_one_answer(132_000, 190).await;
+    let otto = story.session().await;
+    otto.call(
+        "archive_entity",
+        json!({"handle": handle, "reason": "put away"}),
+    )
+    .await;
+
+    let receipt = otto
+        .call(
+            "archive_entity",
+            json!({"handle": handle, "reason": "needed again", "restore": true}),
+        )
+        .await
+        .json();
+
+    assert_eq!(
+        receipt["restored"], true,
+        "the receipt names the change: {receipt}"
+    );
+    assert_the_aliases_were_left_out(&receipt, &handle, 190);
+}
+
+/// "I folded a duplicate into a thing that carries a very long list of aliases.
+/// Does the receipt hand the whole list back?"
+///
+/// **It cannot: the merge is refused first.** The survivor takes the duplicate's
+/// names and the account of the merge is a record on it, and both are measured
+/// beside the survivor's own row before anything moves. A survivor whose row is
+/// already past one answer leaves no room for the account, so no merge into it
+/// lands and no merge receipt is ever served with such a row. The duplicate is
+/// named like one of the survivor's aliases so the refusal is for the account
+/// and not for the names the merge would add.
+#[tokio::test]
+async fn a_merge_into_a_thing_whose_aliases_are_past_one_answer_is_refused_whole() {
+    let (_first, story, survivor) = a_thing_whose_aliases_are_past_one_answer(133_000, 190).await;
+    let otto = story.session().await;
+    let duplicate = format!("thing:{}", word(133_001));
+    otto.add_over_the_screen(&duplicate, &aliases(133_000, 190)[0])
+        .await;
+
+    let refusal = otto
+        .refused(
+            "merge_entities",
+            json!({"duplicate": duplicate, "survivor": survivor, "reason": "the same thing"}),
+        )
+        .await;
+
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    let after = otto
+        .call("recall", json!({"subject": duplicate}))
+        .await
+        .json();
+    assert!(
+        after["objects"][0].get("merged_into").is_none(),
+        "nothing moved: {after}"
+    );
+}
