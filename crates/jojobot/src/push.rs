@@ -61,34 +61,104 @@ impl Ntfy {
 }
 
 /// **The most text ntfy carries as a message.** A body over this many bytes is
-/// sent as a file instead, which is ntfy's own rule and not jojobot's.
+/// the case ntfy handles as a file, which is ntfy's own rule and not jojobot's.
 const MESSAGE_LIMIT: usize = 4096;
+
+/// **How much of a long body the phone always reads**, in bytes, before the line
+/// that says where the rest is. Under [`MESSAGE_LIMIT`] with room for that line.
+const READABLE_BYTES: usize = 4000;
+
+/// The line that closes the readable part of a body that was too long to show.
+const REST_IS_ON_THE_PAGE: &str = "The rest is on the web UI's mail page.";
+
+/// **What a long body shows on the phone**: its first [`READABLE_BYTES`] bytes,
+/// cut at a character, then the line that says where the rest is.
+fn readable_part(body: &str) -> String {
+    let mut end = READABLE_BYTES.min(body.len());
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n\n{REST_IS_ON_THE_PAGE}", body[..end].trim_end())
+}
+
+/// **A text as one header value.** A header carries no line break, and ntfy reads
+/// a backslash and an n in the message header as one, so a break is written that
+/// way. Any other control character becomes a space.
+fn as_a_header_line(text: &str) -> String {
+    text.replace("\r\n", "\\n")
+        .replace('\n', "\\n")
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// Why a publish did not go through.
+enum Failed {
+    /// The server answered with this status.
+    Answered(reqwest::StatusCode),
+    /// The server was not reached.
+    Unreached(String),
+}
+
+impl Failed {
+    /// **The answers a server gives to a file it will not take**: attachments
+    /// are off (400), the file is over the size limit (413), or the visitor's
+    /// storage is used up (507). Anything else is a failure of the push.
+    fn is_a_refused_file(&self) -> bool {
+        matches!(self, Failed::Answered(status) if matches!(status.as_u16(), 400 | 413 | 507))
+    }
+
+    fn undelivered(self) -> Undelivered {
+        match self {
+            Failed::Answered(status) => Undelivered(format!("the ntfy server answered {status}")),
+            Failed::Unreached(why) => {
+                Undelivered(format!("the ntfy server could not be reached: {why}"))
+            }
+        }
+    }
+}
 
 #[async_trait]
 impl Notifier for Ntfy {
+    /// **Text that fits goes as a message. Text that does not shows its first
+    /// part and goes whole as a file beside it**, and a server that will not take
+    /// the file is sent the readable part alone. The phone always gets text to
+    /// read, and a refused file is never a failed push.
     async fn deliver(&self, notification: &Notification) -> Result<(), Undelivered> {
-        let request = match notification.body.len() > MESSAGE_LIMIT {
-            false => self.as_a_message(notification),
-            true => self.as_an_attachment(notification),
-        };
-        // **Nothing here quotes the request**: it carries the credential.
-        let answer = request.send().await.map_err(|e| {
-            Undelivered(format!(
-                "the ntfy server could not be reached: {}",
-                e.without_url()
-            ))
-        })?;
-        match answer.status().is_success() {
-            true => Ok(()),
-            false => Err(Undelivered(format!(
-                "the ntfy server answered {}",
-                answer.status()
-            ))),
+        if notification.body.len() <= MESSAGE_LIMIT {
+            return self
+                .publish(self.as_a_message(notification))
+                .await
+                .map_err(Failed::undelivered);
+        }
+        let readable = readable_part(&notification.body);
+        match self.publish(self.as_a_file(notification, &readable)).await {
+            Err(refused) if refused.is_a_refused_file() => self
+                .publish(self.as_a_message(&Notification {
+                    title: notification.title.clone(),
+                    body: readable,
+                }))
+                .await
+                .map_err(Failed::undelivered),
+            other => other.map_err(Failed::undelivered),
         }
     }
 }
 
 impl Ntfy {
+    /// Send one request and say whether it went through.
+    async fn publish(&self, request: reqwest::RequestBuilder) -> Result<(), Failed> {
+        // **Nothing here quotes the request**: it carries the credential.
+        let answer = request
+            .send()
+            .await
+            .map_err(|e| Failed::Unreached(e.without_url().to_string()))?;
+        match answer.status().is_success() {
+            true => Ok(()),
+            false => Err(Failed::Answered(answer.status())),
+        }
+    }
+
     /// **Text that fits**, published as JSON to the server's root so a subject
     /// with any character in it never travels in an HTTP header.
     fn as_a_message(&self, notification: &Notification) -> reqwest::RequestBuilder {
@@ -99,28 +169,23 @@ impl Ntfy {
         })))
     }
 
-    /// **Text that does not fit, sent whole as a file.** The body is the file and
-    /// the notification beside it says so. The title rides in a header, which
-    /// ntfy reads as UTF-8; a title that cannot be a header value is replaced by
-    /// a plain one rather than losing the message.
-    fn as_an_attachment(&self, notification: &Notification) -> reqwest::RequestBuilder {
-        let title = reqwest::header::HeaderValue::from_bytes(notification.title.as_bytes())
-            .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static("a message"));
-        let sender = notification
-            .body
-            .lines()
-            .next()
-            .unwrap_or("A message")
-            .to_string();
+    /// **The whole text as a file, with the readable part beside it.** The body
+    /// is the file; the notification text is `readable`. The title rides in a
+    /// header, which ntfy reads as UTF-8; one that cannot be a header value is
+    /// replaced by a plain one rather than losing the message.
+    fn as_a_file(&self, notification: &Notification, readable: &str) -> reqwest::RequestBuilder {
+        let title = reqwest::header::HeaderValue::from_bytes(
+            as_a_header_line(&notification.title).as_bytes(),
+        )
+        .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static("a message"));
+        let shown = reqwest::header::HeaderValue::from_bytes(as_a_header_line(readable).as_bytes())
+            .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static(REST_IS_ON_THE_PAGE));
         self.authorised(
             self.http
                 .put(format!("{}/{}", self.config.url, self.config.topic))
                 .header("Title", title)
                 .header("Filename", "message.txt")
-                .header(
-                    "Message",
-                    format!("{sender}. The whole message is attached."),
-                )
+                .header("Message", shown)
                 .body(notification.body.clone()),
         )
     }
@@ -226,5 +291,56 @@ async fn run(
                 () = tokio::time::sleep(wait) => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **The readable part of a long body is cut at a character, never inside
+    /// one.** A body of three-byte characters puts the 4,000th byte inside one;
+    /// a cut at the byte would panic or write half a character.
+    #[test]
+    fn the_readable_part_is_cut_at_a_character_and_stays_under_the_limit() {
+        // 4,000 is not a multiple of three, so the byte at 4,000 is mid-character.
+        let body = "あ".repeat(2000);
+        assert!(!body.is_char_boundary(READABLE_BYTES));
+        let readable = readable_part(&body);
+        let (shown, closing) = readable.rsplit_once("\n\n").expect("a closing line");
+        assert_eq!(closing, REST_IS_ON_THE_PAGE);
+        assert!(body.starts_with(shown));
+        assert!(shown.len() <= READABLE_BYTES && shown.len() > READABLE_BYTES - 3);
+        assert!(readable.len() <= MESSAGE_LIMIT);
+    }
+
+    /// **The notification text travels as one header line.** A line break is
+    /// written the way ntfy reads one in a header, and no other control
+    /// character survives into the value.
+    #[test]
+    fn a_text_becomes_one_header_line_with_its_breaks_written_out() {
+        assert_eq!(
+            as_a_header_line("one\n\ntwo\r\nthree"),
+            "one\\n\\ntwo\\nthree"
+        );
+        assert_eq!(as_a_header_line("tab\there\u{7}bell"), "tab here bell");
+        assert!(
+            reqwest::header::HeaderValue::from_bytes(as_a_header_line("あ\n\u{0}い").as_bytes())
+                .is_ok()
+        );
+    }
+
+    /// **Only a file the server will not take is retried as text.** The three
+    /// answers a server gives to such a file; anything else is a failed push.
+    #[test]
+    fn only_the_answers_to_a_refused_file_fall_back_to_text() {
+        let answered = |code: u16| Failed::Answered(reqwest::StatusCode::from_u16(code).unwrap());
+        for refusal in [400, 413, 507] {
+            assert!(answered(refusal).is_a_refused_file(), "{refusal}");
+        }
+        for failure in [401, 403, 404, 429, 500, 503] {
+            assert!(!answered(failure).is_a_refused_file(), "{failure}");
+        }
+        assert!(!Failed::Unreached("down".into()).is_a_refused_file());
     }
 }

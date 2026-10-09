@@ -298,8 +298,32 @@ fn body_of(bytes: usize) -> String {
 /// line. ntfy's limit counts the text with it.
 const FRAMING: usize = "From bot:otto\n\n".len();
 
+/// The line a long body's readable part ends with.
+const CLOSING: &str = "The rest is on the web UI's mail page.";
+
+/// **What the phone reads of a long body**, from the one place that says it: the
+/// notification text of a publish, with the header's written line breaks turned
+/// back into line breaks. Returns the part before the closing line, and checks
+/// the closing line is there.
+fn readable_of(published_message: &str) -> String {
+    let shown = published_message.replace("\\n", "\n");
+    let (head, closing) = shown
+        .rsplit_once("\n\n")
+        .unwrap_or_else(|| panic!("no closing line in {shown:?}"));
+    assert_eq!(
+        closing, CLOSING,
+        "the readable part closes by saying where the rest is"
+    );
+    assert!(
+        shown.len() <= 4096,
+        "the readable part fits ntfy's message limit: {} bytes",
+        shown.len()
+    );
+    head.to_string()
+}
+
 #[tokio::test]
-async fn a_body_over_the_limit_arrives_whole_as_an_attachment_and_one_that_fits_does_not() {
+async fn a_long_body_shows_its_start_and_goes_whole_as_a_file_when_the_server_takes_files() {
     let ntfy = FakeNtfy::start().await;
     let (_story, s) = pushing_to(&ntfy, QUICK).await;
 
@@ -313,25 +337,89 @@ async fn a_body_over_the_limit_arrives_whole_as_an_attachment_and_one_that_fits_
         !ntfy.published().is_empty()
     })
     .await;
-    let sent = &ntfy.published()[0].body;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let published = ntfy.published();
+    assert_eq!(
+        published.len(),
+        1,
+        "one notification, text and file together"
+    );
+    let sent = &published[0].body;
+    let whole = format!("From bot:otto\n\n{long}");
     assert_eq!(sent["attachment"], true, "{sent}");
     assert_eq!(sent["topic"], "phone");
     assert_eq!(sent["title"], "the long report");
     assert_eq!(sent["filename"], "message.txt");
     assert_eq!(
-        sent["text"],
-        format!("From bot:otto\n\n{long}"),
-        "the attachment holds the whole message, never a cut of it"
-    );
-    assert!(
-        sent["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("attached"),
-        "the notification beside the file says it is there: {sent}"
+        sent["text"], whole,
+        "the file holds the whole message, never a cut of it"
     );
 
-    // ── the limit itself: ntfy's message limit is 4096 bytes ────────────────
+    let readable = readable_of(sent["message"].as_str().expect("a notification text"));
+    assert!(
+        whole.starts_with(&readable) && (3900..=4000).contains(&readable.len()),
+        "the readable part is the start of the message, about 4,000 bytes: {} bytes",
+        readable.len()
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_refuses_the_file_is_sent_the_readable_part_alone_once_and_without_a_warning()
+{
+    let (logged, _guard) = capture_logs();
+    // The three answers a server gives to a file it will not take: attachments
+    // off, over the size limit, and storage used up.
+    for refusal in [400, 413, 507] {
+        let ntfy = FakeNtfy::start().await;
+        ntfy.refuse_files_with(refusal);
+        let (story, s) = pushing_to(&ntfy, QUICK).await;
+        let long = body_of(6000);
+        s.call(
+            "post_message",
+            json!({"to": "person:lisa", "subject": "the long report", "body": long}),
+        )
+        .await;
+        eventually("the readable part was published", || {
+            !ntfy.published().is_empty()
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let published = ntfy.published();
+        assert_eq!(published.len(), 1, "once, after a {refusal}: {published:?}");
+        let sent = &published[0].body;
+        assert!(
+            sent["attachment"].is_null(),
+            "text alone after a {refusal}: {sent}"
+        );
+        assert_eq!(sent["title"], "the long report");
+        let whole = format!("From bot:otto\n\n{long}");
+        let text = sent["message"].as_str().expect("a text message");
+        let (head, closing) = text.rsplit_once("\n\n").expect("a closing line");
+        assert_eq!(closing, CLOSING);
+        assert!(
+            whole.starts_with(head) && (3900..=4000).contains(&head.len()),
+            "{} bytes",
+            head.len()
+        );
+        assert!(text.len() <= 4096);
+        assert_eq!(
+            story.mail_held_by("person:lisa").await,
+            (1, 0, 0),
+            "the whole message stays in the box"
+        );
+    }
+    assert!(
+        !logged.text().contains("A PUSH NEVER WENT OUT"),
+        "a refused file is not a failed push: {}",
+        logged.text()
+    );
+}
+
+#[tokio::test]
+async fn the_last_body_that_fits_goes_as_text_and_one_byte_more_goes_as_a_file() {
+    let ntfy = FakeNtfy::start().await;
+    let (_story, s) = pushing_to(&ntfy, QUICK).await;
     s.call(
         "post_message",
         json!({"to": "person:lisa", "subject": "the last that fits",
@@ -344,43 +432,18 @@ async fn a_body_over_the_limit_arrives_whole_as_an_attachment_and_one_that_fits_
                "body": body_of(4096 - FRAMING + 1)}),
     )
     .await;
-    eventually("both boundary messages were published", || {
-        ntfy.published().len() == 3
+    eventually("both messages were published", || {
+        ntfy.published().len() == 2
     })
     .await;
     let published = ntfy.published();
-    let fits = &published[1].body;
+    let fits = &published[0].body;
     assert_eq!(fits["title"], "the last that fits");
     assert!(
         fits["message"].is_string() && fits["attachment"].is_null(),
         "{fits}"
     );
-    let over = &published[2].body;
+    let over = &published[1].body;
     assert_eq!(over["title"], "the first that does not");
     assert_eq!(over["attachment"], true, "{over}");
-}
-
-/// **PENDING the PM's answer: a server that has attachments off.** ntfy
-/// answers a file with a 400 there, so today the push is retried for the window
-/// and then given up on, naming the message, and the text never reaches the
-/// phone. Whether it should instead send the text up to the limit with a line
-/// pointing at the rest is the PM's decision, so this case asserts only what
-/// holds either way and leaves the delivery for the answer.
-#[tokio::test]
-#[ignore = "waits on the PM's answer for a server with attachments off"]
-async fn a_body_over_the_limit_to_a_server_with_attachments_off_is_pending_the_rulings_answer() {
-    let ntfy = FakeNtfy::start().await;
-    ntfy.refuse_attachments();
-    let (story, s) = pushing_to(&ntfy, QUICK).await;
-    s.call(
-        "post_message",
-        json!({"to": "person:lisa", "subject": "the long report", "body": body_of(6000)}),
-    )
-    .await;
-    assert_eq!(
-        story.mail_held_by("person:lisa").await,
-        (1, 0, 0),
-        "the message lands whatever the server does with the file"
-    );
-    todo!("the delivery to assert is the PM's to say");
 }

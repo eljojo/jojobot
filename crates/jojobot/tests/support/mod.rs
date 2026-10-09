@@ -442,9 +442,10 @@ pub struct Published {
 
 struct NtfyState {
     down: std::sync::atomic::AtomicBool,
-    /// Whether attachments are off, as on a server with no attachment cache
-    /// set: a file is refused with a 400, which is what ntfy answers.
-    no_attachments: std::sync::atomic::AtomicBool,
+    /// The status a file is refused with, or 0 when files are taken. A server
+    /// with no attachment cache answers 400, one with a size limit 413, and one
+    /// whose storage is used up 507.
+    refuses_files_with: std::sync::atomic::AtomicU16,
     attempts: std::sync::atomic::AtomicUsize,
     accepted: Mutex<Vec<Published>>,
 }
@@ -461,7 +462,7 @@ impl FakeNtfy {
     pub async fn start() -> Self {
         let state = Arc::new(NtfyState {
             down: std::sync::atomic::AtomicBool::new(false),
-            no_attachments: std::sync::atomic::AtomicBool::new(false),
+            refuses_files_with: std::sync::atomic::AtomicU16::new(0),
             attempts: std::sync::atomic::AtomicUsize::new(0),
             accepted: Mutex::new(Vec::new()),
         });
@@ -500,8 +501,9 @@ impl FakeNtfy {
             if state.down.load(Ordering::SeqCst) {
                 return axum::http::StatusCode::SERVICE_UNAVAILABLE;
             }
-            if state.no_attachments.load(Ordering::SeqCst) {
-                return axum::http::StatusCode::BAD_REQUEST;
+            let refusal = state.refuses_files_with.load(Ordering::SeqCst);
+            if refusal != 0 {
+                return axum::http::StatusCode::from_u16(refusal).unwrap();
             }
             let header = |name: &str| {
                 headers
@@ -541,12 +543,12 @@ impl FakeNtfy {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// Refuse every file with a 400 from here, as a server with attachments off
-    /// does. Text still goes through.
-    pub fn refuse_attachments(&self) {
+    /// Refuse every file with `status` from here, as a server that will not take
+    /// attachments does. Text still goes through.
+    pub fn refuse_files_with(&self, status: u16) {
         self.state
-            .no_attachments
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+            .refuses_files_with
+            .store(status, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Accept publishes again.
