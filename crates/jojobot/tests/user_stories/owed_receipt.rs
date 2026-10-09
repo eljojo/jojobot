@@ -149,3 +149,167 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
     assert!(!line.contains("owed"), "{line}");
     story.finish().await;
 }
+
+/// **A thing made with its day says it falls due on it, and a thing made
+/// without one says nothing.** A creation carries no line of its own when the
+/// day did not move.
+#[tokio::test]
+async fn a_creation_that_sets_a_day_says_the_thing_falls_due_on_it() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "sigma", "name": "The Rigging",
+                "source": "user-named", "parent": "project:atlas",
+                "sets": {"decide_by": "2026-11-01"},
+            }),
+        )
+        .await;
+    let line = the_line(&made);
+    assert!(
+        line.contains("work:sigma") && line.contains("2026-11-01"),
+        "the line names the thing and the day: {line}"
+    );
+    assert!(
+        made.json().get("owed").is_none(),
+        "the day rides in the line, not in a field of its own: {}",
+        made.json()
+    );
+
+    let plain = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "tau", "name": "The Mast",
+                "source": "user-named", "parent": "project:atlas",
+            }),
+        )
+        .await;
+    assert!(
+        plain.json().get("postcondition").is_none(),
+        "a creation that moved no day has no line: {}",
+        plain.json()
+    );
+    story.finish().await;
+}
+
+/// **Setting the day on a thing that exists says it falls due on it, and
+/// setting something else says nothing.**
+#[tokio::test]
+async fn setting_a_day_on_a_thing_says_it_falls_due_on_it() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_piece_of_work(&s).await;
+
+    let set = s
+        .call(
+            "update_entity",
+            json!({"handle": "work:sigma", "sets": {"decide_by": "2026-11-01"}}),
+        )
+        .await;
+    let line = the_line(&set);
+    assert!(
+        line.contains("work:sigma") && line.contains("2026-11-01"),
+        "the line names the thing and the day: {line}"
+    );
+
+    let ordinary = s
+        .call(
+            "update_entity",
+            json!({"handle": "work:sigma", "sets": {"crew": "four"}}),
+        )
+        .await;
+    assert!(
+        ordinary.json().get("postcondition").is_none(),
+        "an update that moved no day has no line: {}",
+        ordinary.json()
+    );
+    story.finish().await;
+}
+
+/// The thing's folded `due_on`, the way a caller reads it back.
+async fn due_on_of(s: &Session, thing: &str) -> Option<String> {
+    s.recall(thing).await.json()["objects"][0]["fields"]["due_on"]
+        .as_str()
+        .map(str::to_string)
+}
+
+/// **Finishing a thing through `update_entity` takes its stored due day off,
+/// as finishing it through a claim does.** The update worked out that the day
+/// should go and then did nothing about it, so the stored day stayed on a
+/// finished thing. The pair beside it: a status that is not done keeps the day,
+/// so a clear that fired on every status change would pass the finish alone.
+#[tokio::test]
+async fn finishing_a_thing_through_update_entity_takes_its_due_day_off() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_piece_of_work(&s).await;
+    s.call(
+        "update_entity",
+        json!({"handle": "work:sigma", "sets": {"decide_by": "2026-11-01"}}),
+    )
+    .await;
+    assert_eq!(
+        due_on_of(&s, "work:sigma").await.as_deref(),
+        Some("2026-11-01"),
+        "the day is stored on the thing before it is finished"
+    );
+
+    // A status that is not done leaves the day where it was.
+    s.call(
+        "update_entity",
+        json!({"handle": "work:sigma", "sets": {"status": "now"}}),
+    )
+    .await;
+    assert_eq!(
+        due_on_of(&s, "work:sigma").await.as_deref(),
+        Some("2026-11-01"),
+        "a thing moved to now still falls due"
+    );
+
+    s.call(
+        "update_entity",
+        json!({"handle": "work:sigma", "sets": {"status": "done"}}),
+    )
+    .await;
+    assert_eq!(
+        due_on_of(&s, "work:sigma").await,
+        None,
+        "a finished thing holds no due day"
+    );
+    story.finish().await;
+}
+
+/// **A thing made already finished holds no due day**, so a creation has no
+/// stored day to take off. The positive beside it: the same creation without
+/// the finish holds the day.
+#[tokio::test]
+async fn a_thing_made_already_finished_holds_no_due_day() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    for (handle, name, status, held) in [
+        ("tau", "The Mast", "next", true),
+        ("upsilon", "The Boom", "done", false),
+    ] {
+        s.call(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": handle, "name": name,
+                "source": "user-named", "parent": "project:atlas",
+                "sets": {"decide_by": "2026-11-01", "status": status},
+            }),
+        )
+        .await;
+        assert_eq!(
+            due_on_of(&s, &format!("work:{handle}")).await.is_some(),
+            held,
+            "{handle} made at {status}"
+        );
+    }
+    story.finish().await;
+}

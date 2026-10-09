@@ -565,6 +565,7 @@ const ROSTER: &[&str] = &[
     "work:rule-58-replacement",
     "work:shipped-kind-fields",
     "work:sigma",
+    "work:tau",
     // **The shared contract suite's own fixtures, and the case labels beside
     // them.** They were invisible until the fixtures named their handles whole:
     // a slug handed to a constructor carries no handle for this scan to read.

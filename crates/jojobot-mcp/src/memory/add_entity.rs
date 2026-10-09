@@ -293,6 +293,7 @@ impl Jojobot {
         // creates the thing, and a refusal takes the creation back with it.
         let first_fields = args.sets.clone().filter(|sets| !sets.is_empty());
         let mut fold_behind = None;
+        let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let (added, first_claim) = match first_fields {
             None => {
                 // **A bot is measured as the boot it will have, whatever the call
@@ -375,6 +376,7 @@ impl Jojobot {
                 // from the moment it is made, with the day it falls due beside
                 // the keys that set it.
                 let (due_on, _) = self.moved_due_moment(&creating, &fields, &[]).await;
+                due_moved = due_on;
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(
                         jojobot_domain::attention::DUE_ON.to_string(),
@@ -459,6 +461,12 @@ impl Jojobot {
                         "first_claim".into(),
                         fact_receipt_json(fact, self.dated(None, args.sid.as_deref()).await?),
                     );
+                }
+                // **The line a write ends with, when it gave the thing a day to
+                // fall due on.** A creation holds nothing before it, so no stored
+                // day is ever taken off here.
+                if let Some(due) = crate::answer::falls_due_sentence(&entity.id, due_moved) {
+                    crate::answer::note_postcondition(&mut body, due);
                 }
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);

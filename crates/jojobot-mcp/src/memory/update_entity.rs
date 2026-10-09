@@ -131,6 +131,7 @@ impl Jojobot {
         let sets = args.sets.clone().filter(|sets| !sets.is_empty());
         let mut claim = None;
         let mut fold_behind = None;
+        let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let written = match sets {
             None => match self.memory.update_entity(&handle, patch).await {
                 Ok(written) => written,
@@ -165,6 +166,7 @@ impl Jojobot {
                 // the claim's own fields.
                 let set_keys: std::collections::BTreeSet<String> = fields.keys().cloned().collect();
                 let (due_on, _) = self.moved_due_moment(&handle, &fields, &[]).await;
+                due_moved = due_on;
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(
                         jojobot_domain::attention::DUE_ON.to_string(),
@@ -239,6 +241,13 @@ impl Jojobot {
         };
         match written {
             Guarded::Written(entity) => {
+                // **A write that moved the thing out of owing anything takes the
+                // stored due moment off**, as a capture and an edit do: it sits on
+                // the record that carried the key it came from, not always the
+                // claim this call wrote. See `clear_stored_due_moment`.
+                if matches!(due_moved, jojobot_domain::attention::DueMove::Cleared) {
+                    self.clear_stored_due_moment(&entity.id, &caller.bot).await;
+                }
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
                 let mut body = entity_json(&entity);
@@ -252,6 +261,12 @@ impl Jojobot {
                 }
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
+                }
+                // **The line a write ends with, when it gave the thing a day to
+                // fall due on.** Absent otherwise: a quiet answer says only what
+                // changed.
+                if let Some(due) = crate::answer::falls_due_sentence(&entity.id, due_moved) {
+                    crate::answer::note_postcondition(&mut body, due);
                 }
                 // **No reason given, and that is the honest answer.**
                 // Reading a bare handle as a person is what the argument
