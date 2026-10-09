@@ -680,6 +680,53 @@ fn update_facts_confirmed_by_user_says_it_is_trusted_and_not_checked() {
     );
 }
 
+/// What a verb says about itself, as the served surface describes it.
+fn tool_description(verb: &str) -> String {
+    Jojobot::tool_router()
+        .list_all()
+        .iter()
+        .find(|t| t.name.as_ref() == verb)
+        .unwrap_or_else(|| panic!("the surface offers {verb}"))
+        .description
+        .as_deref()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// **A wrap is for work that is over; work that continues on another agent is a
+/// resume note.** The rotation line used to say wrapping is how you rotate when
+/// a run has gotten long, which sent a run that is stopping with the job undone
+/// to tell a story that has not happened. The sentence that offers the rotation
+/// now carries the exception, and `journal` names it where a beat is described.
+#[test]
+fn wrap_session_and_journal_name_the_resume_note() {
+    let wrap = tool_description("wrap_session");
+    let rotate = wrap
+        .split(". ")
+        .find(|sentence| sentence.contains("ROTATE"))
+        .expect("wrap_session offers the rotation");
+    assert!(
+        rotate.contains("resume note"),
+        "the rotation line does not say work continuing elsewhere is a resume note: {rotate}"
+    );
+    let journal = tool_description("journal");
+    assert!(
+        journal.contains("resume note"),
+        "journal does not name the resume note as its one exception: {journal}"
+    );
+}
+
+/// **The second wrap says it carries no code.** The window a code opens ends with
+/// the second wrap, so the answer to it has none to hand back.
+#[test]
+fn wrap_session_says_the_second_wraps_answer_carries_no_code() {
+    let wrap = tool_description("wrap_session");
+    assert!(
+        wrap.contains("second wrap's answer"),
+        "wrap_session does not say what the answer to a second wrap holds: {wrap}"
+    );
+}
+
 /// **The orientation essay's list of kinds names `role`**, the kind a claimed
 /// role is made as, so a caller reading the list is not surprised by it in a
 /// listing.

@@ -1175,7 +1175,7 @@ every call — it is what tells jojobot which bot is asking.
 
 ```text
 Record ONE beat in your session's chronology — a literal journal, not a log.
-High-level: what you did, what you found, what went wrong.
+High-level: what you did, what you found, what went wrong — except a resume note for work that continues on another agent, which is dense and specific.
 Not every tool call, not every file: a reader months from now wants the story, and a firehose buries it.
 `focus` rewrites what your session says it is working on RIGHT NOW, in place — the chronology is history, the focus is the present, and they answer different questions.
 The first journal entry (or the first write of any kind) is what brings your session's record into being, so a boot that does nothing leaves nothing behind.
@@ -4840,8 +4840,9 @@ A wrap you have to retry finishes what the first attempt started rather than rep
 Write the story for somebody with none of your context: what this run was for, what actually happened, what is left.
 It is also what the next boot of this identity is handed as the handover, so it is not private to the session.
 A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
-When the work continues but this run has gotten long, wrapping is also how you ROTATE: wrap, then boot again for a fresh sid.
+When the work continues but this run has gotten long, wrapping is also how you ROTATE: wrap, then boot again for a fresh sid; work that continues on another agent is a resume note in `journal`, not a wrap.
 THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run's own sid back for one last change while the run stays wrapped; the window ends when you wrap a second time (a second closing entry, no new code) or a newer run of the bot starts.
+A second wrap's answer carries no `wrap_code`.
 THE ANSWER IS A RECEIPT: the story is not read back, and the chronology it hands back is the newest of the record (`entry_count` is the whole length, `chronology_elided` and `entries_omitted` say how much is not here; nothing was dropped).
 The closing entry carries the focus as it stood as `closing_focus`.
 Pass your `sid` on every call.

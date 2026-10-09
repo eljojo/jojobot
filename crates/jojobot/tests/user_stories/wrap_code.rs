@@ -530,3 +530,70 @@ async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
         "and neither the first story nor the change between the wraps: {handover}"
     );
 }
+
+/// **A run whose work continues on another agent leaves a resume note and does not
+/// wrap, and the next boot of the identity picks that run up as taught.** The
+/// calls are exactly the ones the descriptions of `journal` and `wrap_session`
+/// give: one dense beat with the focus set, no wrap, then a boot that is offered
+/// the run by what it says it is working on and answers the offer with the run's
+/// own sid. The run is not wrapped, so the note is the way in, and the
+/// chronology the resuming run inherits holds it.
+#[tokio::test]
+async fn a_run_whose_work_continues_elsewhere_leaves_a_resume_note_and_is_picked_up() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    let stopped = first.sid().to_string();
+    first
+        .call(
+            "journal",
+            json!({
+                "entry": "Resume note: the quote from the second contractor is the one thing \
+                          left. Ruled out the first contractor, whose figure leaves out the \
+                          floor. Next step: call the second and ask for the floor priced apart.",
+                "focus": "price the kitchen floor with the second contractor",
+            }),
+        )
+        .await;
+
+    // Nothing wrapped it, so the next boot is offered the run by what it says it is
+    // working on, and no handle comes back until the offer is answered.
+    let (offer, unanswered) = story
+        .call("start_here", json!({"bot": "otto", "brief": true}))
+        .await;
+    offer
+        .says(&stopped)
+        .says("price the kitchen floor with the second contractor");
+    assert!(
+        unanswered.is_none(),
+        "an unanswered offer hands back no handle"
+    );
+
+    // Answering with the run's own sid continues that run, and its chronology holds the note.
+    let (resumed, picked_up) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": &stopped}),
+        )
+        .await;
+    resumed.says("\"resumed\":true").says("floor priced apart");
+    let second = picked_up.expect("answering the offer hands back the handle");
+    assert_eq!(
+        second.sid(),
+        stopped,
+        "the run continues, it does not restart"
+    );
+    // The run was never wrapped, so it is not a wrapped run's one-time window: it
+    // is an ordinary run, and its wrap is the first one.
+    let wrapped = second
+        .call(
+            "wrap_session",
+            json!({"story": "the floor is priced apart"}),
+        )
+        .await
+        .json();
+    assert!(
+        wrapped["wrap_code"].is_string(),
+        "the first wrap of the resumed run hands back its code: {wrapped}"
+    );
+    story.finish().await;
+}

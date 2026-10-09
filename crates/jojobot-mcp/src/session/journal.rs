@@ -32,7 +32,7 @@ pub struct JournalArgs {
 impl Jojobot {
     #[tool(
         description = "Record ONE beat in your session's chronology — a literal journal, not a \
-                       log. High-level: what you did, what you found, what went wrong. Not every tool call, not every file: a reader \
+                       log. High-level: what you did, what you found, what went wrong — except a resume note for work that continues on another agent, which is dense and specific. Not every tool call, not every file: a reader \
                        months from now wants the story, and a firehose buries it. `focus` \
                        rewrites what your session says it is working on RIGHT NOW, in place — \
                        the chronology is history, the focus is the present, and they answer \
