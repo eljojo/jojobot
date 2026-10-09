@@ -9,11 +9,12 @@ use super::*;
 /// real store's per-doc numbering. A fresh instance starts empty.
 #[derive(Default)]
 pub struct InMemoryMemory {
-    /// **Whether a key sent as an own field stays on its record** instead of
-    /// reaching its thing ([`WriteClass::Stays`]). Off by default, as the
-    /// deployed store is; a case about the change builds the store with
-    /// [`InMemoryMemory::with_own_fields_staying`].
-    own_fields_stay: bool,
+    /// **Whether a key sent as an own field reaches its thing**, as it did
+    /// before own fields stayed on their record. Off by default, as the deployed
+    /// store is: an own field stays ([`WriteClass::Stays`]). A case about a store
+    /// from before the change builds it with
+    /// [`InMemoryMemory::with_own_fields_reaching`].
+    own_fields_reach: bool,
     entities: Mutex<Vec<Entity>>,
     /// **How many times the whole listing has been asked for**, through
     /// [`Memory::list_entities`]. The real store builds every entity's row on
@@ -210,9 +211,9 @@ impl InMemoryMemory {
             .push((key, now));
     }
 
-    /// **This store with own fields staying on their record.** See the field.
-    pub fn with_own_fields_staying(mut self) -> Self {
-        self.own_fields_stay = true;
+    /// **This store with own fields reaching their thing.** See the field.
+    pub fn with_own_fields_reaching(mut self) -> Self {
+        self.own_fields_reach = true;
         self
     }
 
@@ -1841,7 +1842,7 @@ impl Memory for InMemoryMemory {
             &fact.derived,
             &[],
             &self.declarations(),
-            self.own_fields_stay,
+            !self.own_fields_reach,
         )?;
 
         // Every entity this write names must already exist — the subject first,
@@ -2670,7 +2671,7 @@ impl Memory for InMemoryMemory {
             &patch.derived,
             &patch.clear_fields,
             &self.declarations(),
-            self.own_fields_stay,
+            !self.own_fields_reach,
         )?;
         apply_fact_patch(&mut edited, &patch)?;
         // **Stored under its source's storage key, exactly as a capture's

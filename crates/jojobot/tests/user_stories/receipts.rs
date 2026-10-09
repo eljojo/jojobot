@@ -284,7 +284,7 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
             "capture",
             json!({
                 "subject": "bot:omega", "content": "the kettle is a blue one",
-                "provenance": "testimony", "fields": {"colour": "blue"},
+                "provenance": "testimony", "sets": {"colour": "blue"},
             }),
         )
         .await
@@ -295,6 +295,29 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
     assert!(
         said.contains("colour") && said.contains(" moved "),
         "{said}"
+    );
+
+    // The same key sent as the claim's own field stays on the claim, and the
+    // receipt lists it there and not among the keys that reached the bot.
+    let as_own_field = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:omega", "content": "the kettle is a green one",
+                "provenance": "testimony", "fields": {"colour": "green"},
+            }),
+        )
+        .await
+        .json();
+    assert_eq!(
+        as_own_field["stayed_on_the_record"],
+        json!(["colour"]),
+        "{as_own_field}"
+    );
+    assert_eq!(
+        as_own_field["reached_the_thing"],
+        json!([]),
+        "{as_own_field}"
     );
 
     s.wrap("wrote a mark and an ordinary key").await;

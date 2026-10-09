@@ -58,6 +58,12 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", 
 [features]
 rooms = []
 year = []
+# **Locks that replay a real run of the product before own fields stayed on their
+# record.** A model writing `fields` now keeps those keys on the record, so the
+# replay no longer shows what the product does. `make rooms` does not run them;
+# their files and the transcripts they came from stay as they were, and
+# `make room ROOM=<name>` (all features on) still runs one.
+retired = []
 
 [[test]]
 name = "adoption_room"
@@ -93,7 +99,7 @@ required-features = ["rooms"]
 
 [[test]]
 name = "desk_lock"
-required-features = ["rooms"]
+required-features = ["retired"]
 
 [[test]]
 name = "discriminating_case"
@@ -105,7 +111,7 @@ required-features = ["rooms"]
 
 [[test]]
 name = "furnace_lock"
-required-features = ["rooms"]
+required-features = ["retired"]
 
 [[test]]
 name = "globex_lock"
@@ -165,7 +171,7 @@ required-features = ["rooms"]
 
 [[test]]
 name = "trip_lock"
-required-features = ["rooms"]
+required-features = ["retired"]
 
 [[test]]
 name = "usage_limit_run"
@@ -181,7 +187,7 @@ required-features = ["rooms"]
 
 [[test]]
 name = "wharf_lock"
-required-features = ["rooms"]
+required-features = ["retired"]
 
 [[test]]
 name = "windowed_lock"

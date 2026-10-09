@@ -256,7 +256,7 @@ async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_
                     "capture",
                     json!({"subject": "topic:instance", "content": "who the operator is",
                            "provenance": "testimony",
-                           "fields": {"operator": "person:ned-flanders"}, "sid": sid}),
+                           "sets": {"operator": "person:ned-flanders"}, "sid": sid}),
                 )
                 .await
                 .expect("the operator is named");
@@ -2189,7 +2189,7 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         .call(
             "capture",
             json!({"subject": "work:upgrade-fixture-task", "content": "waiting on a review",
-                   "provenance": "testimony", "fields": {"status": "waiting"}, "sid": sid}),
+                   "provenance": "testimony", "sets": {"status": "waiting"}, "sid": sid}),
         )
         .await;
     if landed.contains("\"status\":\"blocked\"") {
@@ -2199,7 +2199,7 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         .call(
             "capture",
             json!({"subject": "work:upgrade-fixture-task", "content": "an unlisted status",
-                   "provenance": "testimony", "fields": {"status": "somewhere-else"},
+                   "provenance": "testimony", "sets": {"status": "somewhere-else"},
                    "sid": sid}),
         )
         .await;
@@ -2216,7 +2216,7 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         .call(
             "capture",
             json!({"subject": "project:upgrade-fixture-project", "content": "an unlisted status",
-                   "provenance": "testimony", "fields": {"status": "somewhere-else"},
+                   "provenance": "testimony", "sets": {"status": "somewhere-else"},
                    "sid": sid}),
         )
         .await;
@@ -2356,7 +2356,7 @@ async fn a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot()
             "capture",
             json!({"subject": "topic:instance", "content": "who the operator is",
                    "provenance": "testimony", "sid": sid,
-                   "fields": {"operator": "person:milhouse"}}),
+                   "sets": {"operator": "person:milhouse"}}),
         ),
     ] {
         let answer = surface.call(tool, args).await;
@@ -2842,7 +2842,7 @@ async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owne
             "capture",
             json!({"subject": "bot:alpha", "content": "alpha runs the role the recording held",
                    "provenance": "testimony", "sid": sid,
-                   "fields": {"claims_role": "upgrade-fixture-holder"}}),
+                   "sets": {"claims_role": "upgrade-fixture-holder"}}),
         )
         .await;
     if named.contains("\"status\":\"blocked\"") {

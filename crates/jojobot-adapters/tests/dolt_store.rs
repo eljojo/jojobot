@@ -4128,16 +4128,18 @@ async fn the_pass_that_stamps_unreadable_due_days_runs_once_and_touches_only_wha
         parent: parent.map(|p| EntityId(p.into())),
         ..NewEntity::new(EntityId(handle.into()), name, "user-named")
     };
-    let write = |handle: &str, fields: &[(&str, &str)]| NewFact {
-        fields: fields
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-        ..NewFact::about(
-            EntityId(handle.into()),
-            "recorded as it was",
-            date(2026, 9, 1),
-        )
+    let write = |handle: &str, fields: &[(&str, &str)]| {
+        jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..NewFact::about(
+                EntityId(handle.into()),
+                "recorded as it was",
+                date(2026, 9, 1),
+            )
+        })
     };
     let broken = [
         ("cadence_days", "often"),
@@ -4301,6 +4303,7 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
     let claim = memory
         .capture(NewFact {
             fields: fields_at(t0),
+            derived: fields_at(t0).into_keys().collect(),
             ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
         })
         .await
@@ -4339,13 +4342,17 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
         row.0
     };
     let class_before = class_of_the_newest_moment().await;
-    assert_eq!(class_before, "own", "the claim wrote the moment as its own");
+    assert_eq!(
+        class_before, "sets",
+        "the claim wrote the moment as a key jojobot computed, which reaches"
+    );
 
     let renewed = memory
         .update_fact(
             &claim.address(),
             FactPatch {
                 fields: fields_at(t0 + jiff::SignedDuration::from_mins(6)),
+                derived: fields_at(t0).into_keys().collect(),
                 role_move: Some(RoleMove {
                     kind: RoleMoveKind::Renew,
                     role: "lease-stamp".into(),
@@ -6893,10 +6900,8 @@ async fn dolt_keeps_own_fields_off_the_thing_when_they_stay() {
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
-    memory::own_fields_stay_while_settings_and_computed_keys_reach(
-        &DoltMemory::open(pool.clone()).with_own_fields_staying(),
-    )
-    .await;
+    memory::own_fields_stay_while_settings_and_computed_keys_reach(&DoltMemory::open(pool.clone()))
+        .await;
 
     let badge = badge_of(&pool, "thing:contract-stays").await;
     let rows: Vec<(String, String)> = sqlx::query_as(
@@ -6953,11 +6958,15 @@ async fn dolt_keeps_the_bag_each_write_was_made_under() {
     };
     assert_eq!(
         classes("own_key"),
-        ["own", "own", "own", "sets"],
+        ["stays", "stays", "stays", "sets"],
         "{rows:?}"
     );
-    assert_eq!(classes("set_key"), ["sets", "sets"], "{rows:?}");
-    assert_eq!(classes("label"), ["own"], "{rows:?}");
+    assert_eq!(
+        classes("set_key"),
+        ["sets", "sets", "sets", "stays"],
+        "{rows:?}"
+    );
+    assert_eq!(classes("label"), ["stays"], "{rows:?}");
 
     store.stop().await;
 }

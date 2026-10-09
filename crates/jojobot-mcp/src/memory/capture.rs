@@ -734,10 +734,11 @@ impl Jojobot {
                        adds and never erases. Every entity the call names — the subject, an \
                        edge's object, refs — must ALREADY EXIST, or nothing is written and \
                        the answer is status: blocked with candidates; a new entity is two \
-                       steps, add_entity and then capture. `fields` is a flat bag stored as \
-                       written (a handle, or a comma list of handles, is a link and must \
-                       exist; six keys describe their own claim and stay on it, listed under \
-                       `fields`); `sets` sets keys on the thing itself in the same call. A \
+                       steps, add_entity and then capture. `fields` is a flat bag that stays \
+                       on the claim (a handle, or a comma list of handles, is a link and must \
+                       exist; six keys describe their own claim, listed under `fields`); \
+                       `sets` sets keys on the thing itself in the same call, the only bag \
+                       that reaches it. A \
                        claim drawn as a connection edge with your OWN bot handle as subject \
                        is a `thought`: its content is capped (200 characters unless the bot's \
                        `thought_body_cap` says otherwise) and `thought_capacity` caps how \

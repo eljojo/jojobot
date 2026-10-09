@@ -899,13 +899,13 @@ mod tests {
             .written()
             .expect("not blocked");
         memory
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: std::collections::BTreeMap::from([(
                     "timezone".to_string(),
                     zone.to_string(),
                 )]),
                 ..NewFact::about(instance, "the operator's zone", date(2026, 9, 1))
-            })
+            }))
             .await
             .expect("capture ok")
             .written()

@@ -589,10 +589,7 @@ mod tests {
     /// The layer forwards which keys of a record the store holds off the thing.
     #[tokio::test]
     async fn the_layer_forwards_the_keys_a_switched_store_holds_off_a_thing() {
-        let over = Provisioned::new(
-            InMemoryMemory::booted().with_own_fields_staying(),
-            Provisions::new(vec![]),
-        );
+        let over = Provisioned::new(InMemoryMemory::booted(), Provisions::new(vec![]));
         jojobot_domain::memory::testing::contract::own_fields_stay_while_settings_and_computed_keys_reach(&over).await;
     }
 

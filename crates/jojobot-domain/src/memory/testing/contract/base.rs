@@ -2901,7 +2901,7 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
     .await;
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [
                 (
                     "columns".to_string(),
@@ -2916,7 +2916,7 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
                 "the board and where it stands",
                 date(2026, 10, 1),
             )
-        },
+        }),
     )
     .await;
     assert_eq!(
@@ -15108,7 +15108,10 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
     )
     .await;
     let held = store.fields(&thing).await.expect("fields read");
-    assert_eq!(held["own_key"], "o", "an own field reaches the thing today");
+    assert!(
+        !held.contains_key("own_key"),
+        "an own field stays on the claim: {held:?}"
+    );
     assert_eq!(held["set_key"], "s", "a setting reaches the thing");
     assert_eq!(
         read_back(store, &thing, &claim.id).await.fields,
@@ -15154,10 +15157,10 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
     let after_refusals = store.fields(&thing).await.expect("fields read");
     assert_eq!(
         (
-            after_refusals["own_key"].as_str(),
+            after_refusals.get("own_key").map(String::as_str),
             after_refusals["set_key"].as_str()
         ),
-        ("o", "s"),
+        (None, "s"),
         "a refused write moves nothing",
     );
     // **Each bag may still patch its own keys.**
@@ -15225,6 +15228,49 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
             )
             .await,
         "own_key",
+    );
+    // **The route the other way**: a setting taken off leaves the thing, and the
+    // same key written as an own field afterwards stays on the claim.
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[], &[], &["set_key"]),
+            &other_caller(),
+        )
+        .await
+        .expect("a clear takes a setting off")
+        .written()
+        .expect("nothing blocks it");
+    assert!(
+        !store
+            .fields(&thing)
+            .await
+            .expect("fields")
+            .contains_key("set_key"),
+        "the clear took the setting off the thing",
+    );
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[("set_key", "now an own field")], &[], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("once taken off it is written under the other bag")
+        .written()
+        .expect("nothing blocks it");
+    assert!(
+        !store
+            .fields(&thing)
+            .await
+            .expect("fields")
+            .contains_key("set_key"),
+        "an own field stays on the claim",
+    );
+    assert_eq!(
+        read_back(store, &thing, &claim.id).await.fields["set_key"],
+        "now an own field",
+        "and the claim carries it",
     );
 
     // **A key that only labels the claim is never set on the thing.**

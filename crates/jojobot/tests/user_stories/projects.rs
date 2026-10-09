@@ -521,7 +521,7 @@ async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
             "capture",
             json!({
                 "subject": "work:phi", "content": "where it stands",
-                "provenance": "testimony", "fields": {"status": "backlog"},
+                "provenance": "testimony", "sets": {"status": "backlog"},
             }),
         )
         .await;
@@ -550,7 +550,7 @@ async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
             json!({
                 "subject": "project:atlas", "content": "weighing it up",
                 "provenance": "testimony",
-                "fields": {"status": "considering", "decide_by": "2026-01-01"},
+                "sets": {"status": "considering", "decide_by": "2026-01-01"},
             }),
         )
         .await;
@@ -594,7 +594,7 @@ async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
             "capture",
             json!({
                 "subject": "project:atlas", "content": "still weighing it up",
-                "provenance": "testimony", "fields": {"status": "considering"},
+                "provenance": "testimony", "sets": {"status": "considering"},
             }),
         )
         .await;
@@ -672,7 +672,7 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
             "capture",
             json!({
                 "subject": "project:atlas", "content": "weighing it up",
-                "provenance": "testimony", "fields": {"status": "considering"},
+                "provenance": "testimony", "sets": {"status": "considering"},
             }),
         )
         .await;
@@ -687,7 +687,7 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
         "capture",
         json!({
             "subject": "project:atlas", "content": "a shorter list",
-            "provenance": "testimony", "fields": {"columns": "someday, next, now, done"},
+            "provenance": "testimony", "sets": {"columns": "someday, next, now, done"},
         }),
     )
     .await
@@ -699,7 +699,7 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
         "capture",
         json!({
             "subject": "topic:instance", "content": "done means something else",
-            "provenance": "testimony", "fields": {"status_word/done": "someday"},
+            "provenance": "testimony", "sets": {"status_word/done": "someday"},
         }),
     )
     .await
@@ -845,7 +845,7 @@ async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_tha
     let claim = s
         .call(
             "update_fact",
-            json!({"address": address, "fields": {"status": "musing"}}),
+            json!({"address": address, "sets": {"status": "musing"}}),
         )
         .await
         .json();
@@ -858,7 +858,7 @@ async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_tha
     let back = s
         .call(
             "update_fact",
-            json!({"address": address, "fields": {"status": "waiting"}}),
+            json!({"address": address, "sets": {"status": "waiting"}}),
         )
         .await
         .json();

@@ -72,7 +72,7 @@ async fn a_bot_that_writes_a_voucher_is_refused_and_nothing_is_stored() {
             json!({
                 "subject": "topic:widgets", "content": "widgets are issued by the factory",
                 "provenance": "inference",
-                "fields": {"right": "boot-as", "target": "bot:patty", "state": "held"},
+                "sets": {"right": "boot-as", "target": "bot:patty", "state": "held"},
             }),
         )
         .await
@@ -108,7 +108,7 @@ async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bo
         .memory_store()
         .add_entity_with_first_claim(
             NewEntity::new(voucher.clone(), "Boot as Patty", "jojobot"),
-            NewFact {
+            jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [
                     ("right", "boot-as"),
                     ("target", "bot:patty"),
@@ -120,7 +120,7 @@ async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bo
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect(),
                 ..NewFact::about(voucher.clone(), "a voucher for boot-as on patty", today)
-            },
+            }),
         )
         .await
         .expect("the engine path writes it");

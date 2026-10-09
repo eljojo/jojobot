@@ -89,8 +89,16 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
             json!({"subject": "thing:handcart"}),
         )
         .await;
+    // The claim's own field stays on the claim: the thing does not hold it, and
+    // the record does.
     held.says("\"colour\":\"blue\"")
-        .says("\"painter\":\"the owner\"");
+        .never_says("\"painter\":\"the owner\"");
+    s.shape(
+        "what the record holds",
+        json!({"subject": "thing:handcart", "facts": true}),
+    )
+    .await
+    .says("\"painter\":\"the owner\"");
 
     // A setting named as one of the claim's own fields.
     s.refused(
@@ -262,9 +270,10 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
 ///
 /// A claim writes a key the work kind declares as one of its own fields and
 /// another one as a setting, and labels itself with a key that only describes
-/// it. The receipt names both lists. It also says, once, that the key the kind
-/// reads would not reach the thing if the claim's own fields stopped doing so,
-/// and that it belongs in `sets` — and says nothing of the key already there.
+/// it. The receipt names both lists: the own field the kind reads stayed on the
+/// claim with the label. It also says, once, that the key the kind reads did not
+/// reach the thing and belongs in `sets` — and says nothing of the key already
+/// there.
 /// **Paired with a call that sends everything in `sets`**, which gets no hint.
 #[tokio::test]
 async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at_sets() {
@@ -296,9 +305,12 @@ async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at
     let mut reached = list("reached_the_thing");
     reached.sort();
     // `due_on` is jojobot's own arithmetic from the decide-by day, kept as one of
-    // the claim's own fields, and it reaches the thing like the rest.
-    assert_eq!(reached, ["decide_by", "due_on", "status"], "{receipt}");
-    assert_eq!(list("stayed_on_the_record"), ["purpose"], "{receipt}");
+    // the claim's own fields, and it reaches the thing like the setting. `status`
+    // was sent as an own field and stays on the claim beside the label.
+    assert_eq!(reached, ["decide_by", "due_on"], "{receipt}");
+    let mut stayed = list("stayed_on_the_record");
+    stayed.sort();
+    assert_eq!(stayed, ["purpose", "status"], "{receipt}");
     let hint = receipt["hint"]
         .as_str()
         .unwrap_or_else(|| panic!("a kind-read key sent as an own field is hinted: {receipt}"));
@@ -320,14 +332,17 @@ async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at
     assert!(
         edited["reached_the_thing"]
             .as_array()
-            .is_some_and(|reached| reached.iter().any(|key| key == "status")),
-        "an edit's receipt names what reached the thing: {edited}",
+            .is_some_and(|reached| reached.iter().all(|key| key != "status")),
+        "an edit's receipt does not name an own field as reaching the thing: {edited}",
     );
-    assert_eq!(
-        edited["stayed_on_the_record"],
-        json!(["purpose"]),
-        "{edited}"
-    );
+    let mut stayed: Vec<String> = edited["stayed_on_the_record"]
+        .as_array()
+        .expect("the edit names what stayed")
+        .iter()
+        .map(|v| v.as_str().expect("a key").to_string())
+        .collect();
+    stayed.sort();
+    assert_eq!(stayed, ["purpose", "status"], "{edited}");
     assert!(
         edited["hint"]
             .as_str()

@@ -87,8 +87,7 @@ async fn a_search_holding_a_key_and_a_value_finds_exactly_the_things_that_hold_t
 /// The index forwards which keys of a record the store holds off the thing.
 #[tokio::test]
 async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {
-    let store = IndexedMemory::new(Arc::new(InMemoryMemory::booted().with_own_fields_staying()))
-        .expect("index opens");
+    let store = IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens");
     contract::own_fields_stay_while_settings_and_computed_keys_reach(&store).await;
 }
 

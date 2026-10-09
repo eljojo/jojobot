@@ -1825,6 +1825,7 @@ async fn alpha_page_with_keys(n: usize) -> String {
         piece.fields = [(format!("key-{i:02}"), format!("value-{i:02}"))]
             .into_iter()
             .collect();
+        piece.sets = piece.fields.keys().cloned().collect();
         memory.capture(piece).await.expect("the field is written");
     }
     page_over(seeded_board_over(memory).await, "/person:alpha/").await
@@ -3605,7 +3606,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
             .written()
             .expect("nothing on this board collides with it");
         memory
-            .capture(NewFact {
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [
                     ("decide_by".to_string(), "2020-01-01".to_string()),
                     ("status".to_string(), status.to_string()),
@@ -3617,7 +3618,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
                     "where it stands",
                     Date::constant(2026, 3, 5),
                 )
-            })
+            }))
             .await
             .expect("the status is written");
     }
@@ -3632,7 +3633,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("status_word/wrapped".to_string(), "done".to_string())]
                 .into_iter()
                 .collect(),
@@ -3641,7 +3642,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
                 "what the operator's words mean",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the mapping is written");
     memory
@@ -3655,7 +3656,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
         .written()
         .expect("nothing on this board collides with it");
     memory
-        .capture(NewFact {
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [
                 ("selects".to_string(), "project".to_string()),
                 ("asks".to_string(), "overdue".to_string()),
@@ -3667,7 +3668,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
                 "which projects are late",
                 Date::constant(2026, 3, 5),
             )
-        })
+        }))
         .await
         .expect("the question is written");
 

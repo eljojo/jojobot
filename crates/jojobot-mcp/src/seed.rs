@@ -631,6 +631,7 @@ mod tests {
             jiff::civil::date(2026, 7, 1),
         );
         fact.fields.insert("timezone".into(), "Etc/GMT+12".into());
+        fact.sets.insert("timezone".into());
         memory.capture(fact).await.expect("capture ok");
         let before = memory.fields(&id).await.expect("fields read");
         assert_eq!(

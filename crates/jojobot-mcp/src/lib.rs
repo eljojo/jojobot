@@ -369,7 +369,7 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  with an **address** (`kind:slug#local-id`) and a **provenance** \
                  saying who backs it; a claim nobody confirmed is a hypothesis \
                  until the operator confirms it. **jojobot is where durable things are \
-                 kept.** A thing's **fields** are every write on it, folded, the \
+                 kept.** A thing's **fields** are every `sets` write on it, folded, the \
                  newest write of each key winning (a handle, or a comma list of \
                  handles, is a link and must exist; a counter key sums). **Start \
                  with `search`**, which reaches mail with `include_mail: true`.\

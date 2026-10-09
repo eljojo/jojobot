@@ -43,8 +43,12 @@ impl Jojobot {
             let slug = jojobot_domain::handle::draw(SLUG_LEN);
             let id = EntityId::new(EntityKind::VOUCHER, &slug);
             let new = NewEntity::new(id.clone(), format!("Voucher {slug}"), "jojobot");
+            // **A voucher's keys are the voucher's own state**, so every one of
+            // them is a setting that reaches the thing.
+            let fields = voucher.fields();
             let first = NewFact {
-                fields: voucher.fields(),
+                sets: fields.keys().cloned().collect(),
+                fields,
                 ..NewFact::about(
                     id.clone(),
                     format!(

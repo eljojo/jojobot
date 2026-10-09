@@ -1202,7 +1202,7 @@ mod tests {
     #[tokio::test]
     async fn the_mention_layer_forwards_the_keys_a_switched_store_holds_off_a_thing() {
         let store = Mentioning::new(std::sync::Arc::new(
-            crate::memory::testing::InMemoryMemory::booted().with_own_fields_staying(),
+            crate::memory::testing::InMemoryMemory::booted(),
         ));
         crate::memory::testing::contract::own_fields_stay_while_settings_and_computed_keys_reach(
             &store,

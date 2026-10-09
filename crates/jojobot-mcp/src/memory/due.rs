@@ -236,12 +236,15 @@ impl Jojobot {
 
     /// **What a write's receipt says about reach.** The keys of the claim that
     /// reached the thing it is about, told apart from the ones that stayed on the
-    /// record because they only describe it; and, for a key the caller sent as one
-    /// of the claim's own fields that the thing's kind or a carrier reads off the
+    /// record because they only describe it or were sent as its own fields; and,
+    /// for a key the caller sent as one of the claim's own fields that the store
+    /// held off the thing and that the thing's kind or a carrier reads off the
     /// thing, a hint that it belongs in `sets`.
     ///
     /// `own_sent` is the keys this call sent as the claim's own fields, so a key
-    /// already in the setting bag, or one a call did not send, is never hinted.
+    /// already in the setting bag, or one a call did not send, is never hinted. A
+    /// key the store let reach (a record from before own fields stayed) is not
+    /// hinted either: it reached.
     pub(crate) async fn note_reach_and_hint(
         &self,
         body: &mut serde_json::Value,
@@ -255,9 +258,13 @@ impl Jojobot {
             .chain(&reach.kept)
             .cloned()
             .collect();
-        crate::answer::note_reach(body, reach.reached, stayed);
         let read = self.keys_read_off_a_thing(&fact.subject);
-        let to_move: Vec<&String> = own_sent.iter().filter(|key| read.contains(*key)).collect();
+        let to_move: Vec<String> = own_sent
+            .iter()
+            .filter(|key| reach.kept.contains(*key) && read.contains(*key))
+            .cloned()
+            .collect();
+        crate::answer::note_reach(body, reach.reached, stayed);
         if to_move.is_empty() {
             return;
         }
@@ -270,8 +277,8 @@ impl Jojobot {
             body,
             format!(
                 "{named} sent as the claim's own fields, and the thing's kind or a carrier reads \
-                 {} off the thing. A claim's own fields will stop reaching the thing, so {} \
-                 would not reach it then: send {} in `sets` instead.",
+                 {} off the thing. A claim's own fields stay on the claim, so {} did not reach \
+                 the thing: send {} in `sets` instead.",
                 if to_move.len() == 1 { "it" } else { "them" },
                 if to_move.len() == 1 { "it" } else { "they" },
                 if to_move.len() == 1 { "it" } else { "them" },

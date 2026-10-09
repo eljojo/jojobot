@@ -1274,10 +1274,8 @@ async fn a_setting_bag_reaches_the_thing_against_the_fake() {
 /// Own fields staying and computed keys reaching, against the fake built so they do.
 #[tokio::test]
 async fn own_fields_stay_and_computed_keys_reach_against_the_fake() {
-    contract::own_fields_stay_while_settings_and_computed_keys_reach(
-        &InMemoryMemory::booted().with_own_fields_staying(),
-    )
-    .await;
+    contract::own_fields_stay_while_settings_and_computed_keys_reach(&InMemoryMemory::booted())
+        .await;
 }
 
 /// 🚨 **The four class tokens, pinned as literals.** They are stored in a column

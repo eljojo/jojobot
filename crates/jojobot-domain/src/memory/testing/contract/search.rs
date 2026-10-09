@@ -1,4 +1,4 @@
-use super::support::{add, capture, edit, other_caller};
+use super::support::{add, capture, edit, other_caller, state};
 use super::*;
 
 // --- retrieval: the search verb ------------------------------------------
@@ -808,10 +808,10 @@ pub async fn search_finds_things_that_answer_a_type_structurally<M: Memory, S: S
     ] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [(key.to_string(), value.to_string())].into_iter().collect(),
                 ..NewFact::about(whole.clone(), said, date(2026, 8, 1))
-            },
+            }),
         )
         .await;
     }
@@ -819,7 +819,7 @@ pub async fn search_finds_things_that_answer_a_type_structurally<M: Memory, S: S
     let partial = EntityId::person("person:contract-crate-partial");
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("weight".to_string(), "3".to_string())]
                 .into_iter()
                 .collect(),
@@ -828,14 +828,14 @@ pub async fn search_finds_things_that_answer_a_type_structurally<M: Memory, S: S
                 "a lighter one, and nobody wrote down when it lands",
                 date(2026, 8, 2),
             )
-        },
+        }),
     )
     .await;
     // Carries neither, and is a thing all the same.
     let unrelated = EntityId::person("person:contract-crate-unrelated");
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("mood".to_string(), "curious".to_string())]
                 .into_iter()
                 .collect(),
@@ -844,7 +844,7 @@ pub async fn search_finds_things_that_answer_a_type_structurally<M: Memory, S: S
                 "nothing to do with crates",
                 date(2026, 8, 3),
             )
-        },
+        }),
     )
     .await;
 
@@ -942,17 +942,17 @@ pub async fn search_keeps_only_what_fits_when_the_caller_asks<M: Memory, S: Sear
     ] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields: [(key.to_string(), value.to_string())].into_iter().collect(),
                 ..NewFact::about(whole.clone(), said, date(2026, 8, 1))
-            },
+            }),
         )
         .await;
     }
     let partial = EntityId("thing:contract-pallet-half".into());
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("stacked".to_string(), "3".to_string())]
                 .into_iter()
                 .collect(),
@@ -961,7 +961,7 @@ pub async fn search_keeps_only_what_fits_when_the_caller_asks<M: Memory, S: Sear
                 "a shorter stack, and no day",
                 date(2026, 8, 2),
             )
-        },
+        }),
     )
     .await;
 
@@ -1046,7 +1046,7 @@ pub async fn a_type_query_flags_a_bad_value_and_returns_the_record<M: Memory, S:
     let messy = EntityId::person("person:contract-pallet-messy");
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("arrives".to_string(), "next tuesday".to_string())]
                 .into_iter()
                 .collect(),
@@ -1055,7 +1055,7 @@ pub async fn a_type_query_flags_a_bad_value_and_returns_the_record<M: Memory, S:
                 "somebody wrote the date in words",
                 date(2026, 8, 4),
             )
-        },
+        }),
     )
     .await;
 
@@ -1171,10 +1171,10 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     ] {
         capture(
             store,
-            NewFact {
+            state(NewFact {
                 fields,
                 ..NewFact::about(thing.clone(), said, day)
-            },
+            }),
         )
         .await;
     }
@@ -1182,10 +1182,10 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     // record that carried it still says so.
     let said = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: with(&[("temper", "calm")]),
             ..NewFact::about(record_only.clone(), "it was calm, once", day)
-        },
+        }),
     )
     .await;
     edit(

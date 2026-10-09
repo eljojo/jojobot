@@ -729,6 +729,8 @@ pub async fn backfill_unreadable_due_days(
         let stamp = jojobot_domain::memory::NewFact {
             provenance: jojobot_domain::memory::Provenance::Inference,
             fields: std::iter::once((attention::DUE_ON.to_string(), day.to_string())).collect(),
+            // The day is jojobot's own arithmetic, so it reaches the thing.
+            derived: std::iter::once(attention::DUE_ON.to_string()).collect(),
             ..jojobot_domain::memory::NewFact::about(
                 entity.id.clone(),
                 "jojobot stamped the day this became late: its schedule cannot be read",

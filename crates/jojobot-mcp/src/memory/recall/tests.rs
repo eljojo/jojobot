@@ -6430,6 +6430,7 @@ async fn a_kind_recall_is_full_to_within_one_object_as_the_answer_is_served() {
             fact.fields = [("note".to_string(), "x".repeat(name_len))]
                 .into_iter()
                 .collect();
+            fact.sets = ["note".to_string()].into_iter().collect();
             memory.capture(fact).await.expect("a note lands");
         }
         let recalled = |offset: Option<u32>| RecallArgs {
@@ -6563,13 +6564,14 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
             5 => &[("owner", "bea"), ("status", "open")],
             _ => &[("mood", "curious")],
         };
-        let note = NewFact {
+        let mut note = jojobot_domain::memory::testing::contract::state(NewFact {
             fields: fields
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             ..NewFact::about(id.clone(), format!("a note about {i}"), day)
-        };
+        });
+        note.sets = note.fields.keys().cloned().collect();
         let written = indexed.capture(note).await;
         assert!(
             matches!(written, Ok(jojobot_domain::memory::Guarded::Written(_))),
@@ -6786,7 +6788,7 @@ async fn a_key_filtered_recall_falls_back_to_the_full_read_when_the_index_answer
         &setup,
         CaptureArgs {
             sid: Some(sid),
-            fields: Some([("volume".to_string(), "eleven".to_string())].into()),
+            sets: Some([("volume".to_string(), "eleven".to_string())].into()),
             ..capture_args("thing:teapot", "the dial goes to eleven")
         },
     )
@@ -6876,7 +6878,7 @@ async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
         &setup,
         CaptureArgs {
             sid: Some(sid),
-            fields: Some([("volume".to_string(), "eleven".to_string())].into()),
+            sets: Some([("volume".to_string(), "eleven".to_string())].into()),
             ..capture_args("thing:teapot", "the dial goes to eleven")
         },
     )

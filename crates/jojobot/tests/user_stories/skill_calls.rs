@@ -173,7 +173,7 @@ async fn the_rhythms_skills_calls_do_what_the_skill_says() {
             "capture",
             json!({
                 "subject": "promise:return-the-wrench", "content": "back by July",
-                "provenance": "testimony", "fields": { "promised_by": "2026-07-01" },
+                "provenance": "testimony", "sets": { "promised_by": "2026-07-01" },
             }),
         )
         .await;
@@ -205,7 +205,7 @@ async fn the_rhythms_skills_calls_do_what_the_skill_says() {
             "capture",
             json!({
                 "subject": "thing:torque-wrench", "content": "the warranty runs out",
-                "provenance": "testimony", "fields": { "runs_out": "2026-06-01" },
+                "provenance": "testimony", "sets": { "runs_out": "2026-06-01" },
             }),
         )
         .await;
@@ -245,7 +245,7 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
         json!({
             "subject": "project:atlas", "content": "the board's columns",
             "provenance": "testimony",
-            "fields": { "columns": "inbox, someday, next, now, waiting, done" },
+            "sets": { "columns": "inbox, someday, next, now, waiting, done" },
         }),
     )
     .await;
@@ -256,7 +256,7 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
         "capture",
         json!({
             "subject": "project:atlas", "content": "a shorter list", "provenance": "testimony",
-            "fields": { "columns": "inbox, someday, next, now, done" },
+            "sets": { "columns": "inbox, someday, next, now, done" },
         }),
     )
     .await

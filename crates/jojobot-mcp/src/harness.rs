@@ -64,12 +64,12 @@ fn plain_store() -> InMemoryMemory {
     InMemoryMemory::seeded()
 }
 
-/// **A handler over a store where a key sent as an own field stays on its
-/// record**, as the deployed store will once the switch is made. Every case
-/// about the switch builds this one; [`handler`] is the store as it is.
-pub(crate) fn handler_switched() -> Jojobot {
+/// **A handler over a store from before own fields stayed on their record**: a
+/// key sent as an own field reaches its thing, as it did. Only a case that sets
+/// the old shape beside the new one builds this; [`handler`] is the store as it is.
+pub(crate) fn handler_reaching() -> Jojobot {
     Jojobot::new(
-        Arc::new(plain_store().with_own_fields_staying()),
+        Arc::new(plain_store().with_own_fields_reaching()),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -588,7 +588,7 @@ mod tests {
         ensure(jojobot, "person:lisa").await;
         let said = |key: &str, value: &str| CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+            sets: Some([(key.to_string(), value.to_string())].into_iter().collect()),
             ..capture_args("work:phi", "a value for the guard to judge")
         };
         let refused = jojobot
@@ -680,7 +680,7 @@ mod tests {
     ) -> serde_json::Value {
         let sent = CaptureArgs {
             provenance: Some("testimony".into()),
-            fields: Some(
+            sets: Some(
                 fields
                     .iter()
                     .map(|(key, value)| (key.to_string(), value.to_string()))

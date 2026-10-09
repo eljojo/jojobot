@@ -555,27 +555,27 @@ pub async fn a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot<M: Mem
     // The claim the previous build wrote, on the bot, with the words it wrote.
     let old = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: old_role_fields(&seat.name, "delta", t0),
             ..NewFact::about(
                 seat.bot.clone(),
                 "claimed the contract-moved-role role",
                 date(2026, 7, 1),
             )
-        },
+        }),
     )
     .await;
     // A second role of the same bot.
     let other = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: old_role_fields("contract-kept-role", "delta", t0),
             ..NewFact::about(
                 seat.bot.clone(),
                 "claimed the contract-kept-role role",
                 date(2026, 7, 1),
             )
-        },
+        }),
     )
     .await;
     // A record in the claim's own words that holds the keys beside a key that
@@ -584,14 +584,14 @@ pub async fn a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot<M: Mem
     mixed_fields.insert("agent".to_string(), "an-agent".to_string());
     let mixed = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: mixed_fields,
             ..NewFact::about(
                 seat.bot.clone(),
                 "claimed the contract-moved-role role",
                 date(2026, 7, 1),
             )
-        },
+        }),
     )
     .await;
 
@@ -599,19 +599,19 @@ pub async fn a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot<M: Mem
     // claim's own, is somebody's note and is not archived for being emptied.
     let note = capture(
         store,
-        NewFact {
+        computed(NewFact {
             fields: old_role_fields(&seat.name, "delta", t0),
             ..NewFact::about(seat.bot.clone(), "delta's own note", date(2026, 7, 1))
-        },
+        }),
     )
     .await;
 
     // The holder's first write on the object moves the claim.
     let renewed = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("delta", soon),
             ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
-        })
+        }))
         .await;
     assert!(
         matches!(renewed, Ok(Guarded::Written(_))),
@@ -713,22 +713,22 @@ pub async fn a_pass_over_the_bots_takes_the_old_keys_off_moved_roles_only<M: Mem
     ] {
         capture(
             store,
-            NewFact {
+            computed(NewFact {
                 fields: old_role_fields(role, "delta", t0),
                 ..NewFact::about(
                     seat.bot.clone(),
                     format!("claimed the {role} role"),
                     date(2026, 7, 1),
                 )
-            },
+            }),
         )
         .await;
     }
     let renewed = store
-        .capture(NewFact {
+        .capture(computed(NewFact {
             fields: role_fields("delta", soon),
             ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
-        })
+        }))
         .await;
     assert!(
         matches!(renewed, Ok(Guarded::Written(_))),

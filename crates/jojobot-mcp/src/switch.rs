@@ -68,7 +68,7 @@ fn sample(field: &jojobot_domain::memory::types::Field) -> String {
 /// pairs the cases below, which would pass over a store that never switched.
 #[tokio::test]
 async fn a_key_sent_as_an_own_field_stays_on_the_record_in_a_switched_store() {
-    let jojobot = handler_switched();
+    let jojobot = handler();
     ensure(&jojobot, "thing:shelf").await;
     let wrote = capture_ok(
         &jojobot,
@@ -101,7 +101,7 @@ async fn a_key_sent_as_an_own_field_stays_on_the_record_in_a_switched_store() {
 /// then holds beyond what was sent is jojobot's, and has to be on the thing.
 #[tokio::test]
 async fn every_key_a_carrier_computes_reaches_its_thing() {
-    let jojobot = handler_switched();
+    let jojobot = handler();
     // One roster handle per carrier; the case fails if there are more carriers
     // than handles, which is the moment to add a handle.
     let handles = [
@@ -164,7 +164,7 @@ async fn every_key_a_carrier_computes_reaches_its_thing() {
 /// caller did not send is the schedule jojobot worked out.
 #[tokio::test]
 async fn every_key_a_check_in_computes_reaches_the_rhythm() {
-    let jojobot = handler_switched();
+    let jojobot = handler();
     ensure(&jojobot, "thing:kettle").await;
     jojobot
         .add_entity(Parameters(AddEntityArgs {
@@ -219,7 +219,7 @@ async fn every_key_a_check_in_computes_reaches_the_rhythm() {
 #[tokio::test]
 async fn the_role_keys_a_claim_writes_reach_the_role_object() {
     use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER};
-    let jojobot = handler_switched();
+    let jojobot = handler();
     make_bot(&jojobot, "alpha").await;
     let booted = json_of(
         &jojobot
@@ -349,7 +349,7 @@ async fn a_shelf_with_a_record_to_take_back(jojobot: &Jojobot) -> String {
 /// something it never held.
 #[tokio::test]
 async fn archiving_a_record_names_the_keys_that_left_the_thing() {
-    let jojobot = handler_switched();
+    let jojobot = handler();
     let address = a_shelf_with_a_record_to_take_back(&jojobot).await;
     let receipt = json_of(
         &jojobot
@@ -378,7 +378,7 @@ async fn archiving_a_record_names_the_keys_that_left_the_thing() {
 /// and the receipt names it the same way an archive does.
 #[tokio::test]
 async fn retracting_a_record_takes_back_what_it_set_and_names_the_keys_that_left() {
-    let jojobot = handler_switched();
+    let jojobot = handler();
     let address = a_shelf_with_a_record_to_take_back(&jojobot).await;
     let sid = writing_as(&jojobot);
     let receipt = json_of(
@@ -406,7 +406,7 @@ async fn retracting_a_record_takes_back_what_it_set_and_names_the_keys_that_left
 /// earlier record set too, so the thing still holds it.
 #[tokio::test]
 async fn archiving_a_record_that_took_nothing_with_it_says_so() {
-    let jojobot = handler_switched();
+    let jojobot = handler();
     ensure(&jojobot, "thing:shelf").await;
     for said in ["measured", "measured again"] {
         capture_ok(
@@ -457,7 +457,7 @@ async fn archiving_a_record_that_took_nothing_with_it_says_so() {
 /// thing, so the list follows the store and not a list of key names.
 #[tokio::test]
 async fn a_receipt_places_each_key_by_the_class_the_store_kept() {
-    for (jojobot, own_field_reaches) in [(handler_switched(), false), (handler(), true)] {
+    for (jojobot, own_field_reaches) in [(handler(), false), (handler_reaching(), true)] {
         ensure(&jojobot, "thing:shelf").await;
         let receipt = capture_ok(
             &jojobot,

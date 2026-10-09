@@ -63,7 +63,7 @@ It takes an entity out of default reads and leaves its claims where they are.
 
 ```text
 Archiving a claim does not stop a rhythm's cadence.
-The schedule is fields — cadence_days, counts_from — and a thing's fields are its writes, the newest write of each key winning, from whichever active record made it.
+The schedule is keys set on the loop — cadence_days, counts_from — and a thing's fields are the writes that set them, the newest write of each key winning, from whichever active record made it.
 Archiving one claim takes only that record's own writes out of the running; a schedule key last written on a different, still-active record keeps counting.
 To silence it, clear counts_from with update_fact: the rhythm reads NotYetOpened and nothing computes a next due date, while the loop itself, its name and its history stay exactly as they were.
 Archiving is still the right move when a claim about the rhythm was wrong or is no longer worth keeping — it is simply not what stops the cadence.

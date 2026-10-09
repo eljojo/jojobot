@@ -428,7 +428,7 @@ PROVENANCE: testimony (the operator said it), observation (you READ it in a syst
 STANDING (settled or open) is a separate question — how sure anyone is — and follows the provenance unless you set it; the operator hedging their own words is testimony with standing open.
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates; a new entity is two steps, add_entity and then capture.
-`fields` is a flat bag stored as written (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim and stay on it, listed under `fields`); `sets` sets keys on the thing itself in the same call.
+`fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
 A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (200 characters unless the bot's `thought_body_cap` says otherwise) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`.
 It answers with a receipt, not the record: the address you edit it through, what was recorded, and how many keys landed; the write is read back from the store before it is called a success.
 recall the subject to read it back.
