@@ -67,6 +67,8 @@ mod harness;
 #[cfg(test)]
 mod read_refusals;
 #[cfg(test)]
+mod snapshot;
+#[cfg(test)]
 mod surface;
 
 use jojobot_domain::mailbox::{

@@ -358,7 +358,7 @@ fn mailbox_error_arms(e: MailboxError) -> McpError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
@@ -505,7 +505,8 @@ mod tests {
     /// One row per refusal kind: its name, an error the domain raises for it, and
     /// the word it wears. `mailbox_fix_by` is an exhaustive match, so a kind
     /// added without a word does not compile.
-    fn mailbox_refusal_rows() -> Vec<(&'static str, MailboxError, Option<&'static str>)> {
+    pub(crate) fn mailbox_refusal_rows() -> Vec<(&'static str, MailboxError, Option<&'static str>)>
+    {
         let s = |text: &str| text.to_string();
         vec![
             (

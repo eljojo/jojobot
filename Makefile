@@ -51,6 +51,16 @@ check: ## The DONE bar: formatted, green, clippy-clean
 report: ## The report bar: check less the slow jobs the history lets go
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- report
 
+# **The files of every text a model reads.** A tool's description, an argument's
+# description, the instructions, the orientation essay, a skill, a teaching and
+# the refusal of each error kind are rendered into `crates/jojobot-mcp/served-texts/`,
+# one file to a surface, and `make check` fails when the files and the texts
+# differ. A commit that changes one of those texts runs this and commits the
+# rewritten files with it, so the diff of what models read is in the commit and
+# is accepted by name. It rewrites the files and judges nothing.
+snapshot: ## Rewrite the checked-in files of every text a model reads
+	SNAPSHOT_UPDATE=1 $(MAKE) narrow CRATE=jojobot-mcp FILTER=every_text_a_model_reads_matches_the_snapshot
+
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
 # It checks the format, then runs that crate's tests, then lints that crate.

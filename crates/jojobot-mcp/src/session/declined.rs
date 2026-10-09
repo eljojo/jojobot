@@ -218,7 +218,7 @@ fn session_error_arms(e: SessionError) -> McpError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::harness::*;
 
@@ -374,7 +374,8 @@ mod tests {
     /// One row per refusal kind: its name, an error the domain raises for it, and
     /// the word it wears. `session_fix_by` is an exhaustive match, so a kind
     /// added without a word does not compile.
-    fn session_refusal_rows() -> Vec<(&'static str, SessionError, Option<&'static str>)> {
+    pub(crate) fn session_refusal_rows() -> Vec<(&'static str, SessionError, Option<&'static str>)>
+    {
         use jojobot_domain::session::SessionState;
         let s = |text: &str| text.to_string();
         vec![

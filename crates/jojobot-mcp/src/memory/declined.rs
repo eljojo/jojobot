@@ -1422,7 +1422,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
@@ -1748,7 +1748,7 @@ mod tests {
     /// and the word it wears. `memory_fix_by` is an exhaustive match, so a kind
     /// added without a word does not compile; the rows are what the served
     /// answers are held against.
-    fn memory_refusal_rows() -> Vec<(&'static str, MemoryError, Option<&'static str>)> {
+    pub(crate) fn memory_refusal_rows() -> Vec<(&'static str, MemoryError, Option<&'static str>)> {
         use jojobot_domain::memory::MayWrite;
 
         let s = |text: &str| text.to_string();
