@@ -497,12 +497,7 @@ async fn the_scan_for_oversized_records_finds_one_stored_over_the_ceiling() {
         .iter()
         .filter(|line| line.contains("STORED RECORD OVER THE CEILING"))
         .collect();
-    assert_eq!(
-        named.len(),
-        1,
-        "one record, one warning: {:?}",
-        booted.log
-    );
+    assert_eq!(named.len(), 1, "one record, one warning: {:?}", booted.log);
     assert!(
         named[0].contains(&format!("{handle}#{local}")),
         "the warning names the record's address {handle}#{local}: {}",
