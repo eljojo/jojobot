@@ -4074,3 +4074,49 @@ fn the_hypothesis_labelling_and_the_place_for_durable_things_are_still_taught() 
         "the instructions do not say jojobot is where durable things are kept"
     );
 }
+
+/// **The rule for archive, retract or rewrite is worded the same in the three
+/// places a caller meets it**: update_fact's description, update_fact's `status`
+/// argument and retract's description. A rule stated three ways is three rules,
+/// and the one a caller reads first is the one it follows.
+#[test]
+fn the_archive_or_retract_rule_is_worded_the_same_everywhere() {
+    let squash = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let tools = Jojobot::tool_router().list_all();
+    let tool = |name: &str| {
+        tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("{name} is a tool"))
+    };
+    let rule_in = |text: &str| -> String {
+        let text = squash(text);
+        let from = text
+            .find("ARCHIVE, RETRACT OR REWRITE")
+            .expect("the rule is stated");
+        let end = text[from..]
+            .find("restore: true).")
+            .expect("the rule ends where an archived entity comes back")
+            + "restore: true).".len();
+        text[from..from + end].to_string()
+    };
+    let retract = rule_in(tool("retract").description.as_deref().unwrap_or_default());
+    let update_fact = tool("update_fact");
+    let update_fact_description = rule_in(update_fact.description.as_deref().unwrap_or_default());
+    let status_argument =
+        rule_in(
+            serde_json::Value::Object((*update_fact.input_schema).clone())["properties"]["status"]
+                ["description"]
+                .as_str()
+                .expect("update_fact's status argument is described"),
+        );
+    assert!(
+        retract.len() > 300,
+        "the rule is a paragraph, or this compares nothing: {retract}"
+    );
+    assert_eq!(
+        update_fact_description, retract,
+        "update_fact's description"
+    );
+    assert_eq!(status_argument, retract, "update_fact's status argument");
+}
