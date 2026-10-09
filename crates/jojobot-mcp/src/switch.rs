@@ -233,6 +233,9 @@ async fn the_role_keys_a_claim_writes_reach_the_role_object() {
                 resume: Some("new".into()),
                 sid: None,
                 today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
             }))
             .await
             .expect("start_here ok"),

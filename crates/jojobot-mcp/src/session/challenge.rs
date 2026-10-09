@@ -124,15 +124,19 @@ impl Jojobot {
         bot: &EntityId,
         fields: impl IntoIterator<Item = (&'static str, String)>,
     ) -> Result<(), MemoryError> {
+        // **Every key of a challenge is its own state**, so each one is a setting
+        // that reaches the thing, as the keys it was created with are.
+        let fields: std::collections::BTreeMap<String, String> = fields
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect();
         let written = self
             .memory
             .update_fact(
                 address,
                 FactPatch {
-                    fields: fields
-                        .into_iter()
-                        .map(|(key, value)| (key.to_string(), value))
-                        .collect(),
+                    sets: fields.keys().cloned().collect(),
+                    fields,
                     ..FactPatch::default()
                 },
                 bot,
@@ -594,6 +598,8 @@ impl Jojobot {
                             VoucherState::Void.as_token().to_string(),
                         )]
                         .into(),
+                        // The state is the voucher's own, so it reaches the thing.
+                        sets: [voucher::STATE.to_string()].into(),
                         ..FactPatch::default()
                     },
                     bot,

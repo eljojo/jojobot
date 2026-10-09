@@ -304,7 +304,6 @@ async fn a_bot_cannot_rename_merge_or_archive_a_voucher_nor_rename_into_one() {
 /// bot that sets it up is `otto`, who is never a party to a code.
 async fn an_instance_with_an_operator(s: &super::dsl::Session) {
     s.add("person:lisa", "Lisa").await;
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "who the operator is",
@@ -720,7 +719,6 @@ async fn no_code_is_made_without_an_operator_or_a_bot_and_no_bot_writes_a_challe
 
     // ── the operator is named; a bot that is nobody still gets no code ──────
     s.add("person:lisa", "Lisa").await;
-    s.add("topic:instance", "This instance").await;
     s.event_with(
         "topic:instance",
         "who the operator is",
