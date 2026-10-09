@@ -1,7 +1,7 @@
 # The loop room
 
 **Two phases, and the second one has no memory of the first.** That is the
-whole design. Everything else — the goal, the furniture, the four locks — is
+whole design. Everything else — the goal, the furniture, the five locks — is
 there to make the second phase ask a question the first phase can only have
 made answerable by working properly.
 
@@ -74,12 +74,14 @@ paid run, reads as a product defect, and costs money to find. A room can be
 perfectly discriminating and still be impossible, and from the free suite the
 two look identical.
 
-## The identity rule — binding, and the same as every room's
+## The identity rule — binding on every room but the decisions room
 
 **The model boots as the shipped `assistant` and stays there.** No charter is
 written for it, and no hand-authored orientation of any kind reaches it. The
 entry names the identity, because a line that does not is ambiguous against a
-surface where a bot is addressed by name — and it names nothing else.
+surface where a bot is addressed by name — and it names nothing else. The
+decisions room is the one exception: its entries name no identity (see
+`decisions.md`).
 
 ## What the room holds before the occupant arrives
 

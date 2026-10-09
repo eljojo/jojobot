@@ -1,6 +1,6 @@
 # The year
 
-**Fourteen sittings inside one year, none of them remembering the one before.**
+**Fifteen sittings inside one year, none of them remembering the one before.**
 The operator uses jojobot for a year and the year takes minutes on the clock.
 
 Every other room asks whether one thing works. This one asks whether a year of
@@ -59,14 +59,16 @@ nothing.
 
 ## What the room holds before the occupant arrives
 
-Almost nothing, on purpose: the operator is starting. Five nouns and one brief.
+Almost nothing, on purpose: the operator is starting. Seven nouns and one brief.
 **Everything else in this document is built by the sittings**, which is what
 makes a later one depend on an earlier one rather than on the furniture.
 
-**Three of the nouns are named alike and all three are real** — `place:springfield` is the
-town, `org:springfield-town-council` is its council and `place:daredevil-gorge` is the
-gorge outside it. None is a mistake, and a sitting asked about "Springfield" has three
-right answers to choose between. That is the shape a real store grows on its own.
+**Four of the nouns are named alike in two pairs and all four are real** —
+`place:springfield` is the town and `org:springfield-town-council` is its council;
+`place:daredevil-gorge` is the gorge outside it and `event:gorge-stunt-show` is the show
+held there. None is a mistake, and a sitting asked about "Springfield" has two right
+answers to choose between, and one asked about "the gorge" has two. That is the shape a
+real store grows on its own.
 
 ⚠️ **Nothing here is dated on a day any sitting claims.** A record already
 carrying a sitting's day would make that sitting's generated assertion hold
@@ -209,15 +211,14 @@ say     February: nothing on the longboard carries this sitting's own day, so th
 > start jojobot as assistant — it is 15 March 2026 and the council meets on Tuesdays, put that down, and I patched that soft spot in the longboard's deck — thirty dollars in materials, already paid for
 
 ```locks
-# ⚠️ **A named check, because this is the one sitting the finished room cannot
-# answer for.** July rewrites what March wrote, in place and under July's own
-# day, and editing a claim destroys what it said before — so at the end of the
-# run nothing is dated March and nothing says what March said. The word
-# "Tuesday" survived only because the corrected sentence happens to keep it,
-# which is a check standing on an accident rather than on the record.
+# ⚠️ **A named check, scoped to this sitting's own window.** July takes what
+# March wrote back: the record is marked, not rewritten. The question here is
+# whether this sitting recorded anything at all, which is not a question about
+# the finished room.
 #
 # The check reads the world either side of this sitting and asks whether the
-# council gained a record in that window. Only this sitting writes there.
+# council gained a record in that window. Only this sitting writes there, and no
+# later sitting can take that away.
 check   the_council_was_given_a_claim_in_march
 say     March: nothing says the council meets on Tuesdays, so July has nothing to take back
 
@@ -332,12 +333,13 @@ say     June: the bearings check does not say it was done on the day this sittin
 # `carries` lines would hold on two separate records naming one thing each,
 # which is the easy case and not the one the operator asked for. Whether two
 # landed on ONE record is a correlation inside one object, and this format's
-# three words do not branch — the same reason the loop's own lock two sittings
-# from here is a hatch.
+# assertion words do not branch — the same reason the loop's own lock two
+# sittings from here is a hatch.
 #
 # ⛔️ **No handle is named here and no KIND is either.** January invents the
 # event's handle, so a lock that spelled it would fail a run whose January
-# called it something else — and naming the kinds is the same fault one level
+# called it something else (December's hedge lock is the one lock in the year
+# that does name it) — and naming the kinds is the same fault one level
 # up, because which things a sitting points at is the sitting's own choice. A
 # claim linking the council to the gorge did the identical thing.
 #
@@ -412,7 +414,7 @@ say     August: somebody who was never at the inspection is now recorded as havi
 # ⚠️ **The day rather than the word.** What the operator called the committee
 # the occupant may call the board, and both are right — a needle inside the
 # occupant's prose measures whoever wrote the needle. Nothing else writes on the
-# council on this day: January's claim is January's, March's is rewritten under
+# council on this day: January's claim is January's, March's was taken back on
 # July's day, and October touches the skate tool.
 recall {"subject": "org:springfield-town-council", "facts": true}
 carries "recorded_at":"2026-08-16"
@@ -527,7 +529,7 @@ say     October: September's account of the skate tool was not archived with a c
 #
 # ⛔️ **No handle is named here.** January invents the event's name, so a lock
 # that spelled it would be refused by a run whose January called it something
-# else — measuring nothing while reporting the walk itself as broken. June's
+# else (December's hedge lock is the one lock in the year that does name it) — measuring nothing while reporting the walk itself as broken. June's
 # own lock reaches the event the same way, by kind and edge, and this one
 # follows suit.
 # 🚨 **A hatch, scoped to October's own window.** Asked of the finished
@@ -678,25 +680,6 @@ is, and it must not.**
 > start jojobot as assistant — it is 22 November 2026, when did I last get the wheels serviced, and put down that I did it again today, and I've skated it about 600 kilometres since then — forty five dollars this time, and they've sent me the bill for it. Also, the skate tool needed a new washer when it came back — twenty dollars for the part, and they've billed me for that one too
 
 ```locks
-# **The day, not the word.** What the operator calls the wheels the record
-# calls bearings, and an occupant may write either — a needle in anybody's prose
-# measures whoever wrote the needle, which is the defect this room already
-# removed from March, July and August.
-#
-# ⚠️ **A named check rather than a query, and the reason is the failure this
-# sitting exists to catch.** The failure is not silence. It is a sitting that
-# reached for the operator's words, found nothing, and stood up a SECOND loop
-# beside the first — after which the store holds two, each with half the
-# history, and neither answers when the bearings were last done. An assertion is a
-# substring of the whole answer, so it cannot tell one loop carrying both days
-# from two loops carrying one each. **And the handle is the occupant's own
-# word**: January invents it, so no lock may name it.
-#
-# One lock rather than two, for the reason May gives: "no second loop" is true
-# of a room nobody worked in, and it is this sitting's own day that makes the
-# absence mean something. January's check-in is 2025-12-20 and June's is
-# 2026-06-14, so this day is on that loop if and only if this sitting recorded
-# a turn of it.
 # ⚠️ **What December reads, locked where it is written.** December is asked what
 # has gone quiet and nothing asserts over it, by design — but what it can NOTICE
 # depends on what the year left. A check-in stores the schedule jojobot worked
@@ -732,13 +715,32 @@ is, and it must not.**
 #
 # **This is not a second copy of the conversion rule**, which is held where it
 # lives. It says this room's own record carries what December reads.
-# ⛔️ **Selected by KIND, because the handle is the occupant's own word.** The
-# room says so four lines above the lock below: January invents the name, so no
-# lock may name it. This one did, and a run whose January called the loop
-# something else failed here for the name rather than for the claim.
+# ⛔️ **Selected by KIND, because the handle is the occupant's own word.**
+# January invents the name, so no lock may name it. This one did, and a run
+# whose January called the loop something else failed here for the name rather
+# than for the claim.
 check   the_years_turns_are_on_file_as_derivations
 say     late November: the year's turns are not on file as derivations, so they were written by hand rather than checked in, and December has nothing to notice about what the loop's standing rests on
 
+# **The day, not the word.** What the operator calls the wheels the record
+# calls bearings, and an occupant may write either — a needle in anybody's prose
+# measures whoever wrote the needle, which is the defect this room already
+# removed from March, July and August.
+#
+# ⚠️ **A named check rather than a query, and the reason is the failure this
+# sitting exists to catch.** The failure is not silence. It is a sitting that
+# reached for the operator's words, found nothing, and stood up a SECOND loop
+# beside the first — after which the store holds two, each with half the
+# history, and neither answers when the bearings were last done. An assertion is a
+# substring of the whole answer, so it cannot tell one loop carrying both days
+# from two loops carrying one each. **And the handle is the occupant's own
+# word**: January invents it, so no lock may name it.
+#
+# One lock rather than two, for the reason May gives: "no second loop" is true
+# of a room nobody worked in, and it is this sitting's own day that makes the
+# absence mean something. January's check-in is 2025-12-20 and June's is
+# 2026-06-14, so this day is on that loop if and only if this sitting recorded
+# a turn of it.
 check   the_service_landed_on_the_loop_that_already_existed
 say     late November: this sitting's day is not on the loop January opened — either a question asked in the operator's own words reached nothing and the turn went unrecorded, or it was filed on a second loop standing beside the first, and neither one can say when the bearings were last done
 ```
@@ -836,7 +838,7 @@ say     December: the walk back from the loop's own cadence does not reach the o
 # opposite, and no read of current truth carries the old wording — so a sitting
 # that answers without reaching the record's own history has nothing to write
 # here, and a sitting that guesses writes something else. **The key is named by
-# the operator**, for the reason the ledger room gives: a lock on a key the
+# the operator**, for the reason every lock in this room gives: a lock on a key the
 # occupant invents measures which word the occupant chose.
 # ⚠️ **The KEY is the operator's word and the VALUE is the occupant's.** A
 # needle demanding the value BE the old wording scored a sitting that wrote the
@@ -920,7 +922,7 @@ say     later December: the folded record states a date that appears in none of 
 # whether the correction really landed as ONE record with more than one
 # write, active, rather than a retraction beside a fresh claim wearing a
 # rewrite's shape from a distance. Placed last rather than beside the "was"
-# lock so that adding it never renumbers a lock this room already had.
+# lock so that adding it moves no lock the year's test pins by its position.
 check   the_board_locks_mistake_is_rewritten_in_place
 say     later December: the board lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite
 
@@ -931,7 +933,7 @@ say     later December: the board lock's correction did not land as one record w
 # way a session with no reason to know the flag exists actually would — so
 # nothing has ever proven the fold is served SHORT rather than merely
 # STORED. Placed last, after the board lock's own check, for the same reason
-# that one is: adding it here never renumbers a lock this room already had.
+# that one is: adding it here moves no lock the year's test pins by its position.
 #
 # ⚠️ **Both assertions in the same lock, because a `lacks`-only lock passes
 # on an answer that came back empty.** The elision note — `"stood_for":`,
@@ -964,7 +966,7 @@ say     later December: the longboard's own sources are not reachable even by na
 # rather than joined — which is the wrong answer a plain value gives.
 #
 # Placed last, for the reason every other lock in this block already is:
-# adding it here never renumbers a lock this room already had.
+# adding it here moves no lock the year's test pins by its position.
 recall {"subject": "thing:skateboard"}
 carries "km":"1400"
 say     later December: the skateboard's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it
@@ -979,6 +981,13 @@ say     later December: the skateboard's distance does not read as the year's tw
 # record still says what it always said.
 #
 # Placed last, for the reason every lock in this block already is.
+#
+# ⚠️ **The one lock in the year that names the inspection's handle.** January
+# invents it, and this lock reads `event:gorge-safety-inspection`, the name the
+# brief's words most naturally make; October gives the event a new name, and a
+# handle it wore before keeps answering. A run whose January filed the event
+# under another handle fails here for the name and not for the claim, and the
+# other locks in the year reach the event by kind and edge to avoid exactly that.
 recall {"subject": "event:gorge-safety-inspection", "facts": true}
 carries "standing":"open"
 say     later December: the inspection's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so
@@ -988,15 +997,15 @@ say     later December: the inspection's own planning claim does not read as sti
 # broken. It is wrong only because January said, once, that the operator's
 # own three words are invoiced, paid or waived, and nothing else. A sitting
 # with no memory of January has no way to know "sent" is the odd one out
-# except by having kept that declaration — the same property the ledger
-# room's own design rests this whole capability on.
+# except by having kept that declaration — the property this whole capability
+# rests on.
 #
 # ⚠️ **On the skateboard, not the longboard, and that placement is load-bearing.** Two
 # jobs sharing one subject would share the fold on `cost` and `settled` too
 # — the newer write would read back as both jobs' current value, and the
 # older job's own figures would be reachable only behind `stood_for`. One
-# job per subject is what keeps each independently readable, the same
-# reason the ledger room's own furniture never put two jobs on one thing.
+# job per subject is what keeps each independently readable, which is why
+# each job in this year sits on a subject of its own.
 #
 # ⚠️ **No `facts: true`.** The fold alone is the question — what the thing
 # HOLDS now — and asking for the records too would put the same pair at two
@@ -1018,9 +1027,9 @@ carries "settled":"paid"
 say     later December: the March job no longer reads as paid, so a word that was already right was painted over
 
 # 🚨 **THE SECOND OFF-VOCABULARY WORD, INDEPENDENT OF NOVEMBER'S "sent".**
-# Ledger's own room uses two odd words on purpose — its own text says one
-# outlier is guessable, and two make the question about the actual SET
-# rather than about the one word that looks wrong. This is the other half
+# This year uses two odd words on purpose: one outlier is guessable, and two
+# make the question about the actual SET rather than about the one word that
+# looks wrong. This is the other half
 # of the same fix this block already proves for the wheels, on its own
 # subject, so a sitting that catches one off-vocabulary word and stops is
 # caught apart from one that found the set.
@@ -1078,8 +1087,8 @@ is where the method reads.
 
 **Whether October reads as a correction rather than a coincidence.** September
 recorded that Ralph returned the skate tool; October says Nelson brought it back. The
-lock only reads WHAT landed on the record — September's address, rewritten,
-with the earlier wording still reachable through it. Whether the sitting
+lock only reads WHAT landed on the record — September's address, archived and
+still saying Ralph, with a standing claim about Nelson derived from it. Whether the sitting
 treated it as a correction ON PURPOSE, or arrived at the same record by
 accident, is in the transcript rather than in the store, and that is a
 person's to read.

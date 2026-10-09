@@ -54,9 +54,10 @@ message assistant | the reading pile, and somebody to take it | I want a second 
     Leave it so whoever comes next can pick it up.
 ```
 
-⚠️ **Every lock in this room but the first reaches for Rust, and that is the
-finding rather than a shortcut.** Three of the four are about **whichever bot
-is not the one that ships** — a thing the OCCUPANT named. A lock's query is
+⚠️ **Every lock in this room reaches for Rust, and that is the finding rather
+than a shortcut.** The first asks which ONE message is no longer new, which an
+assertion cannot say (`checks.rs` gives the reason). Three of the four are about
+**whichever bot is not the one that ships** — a thing the OCCUPANT named. A lock's query is
 text written before the run, nothing in the query surface computes *the one
 that is not this one*, and pinning a handle would assert that the occupant
 guessed the same word this document did.

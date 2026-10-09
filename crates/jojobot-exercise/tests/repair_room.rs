@@ -206,7 +206,7 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
                 room,
                 sid,
                 "archive_entity",
-                json!({"handle": "place:bet", "reason": "the same place as the Atlas Tavern"}),
+                json!({"handle": "place:drunken-clam", "reason": "the same place as Moe's Tavern"}),
             )
             .await;
         }
@@ -215,8 +215,8 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
                 room,
                 sid,
                 "capture",
-                json!({"subject": "place:atlas",
-                       "content": "The Thursday quiz night is at Betty's Bar.",
+                json!({"subject": "place:moes-tavern",
+                       "content": "The Thursday quiz night is at The Drunken Clam.",
                        "provenance": "testimony"}),
             )
             .await;
@@ -225,7 +225,7 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
                     room,
                     sid,
                     "archive_entity",
-                    json!({"handle": "place:bet", "reason": "the same place as the Atlas Tavern"}),
+                    json!({"handle": "place:drunken-clam", "reason": "the same place as Moe's Tavern"}),
                 )
                 .await;
             }
@@ -235,7 +235,7 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
                 room,
                 sid,
                 "merge_entities",
-                json!({"duplicate": "place:bet", "survivor": "place:atlas"}),
+                json!({"duplicate": "place:drunken-clam", "survivor": "place:moes-tavern"}),
             )
             .await;
         }

@@ -43,6 +43,12 @@ in the key's own word — *runs out on*, *decide by* — and nothing else change
 It is a change to what the operator says, not a hint: the entry still names no
 type, key or verb.
 
+**The loan is worded in `runs_out`'s word, not `promised_by`'s.** *Runs out on*
+is the word the `runs-out` type's key carries, and the loan is a promise, whose
+own key is `promised_by`. A model that takes the wording at its word writes the
+loan under `runs_out`, which the call-log table counts as a shipped date key and
+not as the loan's own. The loan's lock asks `due_on`, which both leave.
+
 ## The identity rule — binding, and the same as every room's
 
 **The model boots as the shipped `assistant` and stays there.** No charter is

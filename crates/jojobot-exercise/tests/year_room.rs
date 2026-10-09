@@ -1,6 +1,6 @@
 //! **The year, held for free.**
 //!
-//! Fourteen cold sittings over a fictional year. The locks that matter are late
+//! Fifteen cold sittings over a fictional year. The locks that matter are late
 //! and the work that earns them is early, so the case that says the year
 //! measures anything is the one that works only its second half: a store that
 //! nobody wrote in until June cannot answer the questions September and October
@@ -1561,7 +1561,7 @@ async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words:
     // **The second job off the vocabulary — its own subject, its own wrong
     // word.** "billed" is not one of the operator's three, and it is wrong
     // for a reason independent of "sent" above: two odd words rather than
-    // one, on purpose, for the reason `ledger.md` gives.
+    // one, on purpose, for the reason `year.md` gives beside that lock.
     did(
         room,
         sid,
@@ -2486,7 +2486,7 @@ async fn work_the_year(
 
 // ────────────────────────────── the cases ──────────────────────────────
 
-/// **Fourteen sittings, every one cold, every one claiming its day.**
+/// **Fifteen sittings, every one cold, every one claiming its day.**
 ///
 /// The day is what the whole fiction rests on: jojobot reads no clock, so a
 /// sitting that names no day is stamped with the day the run happened and the
@@ -2663,7 +2663,7 @@ async fn every_lock_holds_once_the_year_is_worked() {
 /// 🚨 **The sabotage that says the year measures anything: start it in June.**
 ///
 /// If the second half of the year reads much the same against a store nobody
-/// wrote in until June, the year is measuring nothing — it is fourteen rooms
+/// wrote in until June, the year is measuring nothing — it is fifteen rooms
 /// in a row rather than one year.
 ///
 /// **Both halves.** The early sittings' locks fail because that work never
@@ -2703,7 +2703,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
         assert!(
             !outcomes[*at].held,
             "a year that began in June answered a question resting on a sitting that never \
-             happened, so it is fourteen rooms in a row rather than one year: {}",
+             happened, so it is fifteen rooms in a row rather than one year: {}",
             saying(&outcomes),
         );
     }
@@ -2839,10 +2839,10 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         room: &surface,
         boundaries: &boundaries,
     };
-    // **Every dated sitting the room asserts a day over.** July rewrites the
-    // March claim with `update_fact` and late October retracts a June one with
-    // `retract` — both verbs take a date now, so both carry the day the
-    // operator names rather than the day the run happened. September is the
+    // **Every dated sitting the room asserts a day over.** July takes the
+    // March claim back and late October retracts a June one, both with
+    // `retract` — the verb takes a date, so both carry the day the operator
+    // names rather than the day the run happened. September is the
     // one sitting that writes about an earlier day, and the room says so.
     let mut missed = Vec::new();
     let mut asked = 0;
@@ -2876,8 +2876,8 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
 ///
 /// Every other lock in this room runs once against the FINISHED room, so the
 /// only question it can ask is whether something is still there at the end.
-/// March cannot be asked that: July rewrites what March wrote, in place and
-/// under July's own day, and editing a claim destroys what it said before.
+/// March asks a different question: did that sitting record anything. July takes
+/// the claim March wrote back, which marks the record rather than rewriting it.
 ///
 /// **So this reads the world either side of March.** The negative is a year
 /// worked without that sitting; the positive is a year worked with it. **Both

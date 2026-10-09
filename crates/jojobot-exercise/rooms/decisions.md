@@ -4,6 +4,13 @@ A room about whether separate cold sittings can file and later recover design ru
 
 The first nine sittings file the register. Each of the seven later sittings asks one question with no memory of the filing. A rule number is an address for an answer, not a filing instruction.
 
+## The identity rule — this room is the exception
+
+The other rooms open every entry by naming the shipped `assistant` (see
+`bike.md` and `loop.md`). **No entry here names an identity**, and nothing in
+the harness adds one, so a decisions run does not start from that line. What
+this room measures is the filing and the recall, not the boot.
+
 ## Starting work items
 
 The operator names seven pieces of work. They are places for later findings, not places for the rules themselves.
@@ -479,6 +486,6 @@ say     question 7 has no recorded answer with the required rules on its work it
 
 ## What this room can assert
 
-The locks below observe stored results. A paid run still needs a reader to judge whether each answer actually cites the right rule for the right reason.
+The locks above observe stored results. A paid run still needs a reader to judge whether each answer actually cites the right rule for the right reason.
 
 For misses on questions 2 or 5, read the run transcript for whether the answer named what the read left out before calling it a product defect.

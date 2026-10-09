@@ -15,7 +15,7 @@ use crate::run::Expectation;
 use crate::surface::Seed;
 
 /// **The handover room**, converted: its world and its locks are in its
-/// document, and every lock but the first is a named check.
+/// document, and every lock is a named check.
 pub const HANDOVER_ROOM: &str = "rooms/handover.md";
 
 /// **The loop room**, converted: its world and its locks are in its document.
@@ -25,7 +25,7 @@ pub const LOOP_ROOM: &str = "rooms/loop.md";
 /// and the two claims no query expresses are named checks.
 pub const BIKE_ROOM: &str = "rooms/bike.md";
 
-/// **The year** — fourteen cold sittings inside one year. Written in its
+/// **The year** — fifteen cold sittings inside one year. Written in its
 /// document from the beginning, which is what the format was built for.
 pub const YEAR_ROOM: &str = "rooms/year.md";
 
@@ -33,8 +33,8 @@ pub const YEAR_ROOM: &str = "rooms/year.md";
 /// person would file it, so a late question has to reach across subjects
 /// rather than read one. Decision log 299: this is the year room a paid run
 /// uses unless another is named. `year.md` stays shipped for its own
-/// coverage (retraction vs rewrite, rename rendering, the fold, the ledger
-/// vocabulary, lineage walk-back, derivation-on-check-in).
+/// coverage (retraction vs rewrite, rename rendering, the fold, the payment
+/// status vocabulary, lineage walk-back, derivation-on-check-in).
 pub const VAULT_ROOM: &str = "rooms/vault.md";
 
 /// A real design-rule register filed and queried across cold sittings.
@@ -54,7 +54,7 @@ pub const REPAIR_ROOM: &str = "rooms/repair.md";
 pub const TRICK_ROOM: &str = "rooms/trick.md";
 
 /// **The agency room** — a probe built to fail on the product: one employee,
-/// two projects, four cold sittings across nine months. Not the default.
+/// two projects, four cold sittings across eleven months. Not the default.
 pub const AGENCY_ROOM: &str = "rooms/agency.md";
 
 /// **The asking room** — nine sittings of a year, then one cold sitting asked a

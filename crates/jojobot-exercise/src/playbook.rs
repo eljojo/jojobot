@@ -97,8 +97,6 @@ pub struct Phase {
     /// the answer rather than in the room, so nothing asserts over it and the
     /// run surfaces it instead.
     pub read_this: bool,
-    /// **Whether this sitting writes about a day that is not its own**, so the
-    /// generated day assertion does not apply to it. See [`EARLIER_DAY`].
     /// **The day this sitting claims**, when the document says one.
     ///
     /// `None` is a sitting that names no day, which is every room written

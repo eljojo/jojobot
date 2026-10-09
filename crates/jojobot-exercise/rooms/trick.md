@@ -170,10 +170,10 @@ carries rhythm:water-the-fern
 say     the fern is not owed on 2026-11-21, after the day the operator said it could come back, so the loop was taken out for good or never returned
 window  phase-end
 
-# The pause on a request with no loop behind it. The thing the photos live on
-# is the handle, so the lock asks whether anything owed regards it, by whichever
-# route: a promise pointing at it, or the thing itself falling due. Before the
-# day nothing regards it, and after the day something does.
+# The pause on a request with no loop behind it. The folding chairs are the
+# handle, so the lock asks whether anything owed regards them, by whichever
+# route: a promise pointing at them, or the thing itself falling due. Before the
+# day nothing regards them, and after the day something does.
 recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-11-12"}}
 carries rhythm:swap-the-air-filter
 lacks   thing:folding-chairs

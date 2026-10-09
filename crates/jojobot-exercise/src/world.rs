@@ -29,6 +29,16 @@
 //! **`bot` and `sitting` furnish a SECOND bot** and the sittings it already had.
 //! The occupant is refused by both: see [`Seed::house_bot`].
 //!
+//! **An `entity` line may carry a third field, `resembles: kind:slug`**, which
+//! declares that the entity is meant to resemble another already in the world:
+//! it is the one thing furnishing retries a near-miss refusal past, with the
+//! override token the refusal mints. Absent means undeclared, and the refusal
+//! stands.
+//!
+//! ```text
+//! entity  thing:kettle | Kettle | resembles: thing:kettl
+//! ```
+//!
 //! **A handle carries its kind**, which is how a caller addresses one
 //! everywhere else, so this reads the way the surface reads.
 //!

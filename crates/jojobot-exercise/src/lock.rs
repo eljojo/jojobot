@@ -11,6 +11,11 @@
 //!   exception: `carries-either` takes any one of several end states a room
 //!   accepts as right. Pushing more into jojobot would grow a test framework
 //!   inside a query surface, which is worse than the cost it saves;
+//! * the **window**, optional, is one line beside `say`: `window own-phase` reads
+//!   the lock against the room as its OWN phase left it, and `window phase-end`
+//!   sends a query the server computes as that phase ended. A lock that names
+//!   no window runs live, against the finished room, and a window is refused
+//!   under no phase heading and on a check;
 //! * the **sentence** is authored prose and is never generated. *The skate tool says
 //!   `sent` for where the job has got to* is worth more than a boolean because
 //!   somebody wrote it about this room.

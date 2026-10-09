@@ -24,7 +24,8 @@ different words. **Extraction and connection, never collection.**
 `year.md` is tuned over many paid runs and its locks carry hard-won hatch
 windows. Adding twelve cross-subject questions to it would double a document
 that is already the largest in the suite, and every new lock there has to be
-placed "last, so nothing renumbers" — a constraint that fights weaving. A room
+placed last, so the positions its test pins stay where they are — a constraint
+that fights weaving. A room
 with its own cast, its own furniture and its own register reads differently
 from `year.md`: that one fails when a sitting wrote badly, this one fails
 when a sitting **read narrowly**.
@@ -35,9 +36,11 @@ Everything `year.md` says about the day marker holds here unchanged: each
 sitting says its date in the entry and in the `**Day:**` marker, the run
 generates the assertion that what it wrote carries that day, and a sitting
 that writes nothing is neither pass nor fail on that assertion. Two sittings
-here record something that happened on an earlier day; both write on their own
-day and name the earlier one in a separate field, exactly as `year.md`'s
-September does.
+here record something that happened on an earlier day: February's swim and
+October's last call carry the earlier day as a loop's check-in day. Both write
+on their own day. Only October's course names a span in separate fields, as
+`happened_at` and `happened_through` on one claim, and that is the one lock in
+the room that reads such a field.
 
 **The three loops are furnished with their schedules already in place**, the
 way the loop room's fern is: a room with nothing in it teaches no vocabulary.
@@ -75,9 +78,9 @@ machines, possessions and projects a person already has notes for**, three
 loops with their schedules, and one brief. Every fact in the year is written by
 a sitting.
 
-**Two pairs are named alike and both are real** — `place:wagstaff-pool` and
-`event:wagstaff-fair`, `place:capital-city` and nothing else — and neither
-meets the near-miss guard: it is scoped to one kind, and these cross kinds by
+**One pair is named alike and is real** — `place:wagstaff-pool` and
+`event:wagstaff-fair` — and `place:capital-city` has no twin. The pair does not
+meet the near-miss guard: it is scoped to one kind, and these cross kinds by
 design, so both stand without incident. **The pair that does meet it is
 `person:linda` and `person:tina`, two edits apart and the same kind.** This
 document DECLARES the pair, below, so furnishing retries that one refusal
@@ -153,6 +156,19 @@ message assistant | moving my notes in | I am moving my notes in here from the f
 
     Leave it so whoever picks this up in a month has what they need.
 ```
+
+## The status words the locks accept
+
+The brief gives the operator's three words for a project, *considering, doing
+or done*, and says no others. **The locks accept the words the instance can
+read**: the shipped five (`someday`, `next`, `now`, `waiting`, `done`), and the
+operator's own words only once they are bound, by `columns` on the instance or
+on the project, or by a `status_word/<word>` mapping on the instance to a
+shipped word. So a project's first status is `someday` or `next`, or
+`considering` once bound (the shed, and the kitchen floor's history); the
+kitchen floor's move to its working status is `now`, or `doing` once bound; and
+`done` ends the floor, being both the operator's word and a shipped one. A bare
+word with none of those fails.
 
 ## Phase 1 — January, the vault moves in
 
@@ -245,9 +261,10 @@ say     January: the operator's own timing is on record as a guess rather than a
 
 ```locks
 # 🚨 **A window that is a RETURN PERIOD rather than cover, on a thing the
-# occupant names.** No handle is pinned: the thing is found by the day the
-# operator's arithmetic lands on — thirty days from the 6th — under the key the
-# operator asks by. In December this is the control: a window long closed that
+# occupant names.** No handle is pinned in this lock: the thing is found by the
+# day the operator's arithmetic lands on — thirty days from the 6th — under the
+# key the operator asks by. March's lock below does read the desk by the handle
+# `thing:standing-desk`, which the occupant chooses. In December this is the control: a window long closed that
 # must NOT be flagged.
 recall {"kind": "thing", "fields": [{"key": "runs_out", "value": "2026-03-08"}]}
 carries "runs_out":"2026-03-08"
@@ -348,7 +365,7 @@ say     March: nothing on the cat carries this sitting's own day, so the constra
 # 🚨 **THE DESK'S DEADLINE, READ FROM ITS OWN WRITE HISTORY.** "The desk
 # stays" settles what to DO about the window; it says nothing about the
 # window itself, which is a closed but still-true historical fact — the
-# December trap lock above depends on it still being findable by the exact
+# December trap lock below depends on it still being findable by the exact
 # day it ran out. Clearing the key that carries it, rather than simply
 # adding today's note, is the wrong move this lock watches for: a write
 # that takes a key off leaves a `cleared` write behind rather than no
@@ -793,7 +810,10 @@ closed); the furnace's free service 2027-02-01; the boots' guarantee
 2027-03-08; the laptop's cover 2028-01-10; the phone's cover 2028-07-10. The
 operator's horizon is the end of March 2027. **Exactly two windows are open
 today and close inside it** — the furnace and the boots — and the desk's is
-the trap: before the horizon, and already gone.
+the trap: before the horizon, and already gone. **A sixth day sits under a
+deadline key and is no window of the five:** the fair's ticket deadline,
+2026-10-10, written in August under `runs_out` or `decide_by`, and also past
+today. The last lock reads it.
 
 > This is a role-play: play the day below as if it is really today.
 >

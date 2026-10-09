@@ -5,15 +5,15 @@ for itself.** The model is not told what jojobot serves, which verb to reach
 for, or that anybody is measuring it. What it gets is one line. Everything
 after that it works out from the surface as shipped.
 
-## Why this is not the cold-session suite
+## Why this is not a numbered walkthrough
 
-The suite beside this one walks a model through eighty numbered steps and asks
-it to report on each. That measures whether a session **can** reach a
-capability once somebody points at it, and it is the right instrument for that
-question. What it cannot measure is whether a session **does**: a step that
-says "call `read_mailbox` with counts only" has already found the mailbox for
-the occupant, and a phase that asks for PASS or FAIL has said that a test is
-running and that somebody is reading the answer.
+A walkthrough that takes a model through numbered steps and asks it to report
+on each measures whether a session **can** reach a capability once somebody
+points at it, and it is the right instrument for that question. What it cannot
+measure is whether a session **does**: a step that says "call `read_mailbox`
+with counts only" has already found the mailbox for the occupant, and a phase
+that asks for PASS or FAIL has said that a test is running and that somebody is
+reading the answer.
 
 So this room hands over a goal and nothing else. **The locks are the product's
 own routing.** The brief is not in this document — it is waiting in a mailbox,
@@ -24,11 +24,12 @@ learns what the work is, and every lock after that is out of reach.
 the state the room is left in, read back through the served surface. What the
 model said is a transcript a person reads, and it decides nothing.
 
-## The identity rule — binding, and the same as the suite's
+## The identity rule — binding on every room but the decisions room
 
 **The model boots as the shipped `assistant` and stays there.** No charter is
 written for it, by the furniture or by anything else, and no hand-authored
-orientation of any kind reaches it. A room that handed the occupant a bespoke
+orientation of any kind reaches it. The decisions room is the one exception: its
+entries name no identity (see `decisions.md`). A room that handed the occupant a bespoke
 charter would measure the charter somebody wrote for the test.
 
 **The entry line names that identity, and nothing else.** It did not, once:
@@ -135,8 +136,9 @@ carries "km":"4100"
 say     the bike's distance does not read as this year's number, so the newest thing recorded about how far it goes is not this year
 
 # A handoff is waiting: EITHER a message the occupant left, or a run left open
-# saying what it was working on. Both are rails the product offers, and an
-# assertion has no way to say "either of these", so this one reaches for Rust.
+# saying what it was working on. Both are rails the product offers, but they sit in
+# two different answers, the board's mail and the door's offer, and `carries-either`
+# takes alternatives within ONE answer, so this one reaches for Rust.
 check   a_handoff_is_waiting
 say     no message was left and no open run says what it was doing, so the next session arrives at what the occupant found and not at what it did
 ```

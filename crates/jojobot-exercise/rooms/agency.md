@@ -1,6 +1,6 @@
 # The agency room
 
-**A probe, not a proof.** One employee at an agency records everything as nine
+**A probe, not a proof.** One employee at an agency records everything as eleven
 months pass, across four cold sittings that are each dense, and is asked
 questions that only a store that kept the right thing, and handed it back, can
 answer. **It is built to fail on the product.** Its reds are the deliverable,
@@ -70,7 +70,8 @@ so December's reds read against a column of greens.
 
 **The model boots as the shipped `assistant` and stays there.** No charter is
 written for it, and no hand-authored orientation reaches it. The entry names no
-verb and no place to look.
+verb and no place to look, except in December, whose entry names the slot each
+answer goes in.
 
 ## What the room cannot measure
 

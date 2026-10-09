@@ -71,10 +71,10 @@ record  person:bart | {"allergy": "peanuts"} | Bart is allergic to peanuts
 
 # One place named twice, with a claim on each handle. The names do not
 # resemble one another, so the two could be created.
-entity  place:atlas | The Atlas Tavern
-entity  place:bet | Betty's Bar
-fact    place:atlas | testimony | the back booth is the quiet one
-fact    place:bet | testimony | the Thursday quiz night is at Betty's Bar
+entity  place:moes-tavern | Moe's Tavern
+entity  place:drunken-clam | The Drunken Clam
+fact    place:moes-tavern | testimony | the back booth is the quiet one
+fact    place:drunken-clam | testimony | the Thursday quiz night is at The Drunken Clam
 
 # Two loops, both owed by the fourth of November. One of them is the fern the
 # operator is about to say they gave away; the other must stay owed, so an
@@ -127,7 +127,7 @@ say     the loan's last day is not owed by the day it was given, so the question
 
 **Session: fresh.**
 
-> start jojobot as assistant — a few things to put right. Bart is not the one who is allergic to peanuts, Homer is. The Atlas Tavern and Betty's Bar are one and the same place. And I gave the fern away, so I am not watering it any more.
+> start jojobot as assistant — a few things to put right. Bart is not the one who is allergic to peanuts, Homer is. Moe's Tavern and The Drunken Clam are one and the same place. And I gave the fern away, so I am not watering it any more.
 
 ```locks
 # The correction reached the person it was about.

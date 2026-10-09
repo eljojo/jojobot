@@ -171,6 +171,7 @@ const ROSTER: &[&str] = &[
     "place:leftorium",
     "place:moes-tavern",
     "place:moes",
+    "place:drunken-clam", // Family Guy's bar, the second name for a place in the repair room
     "place:daredevil-gorge", // made up: named for the gorge Homer tries to jump in "Bart the Daredevil"
     "place:north-haverbrook",
     // The Belcher family's street, Bob's Burgers.

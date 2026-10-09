@@ -10,7 +10,11 @@
 //! sees is written beside the lock, in the room, by somebody who knows what the
 //! room is about.
 //!
-//! # What each entry here says the surface cannot do
+//! # What the first entries here say the surface cannot do
+//!
+//! These are the entries the first rooms reached for. Each later one says what
+//! it needs on the function that holds it, and the decisions room's question
+//! checks are built by one function, `rule_answer_check`.
 //!
 //! * **`the_brief_left_the_box`** — say that ONE named message is no longer
 //!   `new`. An assertion is a substring of the whole answer, so it cannot
@@ -21,9 +25,10 @@
 //!   VALUE under some key the caller does not know the name of, as opposed to
 //!   sitting in prose. `fields` selects by a named key and `values` reports the
 //!   values of a named key; neither asks *is this anywhere as a value*.
-//! * **`a_handoff_is_waiting`** — say **either** of two claims. The assertion
-//!   vocabulary is three words that do not branch, on purpose, and an `or`
-//!   would be the first branch in it.
+//! * **`a_handoff_is_waiting`** — say **either** of two claims that sit in two
+//!   different answers, the board's mail and the door's offer. The assertion
+//!   vocabulary does not branch, on purpose; `carries-either` is the one
+//!   exception, and it takes alternatives within ONE answer.
 //! * **`the_service_landed_on_the_loop_that_already_existed`** — correlate two
 //!   values inside ONE object. An assertion is a substring of the whole
 //!   answer, so one loop carrying two check-in days and two loops carrying one
@@ -789,7 +794,7 @@ async fn the_brief_left_the_box(seen: &Observed<'_>) -> Result<(), String> {
 /// ⚠️ **Read by direct handle, never by a kind browse**, because a browse drops
 /// an archived place and the second route is exactly an archived place.
 async fn one_place_after_the_correction(seen: &Observed<'_>) -> Result<Option<String>, String> {
-    const PLACES: [&str; 2] = ["place:atlas", "place:bet"];
+    const PLACES: [&str; 2] = ["place:moes-tavern", "place:drunken-clam"];
     const CLAIMS: [&str; 2] = ["booth", "quiz"];
     let mut held: Vec<(String, bool, Vec<Value>)> = Vec::new();
     for handle in PLACES {
@@ -1111,16 +1116,9 @@ const COUNCIL: &str = "\"subject\":\"org:springfield-town-council\"";
 ///
 /// **Every other check in every room runs once, against the finished room**, so
 /// the only question a room can ask is whether something is still there at the
-/// end. That is a weaker question, and March is where the difference bites: a
-/// later sitting rewrites March's claim IN PLACE, under its own day, and
-/// editing a claim destroys what it said before — the earlier text is on no
-/// read, because a claim's content is a column on the fact row rather than one
-/// of the field writes the store keeps. **So by the time the checks run there
-/// is nothing dated March and nothing saying what March said.**
-///
-/// ⛔️ **The needle cannot be a word, either.** March's claim survives today
-/// only because the sentence that replaced it happens to keep one — which is a
-/// check standing on an accident.
+/// end. March asks a different question: did that sitting record anything. A
+/// later sitting takes March's claim back, which marks the record rather than
+/// rewriting it, and the council gains other records after March.
 ///
 /// **So this reads the world either side of March and asks whether the council
 /// gained a record in that window.** Only March writes there. It is structural,
@@ -2143,7 +2141,7 @@ async fn late_octobers_council_drew_a_standing_member_for_bart(
 /// Two `carries` lines hold on two separate records naming one thing each,
 /// which is the easy case and not the one being watched. **Whether two landed
 /// on ONE record is a correlation inside one object**, and the lock format's
-/// three words do not branch — the same reason the loop's own lock is a hatch.
+/// assertion words do not branch — the same reason the loop's own lock is a hatch.
 ///
 /// ⛔️ **It used to demand a person, a place and an event together, and that
 /// could not be met.** The year's story never asks a sitting to name all three
