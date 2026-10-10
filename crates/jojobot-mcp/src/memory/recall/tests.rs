@@ -7600,7 +7600,7 @@ async fn a_hostile_dependency_list_is_cut_to_a_room_and_the_rest_counted() {
     let left_out = object["blocked_by_left_out"]["count"]
         .as_u64()
         .expect("the rest is counted") as usize;
-    assert!(shown >= 1 && shown < 60, "{shown} of 60 shown");
+    assert!((1..60).contains(&shown), "{shown} of 60 shown");
     assert!(
         object["blocked_by"].to_string().len() <= crate::memory::ready::BLOCKED_BY_ROOM,
         "the blockers stay inside their room: {named}"

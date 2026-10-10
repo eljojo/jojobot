@@ -244,7 +244,8 @@ then the keys.
 
     selects   what it looks at — a kind. Required.
     shows     what of each comes back: facts, prose, charter.
-    asks      overdue, when the question is what has fallen due.
+    asks      overdue, when the question is what has fallen due; ready, when
+              it is which work can be started.
 
 Anything you send beside the name wins, so a view is a starting point rather
 than a cage: `recall  view: "colleagues"  charter: true` is the shipped question

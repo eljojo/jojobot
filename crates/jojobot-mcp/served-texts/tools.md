@@ -3133,8 +3133,13 @@ is yours and wins, so a view is a starting point rather than a cage.
 A name that is no view comes back blocked, with the views that exist.
 
 `view: "colleagues"` lists the identities here and what each is for; `view:
-"loops"` lists the recurring things (rhythms) and what each last recorded. A
-view carries its own `shows_keys`, and a `keys` you send wins over it.
+"loops"` lists the recurring things (rhythms) and what each last recorded;
+`view: "ready"` lists the work that can be started now, which is work not
+yet finished whose dependencies are all finished and that waits on nothing.
+The blocked work is counted as left out, and the answer names the call that
+says why: send the view with `subject` set to one piece of work and it comes
+back with `ready: false` and `blocked_by`. A view carries its own
+`shows_keys`, and a `keys` you send wins over it.
 ```
 
 ### Tool `rename_entity`
