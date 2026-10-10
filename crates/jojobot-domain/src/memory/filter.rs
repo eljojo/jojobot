@@ -29,14 +29,22 @@
 //! it includes the things that lack the key: `Not(status = done)` keeps a thing
 //! with no status, and `status != done` does not.
 //!
+//! **One hop over a reference list.** [`Filter::Refs`] asks a question of the
+//! things a list key names: every one of them, or at least one. The question is
+//! itself a filter, evaluated on each named thing and not on the holder, with a
+//! [`Lookup`] supplying the things. [`Filter::Finished`] asks whether the thing
+//! it is evaluated on is finished, by the same function the owed-and-late read
+//! uses. A handle the lookup cannot find fails whatever is asked of it, so a
+//! dangling reference never reads as satisfied.
+//!
 //! **Not a string parser and not a store push-down.** The tree is built in code.
 //! Reading a tree out of an argument, and answering a tree from an index, are
 //! other work.
 
 use std::collections::BTreeMap;
 
-use super::MemoryError;
-use super::types::{Compare, DeclaredType, ValueType, list_holds};
+use super::types::{Compare, DeclaredType, ValueType, list_holds, list_items};
+use super::{MemoryError, kinds};
 
 /// **One filter, or a combination of filters.**
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +60,63 @@ pub enum Filter {
     Not(Box<Filter>),
     /// A test of one key.
     Leaf(Leaf),
+    /// **A question asked of the things a reference list names**, one hop. See
+    /// [`Quantifier`] for what "holds" means over the list.
+    Refs {
+        /// The key whose value is a list of handles.
+        key: String,
+        /// Whether every named thing must answer, or at least one.
+        quantifier: Quantifier,
+        /// The question each named thing is asked.
+        then: Box<Filter>,
+    },
+    /// **The thing this is evaluated on is finished**, by
+    /// [`kinds::is_finished`] with the instance's own status words. An archived
+    /// thing is not finished, whatever it holds.
+    Finished,
+}
+
+/// **How a [`Filter::Refs`] reads its list.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantifier {
+    /// Every named thing answers. **An empty list holds**: there is nothing for
+    /// it to fail on, as for an empty [`Filter::All`].
+    All,
+    /// At least one named thing answers. An empty list does not hold.
+    Any,
+}
+
+/// **A thing as a filter sees it**: what kind it is, what it holds, and whether
+/// it was archived.
+#[derive(Debug, Clone, Copy)]
+pub struct Subject<'a> {
+    /// The kind token, for the questions that depend on it.
+    pub kind: &'a str,
+    /// The thing's folded fields.
+    pub fields: &'a BTreeMap<String, String>,
+    /// Whether the thing is archived.
+    pub archived: bool,
+}
+
+/// **The things a reference list can name, and the instance's own record.**
+pub trait Lookup {
+    /// The thing this handle names now, or `None` when it names nothing.
+    fn thing(&self, handle: &str) -> Option<Subject<'_>>;
+    /// The instance's own fields: what its status words mean.
+    fn instance(&self) -> &BTreeMap<String, String>;
+}
+
+/// **A lookup that finds nothing.** What [`Filter::holds`] evaluates with, so a
+/// tree that needs other things answers as if none exist.
+struct Nothing(BTreeMap<String, String>);
+
+impl Lookup for Nothing {
+    fn thing(&self, _handle: &str) -> Option<Subject<'_>> {
+        None
+    }
+    fn instance(&self) -> &BTreeMap<String, String> {
+        &self.0
+    }
 }
 
 /// **A test of one key's value.**
@@ -180,12 +245,49 @@ impl Filter {
 
     /// **Does this bag of fields satisfy the filter.** It is handed the thing's
     /// folded fields or one record's, and does not know which.
+    ///
+    /// **It knows no other thing**, so a [`Filter::Refs`] over a list with an
+    /// item finds nothing there and fails, and [`Filter::Finished`] has no kind
+    /// to ask about. [`Filter::holds_in`] is the question with a lookup.
     pub fn holds(&self, fields: &BTreeMap<String, String>) -> bool {
+        let subject = Subject {
+            kind: "",
+            fields,
+            archived: false,
+        };
+        self.holds_in(&subject, &Nothing(BTreeMap::new()))
+    }
+
+    /// **Does this thing satisfy the filter, given the things a reference list
+    /// can name.**
+    pub fn holds_in(&self, subject: &Subject<'_>, lookup: &dyn Lookup) -> bool {
         match self {
-            Filter::All(all) => all.iter().all(|filter| filter.holds(fields)),
-            Filter::Any(any) => any.iter().any(|filter| filter.holds(fields)),
-            Filter::Not(inner) => !inner.holds(fields),
-            Filter::Leaf(leaf) => leaf.holds(fields),
+            Filter::All(all) => all.iter().all(|filter| filter.holds_in(subject, lookup)),
+            Filter::Any(any) => any.iter().any(|filter| filter.holds_in(subject, lookup)),
+            Filter::Not(inner) => !inner.holds_in(subject, lookup),
+            Filter::Leaf(leaf) => leaf.holds(subject.fields),
+            Filter::Refs {
+                key,
+                quantifier,
+                then,
+            } => {
+                let held = subject.fields.get(key).map_or("", String::as_str);
+                // A handle the lookup cannot find fails whatever is asked of it.
+                let answers = |handle: &&str| {
+                    lookup
+                        .thing(handle)
+                        .is_some_and(|named| then.holds_in(&named, lookup))
+                };
+                let handles = list_items(held);
+                match quantifier {
+                    Quantifier::All => handles.iter().all(answers),
+                    Quantifier::Any => handles.iter().any(answers),
+                }
+            }
+            Filter::Finished => {
+                !subject.archived
+                    && kinds::is_finished(subject.kind, subject.fields, lookup.instance())
+            }
         }
     }
 
@@ -216,6 +318,7 @@ impl Filter {
                 .try_for_each(|filter| filter.validate(declared, kind)),
             Filter::Not(inner) => inner.validate(declared, kind),
             Filter::Leaf(leaf) => leaf.validate(declared, kind),
+            Filter::Refs { .. } | Filter::Finished => Ok(()),
         }
     }
 }
