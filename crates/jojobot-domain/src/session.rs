@@ -517,30 +517,6 @@ pub fn claim_role(
     }
 }
 
-/// **The field key holding a role's current claimant**, on the bot entity's
-/// own fields — a bare string a caller invents for `role`, so this is what
-/// keeps two roles from colliding on one key.
-pub fn role_holder_key(role: &str) -> String {
-    format!("role/{role}/holder")
-}
-
-/// **The field key holding when a role was last claimed**, alongside
-/// [`role_holder_key`].
-pub fn role_claimed_at_key(role: &str) -> String {
-    format!("role/{role}/claimed_at")
-}
-
-/// **Whether `key` is one of a role's own two guarded fields, and which
-/// role** — parsed by pattern rather than checked against a fixed list,
-/// because a role's name is the caller's own choice, exactly as
-/// [`role_holder_key`] and [`role_claimed_at_key`] mint it by pattern
-/// rather than from a roster.
-pub fn role_from_field_key(key: &str) -> Option<&str> {
-    let rest = key.strip_prefix("role/")?;
-    rest.strip_suffix("/holder")
-        .or_else(|| rest.strip_suffix("/claimed_at"))
-}
-
 /// **The key a role object holds its current claimant under.** The role is its
 /// own object, a child of the bot that holds it, so the key carries no role name:
 /// the object is the role.
@@ -550,7 +526,7 @@ pub const ROLE_HOLDER: &str = "holder";
 /// keeps it and writes the epoch.
 pub const ROLE_CLAIMED_AT: &str = "claimed_at";
 
-/// **What a role's lease says right now**, whichever shape holds it.
+/// **What a role's lease says right now.**
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoleState {
     /// The session id that holds the role, if any session does.
@@ -559,35 +535,20 @@ pub struct RoleState {
     pub claimed_at: Option<Timestamp>,
 }
 
-/// **A role's state, read in both shapes** until the old one is dropped.
+/// **A role's state, read off the role object.**
 ///
 /// `child` is the role object's folded fields, `None` when no such object
-/// exists yet; `bot` is the holding bot's folded fields, where the old shape
-/// keeps `role/<role>/holder` and `role/<role>/claimed_at`. **A role object that
-/// carries a claim moment is the whole truth**, with or without a holder: a
-/// release clears the holder and keeps the moment, and reading the bot's old keys
-/// past it would find a holder the release had ended. A role object with no
-/// moment says nothing about the lease, so the old keys answer. A reader that
-/// understood only the new shape would see every role claimed before the change
-/// as empty, and a watcher that sees an empty role starts a second session.
-pub fn role_state(
-    role: &str,
-    child: Option<&std::collections::BTreeMap<String, String>>,
-    bot: &std::collections::BTreeMap<String, String>,
-) -> RoleState {
-    if let Some(child) = child
-        && child.contains_key(ROLE_CLAIMED_AT)
-    {
-        return RoleState {
+/// exists yet. **A role object that carries a claim moment is the whole truth**,
+/// with or without a holder: a release clears the holder and keeps the moment. A
+/// role object with no moment says nothing about the lease, and so does no
+/// object.
+pub fn role_state(child: Option<&std::collections::BTreeMap<String, String>>) -> RoleState {
+    match child {
+        Some(child) if child.contains_key(ROLE_CLAIMED_AT) => RoleState {
             holder: child.get(ROLE_HOLDER).cloned(),
             claimed_at: child.get(ROLE_CLAIMED_AT).and_then(|s| s.parse().ok()),
-        };
-    }
-    RoleState {
-        holder: bot.get(&role_holder_key(role)).cloned(),
-        claimed_at: bot
-            .get(&role_claimed_at_key(role))
-            .and_then(|s| s.parse().ok()),
+        },
+        _ => RoleState::default(),
     }
 }
 
@@ -600,27 +561,6 @@ pub fn role_claim_in(
     let claimant = fields.get(ROLE_HOLDER)?.clone();
     let now: Timestamp = fields.get(ROLE_CLAIMED_AT)?.parse().ok()?;
     Some((claimant, now))
-}
-
-/// **What a write's own fields say about a role claim, extracted rather
-/// than decided.** `None` when `fields` names neither of a role's own two
-/// keys: nothing here is this write's business. Otherwise the role, the
-/// claimant it names, and the moment it claims at — everything a caller
-/// needs to read the store's CURRENT state for that one role and decide
-/// with [`claim_role`], atomically, inside whatever critical section the
-/// actual write already runs in. Split from the decision itself because the
-/// decision needs the current holder, and only the store the write is
-/// about to land in can say what that is right now.
-pub fn role_write_in(
-    fields: &std::collections::BTreeMap<String, String>,
-) -> Option<(String, String, Timestamp)> {
-    let role = fields
-        .keys()
-        .find_map(|k| role_from_field_key(k))?
-        .to_string();
-    let claimant = fields.get(&role_holder_key(&role))?.clone();
-    let now: Timestamp = fields.get(&role_claimed_at_key(&role))?.parse().ok()?;
-    Some((role, claimant, now))
 }
 
 /// The id charset, `[a-z0-9-]` — the mailbox context's, for the same reasons.
@@ -2067,85 +2007,22 @@ mod tests {
         );
     }
 
-    /// **The role's key is pinned by its own literal.** Nothing outside this
-    /// process declares this spelling — it is stored on a bot's own fields
-    /// and read back by the same code that wrote it — so a rename here is
-    /// invisible to every other test and orphans a record already written
-    /// under the old key.
-    #[test]
-    fn a_roles_field_keys_are_pinned_by_their_own_literal() {
-        assert_eq!(role_holder_key("dev-dispatch"), "role/dev-dispatch/holder");
-        assert_eq!(
-            role_claimed_at_key("dev-dispatch"),
-            "role/dev-dispatch/claimed_at"
-        );
-    }
-
-    /// **The parse is the mint's own inverse, for both fields a role owns** —
-    /// and a key that merely looks like one (wrong prefix, wrong middle
-    /// segment split, or an ordinary field that shares no shape with either)
-    /// is not one.
-    #[test]
-    fn role_from_field_key_inverts_the_two_mints_and_nothing_else() {
-        assert_eq!(
-            role_from_field_key(&role_holder_key("dev-dispatch")),
-            Some("dev-dispatch")
-        );
-        assert_eq!(
-            role_from_field_key(&role_claimed_at_key("dev-dispatch")),
-            Some("dev-dispatch")
-        );
-        assert_eq!(role_from_field_key("thought_capacity"), None);
-        assert_eq!(role_from_field_key("role/dev-dispatch"), None);
-        assert_eq!(role_from_field_key("not-role/dev-dispatch/holder"), None);
-    }
-
-    /// **Naming neither of a role's own fields is not this call's business.**
-    #[test]
-    fn role_write_in_is_none_for_fields_naming_no_role() {
-        let fields: std::collections::BTreeMap<String, String> =
-            [("thought_capacity".to_string(), "5".to_string())]
-                .into_iter()
-                .collect();
-        assert_eq!(role_write_in(&fields), None);
-    }
-
-    /// **The role, the claimant and the moment, read back out of the two
-    /// keys a real claim write sets** — the mint's own inverse, over both
-    /// fields at once this time, so a caller has everything `claim_role`
-    /// needs without parsing the keys twice.
-    #[test]
-    fn role_write_in_reads_back_the_role_the_claimant_and_the_moment() {
-        let now = contract::epoch();
-        let fields: std::collections::BTreeMap<String, String> = [
-            (role_holder_key("dev-dispatch"), "gamma".to_string()),
-            (role_claimed_at_key("dev-dispatch"), now.to_string()),
-        ]
-        .into_iter()
-        .collect();
-        assert_eq!(
-            role_write_in(&fields),
-            Some(("dev-dispatch".to_string(), "gamma".to_string(), now))
-        );
-    }
-
     /// **A second claimant, decided against the CURRENT stored state a
     /// caller supplies — never against anything this write's own fields
     /// say.** This is the shape an atomic check inside a real write has to
-    /// hold: `role_write_in` only ever reads the write's own intent, and
+    /// hold: `role_claim_in` only ever reads the write's own intent, and
     /// `claim_role` is what a caller feeds the store's live answer into.
     #[test]
     fn a_second_claimant_is_refused_against_the_current_stored_holder() {
         let claimed_at = contract::epoch();
         let now = claimed_at + jiff::SignedDuration::from_secs(10);
         let fields: std::collections::BTreeMap<String, String> = [
-            (role_holder_key("dev-dispatch"), "delta".to_string()),
-            (role_claimed_at_key("dev-dispatch"), now.to_string()),
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), now.to_string()),
         ]
         .into_iter()
         .collect();
-        let (role, claimant, now) = role_write_in(&fields).expect("names the role");
-        assert_eq!(role, "dev-dispatch");
+        let (claimant, now) = role_claim_in(&fields).expect("names a holder and a moment");
         let verdict = claim_role(
             &claimant,
             Some("gamma"),
@@ -2929,57 +2806,29 @@ mod tests {
 
     /// **A role object that carries a claim moment is the whole truth about the
     /// role, even when it carries no holder.** A released role keeps its moment
-    /// and loses its holder; reading the bot's old keys past it would find a
-    /// holder the release had already ended.
+    /// and loses its holder.
     #[test]
-    fn a_role_object_with_a_claim_moment_wins_over_the_bots_old_keys() {
+    fn a_role_object_with_a_claim_moment_answers_for_the_lease() {
         let at = contract::epoch();
-        let old = fields_of(&[
-            ("role/dev-dispatch/holder", "stale-holder"),
-            ("role/dev-dispatch/claimed_at", &at.to_string()),
-        ]);
         let released = fields_of(&[("claimed_at", &at.to_string())]);
-        let state = role_state("dev-dispatch", Some(&released), &old);
-        assert_eq!(
-            state.holder, None,
-            "the release is not read past: {state:?}"
-        );
+        let state = role_state(Some(&released));
+        assert_eq!(state.holder, None, "a release is a role without a holder");
         assert_eq!(state.claimed_at, Some(at));
 
         let held = fields_of(&[("holder", "delta"), ("claimed_at", &at.to_string())]);
-        let state = role_state("dev-dispatch", Some(&held), &old);
+        let state = role_state(Some(&held));
         assert_eq!(state.holder.as_deref(), Some("delta"), "{state:?}");
+        assert_eq!(state.claimed_at, Some(at));
     }
 
-    /// **Until a role object holds a claim moment, the bot's old keys answer.**
-    /// This is the half of the cutover that keeps a lease alive across the
-    /// deploy: a role that was claimed in the old shape and not renewed yet has
-    /// no object, or one with no moment, and must still read as held.
+    /// **A role with no object, or an object with no moment, says nothing about
+    /// the lease.** The keys a bot once held for the role are nobody's answer.
     #[test]
-    fn the_bots_old_keys_answer_until_a_role_object_holds_a_moment() {
-        let at = contract::epoch();
-        let old = fields_of(&[
-            ("role/dev-dispatch/holder", "gamma"),
-            ("role/dev-dispatch/claimed_at", &at.to_string()),
-        ]);
-        for child in [None, Some(fields_of(&[("agent", "an-agent-id")]))] {
-            let state = role_state("dev-dispatch", child.as_ref(), &old);
-            assert_eq!(
-                state.holder.as_deref(),
-                Some("gamma"),
-                "{child:?}: {state:?}"
-            );
-            assert_eq!(state.claimed_at, Some(at));
+    fn a_role_with_no_claim_moment_is_held_by_nobody() {
+        let momentless = fields_of(&[("holder", "gamma"), ("agent", "an-agent-id")]);
+        for child in [None, Some(&momentless), Some(&fields_of(&[]))] {
+            assert_eq!(role_state(child), RoleState::default(), "{child:?}");
         }
-        // And another role's old keys are nobody's answer for this one.
-        let other = fields_of(&[
-            ("role/em/holder", "gamma"),
-            ("role/em/claimed_at", &at.to_string()),
-        ]);
-        assert_eq!(
-            role_state("dev-dispatch", None, &other),
-            RoleState::default()
-        );
     }
 
     /// **A claim on a role object is read off its own two keys**, and a write

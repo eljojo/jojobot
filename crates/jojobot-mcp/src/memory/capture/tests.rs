@@ -2770,79 +2770,63 @@ async fn a_different_bot_can_raise_this_bots_thought_capacity() {
     );
 }
 
-/// **A role's own two fields are the boot door's, never an ordinary
-/// capture's — whoever the caller is.** Unlike `thought_capacity`'s
-/// guard, this one does not turn on who is asking: nobody may open this
-/// side door, not even the bot the role would be about, because the
-/// claim path and the renewal path are the only legitimate writers and
-/// neither goes through this verb.
+/// **A role object's own two fields are the boot door's, never an ordinary
+/// capture's — whoever the caller is.** Unlike `thought_capacity`'s guard,
+/// this one does not turn on who is asking: nobody may open this side door,
+/// because the claim path and the renewal path are the only legitimate
+/// writers and neither goes through this verb. The guard is scoped to the
+/// role object: the `role/<role>/holder` key an older build kept on a bot is an
+/// ordinary field now, and nothing reads it as a lease.
 #[tokio::test]
 async fn a_role_holder_field_cannot_be_set_through_an_ordinary_capture() {
     let jojobot = handler();
     ensure(&jojobot, "bot:otto").await;
+    ensure(&jojobot, "role:dev-dispatch").await;
 
-    let refused = blocked(
-        &jojobot
-            .capture(Parameters(CaptureArgs {
-                sets: Some(
-                    [(
-                        jojobot_domain::session::role_holder_key("dev-dispatch"),
-                        "bot:otto".to_string(),
-                    )]
+    for key in ["holder", "claimed_at"] {
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sets: Some(
+                        [(key.to_string(), "bot:otto".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("role:dev-dispatch", "taking the role directly")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{key}: {refused}");
+        assert_eq!(refused["wrote"], false, "{key}: {refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how.contains("start_here"),
+            "the refusal must name the boot door as the way forward: {how}"
+        );
+    }
+    let after = fields_of(&jojobot, "role:dev-dispatch").await;
+    assert!(
+        after.get("holder").is_none() && after.get("claimed_at").is_none(),
+        "the refused writes must not be readable back: {after}"
+    );
+
+    let old_key = jojobot_domain::session::role_keys::role_holder_key("dev-dispatch");
+    let landed = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [(old_key.clone(), "bot:otto".to_string())]
                     .into_iter()
                     .collect(),
-                ),
-                ..capture_args("bot:otto", "taking the role directly")
-            }))
-            .await
-            .expect("a refusal is an answer, not a failure"),
-    );
-    assert_eq!(refused["status"], "blocked", "{refused}");
-    assert_eq!(refused["wrote"], false, "{refused}");
-    let how = refused["how_to_proceed"]
-        .as_str()
-        .expect("a blocked answer says how to proceed");
-    assert!(
-        how.contains("start_here"),
-        "the refusal must name the boot door as the way forward: {how}"
-    );
-
-    let after = fields_of(&jojobot, "bot:otto").await;
-    assert!(
-        after
-            .get(jojobot_domain::session::role_holder_key("dev-dispatch"))
-            .is_none(),
-        "the refused write must not be readable back: {after}"
-    );
-}
-
-/// **The other of the role's two fields, caught the same way.** Proven
-/// separately from the holder field rather than assumed from it — the
-/// guard checks both keys, and a case that only tried one would not
-/// know if the other side of the pair is still an open door.
-#[tokio::test]
-async fn a_role_claimed_at_field_cannot_be_set_through_an_ordinary_capture() {
-    let jojobot = handler();
-    ensure(&jojobot, "bot:otto").await;
-
-    let refused = blocked(
-        &jojobot
-            .capture(Parameters(CaptureArgs {
-                sets: Some(
-                    [(
-                        jojobot_domain::session::role_claimed_at_key("dev-dispatch"),
-                        "2026-01-01T00:00:00Z".to_string(),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ),
-                ..capture_args("bot:otto", "backdating a role claim directly")
-            }))
-            .await
-            .expect("a refusal is an answer, not a failure"),
-    );
-    assert_eq!(refused["status"], "blocked", "{refused}");
-    assert_eq!(refused["wrote"], false, "{refused}");
+            ),
+            ..capture_args("bot:otto", "an old key on a bot is an ordinary field")
+        },
+    )
+    .await;
+    assert_ne!(landed["status"], "blocked", "{landed}");
 }
 
 /// **The emergency reserve, spent through the served verb — and the

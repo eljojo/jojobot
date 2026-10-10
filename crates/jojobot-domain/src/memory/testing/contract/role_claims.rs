@@ -9,9 +9,10 @@
 //! it, or a fake that only looks race-free is standing in for a real store
 //! that still has one.
 //!
-//! **Both shapes are read.** A role claimed before the role became an object
-//! lives in the bot's own `role/<role>/holder` and `role/<role>/claimed_at`,
-//! and it stays held until the role object carries a moment of its own.
+//! **Only the role object is read.** A role claimed before the role became an
+//! object lives in the bot's own `role/<role>/holder` and
+//! `role/<role>/claimed_at`; the start's pass carries such a claim onto the
+//! object and takes the keys off the bot, so the claim stays held.
 
 use super::support::{add, capture, computed, computed_patch, ensure};
 use super::*;
@@ -62,8 +63,14 @@ fn old_role_fields(
     at: jiff::Timestamp,
 ) -> std::collections::BTreeMap<String, String> {
     [
-        (crate::session::role_holder_key(role), claimant.to_string()),
-        (crate::session::role_claimed_at_key(role), at.to_string()),
+        (
+            crate::session::role_keys::role_holder_key(role),
+            claimant.to_string(),
+        ),
+        (
+            crate::session::role_keys::role_claimed_at_key(role),
+            at.to_string(),
+        ),
     ]
     .into_iter()
     .collect()
@@ -460,85 +467,6 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
     );
 }
 
-/// **A role claimed before it was an object is still held.** The bot's own
-/// `role/<role>/holder` and `role/<role>/claimed_at` answer until the role
-/// object carries a moment, so a rival is refused naming the old holder, and that
-/// holder's first write on the new object is a renewal, never a refusal. A
-/// reader that understood only the new shape would see this role as empty, and a
-/// watcher that sees an empty role starts a second session for it.
-///
-/// **Both halves**, or a store that read no old keys would pass the refusal as a
-/// store that refused everything: the old holder's own write lands, and the rival
-/// stays refused after it.
-pub async fn a_role_claimed_in_the_old_shape_is_still_held<M: Memory>(store: &M) {
-    let seat = a_seat(
-        store,
-        "bot:contract-role-old-shape",
-        "role:contract-old-shape",
-    )
-    .await;
-    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
-    let soon = t0 + jiff::SignedDuration::from_secs(10);
-
-    // The claim the previous build wrote, on the bot.
-    capture(
-        store,
-        computed(NewFact {
-            fields: old_role_fields(&seat.name, "delta", t0),
-            ..NewFact::about(seat.bot.clone(), "delta claimed the role", date(2026, 7, 1))
-        }),
-    )
-    .await;
-
-    let rival = store
-        .capture(computed(NewFact {
-            fields: role_fields("epsilon", soon),
-            ..NewFact::about(
-                seat.role.clone(),
-                "epsilon claims the role",
-                date(2026, 7, 1),
-            )
-        }))
-        .await;
-    assert!(
-        matches!(
-            &rival,
-            Err(MemoryError::RoleTaken { role, holder, .. })
-                if *role == seat.name && holder == "delta"
-        ),
-        "a role claimed in the old shape must refuse a rival, naming its holder: {rival:?}",
-    );
-
-    // The old holder's first write on the role object: its own renewal.
-    let renewed = store
-        .capture(computed(NewFact {
-            fields: role_fields("delta", soon),
-            ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
-        }))
-        .await;
-    assert!(
-        matches!(renewed, Ok(Guarded::Written(_))),
-        "the old holder's own write must land, or this proves nothing: {renewed:?}",
-    );
-    let fields = folded_fields_of(store, &seat.role).await;
-    assert_eq!(
-        fields.get(crate::session::ROLE_HOLDER),
-        Some(&"delta".to_string()),
-        "the role object now carries the claim: {fields:?}",
-    );
-
-    let after = store
-        .capture(computed(NewFact {
-            fields: role_fields("epsilon", soon + jiff::SignedDuration::from_secs(1)),
-            ..NewFact::about(seat.role.clone(), "epsilon tries again", date(2026, 7, 1))
-        }))
-        .await;
-    assert!(
-        matches!(&after, Err(MemoryError::RoleTaken { holder, .. }) if holder == "delta"),
-        "the rival is still refused after the renewal: {after:?}",
-    );
-}
-
 /// **A claim in the old shape moves onto its role object, and the bot's keys for
 /// that role are gone.** The positive comes first, in the same case: the object
 /// holds the holder and the moment, or a store that dropped the keys and wrote
@@ -637,8 +565,8 @@ pub async fn a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot<M: Mem
     );
     let on_bot = folded_fields_of(store, &seat.bot).await;
     for key in [
-        crate::session::role_holder_key(&seat.name),
-        crate::session::role_claimed_at_key(&seat.name),
+        crate::session::role_keys::role_holder_key(&seat.name),
+        crate::session::role_keys::role_claimed_at_key(&seat.name),
     ] {
         assert!(
             !on_bot.contains_key(&key),
@@ -647,7 +575,9 @@ pub async fn a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot<M: Mem
     }
     assert_eq!(
         on_bot
-            .get(&crate::session::role_holder_key("contract-kept-role"))
+            .get(&crate::session::role_keys::role_holder_key(
+                "contract-kept-role"
+            ))
             .map(String::as_str),
         Some("delta"),
         "another role's keys stay: {on_bot:?}",
@@ -694,86 +624,291 @@ pub async fn a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot<M: Mem
     assert_eq!(again, 0, "a role with no old keys changes nothing");
 }
 
-/// **A pass over every bot takes the old keys off the roles that have moved, and
-/// leaves the roles that have not.** A role has moved when its object carries a
-/// moment; until then the bot's keys are the only lease there is, and taking
-/// them off would free a role somebody holds. The second pass finds nothing to
-/// write.
-pub async fn a_pass_over_the_bots_takes_the_old_keys_off_moved_roles_only<M: Memory>(store: &M) {
-    let seat = a_seat(store, "bot:contract-role-pass", "role:contract-pass-moved").await;
+/// The pass over every bot, held to finishing every role.
+async fn run_the_pass<M: Memory>(store: &M) -> crate::session::role_keys::OldRoleKeysPass {
+    let pass = crate::session::role_keys::move_old_role_claims(store, date(2026, 7, 2))
+        .await
+        .expect("the pass reads every bot");
+    assert!(pass.failed.is_empty(), "{pass:?}");
+    pass
+}
+
+/// **A role claimed in the old shape is carried onto its object by the start's
+/// pass, and stays held.** The bot's own `role/<role>/holder` and
+/// `role/<role>/claimed_at` name no lease by themselves; the pass writes the
+/// holder and the moment onto a new role object, a child of the bot, and takes
+/// the keys off. Both halves: a rival is refused naming the old holder, and the
+/// old holder's own write lands. A store that dropped the keys and carried
+/// nothing would seat the rival.
+pub async fn a_pass_carries_a_role_claimed_in_the_old_shape_onto_its_object<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-role-carried".to_string());
+    ensure(store, &bot).await;
+    let role = EntityId("role:contract-carried".to_string());
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let soon = t0 + jiff::SignedDuration::from_secs(10);
-    // A role whose object exists and carries no moment has not moved either: the
-    // bot's keys still answer for it.
-    a_seat(store, "bot:contract-role-pass", "role:contract-pass-bare").await;
-    for role in [
-        "contract-pass-moved",
-        "contract-pass-unmoved",
-        "contract-pass-bare",
-    ] {
-        capture(
-            store,
-            computed(NewFact {
-                fields: old_role_fields(role, "delta", t0),
-                ..NewFact::about(
-                    seat.bot.clone(),
-                    format!("claimed the {role} role"),
-                    date(2026, 7, 1),
-                )
-            }),
-        )
+    capture(
+        store,
+        computed(NewFact {
+            fields: old_role_fields("contract-carried", "delta", t0),
+            ..NewFact::about(
+                bot.clone(),
+                "claimed the contract-carried role",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+    assert!(
+        matches!(
+            store.fields(&role).await,
+            Err(MemoryError::UnknownEntity { .. })
+        ),
+        "the role is not an object before the pass, or this proves nothing",
+    );
+
+    let pass = run_the_pass(store).await;
+    assert!(pass.moved >= 1, "the claim was carried: {pass:?}");
+
+    let on_object = folded_fields_of(store, &role).await;
+    assert_eq!(
+        on_object.get(crate::session::ROLE_HOLDER),
+        Some(&"delta".to_string()),
+        "the object holds the holder: {on_object:?}",
+    );
+    assert_eq!(
+        on_object
+            .get(crate::session::ROLE_CLAIMED_AT)
+            .map(String::as_str),
+        Some(t0.to_string().as_str()),
+        "and the moment the old keys held: {on_object:?}",
+    );
+    let object = store
+        .list_entities(Some(EntityKind::ROLE))
+        .await
+        .expect("the roles list")
+        .into_iter()
+        .find(|e| e.id == role)
+        .expect("the role object exists");
+    assert_eq!(object.parent.as_ref(), Some(&bot), "a child of the bot");
+    let on_bot = folded_fields_of(store, &bot).await;
+    assert!(
+        !on_bot.contains_key(&crate::session::role_keys::role_holder_key(
+            "contract-carried"
+        )) && !on_bot.contains_key(&crate::session::role_keys::role_claimed_at_key(
+            "contract-carried"
+        )),
+        "the bot no longer holds the old keys: {on_bot:?}",
+    );
+
+    let rival = store
+        .capture(computed(NewFact {
+            fields: role_fields("epsilon", soon),
+            ..NewFact::about(role.clone(), "epsilon claims the role", date(2026, 7, 2))
+        }))
         .await;
-    }
+    assert!(
+        matches!(
+            &rival,
+            Err(MemoryError::RoleTaken { role, holder, .. })
+                if role == "contract-carried" && holder == "delta"
+        ),
+        "a carried claim must refuse a rival, naming its holder: {rival:?}",
+    );
     let renewed = store
         .capture(computed(NewFact {
             fields: role_fields("delta", soon),
-            ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
+            ..NewFact::about(role.clone(), "delta renews the role", date(2026, 7, 2))
         }))
         .await;
     assert!(
         matches!(renewed, Ok(Guarded::Written(_))),
-        "the role moves onto its object, or this proves nothing: {renewed:?}",
+        "the old holder's own write must land, or this proves nothing: {renewed:?}",
     );
 
-    let pass = crate::session::role_keys::drop_old_role_keys_of_moved_roles(store)
-        .await
-        .expect("the pass reads every bot");
-    assert!(pass.failed.is_empty(), "{pass:?}");
-    assert!(
-        pass.cleared >= 1,
-        "the moved role's record was cleared: {pass:?}"
+    let again = run_the_pass(store).await;
+    assert_eq!(
+        (again.moved, again.cleared),
+        (0, 0),
+        "a second pass finds nothing to write: {again:?}",
     );
+}
 
-    let on_bot = folded_fields_of(store, &seat.bot).await;
-    assert!(
-        !on_bot.contains_key(&crate::session::role_holder_key("contract-pass-moved")),
-        "a moved role's keys are gone: {on_bot:?}",
-    );
-    assert_eq!(
-        on_bot
-            .get(&crate::session::role_holder_key("contract-pass-unmoved"))
-            .map(String::as_str),
-        Some("delta"),
-        "a role that never moved keeps its keys: {on_bot:?}",
-    );
-    assert_eq!(
-        on_bot
-            .get(&crate::session::role_holder_key("contract-pass-bare"))
-            .map(String::as_str),
-        Some("delta"),
-        "a role whose object holds no moment keeps its keys: {on_bot:?}",
-    );
+/// **The pass carries a claim onto a role object that already exists with no
+/// moment, where it is.** One role is one object: the claim lands on the object a
+/// bot already has under the name rather than making a second.
+pub async fn a_pass_writes_the_claim_onto_a_role_object_that_has_no_moment<M: Memory>(store: &M) {
+    let seat = a_seat(store, "bot:contract-role-bare", "role:contract-bare").await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    capture(
+        store,
+        computed(NewFact {
+            fields: old_role_fields(&seat.name, "delta", t0),
+            ..NewFact::about(
+                seat.bot.clone(),
+                "claimed the contract-bare role",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+
+    let pass = run_the_pass(store).await;
+    assert!(pass.moved >= 1, "{pass:?}");
+
     let on_object = folded_fields_of(store, &seat.role).await;
     assert_eq!(
         on_object.get(crate::session::ROLE_HOLDER),
         Some(&"delta".to_string()),
-        "the object still holds the claim: {on_object:?}",
+        "the existing object holds the claim: {on_object:?}",
     );
-
-    let again = crate::session::role_keys::drop_old_role_keys_of_moved_roles(store)
+    let roles = store
+        .list_entities(Some(EntityKind::ROLE))
         .await
-        .expect("a second pass reads");
-    assert_eq!(again.cleared, 0, "nothing is left to take off: {again:?}");
+        .expect("the roles list");
+    assert_eq!(
+        roles.iter().filter(|e| e.id == seat.role).count(),
+        1,
+        "one role is one object",
+    );
+}
+
+/// **A role that has moved is left as it is, and its stale keys come off.** The
+/// object's holder and moment are the lease; the keys on the bot name an older
+/// holder and must not overwrite them. The positive is the object keeping its
+/// newer holder, which is what a pass that carried every old claim would break.
+pub async fn a_pass_leaves_a_moved_role_as_it_is_and_takes_its_stale_keys_off<M: Memory>(
+    store: &M,
+) {
+    let seat = a_seat(store, "bot:contract-role-stale", "role:contract-stale").await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let later = t0 + jiff::SignedDuration::from_secs(600);
+    capture(
+        store,
+        computed(NewFact {
+            fields: role_fields("epsilon", later),
+            ..NewFact::about(
+                seat.role.clone(),
+                "epsilon claims the role",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+    capture(
+        store,
+        computed(NewFact {
+            fields: old_role_fields(&seat.name, "delta", t0),
+            ..NewFact::about(
+                seat.bot.clone(),
+                "claimed the contract-stale role",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+
+    let pass = run_the_pass(store).await;
+    assert!(pass.cleared >= 1, "the stale record was cleared: {pass:?}");
+
+    let on_object = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        on_object.get(crate::session::ROLE_HOLDER),
+        Some(&"epsilon".to_string()),
+        "the object keeps its holder: {on_object:?}",
+    );
+    assert_eq!(
+        on_object
+            .get(crate::session::ROLE_CLAIMED_AT)
+            .map(String::as_str),
+        Some(later.to_string().as_str()),
+        "and its moment: {on_object:?}",
+    );
+    let on_bot = folded_fields_of(store, &seat.bot).await;
+    assert!(
+        !on_bot.contains_key(&crate::session::role_keys::role_holder_key(&seat.name)),
+        "the stale keys are gone: {on_bot:?}",
+    );
+}
+
+/// **A half-written old claim carries nothing.** Keys with no holder, or a
+/// moment that does not read, say nothing about a lease, so the pass takes them
+/// off and writes no claim: the role stays free. The pair is the claim the pass
+/// does carry, in the first case above.
+pub async fn a_pass_carries_nothing_for_a_half_written_old_claim<M: Memory>(store: &M) {
+    let seat = a_seat(store, "bot:contract-role-half", "role:contract-half").await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    capture(
+        store,
+        computed(NewFact {
+            fields: [(
+                crate::session::role_keys::role_holder_key(&seat.name),
+                "delta".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                seat.bot.clone(),
+                "claimed the contract-half role",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+    let mut unreadable = old_role_fields("contract-half-moment", "delta", t0);
+    unreadable.insert(
+        crate::session::role_keys::role_claimed_at_key("contract-half-moment"),
+        "some time ago".to_string(),
+    );
+    capture(
+        store,
+        computed(NewFact {
+            fields: unreadable,
+            ..NewFact::about(
+                seat.bot.clone(),
+                "claimed the contract-half-moment role",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+
+    run_the_pass(store).await;
+
+    let on_object = folded_fields_of(store, &seat.role).await;
+    assert!(
+        !on_object.contains_key(crate::session::ROLE_HOLDER),
+        "no holder was carried: {on_object:?}",
+    );
+    let on_bot = folded_fields_of(store, &seat.bot).await;
+    assert!(
+        !on_bot
+            .keys()
+            .any(|key| key.starts_with("role/contract-half")),
+        "the half-written keys are gone: {on_bot:?}",
+    );
+    let taken = store
+        .capture(computed(NewFact {
+            fields: role_fields("epsilon", t0),
+            ..NewFact::about(
+                seat.role.clone(),
+                "epsilon claims the role",
+                date(2026, 7, 2),
+            )
+        }))
+        .await;
+    assert!(
+        matches!(taken, Ok(Guarded::Written(_))),
+        "a role with no carried claim is free: {taken:?}",
+    );
+    assert!(
+        !store
+            .list_entities(Some(EntityKind::ROLE))
+            .await
+            .expect("the roles list")
+            .iter()
+            .any(|e| e.id.as_str() == "role:contract-half-moment"),
+        "a claim whose moment does not read makes no role object",
+    );
 }
 
 /// **A released role object is not read past to the bot's old keys.** A release
@@ -1366,9 +1501,11 @@ pub async fn run_all_role_claims<M: Memory>(store: &M) {
     a_renewal_restamps_the_lease_moment_it_overwrites(store).await;
     a_renewal_is_a_write_on_the_thing(store).await;
     only_a_renewals_moment_is_overwritten(store).await;
-    a_role_claimed_in_the_old_shape_is_still_held(store).await;
+    a_pass_carries_a_role_claimed_in_the_old_shape_onto_its_object(store).await;
+    a_pass_writes_the_claim_onto_a_role_object_that_has_no_moment(store).await;
+    a_pass_leaves_a_moved_role_as_it_is_and_takes_its_stale_keys_off(store).await;
+    a_pass_carries_nothing_for_a_half_written_old_claim(store).await;
     a_claim_moved_onto_its_object_leaves_no_role_keys_on_the_bot(store).await;
-    a_pass_over_the_bots_takes_the_old_keys_off_moved_roles_only(store).await;
     a_released_role_object_is_not_read_past_to_the_old_keys(store).await;
     a_role_objects_other_keys_land_without_moving_the_lease(store).await;
     a_second_capture_racing_the_first_is_refused(store).await;

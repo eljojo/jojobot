@@ -383,7 +383,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     let role_key = exchange_the_recorded_run(&surface, &git_ref, &role_holder).await;
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
     assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_key).await;
-    assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
+    assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays_held(
         &surface,
         &git_ref,
         &role_holder,
@@ -629,6 +629,7 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
             "field value lowering",
             "mail mentions",
             "message sender column",
+            "old role claims",
             "reference field lowering",
             "session bot column",
             "session mentions",
@@ -1107,7 +1108,11 @@ async fn the_scan_for_oversized_records_finds_one_stored_over_the_ceiling() {
         .expect("the stopped store comes up to be made oversized");
     let (badge, local, handle): (String, String, String) = sqlx::query_as(
         "SELECT f.entity, f.id, e.id FROM fact f JOIN entity e ON e.badge = f.entity
-         WHERE f.status = 'active' ORDER BY e.id, f.id LIMIT 1",
+         WHERE f.status = 'active'
+           AND NOT EXISTS (SELECT 1 FROM field_write w
+                           WHERE w.entity = f.entity AND w.fact_id = f.id
+                             AND w.`key` LIKE 'role/%')
+         ORDER BY e.id, f.id LIMIT 1",
     )
     .fetch_one(editing.pool())
     .await
@@ -1687,6 +1692,11 @@ async fn assert_every_thing_holds_what_it_held(
         held_before.len()
     );
     for (handle, key, was) in held_before {
+        // **The one change the boot makes on purpose**: a role's holder and moment
+        // move off the bot onto the role object, which the role cases hold.
+        if key.starts_with("role/") {
+            continue;
+        }
         let read = surface.call("recall", json!({"subject": handle})).await;
         let parsed: serde_json::Value = serde_json::from_str(&read).unwrap_or_else(|_| {
             panic!("recorded at {git_ref}: {handle} did not read back: {read}")
@@ -1780,15 +1790,14 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
         .collect()
 }
 
-/// **A role claimed before roles were objects is held by the current binary,
-/// and its holder's next write past the renewal age moves it onto the object.**
-/// Release 1 reads both shapes and writes the new one, so the store a deploy
-/// leaves behind must still refuse a rival while the old lease is fresh, then show
-/// the claim on the role object once its holder writes, with a rival still refused
-/// after. Without the
-/// both-shapes read, every role in the store would read as empty here and the
-/// rival would be seated.
-async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
+/// **A role claimed before roles were objects is carried onto its object by the
+/// first boot, and stays held.** The recording keeps the claim on the bot. The
+/// boot writes the holder and the moment onto a role object and takes the keys
+/// off, so a rival is refused naming the holder before and after the holder's
+/// next write, and the bot holds no key of the old shape. Without the pass,
+/// every role in the store would read as empty here and the rival would be
+/// seated.
+async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays_held(
     surface: &Surface,
     git_ref: &str,
     role_holder: &str,
@@ -1807,17 +1816,40 @@ async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
             serde_json::from_str(&read).unwrap_or_else(|_| fail(label, &read));
         parsed["session"]["claim"].clone()
     };
+    let the_role_object = || async {
+        let read = surface
+            .call("recall", json!({"kind": "role", "parent": "bot:assistant"}))
+            .await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&read).unwrap_or_else(|_| fail("the role objects", &read));
+        parsed["objects"]
+            .as_array()
+            .and_then(|all| {
+                all.iter()
+                    .find(|o| o["id"] == "role:upgrade-fixture-holder")
+            })
+            .cloned()
+            .unwrap_or_else(|| fail("the role object the boot made", &read))
+    };
 
-    let before = rival("a rival's claim on a role held in the old shape").await;
+    let carried = the_role_object().await;
+    if carried["fields"]["holder"] != role_holder
+        || carried["fields"]["claimed_at"].as_str().is_none()
+    {
+        fail(
+            "the boot carrying the old claim onto the role object",
+            &carried.to_string(),
+        );
+    }
+    let before = rival("a rival's claim on a role carried from the old shape").await;
     if before["status"] != "refused" || before["holder"] != role_holder {
         fail(
-            "a role held in the old shape did not refuse a rival, naming its holder",
+            "a role carried from the old shape did not refuse a rival, naming its holder",
             &before.to_string(),
         );
     }
 
-    // The holder writes. That renews the claim, and the renewal lands on the role
-    // object, which did not exist.
+    // The holder writes. That renews the claim on the role object.
     let beat = surface
         .call(
             "journal",
@@ -1827,26 +1859,17 @@ async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
     if beat.contains("\"status\":\"blocked\"") {
         fail("the holder's write after the upgrade was refused", &beat);
     }
-    let read = surface
-        .call("recall", json!({"kind": "role", "parent": "bot:assistant"}))
-        .await;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&read).unwrap_or_else(|_| fail("the role objects", &read));
-    let object = &parsed["objects"][0];
-    if object["id"] != "role:upgrade-fixture-holder"
-        || object["fields"]["holder"] != role_holder
-        || object["fields"]["claimed_at"].as_str().is_none()
-    {
+    let renewed = the_role_object().await;
+    if renewed["fields"]["holder"] != role_holder {
         fail(
-            "the holder's write did not move its claim onto the role object",
-            &read,
+            "the holder's write keeping the claim on the role object",
+            &renewed.to_string(),
         );
     }
-
-    let after = rival("a rival's claim after the claim moved").await;
+    let after = rival("a rival's claim after the holder's write").await;
     if after["status"] != "refused" || after["holder"] != role_holder {
         fail(
-            "the moved claim did not still refuse a rival, naming its holder",
+            "the claim did not still refuse a rival, naming its holder",
             &after.to_string(),
         );
     }
@@ -2155,18 +2178,28 @@ async fn assert_every_recorded_record_reads_back(
         );
     }
 
-    // The role-claim fields, on the bot's own folded fields.
+    // The role-claim fields: the boot carried them onto the role object, and the
+    // bot holds none of the old keys.
     let read = surface
         .call("recall", json!({"subject": "bot:assistant"}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the role-claim fields", &read));
+    if parsed["objects"][0]["fields"]
+        .as_object()
+        .is_some_and(|fields| fields.keys().any(|key| key.starts_with("role/")))
+    {
+        fail("the bot holding no key of the old shape", &read);
+    }
+    let read = surface
+        .call("recall", json!({"subject": "role:upgrade-fixture-holder"}))
         .await;
     let parsed: serde_json::Value =
         serde_json::from_str(&read).unwrap_or_else(|_| fail("the role-claim fields", &read));
     // **The holder is the session the recording booted as, recorded beside
     // the dump** — a check that any non-empty value passes would pass on a
     // field the upgrade had rewritten to garbage.
-    if role_holder.is_empty()
-        || parsed["objects"][0]["fields"]["role/upgrade-fixture-holder/holder"] != role_holder
-    {
+    if role_holder.is_empty() || parsed["objects"][0]["fields"]["holder"] != role_holder {
         fail("the role-claim fields", &read);
     }
 
@@ -2729,15 +2762,15 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     );
 }
 
-/// **A role that has moved onto its object, whose bot still holds the old keys
-/// an older build left there, boots clean with the keys taken off.** The old keys
-/// are put back by hand after the holder's write moved the claim, which is the
-/// shape a deployed store holds that an older build filled: the object answers
-/// for the lease and the bot still names a holder and a moment. The second boot
-/// changes nothing, so the pass is idempotent, and the lease is still the
-/// holder's afterwards.
+/// **A pass the boot did not finish leaves old keys on the bot, and the next boot
+/// takes them off.** The first boot carries the recorded claim onto its role
+/// object and takes the keys off. The old keys are then put back by hand and the
+/// pass's marker is dropped, which is the shape a store holds when a boot was cut
+/// short after the claim landed and before the pass finished. The next boot takes
+/// the keys off, a third boot has nothing to do and changes nothing, and the lease
+/// is still the holder's afterwards.
 #[tokio::test]
-async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
+async fn old_keys_an_unfinished_pass_left_are_taken_off_by_the_next_boot() {
     let Restored {
         scratch,
         state_dir,
@@ -2857,6 +2890,10 @@ async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
         .await
         .expect("the record that carried it stands again");
     }
+    sqlx::query("DELETE FROM store_pass WHERE name = 'old role claims'")
+        .execute(store.pool())
+        .await
+        .expect("the pass is owed again");
     let seeded = held_on_the_bot(
         &fields_every_thing_holds(store.pool()).await,
         "upgrade-fixture-holder",
@@ -2897,10 +2934,22 @@ async fn a_moved_role_whose_old_keys_remain_boots_clean_with_them_taken_off() {
             &format!("{left:?}"),
         );
     }
-    // A role that never moved keeps its keys: they are its lease.
-    if held_on_the_bot(&held, "upgrade-fixture-recorder").is_empty() {
+    // A role the recording released in the old shape (its holder cleared, its
+    // moment the epoch) carries no claim, so its keys come off and no holder
+    // is put on an object for it.
+    let recorder_left = held_on_the_bot(&held, "upgrade-fixture-recorder");
+    if !recorder_left.is_empty() {
         fail(
-            "the bot keeping the keys of a role that never moved",
+            "the bot holding no key of the released old role",
+            &format!("{recorder_left:?}"),
+        );
+    }
+    if held
+        .iter()
+        .any(|(handle, key, _)| handle == "role:upgrade-fixture-recorder" && key == "holder")
+    {
+        fail(
+            "the released old role carrying no holder",
             &format!("{held:?}"),
         );
     }
@@ -2958,6 +3007,20 @@ async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owne
         git_ref,
         ..
     } = restore_the_fixture("stray-role").await;
+    // **The pass is marked finished before the boot**, so the old field stays
+    // where an older build left it and the case asks what it asked: whether a
+    // field on a bot that does not own the role stops the owner. It is inert,
+    // because nothing reads it as a lease.
+    let mut store = open_the_store(&state_dir, store_port).await;
+    jojobot_adapters::dolt::migrate::run(store.pool())
+        .await
+        .expect("the schema moves, so the marker has a table to be written in");
+    sqlx::query("INSERT INTO store_pass (name, finished_at) VALUES ('old role claims', ?)")
+        .bind(jiff::Timestamp::now().to_string())
+        .execute(store.pool())
+        .await
+        .expect("the pass is marked finished");
+    store.stop().await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await

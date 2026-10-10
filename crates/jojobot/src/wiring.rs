@@ -823,36 +823,36 @@ pub async fn boot_store_pushing(
         ),
     }
 
-    // **A role that has moved onto its own object no longer keeps a holder and a
-    // moment on the bot.** An older build left them there, frozen, and a reader
-    // that scans a bot's keys takes them for a lapsed lease. A role whose object
-    // carries no moment keeps its keys, because they are its lease. Idempotent,
-    // and best-effort for the reason the steps above are: the object answers for
-    // the lease whether or not the old keys are gone.
-    match jojobot_domain::session::role_keys::drop_old_role_keys_of_moved_roles(
+    // **A role claimed before roles were objects is carried onto its object.** An
+    // older build kept the holder and the moment on the bot, and nothing reads
+    // them as a lease now, so a store restored from before the change would seat a
+    // second session in every such role. Each claim is written onto its role
+    // object, the keys come off the bot, and the pass is marked finished. Not
+    // fatal: a pass that failed or was skipped is owed again at the next boot, and
+    // the keys of a role that could not be moved stay where they are.
+    match jojobot_adapters::dolt::move_old_role_claims_once(
+        store.pool(),
         seed_memory.as_ref(),
+        the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
     )
     .await
     {
-        Ok(pass) => {
-            if pass.cleared > 0 {
-                tracing::info!(
-                    cleared = pass.cleared,
-                    "took the old role keys off the bots whose roles have moved"
-                );
-            }
-            for line in &pass.failed {
-                tracing::warn!(
-                    role = %line,
-                    "OLD ROLE KEYS NOT TAKEN OFF — the role object answers for the lease, so \
-                     nothing is held wrongly. A restart repeats the pass."
-                );
-            }
+        jojobot_adapters::dolt::Migrated::Ran(moved) => {
+            tracing::info!(moved, "carried the old role claims onto their role objects")
         }
-        Err(e) => tracing::warn!(
-            error = %e,
-            "OLD ROLE KEYS NOT TAKEN OFF — the bots could not be read at startup. Nothing was \
-             written and the role objects answer for every lease; a restart repeats the pass."
+        jojobot_adapters::dolt::Migrated::Settled => {
+            tracing::info!("old role claims: already carried")
+        }
+        jojobot_adapters::dolt::Migrated::Skipped(reason) => tracing::warn!(
+            error = %reason,
+            "OLD ROLE CLAIMS NOT CARRIED — the bots could not be read at startup. Nothing was \
+             written; a role claimed in the old shape reads as empty until a restart repeats \
+             the pass."
+        ),
+        jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::warn!(
+            error = %reason,
+            "OLD ROLE CLAIMS NOT ALL CARRIED — a role named above was not moved, so it reads as \
+             empty until a restart repeats the pass."
         ),
     }
 

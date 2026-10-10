@@ -226,13 +226,10 @@ impl Jojobot {
     /// mechanism, called from the two places a write actually lands.
     ///
     /// A role claim lives on the role's own object, a child of the bot (see
-    /// the boot door's `decide_role_claim`), with the bot's old keys as the
-    /// fallback for a claim made before that object existed. This asks the
-    /// store which roles that bot holds rather than tracking a claimed role
-    /// on the session record: a second place to remember what is claimed is
-    /// a second place for the two to disagree. The write goes through
-    /// `write_role_keys`, which moves a claim in the old shape onto its
-    /// object.
+    /// the boot door's `decide_role_claim`). This asks the store which roles
+    /// that bot holds rather than tracking a claimed role on the session
+    /// record: a second place to remember what is claimed is a second place
+    /// for the two to disagree. The write goes through `write_role_keys`.
     ///
     /// Best-effort: a read or write failure here is logged and never turns a
     /// write that landed into a failed call — renewing a lease is not what a

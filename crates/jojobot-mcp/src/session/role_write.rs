@@ -7,16 +7,14 @@
 //! later change in how a claim's keys reach their thing is then a change here.
 //!
 //! The decision on whether a write may land is not made here. The store makes
-//! it in the same act as the write, against the role's state in both shapes —
+//! it in the same act as the write, against the role's state —
 //! see [`jojobot_domain::memory::refuses_role_write`]. This function only finds
 //! or makes the role object and its claim record, and sends the right write.
 
 use jiff::Timestamp;
 use jiff::civil::Date;
-use jojobot_domain::memory::{
-    EntityId, EntityKind, FactPatch, Guarded, MemoryError, NewEntity, NewFact, guard,
-};
-use jojobot_domain::session::role_keys::{drop_old_role_keys, role_claim_content};
+use jojobot_domain::memory::{EntityId, EntityKind, FactPatch, Guarded, MemoryError, NewFact};
+use jojobot_domain::session::role_keys::{ensure_role_object, role_claim_content};
 use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind, role_state};
 
 use crate::Jojobot;
@@ -39,11 +37,9 @@ impl Jojobot {
     /// another session's lease is fresh. A renewal or a release carries a
     /// [`RoleMove`], and the store applies it only while its own sid holds the
     /// role, so one that arrives after the holder gave the role up changes
-    /// nothing. **A role claimed in the old shape has no claim record on its
-    /// object yet.** The record is made empty and the move is applied to it, so
-    /// the compare-and-write of a renewal or a release is the same one an
-    /// established role gets, and the first write after the change moves the
-    /// claim onto the object without a window in which it could be taken twice.
+    /// nothing. **A role object with no claim record yet** gets one made empty
+    /// and the move is applied to it, so the compare-and-write of a renewal or a
+    /// release is the same one an established role gets.
     ///
     /// The role object is the child of `bot`, the bot whose session writes. A
     /// role that exists under another bot is written where it is: one role is one
@@ -169,13 +165,6 @@ impl Jojobot {
             }
         };
         written?;
-        // **The bot's old keys for this role come off once the object holds the
-        // claim**, in this order so a failure between the two leaves the object
-        // answering and the old keys inert: `role_state` reads the object first.
-        // The next write of this role, or the next start, takes them off.
-        if let Err(e) = drop_old_role_keys(&*self.memory, bot, role).await {
-            tracing::warn!(error = %e, %bot, role, "the bot's old role keys could not be taken off");
-        }
         Ok(())
     }
 
@@ -376,49 +365,21 @@ impl Jojobot {
     }
 
     /// **Make the role object, as a child of the bot, the first time it is
-    /// written.** The creation is jojobot's own, so a near miss against another
-    /// seat, such as `dev` beside `dev2`, is not a question for a caller: the
-    /// token the guard minted for it is the answer.
+    /// written.** See [`ensure_role_object`].
     async fn ensure_role_object(
         &self,
         bot: &EntityId,
         object: &EntityId,
         role: &str,
     ) -> Result<(), MemoryError> {
-        let new = NewEntity {
-            parent: Some(bot.clone()),
-            ..NewEntity::new(object.clone(), role, "jojobot")
-        };
-        match self.memory.add_entity(new.clone()).await? {
-            Guarded::Written(_) => Ok(()),
-            Guarded::Blocked {
-                attempted,
-                candidates,
-            } => {
-                let token = guard::override_token(&attempted, &candidates);
-                match self
-                    .memory
-                    .add_entity(NewEntity {
-                        override_token: Some(token),
-                        ..new
-                    })
-                    .await?
-                {
-                    Guarded::Written(_) => Ok(()),
-                    Guarded::Blocked { .. } => Err(MemoryError::InvalidFact(format!(
-                        "the role object {object} could not be made"
-                    ))),
-                }
-            }
-        }
+        ensure_role_object(&*self.memory, bot, object, role).await
     }
 
-    /// **The roles this session's claimant holds, read in both shapes**, each with
-    /// the moment its lease was last written. A role object under the bot that
-    /// carries a moment answers for itself, with or without a holder; the bot's
-    /// old `role/<role>/holder` keys answer for any role whose object does not.
-    /// The moment is what a caller that writes only when a lease is old enough
-    /// decides on, without a second read.
+    /// **The roles this session's claimant holds**, each with the moment its
+    /// lease was last written. A role object under the bot that carries a moment
+    /// answers for itself, with or without a holder. The moment is what a caller
+    /// that writes only when a lease is old enough decides on, without a second
+    /// read.
     pub(crate) async fn roles_held_by(
         &self,
         bot: &EntityId,
@@ -433,7 +394,7 @@ impl Jojobot {
             };
             let child_fields = self.memory.fields(&child).await?;
             seen.push(role.clone());
-            let state = role_state(&role, Some(&child_fields), &bot_fields);
+            let state = role_state(Some(&child_fields));
             if state.holder.as_deref() == Some(claimant) {
                 held.push(HeldRole {
                     role,
@@ -455,8 +416,7 @@ impl Jojobot {
             let object = EntityId::new(EntityKind::ROLE, role);
             match self.memory.fields(&object).await {
                 Ok(object_fields) => {
-                    seen.push(role.to_string());
-                    let state = role_state(role, Some(&object_fields), &bot_fields);
+                    let state = role_state(Some(&object_fields));
                     if state.holder.as_deref() == Some(claimant) {
                         held.push(HeldRole {
                             role: role.to_string(),
@@ -466,21 +426,6 @@ impl Jojobot {
                 }
                 Err(MemoryError::UnknownEntity { .. }) => {}
                 Err(e) => return Err(e),
-            }
-        }
-        for key in bot_fields.keys() {
-            let Some(role) = jojobot_domain::session::role_from_field_key(key) else {
-                continue;
-            };
-            if seen.iter().any(|s| s == role) || held.iter().any(|h| h.role == role) {
-                continue;
-            }
-            let state = role_state(role, None, &bot_fields);
-            if state.holder.as_deref() == Some(claimant) {
-                held.push(HeldRole {
-                    role: role.to_string(),
-                    claimed_at: state.claimed_at,
-                });
             }
         }
         Ok(held)
@@ -502,6 +447,7 @@ mod tests {
     use crate::memory::testing::{capture_args, capture_ok, recall_args};
     use crate::memory::{CaptureArgs, RecallArgs, UpdateFactArgs};
     use crate::orientation::start_here::OrientArgs;
+    use jojobot_domain::memory::NewEntity;
     use rmcp::handler::server::wrapper::Parameters;
 
     fn boot(bot: &str, claim: Option<&str>) -> OrientArgs {
@@ -537,11 +483,11 @@ mod tests {
     async fn an_old_shape_claim(jojobot: &Jojobot, bot: &str, role: &str, holder: &str) {
         let fields: std::collections::BTreeMap<String, String> = [
             (
-                jojobot_domain::session::role_holder_key(role),
+                jojobot_domain::session::role_keys::role_holder_key(role),
                 holder.to_string(),
             ),
             (
-                jojobot_domain::session::role_claimed_at_key(role),
+                jojobot_domain::session::role_keys::role_claimed_at_key(role),
                 (jojobot.clock().now() - jiff::SignedDuration::from_mins(10)).to_string(),
             ),
         ]
@@ -562,6 +508,21 @@ mod tests {
             .expect("the old claim is written")
             .written()
             .expect("nothing blocks it");
+    }
+
+    /// **The start's one pass over the old role keys**, run the way the boot runs
+    /// it, and held to finishing every role.
+    async fn the_boot_moves_the_old_claims(
+        jojobot: &Jojobot,
+    ) -> jojobot_domain::session::role_keys::OldRoleKeysPass {
+        let pass = jojobot_domain::session::role_keys::move_old_role_claims(
+            &*jojobot.memory,
+            jiff::civil::date(2026, 10, 9),
+        )
+        .await
+        .expect("the pass reads every bot");
+        assert!(pass.failed.is_empty(), "{pass:?}");
+        pass
     }
 
     /// **A claim makes the role its own object, a child of the bot, and one read
@@ -671,26 +632,30 @@ mod tests {
         }
     }
 
-    /// **A role claimed in the old shape refuses a rival at the boot door.** The
-    /// previous build left the claim on the bot. It must read as held after the
-    /// change, naming its holder, and the refusal must write nothing.
+    /// **A role claimed in the old shape refuses a rival at the boot door once
+    /// the start has moved it.** The previous build left the claim on the bot.
+    /// The start carries it onto the role object, so the rival is refused naming
+    /// the holder, and the refusal writes nothing.
     #[tokio::test]
     async fn a_role_claimed_in_the_old_shape_refuses_a_rival_naming_its_holder() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         an_old_shape_claim(&jojobot, "bot:gamma", "dev-dispatch", "oldsid").await;
+        let pass = the_boot_moves_the_old_claims(&jojobot).await;
+        assert_eq!(pass.moved, 1, "{pass:?}");
 
         let rival = booted(&jojobot, "gamma", Some("dev-dispatch")).await;
         assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
         assert_eq!(rival["session"]["claim"]["holder"], "oldsid", "{rival}");
     }
 
-    /// **A write moves an old-shape claim onto its object, once, and the claim
-    /// stays held across the move.** Before the write there is no object; after
-    /// it the object carries the holder and a moment, the bot no longer holds the
-    /// role's old keys, and a rival is still refused.
+    /// **The start moves an old-shape claim onto its object, and the claim stays
+    /// held across the move.** Before the pass there is no object; after it the
+    /// object carries the holder and the moment, the bot no longer holds the
+    /// role's old keys, and a rival is refused. The holder's next write renews
+    /// the claim on the object.
     #[tokio::test]
-    async fn a_beat_moves_a_role_claimed_in_the_old_shape_onto_its_object() {
+    async fn the_start_moves_a_role_claimed_in_the_old_shape_onto_its_object() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         let first = booted(&jojobot, "gamma", None).await;
@@ -711,7 +676,7 @@ mod tests {
             "the role is not an object yet",
         );
 
-        crate::session::testing::journal_entry(&jojobot, &sid, "did some of the work").await;
+        the_boot_moves_the_old_claims(&jojobot).await;
 
         let moved = jojobot.memory.fields(&role).await.expect("fields ok");
         assert_eq!(
@@ -723,8 +688,8 @@ mod tests {
         let bot = EntityId("bot:gamma".into());
         let old = jojobot.memory.fields(&bot).await.expect("fields ok");
         for key in [
-            jojobot_domain::session::role_holder_key("dev-dispatch"),
-            jojobot_domain::session::role_claimed_at_key("dev-dispatch"),
+            jojobot_domain::session::role_keys::role_holder_key("dev-dispatch"),
+            jojobot_domain::session::role_keys::role_claimed_at_key("dev-dispatch"),
         ] {
             assert!(
                 !old.contains_key(&key),
@@ -751,6 +716,14 @@ mod tests {
             run_name(&jojobot, &sid),
             "{rival}"
         );
+
+        crate::session::testing::journal_entry(&jojobot, &sid, "did some of the work").await;
+        let renewed = jojobot.memory.fields(&role).await.expect("fields ok");
+        assert_eq!(
+            renewed.get("holder"),
+            Some(&run_name(&jojobot, &sid)),
+            "{renewed:?}"
+        );
     }
 
     /// **A wrap releases a role claimed in the old shape, and the role is free at
@@ -770,6 +743,7 @@ mod tests {
             &run_name(&jojobot, &sid),
         )
         .await;
+        the_boot_moves_the_old_claims(&jojobot).await;
 
         let before = booted(&jojobot, "gamma", Some("dev-dispatch")).await;
         assert_eq!(before["session"]["claim"]["status"], "refused", "{before}");

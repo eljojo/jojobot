@@ -750,6 +750,42 @@ pub async fn backfill_unreadable_due_days(
     }
 }
 
+/// **The one-time pass that carries a role claimed in the old shape onto its
+/// role object**, by the name it logs under and its marker carries.
+///
+/// A role used to keep its holder and claim moment on the bot as
+/// `role/<role>/holder` and `role/<role>/claimed_at`. Nothing reads those keys
+/// as a lease any more, so a store restored from before the change would seat a
+/// second session in every role held that way. This puts each such claim on its
+/// role object and takes the keys off the bot. It writes through the memory
+/// store and not through a table, like the due-day pass above.
+pub const OLD_ROLE_CLAIMS_PASS: &str = "old role claims";
+
+/// **Carry every old-shape role claim onto its role object, once, and mark the
+/// pass finished.** See [`jojobot_domain::session::role_keys::move_old_role_claims`]
+/// for what it moves and what it leaves.
+///
+/// **A pass that finished on this store reads nothing.** A role that could not
+/// be finished leaves the pass owed and its keys in place, so the next boot runs
+/// it again; it is idempotent, because a role that moved has no keys left to
+/// move.
+pub async fn move_old_role_claims_once(
+    pool: &MySqlPool,
+    memory: &dyn jojobot_domain::memory::Memory,
+    today: jiff::civil::Date,
+) -> Migrated {
+    if finished_passes(pool).await.contains(OLD_ROLE_CLAIMS_PASS) {
+        return Migrated::Settled;
+    }
+    match jojobot_domain::session::role_keys::move_old_role_claims(memory, today).await {
+        Err(e) => Migrated::Skipped(e.to_string()),
+        Ok(pass) if pass.failed.is_empty() => {
+            settled(pool, OLD_ROLE_CLAIMS_PASS, Ok::<usize, String>(pass.moved)).await
+        }
+        Ok(pass) => Migrated::Failed(pass.failed.join("; ")),
+    }
+}
+
 /// **Run every one-time permanent-id migration mail and sessions still
 /// need, over one read of the entity list, and say what actually happened
 /// for each — never a false `Ran(0)` standing in for a read that never

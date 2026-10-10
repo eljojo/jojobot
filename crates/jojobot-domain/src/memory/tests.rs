@@ -21,29 +21,37 @@ fn at(s: &str) -> jiff::Timestamp {
     s.parse().expect("a fixed instant")
 }
 
-/// **Both of a role's own fields are caught, by shape, and an ordinary
-/// field never is.** The positive and the negative in one read: a write
-/// naming neither role field has nothing here to refuse. The old shape is
-/// caught on any subject, because it is a key written on a bot.
+/// **Both of a role object's own fields are caught, and an ordinary field
+/// never is.** The positive and the negative in one read: a write naming
+/// neither role field has nothing here to refuse. The keys an older build kept
+/// on a bot are ordinary now, on any subject.
 #[test]
 fn refuses_role_fields_catches_both_of_a_roles_fields_and_nothing_else() {
+    let role = EntityId("role:dev-dispatch".into());
     let bot = EntityId("bot:gamma".into());
-    let holder = crate::session::role_holder_key("dev-dispatch");
-    let claimed_at = crate::session::role_claimed_at_key("dev-dispatch");
+    let holder = crate::session::ROLE_HOLDER.to_string();
+    let claimed_at = crate::session::ROLE_CLAIMED_AT.to_string();
     let ordinary = "thought_capacity".to_string();
 
-    let refused = refuses_role_fields(&bot, [&holder]);
+    let refused = refuses_role_fields(&role, [&holder]);
     assert!(
         matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key }) if role == "dev-dispatch" && key == &holder),
         "{refused:?}",
     );
-    let refused = refuses_role_fields(&bot, [&claimed_at]);
+    let refused = refuses_role_fields(&role, [&claimed_at]);
     assert!(
         matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key }) if role == "dev-dispatch" && key == &claimed_at),
         "{refused:?}",
     );
-    assert!(refuses_role_fields(&bot, [&ordinary]).is_none());
-    assert!(refuses_role_fields(&bot, std::iter::empty::<&String>()).is_none());
+    assert!(refuses_role_fields(&role, [&ordinary]).is_none());
+    assert!(refuses_role_fields(&role, std::iter::empty::<&String>()).is_none());
+
+    let old_holder = crate::session::role_keys::role_holder_key("dev-dispatch");
+    let old_claimed_at = crate::session::role_keys::role_claimed_at_key("dev-dispatch");
+    assert!(
+        refuses_role_fields(&bot, [&old_holder, &old_claimed_at]).is_none(),
+        "the keys of the old shape are ordinary on a bot",
+    );
 }
 
 /// **A role object's holder and claim moment are guarded on the role object,

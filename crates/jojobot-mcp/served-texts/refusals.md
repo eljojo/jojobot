@@ -443,11 +443,11 @@ answer: {
 ### Memory refusal `RoleFieldGuarded`
 
 ```text
-reads: 'role/dev/holder' is the boot door's own field: claim the dev role there, not here
+reads: 'holder' is the boot door's own field: claim the dev role there, not here
 answer: {
-  "attempted": "role/dev/holder",
+  "attempted": "holder",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'role/dev/holder' is the boot door's own field: claim the dev role there, not here. Claim the 'dev' role through start_here's own claim argument — that is the only door either of a role's own two fields opens through.",
+  "how_to_proceed": "Nothing was written: 'holder' is the boot door's own field: claim the dev role there, not here. Claim the 'dev' role through start_here's own claim argument — that is the only door either of a role's own two fields opens through.",
   "status": "blocked",
   "wrote": false
 }

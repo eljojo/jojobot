@@ -2514,12 +2514,9 @@ impl DoltMemory {
         Ok(walk.above())
     }
 
-    /// **A role object's lease state, read in both shapes inside the write's own
-    /// transaction**, or `None` when the subject is no role. The role's own
-    /// folded fields answer first; the holding bot's old `role/<role>/...` keys
-    /// answer until the role carries a moment. The parent is read straight off
-    /// the entity row, which keeps the badge it wears, so a write to anything
-    /// else pays nothing here.
+    /// **A role object's lease state, read inside the write's own transaction**,
+    /// or `None` when the subject is no role. The role's own folded fields
+    /// answer.
     async fn role_state_of(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -2530,17 +2527,7 @@ impl DoltMemory {
             return Ok(None);
         };
         let child = Self::held_by(tx, key).await?;
-        let parent: Option<String> = sqlx::query_scalar("SELECT parent FROM entity WHERE id = ?")
-            .bind(handle.as_str())
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?
-            .flatten();
-        let bot = match parent {
-            Some(parent) => Self::held_by(tx, &EntityId(parent)).await?,
-            None => Default::default(),
-        };
-        let state = jojobot_domain::session::role_state(&role, Some(&child), &bot);
+        let state = jojobot_domain::session::role_state(Some(&child));
         Ok(Some((role, state)))
     }
 
@@ -2554,8 +2541,8 @@ impl DoltMemory {
     /// holds. The row it changes is stamped with the store's clock, as an appended
     /// write is.
     ///
-    /// `false` when the role has no live moment to overwrite (a role claimed in
-    /// the old shape, whose first renewal on the object is an append): the caller
+    /// `false` when the role has no live moment to overwrite (a role whose object
+    /// holds no moment yet, whose first renewal is an append): the caller
     /// then writes as it always did.
     async fn overwrite_lease_moment(
         tx: &mut Transaction<'_, MySql>,

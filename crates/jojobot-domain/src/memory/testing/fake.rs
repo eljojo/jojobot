@@ -1142,32 +1142,21 @@ impl InMemoryMemory {
     ///
     /// The records are passed in rather than locked here, because the write
     /// path reads this while it is already holding them.
-    /// **A role object's lease state, read in both shapes**, or `None` when the
-    /// entity is no role. The role's own folded fields answer first; the holding
-    /// bot's old `role/<role>/...` keys answer until the role carries a moment.
+    /// **A role object's lease state**, or `None` when the entity is no role. The
+    /// role's own folded fields answer.
     fn role_state_for(
         &self,
         entity: &Entity,
-        index: &[Entity],
         facts: &[Fact],
     ) -> Option<(String, crate::session::RoleState)> {
         let role = super::super::role_named_by(&entity.id)?;
-        let stored_as = |e: &Entity| match &e.badge {
+        let stored_as = match &entity.badge {
             Some(badge) => EntityId(badge.clone()),
-            None => e.id.clone(),
+            None => entity.id.clone(),
         };
-        let declared = self.declarations();
         let child =
-            super::super::folded_fields(&self.writes_on(&stored_as(entity), facts), &declared);
-        let bot = entity
-            .parent
-            .as_ref()
-            .and_then(|parent| index.iter().find(|e| &e.id == parent))
-            .map(|parent| {
-                super::super::folded_fields(&self.writes_on(&stored_as(parent), facts), &declared)
-            })
-            .unwrap_or_default();
-        let state = crate::session::role_state(&role, Some(&child), &bot);
+            super::super::folded_fields(&self.writes_on(&stored_as, facts), &self.declarations());
+        let state = crate::session::role_state(Some(&child));
         Some((role, state))
     }
 
@@ -1180,8 +1169,8 @@ impl InMemoryMemory {
     /// release still append, and so does every other key, which is what the
     /// contract's second role case holds.
     ///
-    /// `false` when the role has no live moment to overwrite (a role claimed in
-    /// the old shape, whose first renewal on the object is an append): the caller
+    /// `false` when the role has no live moment to overwrite (a role whose object
+    /// holds no moment yet, whose first renewal is an append): the caller
     /// then writes as it always did.
     fn overwrite_lease_moment(&self, home: &EntityId, moment: &str) -> bool {
         let now = self.clock().now();
@@ -1977,7 +1966,7 @@ impl Memory for InMemoryMemory {
         // gates, against the state this same lock already holds**, in both
         // shapes. Only a write whose subject is a role object reads anything:
         // every other write costs nothing here.
-        if let Some((role, state)) = self.role_state_for(&subject_entity, &index, &facts)
+        if let Some((role, state)) = self.role_state_for(&subject_entity, &facts)
             && let Some(refused) =
                 super::super::refuses_role_write(&role, None, &fact.fields, &state)
         {
@@ -2501,7 +2490,7 @@ impl Memory for InMemoryMemory {
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same lock, so a renewal and a
         // fresh claim are one mechanism rather than two.
-        let role_state = self.role_state_for(entity, &index, &facts);
+        let role_state = self.role_state_for(entity, &facts);
         if let Some((role, state)) = &role_state
             && let Some(refused) = super::super::refuses_role_write(
                 role,

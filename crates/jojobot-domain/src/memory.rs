@@ -895,8 +895,7 @@ pub fn is_a_plain_renewal(patch: &FactPatch) -> bool {
 /// names a holder and a moment in `fields`, is decided by
 /// [`crate::session::claim_role`]. Anything else written to a role object, such
 /// as the agent key or a watcher's mark, is not a lease question and lands.
-/// `state` is [`crate::session::role_state`] over both shapes, so a role claimed
-/// before the change is held here too.
+/// `state` is [`crate::session::role_state`] of the role object.
 pub fn refuses_role_write(
     role: &str,
     role_move: Option<&crate::session::RoleMove>,
@@ -3055,13 +3054,11 @@ pub fn refuses_merge_into_room(
 /// only ever checked the first is what makes a bot able to clear its own
 /// capacity by patch.
 ///
-/// **Two shapes, one guard.** On a role object, the keys `holder` and
-/// `claimed_at` are the role's own; the role is named by the object's handle.
-/// The same keys on anything else are ordinary. The previous shape, a bot's
-/// `role/<role>/holder` and `role/<role>/claimed_at`, is caught by its key's
-/// shape on any subject, since it is written on a bot, and stays guarded until
-/// it is dropped. The agent key and a watcher's marks on a role object are
-/// plain keys and are not caught.
+/// On a role object, the keys `holder` and `claimed_at` are the role's own; the
+/// role is named by the object's handle. The same keys on anything else are
+/// ordinary, and so are the `role/<role>/...` keys an older build kept on a bot:
+/// no start leaves one, and nothing reads one as a lease. The agent key and a
+/// watcher's marks on a role object are plain keys and are not caught.
 ///
 /// The claim path (`orientation::orient::decide_role_claim`) and the
 /// renewal path write these fields directly through the `Memory` trait,
@@ -3072,21 +3069,13 @@ pub fn refuses_role_fields<'a>(
     subject: &EntityId,
     keys: impl IntoIterator<Item = &'a String>,
 ) -> Option<MemoryError> {
-    let object_role = role_named_by(subject);
-    keys.into_iter().find_map(|key| {
-        let role = match &object_role {
-            Some(role)
-                if key == crate::session::ROLE_HOLDER || key == crate::session::ROLE_CLAIMED_AT =>
-            {
-                Some(role.clone())
-            }
-            _ => crate::session::role_from_field_key(key).map(str::to_string),
-        };
-        role.map(|role| MemoryError::RoleFieldGuarded {
+    let role = role_named_by(subject)?;
+    keys.into_iter()
+        .find(|key| *key == crate::session::ROLE_HOLDER || *key == crate::session::ROLE_CLAIMED_AT)
+        .map(|key| MemoryError::RoleFieldGuarded {
             role,
             key: key.clone(),
         })
-    })
 }
 
 /// **A bot's own live thoughts, out of everything captured about it.**
@@ -3111,9 +3100,8 @@ pub fn thought_room(captured: &[Fact]) -> Vec<Fact> {
 }
 
 /// **Which of a bot's own claims are rules currently binding it** — active,
-/// not a thought ([`thought_room`]'s own edge carve, read the other way), and
-/// not a role claim's operational lease state. The boot and a write that
-/// stars a rule both need exactly this filter to decide whether the seats
+/// not a thought ([`thought_room`]'s own edge carve, read the other way). The
+/// boot and a write that stars a rule both need exactly this filter to decide whether the seats
 /// are full; shared here so the two cannot drift apart.
 pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
     recalled
@@ -3124,12 +3112,6 @@ pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
                 .edge
                 .as_ref()
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
-        })
-        .filter(|rule| {
-            !rule
-                .fields
-                .keys()
-                .any(|key| crate::session::role_from_field_key(key).is_some())
         })
         .cloned()
         .collect()

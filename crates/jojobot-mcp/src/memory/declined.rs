@@ -2028,7 +2028,7 @@ pub(crate) mod tests {
                 "RoleFieldGuarded",
                 MemoryError::RoleFieldGuarded {
                     role: s("dev"),
-                    key: s("role/dev/holder"),
+                    key: s("holder"),
                 },
                 Some("change"),
             ),
