@@ -85,8 +85,16 @@ pub fn expanded(body: &str, quoted: &[Quoted], expansions: &[String]) -> String 
 mod tests {
     use super::*;
 
-    fn addresses(body: &str) -> Vec<String> {
+    /// **The shipped kinds are loaded first**, because finding an address asks
+    /// the process-wide kind set whether its subject names a kind. A case that
+    /// relied on another test having loaded it answers differently alone.
+    fn quoted(body: &str) -> Vec<Quoted> {
+        crate::memory::kinds::load_shipped();
         quoted_addresses(body)
+    }
+
+    fn addresses(body: &str) -> Vec<String> {
+        quoted(body)
             .iter()
             .map(|q| format!("{}#{}", q.address.home, q.address.local))
             .collect()
@@ -118,7 +126,7 @@ mod tests {
     #[test]
     fn the_same_address_twice_is_found_twice_in_place() {
         let body = "@person:alpha#f1 and @person:alpha#f1";
-        let found = quoted_addresses(body);
+        let found = quoted(body);
         assert_eq!(found.len(), 2);
         assert_eq!(found[1].span, 21..37);
         let spliced = expanded(body, &found, &["A".into(), "B".into()]);
