@@ -555,6 +555,7 @@ mod tests {
     use super::*;
     use jiff::civil::date;
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
+    use jojobot_domain::memory::types::{Field, ValueType};
 
     fn alpha() -> EntityId {
         EntityId::person("person:alpha")
@@ -1843,6 +1844,65 @@ mod tests {
             Some(&"after".to_string()),
             "the old handle must resolve through history to CURRENT data, not the snapshot the \
              cache took before the rename",
+        );
+    }
+
+    /// **A rename leaves no cached copy of a field that names the old handle.**
+    /// A field naming a thing is served under the handle the thing answers to
+    /// now, and the fold caches what it served, so the copy cached for the thing
+    /// that holds the field still says the old spelling after the rename. The
+    /// fold drops it, which is why a read of a thing's fields needs nothing
+    /// further to resolve a reference.
+    #[tokio::test]
+    async fn a_rename_drops_the_cached_fields_that_name_the_old_handle() {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let folded = Folded::new(inner.clone());
+        folded
+            .declare_type(DeclaredType::new(
+                "fold-pointing",
+                vec![Field::new("friend", ValueType::Reference)],
+            ))
+            .await
+            .expect("the type is declared");
+        let gamma = EntityId::person("person:gamma");
+        let holder = EntityId::person("person:kenny");
+        for (id, name) in [(&alpha(), "Alpha"), (&holder, "Kenny")] {
+            seeded(&folded, id, name).await;
+        }
+        folded
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: BTreeMap::from([("friend".to_string(), alpha().to_string())]),
+                ..NewFact::about(holder.clone(), "has a friend", date(2026, 9, 1))
+            }))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        // The holder is read once, so it has a cached copy to be dropped.
+        assert_eq!(
+            folded
+                .fields(&holder)
+                .await
+                .expect("fields ok")
+                .get("friend"),
+            Some(&alpha().to_string()),
+        );
+
+        folded
+            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None)
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("not blocked");
+
+        assert_eq!(
+            folded
+                .fields(&holder)
+                .await
+                .expect("fields ok")
+                .get("friend"),
+            Some(&gamma.to_string()),
+            "the holder's cached copy still names the handle the friend wore before the rename"
         );
     }
 }

@@ -415,13 +415,9 @@ impl Mentioning {
 
     /// **Resolve every reference-typed value in a field map.**
     ///
-    /// Shared by [`Self::render_fact`], over a fact's own fields, and by
-    /// [`Memory::fields`](super::Memory::fields), over a thing's folded
-    /// fields — both are `BTreeMap<String, String>`, and the same
-    /// reference-typed key holds a plain handle in either. **Both need this,
-    /// or `graph::walk`'s thing-scope filter and record-scope filter compare
-    /// today's handle against two different maps agreeing on every key but
-    /// this one.**
+    /// Used by [`Self::render_fact`], over a fact's own fields. A thing's folded
+    /// fields come from [`Memory::fields`](super::Memory::fields) already
+    /// resolved by the store, so that door resolves nothing here.
     fn render_fields(
         fields: &mut std::collections::BTreeMap<String, String>,
         known: &[Entity],
@@ -866,28 +862,23 @@ impl super::Memory for Mentioning {
         }
         Ok(chains)
     }
-    /// **Resolved exactly as a fact's own fields are.** A thing-scope filter
-    /// compares this map, and a record-scope filter compares a resolved
-    /// fact's — both need to see today's handle under a reference-typed key,
-    /// or the two scopes disagree about the same key on the same thing.
     /// **Straight through**: an age says nothing a mention could be inside.
     async fn field_ages(&self, entity: &EntityId) -> Result<super::FieldAges, super::MemoryError> {
         self.inner.field_ages(entity).await
     }
 
+    /// **A thing's folded fields, as the store serves them.** A thing-scope
+    /// filter compares this map and a record-scope filter compares a resolved
+    /// fact's, so both have to show today's handle under a reference-typed key.
+    /// Nothing is resolved here, because the layers below already do it: a store
+    /// keeps the permanent id a reference names and serves the handle its thing
+    /// wears now on every read, and the fold drops a cached copy that names a
+    /// renamed handle. A resolution here changed no answer on either store.
     async fn fields(
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, super::MemoryError> {
-        let mut fields = self.inner.fields(entity).await?.open();
-        if fields.is_empty() {
-            return Ok(fields);
-        }
-        let known = self.known().await?;
-        let former = self.former().await?;
-        let declared = self.declared().await?;
-        Self::render_fields(&mut fields, &known, &former, &declared);
-        Ok(fields)
+        Ok(self.inner.fields(entity).await?.open())
     }
     /// **A key's backing carries the note its record carried**, the same
     /// text under the same name [`Self::history`] already renders — read
