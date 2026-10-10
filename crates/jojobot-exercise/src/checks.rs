@@ -2529,23 +2529,25 @@ async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Resu
 const UNTOUCHED: &str = "person:bart";
 const UNTOUCHED_RECORD: &str = "person:bart#f1";
 
-/// **What one boundary saw this record holding**, or nothing when the record
-/// did not exist yet.
+/// **What one boundary saw this record holding**: its words and its status.
+/// Nothing when the record did not exist yet, or when search leaves it out.
 ///
 /// A boundary's world is `list_entities` and a `search` over everything, joined
 /// by a newline; the search half carries each fact under `results` with its
-/// own `address` and `content`. **The shape is read off a real boundary rather
-/// than assumed** — a stand-in built from what the format ought to be would
-/// exercise a world this room never produces.
-fn held_at(world: &str, address: &str) -> Option<String> {
+/// own `address`, `content` and `status`. **The shape is read off a real
+/// boundary rather than assumed** — a stand-in built from what the format
+/// ought to be would exercise a world this room never produces.
+fn held_at(world: &str, address: &str) -> Option<(String, String)> {
     let (_, searched) = world.split_once('\n')?;
     let parsed: Value = serde_json::from_str(searched).ok()?;
-    parsed["results"]
+    let hit = parsed["results"]
         .as_array()?
         .iter()
-        .find(|hit| hit["address"].as_str() == Some(address))
-        .and_then(|hit| hit["content"].as_str())
-        .map(str::to_string)
+        .find(|hit| hit["address"].as_str() == Some(address))?;
+    Some((
+        hit["content"].as_str()?.to_string(),
+        hit["status"].as_str()?.to_string(),
+    ))
 }
 
 /// **A record's trace carries exactly the writes the run made to it.**
@@ -2581,12 +2583,12 @@ fn held_at(world: &str, address: &str) -> Option<String> {
 async fn a_records_trace_matches_the_writes_the_run_made(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
-    let observed: Vec<Option<String>> = seen
+    let observed: Vec<Option<(String, String)>> = seen
         .boundaries
         .iter()
         .map(|at| held_at(&at.world, UNTOUCHED_RECORD))
         .collect();
-    let held: Vec<String> = observed.iter().flatten().cloned().collect();
+    let held: Vec<(String, String)> = observed.iter().flatten().cloned().collect();
     // **The positive the lock rests on.** Without it a year where the record
     // was never written reports a trace of one write as correct, because zero
     // observed states and a one-write trace would never be compared at all.
@@ -2596,10 +2598,11 @@ async fn a_records_trace_matches_the_writes_the_run_made(
         ));
     }
     // The record's first appearance is one write; every later change of what it
-    // holds is one more. **So is its leaving the index:** a later sitting
-    // corrects a claim an earlier one wrote by archiving it, which changes its
-    // status and not its words, and an archived claim is not in the index. The
-    // boundary that stops seeing the record is the only trace of that write.
+    // holds is one more, **its words or its status**: a later sitting corrects a
+    // claim an earlier one wrote by archiving it, which changes the status and
+    // not the words, whether or not search still shows an archived claim. **So
+    // is its leaving the index**, as a retraction does, because the boundary
+    // that stops seeing the record is the only trace of that write.
     let appeared = observed.iter().position(Option::is_some).unwrap_or(0);
     let left = observed[appeared..]
         .windows(2)
@@ -2627,7 +2630,10 @@ async fn a_records_trace_matches_the_writes_the_run_made(
     if reported == made {
         return Ok(());
     }
-    let seen_holding: Vec<&str> = held.iter().map(String::as_str).collect();
+    let seen_holding: Vec<(&str, &str)> = held
+        .iter()
+        .map(|(words, status)| (words.as_str(), status.as_str()))
+        .collect();
     Err(format!(
         "the trace of {UNTOUCHED_RECORD} reports {reported} write(s) and the run made {made} — across the boundaries the record was seen holding {seen_holding:?}, so the trace and what the run actually did disagree: {read}"
     ))
