@@ -129,9 +129,9 @@ jojobot also writes **its own beats** into your chronology: one per class of WRI
 
 ### The two endings, and they are not interchangeable
 
-**WRAP when the work is over.** Your run finished what it was for; the story is told and the run closes clean.
+**WRAP when the work is over, or must move to another agent now.** The story is the handover: the wrap frees your role at once, and the next agent boots fresh and reads it. Never pass your `sid` on; it is your session's secret.
 
-**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a compaction — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity is offered this session by what it says it is working on, and whoever resumes it reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
+**CLEAR AND RESUME when the run may go quiet without a wrap** — a crash, a compaction, a quota wall. **Journal a resume note as you go**: once the run has been quiet for the lease, the next boot of this identity is offered it by name and by what it says it is working on, and whoever picks it up reads your chronology.
 
 The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
 

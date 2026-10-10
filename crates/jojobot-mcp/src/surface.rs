@@ -693,21 +693,21 @@ fn tool_description(verb: &str) -> String {
         .to_string()
 }
 
-/// **A wrap is for work that is over; work that continues on another agent is a
-/// resume note.** The rotation line used to say wrapping is how you rotate when
-/// a run has gotten long, which sent a run that is stopping with the job undone
-/// to tell a story that has not happened. The sentence that offers the rotation
-/// now carries the exception, and `journal` names it where a beat is described.
+/// **A wrap is how work moves to another agent now; a resume note is for a run
+/// that goes quiet.** The rotation line used to say work continuing elsewhere is
+/// a resume note, which sent a live handover to a pick-up that needs the run's
+/// key or a lease to pass. The sentence that offers the rotation now says a live
+/// handover is a wrap, and `journal` names the note where a beat is described.
 #[test]
 fn wrap_session_and_journal_name_the_resume_note() {
     let wrap = tool_description("wrap_session");
-    let rotate = wrap
-        .split(". ")
-        .find(|sentence| sentence.contains("ROTATE"))
-        .expect("wrap_session offers the rotation");
+    let after_rotate = wrap
+        .split_once("ROTATE")
+        .expect("wrap_session offers the rotation")
+        .1;
     assert!(
-        rotate.contains("resume note"),
-        "the rotation line does not say work continuing elsewhere is a resume note: {rotate}"
+        after_rotate.contains("resume note") && after_rotate.contains("lease"),
+        "the rotation does not name the resume note and the lease it waits for: {after_rotate}"
     );
     let journal = tool_description("journal");
     assert!(
@@ -2247,8 +2247,8 @@ fn the_orientation_teaches_the_sid_as_the_address_and_leaves_reads_untallied() {
 
 /// **The norms a session cannot derive from the tool list are taught.**
 /// Each of these was a real session getting it wrong or having no way to
-/// know: wrapping a session whose work continues (so the next run started
-/// from nothing), treating `abandoned` as an ordinary ending, and reading a
+/// know: handing a live session's work over by resume note instead of a wrap,
+/// treating `abandoned` as an ordinary ending, and reading a
 /// flat box listing as an invitation to survey a shared namespace.
 ///
 /// Deliberately **engine-generic**: how long a given role's session should
@@ -2262,9 +2262,12 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
         essay.contains("CLEAR AND RESUME"),
         "the continuing case is named"
     );
+    let handover = essay
+        .split_once("**CLEAR AND RESUME")
+        .map_or("", |(before, _)| before);
     assert!(
-        essay.contains("do NOT wrap"),
-        "…and says which verb NOT to reach for, since wrapping is the tempting default"
+        handover.contains("wrap") && handover.contains("`sid`"),
+        "…and says a live handover is a wrap, and that the sid is not passed on"
     );
     assert!(
         essay.contains("resume note"),

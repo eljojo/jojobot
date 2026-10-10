@@ -559,18 +559,82 @@ async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
     );
 }
 
-/// **A run whose work continues on another agent leaves a resume note and does not
-/// wrap, and the next boot of the identity picks that run up as taught.** The
-/// calls are exactly the ones the descriptions of `journal` and `wrap_session`
-/// give: one dense beat with the focus set, no wrap, then a boot that is offered
-/// the run by what it says it is working on and answers the offer with the run's
-/// own sid. The run is not wrapped, so the note is the way in, and the
-/// chronology the resuming run inherits holds it.
+/// **Work that must move to another agent now is a wrap: the story is the
+/// handover, the role is free at once, and the next agent boots fresh.** The
+/// calls are the ones `wrap_session`'s description gives. Before the wrap a rival
+/// boot is refused naming the holder, so the release is what changed the answer.
 #[tokio::test]
-async fn a_run_whose_work_continues_elsewhere_leaves_a_resume_note_and_is_picked_up() {
+async fn a_live_handover_is_a_wrap_the_next_agent_reads_and_the_role_is_free_at_once() {
     let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.event_with(
+        "bot:gamma",
+        "gamma runs the dispatch",
+        json!({"claims_role": "dispatch"}),
+        &[],
+    )
+    .await;
+    let (first, held) = story
+        .call("start_here", json!({"bot": "gamma", "brief": true}))
+        .await;
+    assert_eq!(
+        first.json()["session"]["claim"]["status"],
+        "taken",
+        "{}",
+        first.json()
+    );
+    let holder = held.expect("the boot hands back the handle");
+    let (rival, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": "new"}),
+        )
+        .await;
+    assert_eq!(
+        rival.json()["session"]["claim"]["status"],
+        "refused",
+        "{}",
+        rival.json()
+    );
+
+    holder
+        .wrap(
+            "The dispatch board is half sorted: the east routes are done and the west routes are \
+             not. Next step: sort the west routes by driver before the morning run.",
+        )
+        .await;
+
+    let (next, fresh) = story
+        .call("start_here", json!({"bot": "gamma", "brief": true}))
+        .await;
+    next.says("sort the west routes by driver");
+    assert_eq!(
+        next.json()["session"]["claim"]["status"],
+        "taken",
+        "the wrap released the role at once: {}",
+        next.json()
+    );
+    assert!(
+        fresh.is_some(),
+        "the next agent is handed a fresh run, not the wrapped one"
+    );
+    story.finish().await;
+}
+
+/// **A run that went quiet without wrapping leaves a resume note, and once the
+/// lease has passed it is picked up by its name.** The calls are the ones the
+/// descriptions of `journal` and `wrap_session` give: one dense beat with the
+/// focus set, no wrap, then a boot that is offered the run by its name and by
+/// what it says it is working on. Before the lease has passed the name asks and
+/// is refused; after it the name continues the run with a new key, the chronology
+/// the run inherits holds the note, and the key it had is turned away.
+#[tokio::test]
+async fn a_run_that_went_quiet_leaves_a_resume_note_and_is_picked_up_by_its_name() {
+    let lease = std::time::Duration::from_secs(3);
+    let story = Story::begin_on_a_lease_of("bot:otto", lease).await;
     let first = story.session().await;
-    let stopped = first.sid().to_string();
+    let stopped = first.run().to_string();
     first
         .call(
             "journal",
@@ -583,20 +647,34 @@ async fn a_run_whose_work_continues_elsewhere_leaves_a_resume_note_and_is_picked
         )
         .await;
 
-    // Nothing wrapped it, so the next boot is offered the run by what it says it is
-    // working on, and no handle comes back until the offer is answered.
+    // Nothing wrapped it, so the next boot is offered the run by its name and by
+    // what it says it is working on, and no handle comes back until the offer is
+    // answered. The offer never carries the run's key.
     let (offer, unanswered) = story
         .call("start_here", json!({"bot": "otto", "brief": true}))
         .await;
     offer
         .says(&stopped)
-        .says("price the kitchen floor with the second contractor");
+        .says("price the kitchen floor with the second contractor")
+        .never_says(first.sid());
     assert!(
         unanswered.is_none(),
         "an unanswered offer hands back no handle"
     );
 
-    // Answering with the run's own sid continues that run, and its chronology holds the note.
+    // The run is still inside its lease, so the name alone does not take it.
+    story
+        .refused_at_the_door(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": &stopped}),
+        )
+        .await
+        .says(&stopped)
+        .never_says(first.sid());
+
+    // Once the lease has passed, answering with the run's name continues that run,
+    // and its chronology holds the note.
+    tokio::time::sleep(lease + std::time::Duration::from_millis(500)).await;
     let (resumed, picked_up) = story
         .call(
             "start_here",
@@ -606,10 +684,21 @@ async fn a_run_whose_work_continues_elsewhere_leaves_a_resume_note_and_is_picked
     resumed.says("\"resumed\":true").says("floor priced apart");
     let second = picked_up.expect("answering the offer hands back the handle");
     assert_eq!(
-        second.sid(),
+        second.run(),
         stopped,
         "the run continues, it does not restart"
     );
+    assert_ne!(
+        second.sid(),
+        first.sid(),
+        "the run is handed a new key, and the one it had is closed"
+    );
+    first
+        .refused("journal", json!({"entry": "from the old sitting"}))
+        .await
+        .says(&stopped)
+        .says("resumed")
+        .never_says(first.sid());
     // The run was never wrapped, so it is not a wrapped run's one-time window: it
     // is an ordinary run, and its wrap is the first one.
     let wrapped = second

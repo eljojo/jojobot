@@ -40,8 +40,10 @@ impl Jojobot {
                        readable and it is offered back to resume for 7 days, but its story \
                        was never told. When the work continues but this run has gotten long, \
                        wrapping is also how you ROTATE: wrap, then boot again for a fresh \
-                       sid; work that continues on another agent is a resume note in \
-                       `journal`, not a wrap. THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it \
+                       sid. Work that must move to another agent NOW is a wrap too: the wrap frees \
+                       your role at once and the next agent boots fresh and reads your story. A \
+                       resume note in `journal` is for a run that goes quiet; it is picked up by \
+                       name once the lease has passed, and a key never travels. THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it \
                        as the resume answer hands this run's own sid back for one last change \
                        while the run stays wrapped; the window ends when you wrap a second \
                        time (a second closing entry, no new code) or a newer run of the bot \
