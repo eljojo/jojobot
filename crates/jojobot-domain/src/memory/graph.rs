@@ -1324,6 +1324,14 @@ pub struct Selected {
     /// still answers by its own handle, which is how the one that replaced it
     /// is told apart from it.
     pub decisions_archived: Vec<EntityId>,
+    /// **How many selected objects stand before the first one in `objects`**
+    /// and were not read, because the caller's window began after them. Zero
+    /// unless [`walk_in_window`] read a window.
+    pub skipped: usize,
+    /// **How many selected objects stand after the last one in `objects`** and
+    /// were not read, because the window's room was spent before them. Zero
+    /// unless [`walk_in_window`] read a window.
+    pub left_over: usize,
 }
 
 pub fn resolve(
@@ -1350,6 +1358,8 @@ pub fn resolve(
         archived_excluded: ctx.archived_excluded(&query.select),
         merged_excluded: ctx.merged_excluded(&query.select),
         decisions_archived,
+        skipped: 0,
+        left_over: 0,
     })
 }
 
@@ -2392,6 +2402,44 @@ pub async fn walk<M>(
 where
     M: super::Memory + ?Sized,
 {
+    walk_in_window(store, sessions, query, None).await
+}
+
+/// **The part of a browse a caller will actually serve.**
+///
+/// `offset` objects of the selection stand before it and are not read. The
+/// objects after them are read one at a time, in answer order, and each adds
+/// what `size_of` says it will cost to `budget`; the read stops after the first
+/// object that takes the total past `budget`, and the objects behind it are not
+/// read. `size_of` has to be a LOWER bound of what an object costs when served:
+/// a read that stopped early on an overestimate would leave out an object that
+/// fits, and the answer says what it left out as a count, never as a guess.
+pub struct Window<'a> {
+    /// How many objects of the selection stand before the window.
+    pub offset: usize,
+    /// The room the served objects have.
+    pub budget: usize,
+    /// What one object costs when served, at least.
+    pub size_of: &'a (dyn Fn(&Object) -> usize + Sync),
+}
+
+/// [`walk`], reading only the objects a window will serve when the question
+/// lets the selection be decided without reading them.
+///
+/// **A browse by kind or parent that filters on nothing a thing holds** is
+/// decided by the entities alone, so the objects are selected from the index and
+/// read afterwards, in answer order, until the window's room is spent. Any other
+/// question reads what it always read and answers in full: `skipped` and
+/// `left_over` are then zero, and the caller finds the objects it expects.
+pub async fn walk_in_window<M>(
+    store: &M,
+    sessions: &[DocScan],
+    query: &GraphQuery,
+    window: Option<Window<'_>>,
+) -> Result<Selected, MemoryError>
+where
+    M: super::Memory + ?Sized,
+{
     query.validate()?;
     // The entity index: what exists, what a kind selects, and what a handle
     // that names nothing is screened against.
@@ -2466,6 +2514,71 @@ where
     let query = &query;
     let select = &query.select;
 
+    // **A browse that asks nothing of what a thing holds is decided by the
+    // entities alone**, so its objects are selected from the index and read
+    // afterwards, in answer order, until the window's room is spent. A question
+    // that reads fields or records to choose, that follows links, that names a
+    // handle or a candidate set, or that joins runs reads what it always read.
+    if let Some(window) = &window
+        && sessions.is_empty()
+        && resolved_subject.is_none()
+        && query.follow.is_none()
+        && query.history.is_none()
+        && query.select.candidates.is_none()
+        && query.select.kind != Some(super::EntityKind::SESSION)
+        && !query.select.filters_facts()
+    {
+        let shells: Vec<DocScan> = entities
+            .iter()
+            .map(|entity| DocScan {
+                doc_id: entity.id.to_string(),
+                title: entity.name.clone(),
+                prose: String::new(),
+                facts: Vec::new(),
+                fields: BTreeMap::new(),
+                entity: Some(entity.clone()),
+                owner: None,
+            })
+            .collect();
+        let declarations = if query.needs_declarations() {
+            store.declared_types().await?
+        } else {
+            Vec::new()
+        };
+        let selected = resolve(&shells, &declarations, query)?;
+        let total = selected.objects.len();
+        let skipped = window.offset.min(total);
+        let mut objects: Vec<Object> = Vec::new();
+        let mut spent = 0usize;
+        let mut passed = skipped;
+        for shell in &selected.objects[skipped..] {
+            passed += 1;
+            let doc = read_doc(store, &shell.entity, query.include.prose).await?;
+            let Some(mut object) = resolve(std::slice::from_ref(&doc), &declarations, query)?
+                .objects
+                .pop()
+            else {
+                continue;
+            };
+            fill_revision_counts(store, &mut object).await?;
+            fill_ages(store, &mut object).await;
+            spent += (window.size_of)(&object);
+            objects.push(object);
+            // The object that takes the total past the room is read and kept: it
+            // is the first the caller will find does not fit, and the ones behind
+            // it cannot.
+            if spent > window.budget {
+                break;
+            }
+        }
+        return Ok(Selected {
+            objects,
+            skipped,
+            left_over: total - passed,
+            ..selected
+        });
+    }
+
     // **Whose records are needed.** A walk cannot know where it will go, and a
     // filter over records cannot choose objects without reading theirs — both
     // need all of them. Everything else needs only what it named.
@@ -2513,39 +2626,19 @@ where
             }
             continue;
         }
-        let read = wanted.iter().any(|w| w.id == entity.id);
-        let facts = if read {
-            store.recall(&entity.id).await?
+        if wanted.iter().any(|w| w.id == entity.id) {
+            scanned.push(read_doc(store, entity, query.include.prose).await?);
         } else {
-            Vec::new()
-        };
-        let prose = if read && query.include.prose {
-            store
-                .scan_entity(&entity.id)
-                .await?
-                .map(|doc| doc.prose)
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        // **Asked of the store, never folded from the records above.** What a
-        // thing holds is decided in the order its keys were written, which the
-        // records have already projected away — so a walk that folded them for
-        // itself would answer with a value the store does not hold.
-        let fields = if read {
-            store.fields(&entity.id).await?
-        } else {
-            BTreeMap::new()
-        };
-        scanned.push(DocScan {
-            doc_id: entity.id.to_string(),
-            title: entity.name.clone(),
-            prose,
-            facts,
-            fields,
-            entity: Some(entity.clone()),
-            owner: None,
-        });
+            scanned.push(DocScan {
+                doc_id: entity.id.to_string(),
+                title: entity.name.clone(),
+                prose: String::new(),
+                facts: Vec::new(),
+                fields: BTreeMap::new(),
+                entity: Some(entity.clone()),
+                owner: None,
+            });
+        }
     }
     // **Read only for the questions that need it.** A declaration is what makes
     // a key a relation and what licenses an ordering, and a query asking for
@@ -2578,6 +2671,38 @@ where
         fill_ages(store, object).await;
     }
     Ok(found)
+}
+
+/// **One entity's document, read from the store**: its records, its prose when
+/// asked for, and its fields.
+async fn read_doc<M>(store: &M, entity: &Entity, prose: bool) -> Result<DocScan, MemoryError>
+where
+    M: super::Memory + ?Sized,
+{
+    let facts = store.recall(&entity.id).await?;
+    let prose = if prose {
+        store
+            .scan_entity(&entity.id)
+            .await?
+            .map(|doc| doc.prose)
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    // **Asked of the store, never folded from the records above.** What a thing
+    // holds is decided in the order its keys were written, which the records have
+    // already projected away — so a walk that folded them for itself would answer
+    // with a value the store does not hold.
+    let fields = store.fields(&entity.id).await?;
+    Ok(DocScan {
+        doc_id: entity.id.to_string(),
+        title: entity.name.clone(),
+        prose,
+        facts,
+        fields,
+        entity: Some(entity.clone()),
+        owner: None,
+    })
 }
 
 /// Attach, to an object and everything it reached, when the store took in what

@@ -7200,3 +7200,108 @@ async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
         }
     }
 }
+
+/// **A browse that does not fit reads only the objects it serves, says exactly
+/// how many it left out, and the offset it names reads the next part whole.**
+/// Sixty places each hold a long record, so a part carries a few dozen of them
+/// at most. The store is asked for the records of the objects served and the one
+/// that overflowed, and not for the rest. Paired: the left-out count is the sixty
+/// less the part, and reading on part by part serves every place once, in handle
+/// order — so a read that dropped the count, or that skipped the objects it did
+/// not read, fails.
+#[tokio::test]
+async fn a_browse_that_does_not_fit_reads_only_what_it_serves_and_counts_the_rest() {
+    let memory = shared_memory();
+    let jojobot = handler_over(memory.clone());
+    let handles: Vec<String> = (0..60)
+        .map(|i| EntityId::new(EntityKind::PLACE, format!("browse-{i:02}")).to_string())
+        .collect();
+    for handle in &handles {
+        let id = EntityId(handle.clone());
+        // Staged past the near-miss screen, which would hold sixty numbered
+        // names against each other; what is under test here is the read.
+        memory.past_the_guard(Entity {
+            kind: EntityKind::PLACE,
+            id: id.clone(),
+            name: id.slug().to_string(),
+            aliases: Vec::new(),
+            source: "user-named".into(),
+            crm: None,
+            parent: None,
+            boot: Boot::OnDemand,
+            merged_into: None,
+            badge: None,
+            archived: None,
+        });
+        memory
+            .capture(NewFact {
+                details: Some("a long account of the visit ".repeat(30)),
+                ..NewFact::about(id, "was visited", jiff::civil::date(2026, 10, 1))
+            })
+            .await
+            .expect("the record is written");
+    }
+    let browse = |offset: Option<u32>| RecallArgs {
+        kind: Some("place".into()),
+        facts: Some(true),
+        offset,
+        ..of_nothing()
+    };
+
+    let before = memory.record_reads();
+    let first = json_of(
+        &jojobot
+            .recall(Parameters(browse(None)))
+            .await
+            .expect("recall ok"),
+    );
+    let reads = memory.record_reads() - before;
+    let shown = first["objects"].as_array().expect("objects").len();
+    assert!(
+        shown > 1 && shown < 60,
+        "the fixture must overflow the ceiling and still serve several: {shown}"
+    );
+    assert_eq!(
+        first["not_shown"]["count"],
+        60 - shown,
+        "the left-out count is exactly what was not served: {first}"
+    );
+    assert!(
+        reads <= shown + 2,
+        "{shown} were served and {reads} were read; the rest of the sixty must not be"
+    );
+
+    // Reading on serves every place once, in handle order.
+    let mut served: Vec<String> = first["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect();
+    let mut next = first["not_shown"]["offset"].as_u64();
+    while let Some(offset) = next {
+        let part = json_of(
+            &jojobot
+                .recall(Parameters(browse(Some(offset as u32))))
+                .await
+                .expect("recall ok"),
+        );
+        let objects = part["objects"].as_array().expect("objects");
+        assert!(
+            !objects.is_empty(),
+            "a part that names a next one is not empty: {part}"
+        );
+        assert_eq!(
+            objects[0]["id"].as_str(),
+            Some(handles[served.len()].as_str()),
+            "the part starts at the offset it was named by"
+        );
+        served.extend(
+            objects
+                .iter()
+                .map(|o| o["id"].as_str().expect("an id").to_string()),
+        );
+        next = part["not_shown"]["offset"].as_u64();
+    }
+    assert_eq!(served, handles, "every place once, in handle order");
+}

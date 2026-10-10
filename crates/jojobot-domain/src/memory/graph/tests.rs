@@ -4029,3 +4029,96 @@ fn a_walk_counts_the_objects_it_did_not_follow() {
         "the one run two things point at is counted once: {answer:?}"
     );
 }
+
+/// **A browse reads the objects its window will serve and stops there.** Sixty
+/// places each hold a record; the room has space for 35 of them at 100 apiece.
+/// The read takes the 36th, the first that overflows, and not the 24 behind it,
+/// so the store is asked for 36 objects' records and not 60. What it did not read
+/// is counted: none before the window and 24 after it.
+///
+/// Paired with the same browse read in full: the objects it did read are the ones
+/// the full read has in the same places, field for field, so reading less never
+/// meant reading differently. And with an offset the objects before it are not
+/// read at all.
+#[tokio::test]
+async fn a_windowed_browse_reads_what_fits_and_counts_what_it_did_not() {
+    let store = crate::memory::testing::InMemoryMemory::booted();
+    let names: Vec<EntityId> = (0..60)
+        .map(|i| EntityId::new(EntityKind::PLACE, format!("window-{i:02}")))
+        .collect();
+    for id in &names {
+        // Staged past the near-miss screen, which would hold sixty numbered
+        // names against each other.
+        store.past_the_guard(entity(id.as_str(), id.slug()));
+        store
+            .capture(crate::memory::NewFact::about(
+                id.clone(),
+                "was visited",
+                jiff::civil::date(2026, 10, 1),
+            ))
+            .await
+            .expect("the record is written");
+    }
+    let query = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PLACE),
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    let cost = |_: &Object| 100usize;
+    let window = |offset: usize| Window {
+        offset,
+        budget: 3_500,
+        size_of: &cost,
+    };
+
+    let before = store.record_reads();
+    let read = walk_in_window(&store, &[], &query, Some(window(0)))
+        .await
+        .expect("a kind selects");
+    assert_eq!(
+        store.record_reads() - before,
+        36,
+        "the 35 that fit and the one that overflowed are read, and no other"
+    );
+    assert_eq!(read.objects.len(), 36);
+    assert_eq!((read.skipped, read.left_over), (0, 24));
+    assert_eq!(
+        handles(&read.objects)[..2],
+        [names[0].as_str(), names[1].as_str()]
+    );
+
+    let before = store.record_reads();
+    let full = walk(&store, &[], &query).await.expect("a kind selects");
+    assert_eq!(
+        store.record_reads() - before,
+        60,
+        "the read in full asks for every object, which is what the window saves"
+    );
+    assert_eq!((full.skipped, full.left_over), (0, 0));
+    for (windowed, whole) in read.objects.iter().zip(&full.objects) {
+        assert_eq!(
+            format!("{windowed:?}"),
+            format!("{whole:?}"),
+            "an object read in a window is the object the full read has"
+        );
+    }
+    assert_eq!(
+        (read.withheld, read.archived_excluded, read.merged_excluded),
+        (full.withheld, full.archived_excluded, full.merged_excluded),
+        "what the selection counted does not depend on what was read"
+    );
+
+    let before = store.record_reads();
+    let later = walk_in_window(&store, &[], &query, Some(window(10)))
+        .await
+        .expect("a kind selects");
+    assert_eq!(
+        store.record_reads() - before,
+        36,
+        "the ten before the offset are not read"
+    );
+    assert_eq!((later.skipped, later.left_over), (10, 14));
+    assert_eq!(handles(&later.objects)[0], names[10].as_str());
+}

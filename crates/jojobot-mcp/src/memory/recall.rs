@@ -1156,6 +1156,18 @@ fn fit_facts_of_one(
     }
 }
 
+/// **The selected objects the walk did not read**, standing before and after the
+/// ones the body holds. A walk that read a window of a browse leaves the rest
+/// counted and not served, so the body holds a part of the selection and the
+/// answer has to count the whole of it.
+#[derive(Clone, Copy, Default)]
+struct Outside {
+    /// Objects before the body's first, already read by the caller's `offset`.
+    before: usize,
+    /// Objects after the body's last, never read.
+    after: usize,
+}
+
 /// **Fit a recall under the answer ceiling, filling in the answer's own order.**
 ///
 /// Silent when everything fits and no `offset` was sent: the answer is untouched
@@ -1169,7 +1181,7 @@ fn fit_facts_of_one(
 /// reads them in parts, except that a single fact larger than the ceiling is
 /// never cut and still comes back whole. What was left out is counted under `not_shown` with the
 /// `offset` that reads on.
-fn fit_recall(body: &mut serde_json::Value, offset: usize) {
+fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
     use jojobot_domain::text::{ANSWER_CEILING, Capped};
     let Some(objects) = body
         .get_mut("objects")
@@ -1182,8 +1194,9 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
     let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM;
     let widest = crate::answer::widest_not_shown("objects");
     let total = objects.len();
+    let windowed = outside.before + outside.after > 0;
 
-    if total == 1 && objects[0]["facts"].is_array() {
+    if total == 1 && !windowed && objects[0]["facts"].is_array() {
         let object = objects.into_iter().next().expect("one object");
         fit_facts_of_one(body, object, offset, 0);
         return;
@@ -1198,7 +1211,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
         .take_while(|o| o.get(STANDING_DECISION_OF).is_some())
         .count();
     let thread_has_records = lead > 0 && objects.last().is_some_and(|o| o["facts"].is_array());
-    if lead > 0 && total == lead + 1 && (thread_has_records || offset == 0) {
+    if lead > 0 && !windowed && total == lead + 1 && (thread_has_records || offset == 0) {
         let mut objects = objects;
         let thread = objects.pop().expect("the thread follows its decisions");
         if offset > 0 {
@@ -1256,7 +1269,9 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
     }
 
     let window: Vec<serde_json::Value> = objects.into_iter().skip(offset).collect();
-    let all_fit = offset == 0 && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING;
+    let all_fit = offset == 0
+        && outside.after == 0
+        && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING;
     if all_fit {
         body["objects"] = window.into();
         return;
@@ -1317,6 +1332,10 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
         break;
     }
     body["count"] = shown.len().into();
+    // Counted over the whole selection: the objects the body holds and the ones
+    // the walk did not read on either side of them.
+    let offset = outside.before + offset;
+    let total = outside.before + total + outside.after;
     let after = offset + shown.len();
     let remaining = total.saturating_sub(after);
     body["objects"] = shown.into();
@@ -2212,6 +2231,42 @@ impl Jojobot {
             Vec::new()
         };
 
+        // **Only the objects that will fit are read.** A browse by kind is decided
+        // by the index alone, and what it costs is reading each object, so the walk
+        // is told where the answer starts and how much room it has, and reads
+        // objects in answer order until the room is spent. The cost it is told is
+        // a floor: what an object renders to, with the smallest `held` block every
+        // object carries. A floor can only read a few objects more than fit, never
+        // fewer, and the fit below cuts exactly. A question that needs every object
+        // to answer — an overdue day, the values in use, backing, a status, a
+        // lineage — reads them all as it always did.
+        let offset = args.offset.map_or(0, |o| o as usize);
+        let narrowing = only_keys.as_deref().map(|keys| KeyNarrowing {
+            keys,
+            by_view: keys_from_view,
+        });
+        let held_floor = [entitlement::Widen::Never, entitlement::Widen::WhenEmpty]
+            .into_iter()
+            .map(|widen| crate::answer::served_len(&held_json(&[], today, widen)) + 1)
+            .min()
+            .unwrap_or_default();
+        let floor = |object: &graph::Object| -> usize {
+            crate::answer::served_len(&object_json(object, include, today, narrowing, day_frame))
+                + 1
+                + held_floor
+        };
+        let window = (as_of.is_none()
+            && args.values.is_none()
+            && !args.backing.unwrap_or(false)
+            && wanted_status.is_none()
+            && built_on_address.is_none())
+        .then(|| graph::Window {
+            offset,
+            budget: jojobot_domain::text::ANSWER_CEILING
+                .saturating_sub(crate::answer::STATUS_BAR_ROOM)
+                .saturating_sub(crate::answer::widest_not_shown("objects")),
+            size_of: &floor,
+        });
         let graph::Selected {
             objects: mut found,
             withheld,
@@ -2219,7 +2274,9 @@ impl Jojobot {
             archived_excluded,
             merged_excluded,
             decisions_archived,
-        } = match graph::walk(self.memory.as_ref(), &session_docs, &query).await {
+            skipped,
+            left_over,
+        } = match graph::walk_in_window(self.memory.as_ref(), &session_docs, &query, window).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
         };
@@ -2970,7 +3027,14 @@ impl Jojobot {
                 tracing::warn!(error = %e, "the moment a charter was read could not be kept");
             }
         }
-        fit_recall(&mut body, args.offset.map_or(0, |o| o as usize));
+        fit_recall(
+            &mut body,
+            offset - skipped,
+            Outside {
+                before: skipped,
+                after: left_over,
+            },
+        );
         if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
             self.registry.note_shown(caller.sid.as_str(), &body);
         }
