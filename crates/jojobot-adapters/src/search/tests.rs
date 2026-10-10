@@ -99,6 +99,113 @@ async fn a_fold_makes_the_holders_of_the_folded_thing_findable_by_the_survivor()
     .await;
 }
 
+/// **The fake offers the signal a real store does, and it moves under every
+/// write.** A fake with no signal is scanned on every read, so no case could
+/// show whether a read skipped the scan; a signal that missed a kind of write
+/// would let a case pass on a cache the real store would have refused.
+#[tokio::test]
+async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads() {
+    let fake = InMemoryMemory::booted();
+    let bart = EntityId::person("person:bart");
+    let milhouse = EntityId::person("person:milhouse");
+    let mut last = fake.write_summary().await.expect("answers");
+    assert!(last.is_some(), "the fake offers a signal");
+
+    // Each write below must land, or the signal has nothing to move for: a
+    // write the guard blocked leaves it where it was, and says nothing.
+    macro_rules! moves {
+        ($what:expr, $write:expr) => {{
+            let written = $write.await.expect($what).written().expect($what);
+            let now = fake.write_summary().await.expect("answers");
+            assert_ne!(now, last, "{} left the signal where it was", $what);
+            last = now;
+            written
+        }};
+    }
+    moves!(
+        "adding a thing",
+        fake.add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
+    );
+    moves!(
+        "adding another",
+        fake.add_entity(NewEntity::new(milhouse.clone(), "Milhouse", "user-named"))
+    );
+    let fact = moves!(
+        "capturing a claim",
+        fake.capture(NewFact::about(
+            bart.clone(),
+            "a first claim",
+            date(2026, 7, 1)
+        ))
+    );
+
+    let _ = fake.recall(&bart).await.expect("reads");
+    let _ = fake.scan().await.expect("scans");
+    assert_eq!(
+        fake.write_summary().await.expect("answers"),
+        last,
+        "a read moved the signal"
+    );
+
+    moves!(
+        "editing a claim",
+        fake.update_fact(
+            &fact.address(),
+            contract::state_patch(FactPatch {
+                content: Some("a changed claim".into()),
+                provenance: Some(Provenance::Inference),
+                ..FactPatch::default()
+            }),
+            &milhouse,
+        )
+    );
+    fake.set_prose(&bart, "a page of prose")
+        .await
+        .expect("prose");
+    assert_ne!(
+        fake.write_summary().await.expect("answers"),
+        last,
+        "a prose write left the signal where it was"
+    );
+    last = fake.write_summary().await.expect("answers");
+    fake.retract(&fact.address(), None, date(2026, 7, 2), &milhouse)
+        .await
+        .expect("retracts");
+    assert_ne!(
+        fake.write_summary().await.expect("answers"),
+        last,
+        "a retraction left the signal where it was"
+    );
+    last = fake.write_summary().await.expect("answers");
+    fake.merge(&milhouse, &bart, None, date(2026, 7, 3), &bart)
+        .await
+        .expect("merges");
+    assert_ne!(
+        fake.write_summary().await.expect("answers"),
+        last,
+        "a merge left the signal where it was"
+    );
+    last = fake.write_summary().await.expect("answers");
+    fake.past_the_guard(Entity {
+        id: EntityId::person("person:kenny"),
+        kind: EntityKind::PERSON,
+        name: "Kenny".into(),
+        aliases: Vec::new(),
+        source: "contract-fixture".into(),
+        crm: None,
+        parent: None,
+        boot: Default::default(),
+        merged_into: None,
+        badge: None,
+        archived: None,
+    });
+    assert_ne!(
+        fake.write_summary().await.expect("answers"),
+        last,
+        "a row staged past the writes left the signal where it was"
+    );
+}
+
 /// The index forwards which keys of a record the store holds off the thing.
 #[tokio::test]
 async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {

@@ -6863,27 +6863,23 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
         }
     };
 
-    // **What the index itself reads to stay current is not the walk's.** The fake
-    // has no signal that nothing changed, so every search re-reads the store to
-    // refresh the index; a real store has one. A value nobody holds is read by
-    // no walk at all, so what that call reads is the refresh, and every other
-    // call is measured past it.
+    // **What the index itself reads to fill itself is not the walk's.** The fake
+    // offers the signal a real store does, so only the first search re-reads the
+    // store to fill the index, and the later ones read what their walk reads.
+    // A value nobody holds is read by no walk at all, so what that first call
+    // reads is the fill, and every other call is measured past it.
     let (ids, refresh, _) = ask(vec![filter("owner", Some("cy"), None)]).await;
     assert!(ids.is_empty(), "{ids:?}");
     assert!(
         counting.is_none() || refresh > 0,
-        "the control measures the refresh"
+        "the control measures the fill"
     );
 
     // A key and a value: the four of amy's, and only those four were read.
     let (ids, reads, asked) = ask(vec![filter("owner", Some("amy"), None)]).await;
     assert_eq!(ids, named(&[0, 7, 10, 20]), "{ids:?}");
     if counting.is_some() {
-        assert_eq!(
-            reads - refresh,
-            4,
-            "only the carriers were read, not the thirty"
-        );
+        assert_eq!(reads, 4, "only the carriers were read, not the thirty");
     }
     assert_eq!(
         asked
@@ -6903,21 +6899,20 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
     .await;
     assert_eq!(ids, named(&[0, 10, 20]), "{ids:?}");
     if counting.is_some() {
-        assert_eq!(reads - refresh, 3, "both entries narrowed the candidates");
+        assert_eq!(reads, 3, "both entries narrowed the candidates");
     }
 
     // The key alone: everything carrying it.
     let (ids, reads, _) = ask(vec![filter("owner", None, None)]).await;
     assert_eq!(ids, named(&[0, 5, 7, 10, 20]), "{ids:?}");
     if counting.is_some() {
-        assert_eq!(reads - refresh, 5);
+        assert_eq!(reads, 5);
     }
 
     // The control: a filter asked of one record is not answered by the index, so
     // it still reads every thing, and the answer is unchanged by that.
     let (ids, reads, asked) = ask(vec![filter("owner", Some("amy"), Some("record"))]).await;
     assert_eq!(ids, named(&[0, 7, 10, 20]), "{ids:?}");
-    // No question went to the index, so the refresh is not in this count.
     if counting.is_some() {
         assert_eq!(reads, 30, "a record-scoped filter reads everyone");
     }

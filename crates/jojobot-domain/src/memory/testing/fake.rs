@@ -41,6 +41,11 @@ pub struct InMemoryMemory {
     /// once per claim unless it shares them; these are how a case sees it.
     declaration_reads: std::sync::atomic::AtomicUsize,
     write_scans: std::sync::atomic::AtomicUsize,
+    /// **How many times the whole store has been scanned**, through
+    /// [`Memory::scan`]. A refresh that re-reads one document goes through
+    /// [`Memory::scan_entity`] and does not count; this is how a case sees whether
+    /// a read paid for the whole corpus.
+    full_scans: std::sync::atomic::AtomicUsize,
     /// The claims. **Their fields are not here**: a claim is stored with an
     /// empty bag and its fields are projected from [`InMemoryMemory::writes`]
     /// on every read, exactly as the real store projects them from its own
@@ -166,6 +171,12 @@ impl InMemoryMemory {
     pub fn declaration_reads(&self) -> usize {
         self.declaration_reads
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times the whole store has been scanned. A caller measures a
+    /// delta across the call it is checking.
+    pub fn full_scans(&self) -> usize {
+        self.full_scans.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many times the whole list of writes has been passed over, by any
@@ -486,6 +497,49 @@ impl InMemoryMemory {
     /// one's own key, and nothing here queries by it — `children` reads
     /// every entity and filters in memory — so nothing but this resolution
     /// stands between the stored badge and a reader who wants the handle.
+    /// The documents of `rows`, each built the way a scan builds it: its
+    /// frontmatter, its prose, the facts homed in it and what the thing holds.
+    fn docs_of(&self, rows: Vec<Entity>) -> Vec<search::DocScan> {
+        let facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        let prose = self.prose.lock().expect("fake mutex poisoned").clone();
+        let badges = self.badges.lock().expect("fake mutex poisoned").clone();
+        let declared = self.declarations();
+        rows.into_iter()
+            .map(|entity| {
+                // **The storage key this entity's own rows are filed under**
+                // — its badge, or its own handle when it wears none. `home`
+                // and `writes_on` both read the key; `facts` served back
+                // carry the handle, exactly as any other read does.
+                let key = match &entity.badge {
+                    Some(badge) => EntityId(badge.clone()),
+                    None => entity.id.clone(),
+                };
+                // The scan carries what the thing IS, because the records
+                // it also carries cannot be folded back into it.
+                let mut fields =
+                    super::super::folded_fields(&self.writes_on(&key, &facts), &declared);
+                self.compose_reference_fields(&mut fields);
+                search::DocScan {
+                    doc_id: badges
+                        .get(&entity.id)
+                        .cloned()
+                        .unwrap_or_else(|| entity.id.to_string()),
+                    title: entity.name.clone(),
+                    prose: prose.get(&entity.id).cloned().unwrap_or_default(),
+                    facts: facts
+                        .iter()
+                        .filter(|f| f.home == key)
+                        .map(|f| self.served(self.projected(f), &entity.id))
+                        .collect(),
+                    fields,
+                    entity: Some(entity),
+                    // A stored row is the whole instance's, exactly as it was.
+                    owner: None,
+                }
+            })
+            .collect()
+    }
+
     fn index(&self) -> Vec<Entity> {
         self.index_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -3377,47 +3431,59 @@ impl Memory for InMemoryMemory {
     /// handle IS the key its facts are filed under, so it is the honest answer
     /// to "which document is this".
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
-        let facts = self.facts.lock().expect("fake mutex poisoned").clone();
-        let prose = self.prose.lock().expect("fake mutex poisoned").clone();
-        let badges = self.badges.lock().expect("fake mutex poisoned").clone();
-        let declared = self.declarations();
+        self.full_scans
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // No Journal document: a wrap publishes nowhere, so the journal stays
         // dark until events land — there is no shared page for `search` to
         // scan here.
-        Ok(std::iter::empty()
-            .chain(self.index().into_iter().map(|entity| {
-                // **The storage key this entity's own rows are filed under**
-                // — its badge, or its own handle when it wears none. `home`
-                // and `writes_on` both read the key; `facts` served back
-                // carry the handle, exactly as any other read does.
-                let key = match &entity.badge {
-                    Some(badge) => EntityId(badge.clone()),
-                    None => entity.id.clone(),
-                };
-                // The scan carries what the thing IS, because the records
-                // it also carries cannot be folded back into it.
-                let mut fields =
-                    super::super::folded_fields(&self.writes_on(&key, &facts), &declared);
-                self.compose_reference_fields(&mut fields);
-                search::DocScan {
-                    doc_id: badges
-                        .get(&entity.id)
-                        .cloned()
-                        .unwrap_or_else(|| entity.id.to_string()),
-                    title: entity.name.clone(),
-                    prose: prose.get(&entity.id).cloned().unwrap_or_default(),
-                    facts: facts
-                        .iter()
-                        .filter(|f| f.home == key)
-                        .map(|f| self.served(self.projected(f), &entity.id))
-                        .collect(),
-                    fields,
-                    entity: Some(entity),
-                    // A stored row is the whole instance's, exactly as it was.
-                    owner: None,
-                }
-            }))
-            .collect())
+        Ok(self.docs_of(self.index()))
+    }
+
+    /// **One document, read without scanning the rest**, as the real store
+    /// answers it. The port's default scans everything and picks one, which would
+    /// make the fake pay for the whole corpus on a read the real store answers
+    /// from one page.
+    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
+        let wanted: Vec<Entity> = self
+            .index()
+            .into_iter()
+            .filter(|row| &row.id == entity)
+            .collect();
+        Ok(self.docs_of(wanted).pop())
+    }
+
+    /// **The signal the real store answers with, built from the same things.**
+    /// Counts and latest moments of the entity and claim writes, and a hash of
+    /// each table's own content, so a row staged past the writes — the fake's
+    /// equivalent of an edit made directly against the real tables — moves it
+    /// too. A fake that offered no signal would be scanned on every read and
+    /// could never show a case whether a read skipped the scan.
+    async fn write_summary(&self) -> Result<Option<crate::memory::WriteSummary>, MemoryError> {
+        use std::hash::{Hash, Hasher};
+        let hashed = |text: String| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            text.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+        let entity_writes = self.entity_writes.lock().expect("fake mutex poisoned");
+        let claim_writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        let entity_rows = self.entities.lock().expect("fake mutex poisoned");
+        let fact_rows = self.facts.lock().expect("fake mutex poisoned");
+        Ok(Some(crate::memory::WriteSummary {
+            entities: (
+                entity_writes.len() as i64,
+                entity_writes.iter().map(|(_, at)| *at).max(),
+            ),
+            facts: (
+                claim_writes.len() as i64,
+                claim_writes
+                    .iter()
+                    .filter_map(|(_, _, w)| w.written_at)
+                    .max(),
+            ),
+            entity_hash: Some(hashed(format!("{entity_rows:?}"))),
+            fact_hash: Some(hashed(format!("{fact_rows:?}"))),
+        }))
     }
 
     async fn declare_type(
