@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__paseo__create_heartbeat",
+      "mcp__paseo__delete_heartbeat"
+    ]
+  }
+}
