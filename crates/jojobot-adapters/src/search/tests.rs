@@ -84,6 +84,21 @@ async fn a_search_holding_a_key_and_a_value_finds_exactly_the_things_that_hold_t
     .await;
 }
 
+/// **A fold re-reads the things holding a field that named the folded thing**, on
+/// its own so the case can be run and broken without the whole contract around
+/// it. The whole contract runs the same case over the fake and over the real
+/// store.
+#[tokio::test]
+async fn a_fold_makes_the_holders_of_the_folded_thing_findable_by_the_survivor() {
+    let store =
+        Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
+    contract::a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold(
+        store.as_ref(),
+        &Retrieval::new(store.index(), vec![store.clone()]),
+    )
+    .await;
+}
+
 /// The index forwards which keys of a record the store holds off the thing.
 #[tokio::test]
 async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {

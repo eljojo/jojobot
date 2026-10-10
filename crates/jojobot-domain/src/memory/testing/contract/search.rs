@@ -667,6 +667,83 @@ pub async fn a_name_the_duplicate_wore_finds_the_survivor_after_a_fold<M: Memory
     );
 }
 
+/// **A thing holding a field that named the folded thing is found by the
+/// survivor after a fold.**
+///
+/// A field whose value is a handle is a link, so a fold rewrites it: the
+/// holder now names the survivor. The index is re-read for the holder, so a
+/// search for the survivor reaches it and a search for the folded handle no
+/// longer does. **Paired**: the holder is found by the folded handle before the
+/// fold, so the absence after it is the fold's doing, and the survivor's own
+/// holder keeps its place, so a fold that dropped every holder cannot pass.
+pub async fn a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold<
+    M: Memory,
+    S: Search,
+>(
+    store: &M,
+    search: &S,
+) {
+    let kept = EntityId("pet:contract-quokka-kept".into());
+    let spare = EntityId("pet:contract-wombat-spare".into());
+    let holder = EntityId::person("person:contract-bellringer");
+    let other = EntityId::person("person:contract-lamplighter");
+    for (id, name) in [(&kept, "Kept Pet"), (&spare, "Spare Pet")] {
+        add(store, NewEntity::new(id.clone(), name, "user-named")).await;
+    }
+    for (who, pet, said) in [
+        (&holder, &spare, "keeps the spare one"),
+        (&other, &kept, "keeps the kept one"),
+    ] {
+        capture(
+            store,
+            state(NewFact {
+                fields: [("companion".to_string(), pet.as_str().to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(who.clone(), said, date(2026, 7, 1))
+            }),
+        )
+        .await;
+    }
+
+    let holding = |pet: &EntityId| SearchQuery {
+        holding: vec![HeldField {
+            key: "companion".to_string(),
+            value: Some(pet.as_str().to_string()),
+        }],
+        ..SearchQuery::default()
+    };
+    let holders = |hits: &[Hit], who: &EntityId| {
+        hits.iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if &entity.id == who))
+    };
+    let before = found(search, holding(&spare)).await;
+    assert!(
+        holders(&before, &holder),
+        "the holder is not found by the thing it names before any fold: {before:?}"
+    );
+
+    store
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller())
+        .await
+        .expect("the fold lands");
+
+    let by_survivor = found(search, holding(&kept)).await;
+    assert!(
+        holders(&by_survivor, &holder),
+        "the holder of the folded thing is not found by the survivor: {by_survivor:?}"
+    );
+    assert!(
+        holders(&by_survivor, &other),
+        "the survivor's own holder dropped out of the answer: {by_survivor:?}"
+    );
+    let by_folded = found(search, holding(&spare)).await;
+    assert!(
+        !holders(&by_folded, &holder),
+        "the holder is still found by the folded handle: {by_folded:?}"
+    );
+}
+
 /// **No bare hits.** A fact hit names the entity it is about and the entity
 /// whose page it sits on — handle, kind AND display name — so a reader knows
 /// what came back without spending a call per handle to find out.
@@ -1136,6 +1213,7 @@ macro_rules! retrieval_cases {
         $m!(a_name_the_duplicate_wore_finds_the_survivor_after_a_fold(
             $store, $search
         ));
+        $m!(a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold($store, $search));
         $m!(search_finds_things_that_answer_a_type_structurally(
             $store, $search
         ));
