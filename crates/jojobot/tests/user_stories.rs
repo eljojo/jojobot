@@ -152,6 +152,9 @@ mod rhythms;
 mod role_owner;
 #[path = "user_stories/rule_seats.rs"]
 mod rule_seats;
+/// Search keeps the archive below the live claims, like a mail client.
+#[path = "user_stories/search_like_a_mail_client.rs"]
+mod search_like_a_mail_client;
 /// A claim that sets keys on its thing from a bag of its own.
 #[path = "user_stories/setting.rs"]
 mod setting;

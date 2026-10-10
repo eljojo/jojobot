@@ -37,7 +37,7 @@ use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jiff::civil::Date;
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
@@ -148,6 +148,10 @@ struct Fields {
     subject: Field,
     /// A fact's lifecycle state.
     status: Field,
+    /// `yes` on an archived fact that a retraction record in its own doc takes
+    /// back. Absent on every other fact: the default search leaves out what
+    /// this marks, and `status: archived` reads it.
+    retracted: Field,
     /// A fact's provenance.
     provenance: Field,
     /// A fact's standing — the other certainty axis.
@@ -223,6 +227,7 @@ impl Fields {
             kind: b.add_text_field("kind", STRING),
             subject: b.add_text_field("subject", STRING),
             status: b.add_text_field("status", STRING),
+            retracted: b.add_text_field("retracted", STRING),
             provenance: b.add_text_field("provenance", STRING),
             standing: b.add_text_field("standing", STRING),
             edge_shape: b.add_text_field("edge_shape", STRING),
@@ -1418,6 +1423,15 @@ impl FullTextIndex {
             writer.add_document(document).map_err(store_err)?;
         }
 
+        // The ids in this doc a retraction record takes back. A retraction is
+        // homed with its target, and the address it carries names the home by
+        // handle, which a rename moves — so only the local id is compared.
+        let taken_back: HashSet<&str> = scan
+            .facts
+            .iter()
+            .filter_map(Fact::retracts)
+            .filter_map(|address| address.rsplit_once('#').map(|(_, local)| local))
+            .collect();
         for fact in &scan.facts {
             // A fact carries the names of the entity whose page it sits on, so
             // asking by nickname reaches the claims and not only the entity
@@ -1446,6 +1460,9 @@ impl FullTextIndex {
                 f.standing => fact.standing.as_token(),
                 f.payload => payload_json(&Payload::Fact { fact: fact.clone() })?,
             );
+            if fact.status == FactStatus::Archived && taken_back.contains(fact.id.as_str()) {
+                document.add_text(f.retracted, "yes");
+            }
             // **Only when there is one.** An empty field and an absent one are
             // the same to a query that never asks for `history_text`, and
             // writing one on every fact would cost every reindex for a field
@@ -1626,10 +1643,21 @@ impl FullTextIndex {
         let f = &self.fields;
         let mut clauses = self.text_clauses(query);
         clauses.push(self.must_term(f.class, CLASS_FACT));
-        // The default is the whole point of the field: an archived fact stays
-        // out of an ordinary search, and `status: archived` is how it is
-        // reached deliberately.
-        clauses.push(self.must_term(f.status, query.status.unwrap_or_default().as_token()));
+        // **The default is the mailbox's, not the current truth's.** An
+        // archived claim that was true once is in the answer, ranked below
+        // every active one; one that was taken back as never true is left out.
+        // `status: active` narrows to current truth and `status: archived`
+        // reads every archived claim, the taken-back ones too.
+        match query.status {
+            Some(status) => clauses.push(self.must_term(f.status, status.as_token())),
+            None => clauses.push((
+                Occur::MustNot,
+                Box::new(TermQuery::new(
+                    Term::from_field_text(f.retracted, "yes"),
+                    IndexRecordOption::Basic,
+                )),
+            )),
+        }
         if let Some(kind) = query.kind {
             clauses.push(self.must_term(f.kind, kind.as_token()));
         }
@@ -1868,6 +1896,23 @@ fn resolve(mirror: &[DocMirror], id: &EntityId) -> EntityRef {
         .unwrap_or_else(|| EntityRef::unresolved(id.clone()))
 }
 
+/// **The claim that replaced an archived one**: a later claim that names it as
+/// its source, an active one before an archived one. `None` for a claim that is
+/// not archived, and for an archived claim nobody replaced, which includes one
+/// that was taken back.
+fn superseded_by(mirror: &[DocMirror], fact: &Fact) -> Option<FactAddress> {
+    if fact.status != FactStatus::Archived {
+        return None;
+    }
+    let address = fact.address();
+    mirror
+        .iter()
+        .flat_map(|doc| doc.scanned.facts.iter())
+        .filter(|held| held.derived_from.as_ref() == Some(&address))
+        .max_by_key(|held| held.status == FactStatus::Active)
+        .map(Fact::address)
+}
+
 /// Where an entity sits in the graph: the edges drawn by the facts **about** it,
 /// wherever those rows are homed, deduped and in first-seen order.
 ///
@@ -2031,7 +2076,12 @@ impl FullTextIndex {
         let newest = scored
             .iter()
             .filter_map(|(_, p)| match p {
-                Payload::Fact { fact } => Some(rank_date(fact)),
+                // An archived claim does not set the date the active ones are
+                // aged against: their order must not move because an old
+                // claim sits beside them in the answer.
+                Payload::Fact { fact } if fact.status == FactStatus::Active => {
+                    Some(rank_date(fact))
+                }
                 _ => None,
             })
             .max();
@@ -2049,6 +2099,10 @@ impl FullTextIndex {
                     // subtraction, so a gloss that is the only match still
                     // comes back.
                     (Payload::Fact { fact }, _) if fact.derived_from.is_some() => -DERIVED_DEMOTION,
+                    // **An archived claim ranks below every active one**, however
+                    // well it matches. Its words were true once; the answer the
+                    // reader wants is the one that is true now.
+                    (Payload::Fact { fact }, _) if fact.status == FactStatus::Archived => 0.0,
                     (Payload::Fact { fact }, Some(newest)) => {
                         let age_days = (newest - rank_date(fact)).get_days().max(0) as f32;
                         RECENCY_WEIGHT / (1.0 + age_days / 365.25)
@@ -2061,6 +2115,13 @@ impl FullTextIndex {
                     // is the only match still comes back.
                     (Payload::Session { .. }, _) => -SESSION_DEMOTION,
                     _ => 0.0,
+                };
+                let archived =
+                    matches!(&payload, Payload::Fact { fact } if fact.status == FactStatus::Archived);
+                let boost = if archived {
+                    boost - ARCHIVED_DEMOTION
+                } else {
+                    boost
                 };
                 let hit = payload.into_hit(&terms, &mirror);
                 (score + boost, tiebreak(&hit), hit)
@@ -2141,6 +2202,7 @@ impl Payload {
                 subject: resolve(mirror, &fact.subject),
                 home: resolve(mirror, &fact.home),
                 source: standing_of(mirror, fact.derived_from.as_ref()),
+                superseded_by: superseded_by(mirror, &fact),
                 fact: Box::new(fact),
             },
             Payload::Prose {
@@ -2254,6 +2316,13 @@ const SESSION_DEMOTION: f32 = 1_000.0;
 /// order is an answer, then a derivation, then a run — a derived claim is still
 /// about the world, where a session is about the work.
 const DERIVED_DEMOTION: f32 = 100.0;
+
+/// **How far an archived claim is pushed below the active ones.** Larger than
+/// any relevance score and than the derived demotion, so an archived claim
+/// ranks below every active claim, entity and page it shares an answer with;
+/// smaller than the session demotion, so a run is still last. A subtraction
+/// rather than a filter: an archived claim that is the only match comes back.
+const ARCHIVED_DEMOTION: f32 = 500.0;
 
 /// **The one analyzer, named once.** Indexing and querying both read it by this
 /// name: a document written under one analyzer and asked for under another

@@ -437,17 +437,37 @@ async fn moving_abroad() {
         "embassy appointment was rebooked to the ninth",
     )
     .await;
-    // It stays on the record, marked as moved past — and the front door stops
-    // offering it as current truth, which is the difference between putting a
-    // claim past and deleting it.
+    // It stays on the record, marked as moved past — and the front door still
+    // finds it, below the claim that stands, which is the difference between
+    // putting a claim past and deleting it. Current truth only is asked for by
+    // name.
     s.recall("project:atlas")
         .await
         .claim(&first_date)
         .says("archived");
-    s.find("embassy appointment")
-        .await
+    let default = s.find("embassy appointment").await;
+    default
         .says("rebooked to the ninth")
-        .never_says("appointment is on the first");
+        .says("appointment is on the first");
+    let body = default.json();
+    let results = body["results"].as_array().expect("results is a list");
+    let at = |needle: &str| {
+        results
+            .iter()
+            .position(|hit| hit["content"].as_str().is_some_and(|c| c.contains(needle)))
+            .unwrap_or_else(|| panic!("{needle:?} is not in the answer: {body}"))
+    };
+    assert!(
+        at("rebooked to the ninth") < at("appointment is on the first"),
+        "the moved-past claim ranks below the one that stands: {body}"
+    );
+    s.call(
+        "search",
+        json!({"query": "embassy appointment", "status": "active"}),
+    )
+    .await
+    .says("rebooked to the ninth")
+    .never_says("appointment is on the first");
 
     // GAP — and nothing says WHICH claim replaced it. An archived claim knows
     // it was moved past and not what moved past it, so a reader reconstructing

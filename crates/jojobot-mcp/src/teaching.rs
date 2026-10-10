@@ -1197,6 +1197,7 @@ mod tests {
                 "person:alpha",
             )),
             source: None,
+            superseded_by: None,
         };
         let spy = Arc::new(SpySearch::answering(vec![hit]));
         let jojobot = handler_with(spy);

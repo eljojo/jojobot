@@ -1959,7 +1959,8 @@ async fn rebuild_indexes_a_store_that_was_already_full() {
 ///
 /// Both roads to archived are driven here, because they are set by
 /// different verbs: `retract` marks an event, and an ordinary edit is
-/// what moves a fact there directly.
+/// what moves a fact there directly. The first is left out of the default
+/// answer; the second is served below the claim that stands.
 #[tokio::test]
 async fn a_claim_taken_back_before_the_scan_is_not_served_after_it() {
     let inner = Arc::new(InMemoryMemory::booted());
@@ -2047,9 +2048,96 @@ async fn a_claim_taken_back_before_the_scan_is_not_served_after_it() {
         !seen.contains(&taken_back.address().to_string()),
         "the claim that was taken back is not: {seen:?}"
     );
+    // **A claim the record moved past is served, below the one that stands.**
+    // Only a taken-back claim is left out by default.
+    let position = |address: &str| seen.iter().position(|seen| seen == address);
+    let moved_past_at = position(&moved_past.address().to_string())
+        .unwrap_or_else(|| panic!("the claim the record has moved past is served: {seen:?}"));
+    let stands_at = position(&stands.address().to_string()).expect("stands, asserted above");
     assert!(
-        !seen.contains(&moved_past.address().to_string()),
-        "and neither is the claim the record has moved past: {seen:?}"
+        stands_at < moved_past_at,
+        "and it ranks below the claim that stands: {seen:?}"
+    );
+}
+
+/// 🚨 **A retraction written before the `retracts` key existed reads as an
+/// archived claim, not as a retracted one.**
+///
+/// The index marks a claim retracted only when a sibling record carries
+/// `retracts` pointing at it. A claim archived by the old retraction has no such
+/// partner, so the default search serves it, below the active claims. **The
+/// literal key is written here on purpose**: it is stored on records, so a
+/// rename of the constant would leave every older record unmarked and nothing
+/// in this process would notice.
+///
+/// The partnered claim is in the same document, so the case moves when the key
+/// is the only difference.
+#[test]
+fn a_retraction_with_no_retracts_partner_reads_as_archived_not_retracted() {
+    let index = FullTextIndex::open().expect("index opens");
+    let day = "2026-08-10".parse().expect("a civil date");
+    let standing = fact("person:milhouse", "f1", "the committee meets", day);
+    let old_shape = Fact {
+        status: FactStatus::Archived,
+        ..fact("person:milhouse", "f2", "the committee met weekly", day)
+    };
+    let partnered = Fact {
+        status: FactStatus::Archived,
+        ..fact("person:milhouse", "f3", "the committee met daily", day)
+    };
+    let partner = Fact {
+        fields: [("retracts".to_string(), "person:milhouse#f3".to_string())].into(),
+        ..fact("person:milhouse", "f4", "taken back: never true", day)
+    };
+    index
+        .ingest_all(
+            &[DocScan {
+                doc_id: "outline-uuid-1".into(),
+                title: "Milhouse".into(),
+                prose: String::new(),
+                entity: Some(entity("person:milhouse", "Milhouse")),
+                facts: vec![standing, old_shape, partnered, partner],
+                fields: Default::default(),
+                owner: None,
+            }],
+            index.reading_begins(),
+            &Default::default(),
+        )
+        .expect("memory ingested");
+
+    let ids = |query: SearchQuery| -> Vec<String> {
+        index
+            .search(&query)
+            .expect("search ok")
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Fact { fact, .. } => Some(fact.id.0.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let default = ids(SearchQuery {
+        text: Some("committee".into()),
+        ..SearchQuery::default()
+    });
+    let at = |id: &str| default.iter().position(|seen| seen == id);
+
+    assert!(
+        at("f1").is_some() && at("f1") < at("f2") && at("f2").is_some(),
+        "the old-shape claim is served below the one that stands: {default:?}"
+    );
+    assert!(
+        at("f3").is_none(),
+        "the claim a `retracts` partner takes back is left out: {default:?}"
+    );
+    let archived = ids(SearchQuery {
+        text: Some("committee".into()),
+        status: Some(FactStatus::Archived),
+        ..SearchQuery::default()
+    });
+    assert!(
+        archived.contains(&"f3".to_string()) && archived.contains(&"f2".to_string()),
+        "status archived reads both: {archived:?}"
     );
 }
 
@@ -7616,6 +7704,7 @@ async fn an_untyped_edge_is_walkable_like_any_other() {
         subject: alpha.clone(),
         home: alpha,
         source: None,
+        superseded_by: None,
     }];
 
     for shape in [Some(EdgeShape::Connection), None] {
@@ -7697,6 +7786,7 @@ async fn an_edge_filter_beats_a_prose_mention() {
             subject: alpha.clone(),
             home: alpha,
             source: None,
+            superseded_by: None,
         }],
         "got {hits:?}"
     );

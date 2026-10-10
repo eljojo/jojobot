@@ -358,7 +358,10 @@ pub async fn search_excludes_a_retracted_record_by_default<M: Memory, S: Search>
     );
 }
 
-pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<M: Memory, S: Search>(
+pub async fn search_serves_superseded_below_the_standing_and_lists_only_it_on_request<
+    M: Memory,
+    S: Search,
+>(
     store: &M,
     search: &S,
 ) {
@@ -396,9 +399,17 @@ pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<M: Me
         addresses.contains(&live.address().to_string()),
         "the active fact must be found: {default:?}"
     );
+    // **Served, and never ahead of what stands.** The order is the claim:
+    // presence alone holds on a store that ranks nothing.
+    let live_at = addresses
+        .iter()
+        .position(|a| a == &live.address().to_string());
+    let retired_at = addresses
+        .iter()
+        .position(|a| a == &retired.address().to_string());
     assert!(
-        !addresses.contains(&retired.address().to_string()),
-        "a superseded fact must not come back as current truth: {default:?}"
+        retired_at.is_some() && live_at < retired_at,
+        "a superseded fact comes back below the one that stands: {default:?}"
     );
 
     let asked = found(
@@ -1107,7 +1118,11 @@ macro_rules! retrieval_cases {
         ));
         $m!(a_term_from_a_superseded_wording_is_found_only_when_asked_for($store, $search));
         $m!(a_hit_carries_the_clocks_the_store_kept($store, $search));
-        $m!(search_excludes_superseded_by_default_and_lists_it_on_request($store, $search));
+        $m!(
+            search_serves_superseded_below_the_standing_and_lists_only_it_on_request(
+                $store, $search
+            )
+        );
         $m!(search_excludes_a_retracted_record_by_default(
             $store, $search
         ));

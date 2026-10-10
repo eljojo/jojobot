@@ -33,9 +33,13 @@ pub struct SearchArgs {
     /// belongs to no entity and so has no kind to match.
     #[serde(default)]
     pub(crate) kind: Option<String>,
-    /// `active` (the default) or `archived`. An archived fact is **excluded
-    /// unless asked for by name** — a claim already moved past must not come
-    /// back as current truth.
+    /// `active` or `archived`. **Left unset, the search behaves like a mail
+    /// client**: active claims first, then archived ones — a claim that was
+    /// true once and was replaced or moved past — ranked below every active
+    /// one, and a hit that was replaced names the claim that replaced it in
+    /// `superseded_by`. A claim taken back as never true (retracted) is left
+    /// out. `active` is current truth only. `archived` reads every archived
+    /// claim, the retracted ones too.
     #[serde(default)]
     pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference` — keep only the claims backed
@@ -211,6 +215,7 @@ fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
             subject,
             home,
             source,
+            superseded_by,
         } => {
             let mut body = fact_json(fact, as_of, None);
             if let Some(obj) = body.as_object_mut() {
@@ -223,6 +228,12 @@ fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
                 // source nobody could place.
                 if let Some(standing) = source {
                     obj.insert("source_standing".into(), standing.as_token().into());
+                }
+                // **Which claim took this one's place.** Absent — not null —
+                // for every claim nobody replaced: an active one, one taken
+                // back, one only archived.
+                if let Some(address) = superseded_by {
+                    obj.insert("superseded_by".into(), address.to_string().into());
                 }
             }
             body
@@ -607,10 +618,12 @@ impl Jojobot {
                        free prose AND the messages in bots' mailboxes at once (the operator's \
                        box is never searched). `query` is free text, matched by stem; a \
                        record needs most of its terms, not all of them. It is optional when a \
-                       filter narrows: kind, status (default active), provenance, standing \
-                       (`open` asks which claims are still in doubt), subject, edge {shape, \
-                       object}, answers_type or fits_type (one of the two, never both; prefer \
-                       answers_type, which names each thing's gaps). A call with neither a \
+                       filter narrows: kind, status (unset: active claims, then archived ones \
+                       ranked below them, retracted ones left out; `active` is current truth \
+                       only; `archived` reads the archive, retracted claims too), provenance, \
+                       standing (`open` asks which claims are still in doubt), subject, edge \
+                       {shape, object}, answers_type or fits_type (one of the two, never \
+                       both; prefer answers_type, which names each thing's gaps). A call with neither a \
                        query nor one of those filters is refused, and include_mail is not a \
                        filter. kind + edge answers a cross-entity question in one call (which \
                        people are in X) by walking typed edges. No hit comes back bare: a \
@@ -623,8 +636,9 @@ impl Jojobot {
                        searched: false means nothing there was searched, which is not the \
                        same as nothing matching, and a `note` says which case you are in. AN \
                        ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many \
-                       it left out and the offset that returns them. AN EMPTY ANSWER NAMES \
-                       WHAT IT LOOKED THROUGH, as searched. The matching and corpus notes \
+                       it left out and the offset that returns them. EVERY ANSWER NAMES \
+                       WHAT IT LEFT OUT, as left_out, with the argument that returns it; an \
+                       empty answer also says what it looked through, as searched. The matching and corpus notes \
                        ride your first search of a session and every answer of fewer than \
                        three hits. Each argument's own description holds the rest."
     )]
@@ -796,6 +810,30 @@ impl Jojobot {
             // neither.** See [`corpus_note`].
             body["corpus"] = corpus_note();
         }
+        // **Every answer names what it left out and the argument that returns
+        // it**, a full one as well as an empty one: a page of hits reads as the
+        // whole population, and the claims taken back as never true sit beside
+        // it unseen. A narrowing the caller asked for is theirs and is not
+        // listed — `status` names what it narrowed to, so only the populations
+        // it did not name are.
+        let mut left_out = Vec::new();
+        match query.status {
+            None => left_out.push(
+                "retracted claims, taken back as never true (status archived reads them)"
+                    .to_string(),
+            ),
+            Some(FactStatus::Active) => left_out.push(
+                "archived claims, the retracted ones too (status archived reads them)".to_string(),
+            ),
+            Some(FactStatus::Archived) => {}
+        }
+        if !query.include_history {
+            left_out.push("earlier wordings (include_history reads them)".to_string());
+        }
+        if !query.include_mail {
+            left_out.push("mailbox messages (include_mail reads them)".to_string());
+        }
+        body["left_out"] = left_out.clone().into();
         // **An empty answer names what it looked through.** The matching note
         // says the wording may have missed; this says which population the call
         // narrowed to and what the default left out. Added only to an answer
@@ -833,16 +871,6 @@ impl Jojobot {
                     looked.join(", ")
                 },
             );
-            let mut left_out = Vec::new();
-            if args.status.is_none() {
-                left_out.push("archived claims (status archived reads them)".to_string());
-            }
-            if !query.include_history {
-                left_out.push("earlier wordings (include_history reads them)".to_string());
-            }
-            if !query.include_mail {
-                left_out.push("mailbox messages (include_mail reads them)".to_string());
-            }
             // **An empty answer also names the things that share a word with
             // the query.** The index needs most of a query's words to match, so a
             // long query can miss a place that one of its words names, and a
@@ -2668,6 +2696,7 @@ mod tests {
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),
                 source: None,
+                superseded_by: None,
             },
             Hit::Prose {
                 doc_id: "doc-1".into(),
@@ -2870,18 +2899,21 @@ mod tests {
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),
                 source: None,
+                superseded_by: None,
             },
             Hit::Fact {
                 fact: Box::new(undated_too),
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),
                 source: None,
+                superseded_by: None,
             },
             Hit::Fact {
                 fact: Box::new(dated),
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),
                 source: None,
+                superseded_by: None,
             },
         ];
 

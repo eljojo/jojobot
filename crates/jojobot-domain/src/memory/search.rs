@@ -28,8 +28,8 @@
 use std::collections::HashSet;
 
 use super::{
-    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance,
-    Standing, types, validate_edge, validate_subject,
+    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactStatus, MemoryError,
+    Provenance, Standing, types, validate_edge, validate_subject,
 };
 use crate::mailbox::Message;
 use crate::session::SessionId;
@@ -183,10 +183,11 @@ pub struct SearchQuery {
     /// Narrow to one entity kind: an entity's own kind, a fact's subject's kind,
     /// or the kind of the entity whose doc the prose sits in.
     pub kind: Option<EntityKind>,
-    /// Narrow to one lifecycle state. **`None` means active only** — a
-    /// superseded fact is excluded unless asked for by name, because a claim the
-    /// store has already moved past coming back as current truth is worse than
-    /// no memory at all.
+    /// Narrow to one lifecycle state. **`None` means active and archived, with
+    /// the archived ones ranked below every active one and the retracted ones
+    /// left out**: a claim that was true once is found, never ahead of what is
+    /// true now. `Active` is current truth only; `Archived` reads every
+    /// archived claim, the retracted ones too.
     pub status: Option<FactStatus>,
     /// Narrow to testimony or inference.
     pub provenance: Option<Provenance>,
@@ -595,6 +596,13 @@ pub enum Hit {
         /// `None` when this claim was worked out from nothing — the ordinary
         /// case, and an absence rather than an unknown.
         source: Option<SourceStanding>,
+        /// **The claim that took this one's place**, when this one is archived
+        /// and a later claim names it as [`Fact::derived_from`].
+        ///
+        /// `None` is an ordinary answer and says less than it looks: an
+        /// archived claim nobody replaced, one taken back, and an active claim
+        /// all carry nothing here.
+        superseded_by: Option<FactAddress>,
     },
     /// A message matched in a mailbox — **unmistakably mail**, and carrying the
     /// whole envelope: which box, what state it is in, who sent it, and the id

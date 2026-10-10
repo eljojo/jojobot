@@ -3377,14 +3377,14 @@ attributed, never journalled.
 The front door — use it first, and any time you do not already hold the exact handle or address.
 One ranked list over entities, facts, free prose AND the messages in bots' mailboxes at once (the operator's box is never searched).
 `query` is free text, matched by stem; a record needs most of its terms, not all of them.
-It is optional when a filter narrows: kind, status (default active), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
+It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
 kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
 No hit comes back bare: a fact carries its claim, its address (feed it to update_fact), who it is `about` and where it is `home`d; an entity or prose hit carries the entity's names and edges; a message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 ALWAYS read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, which is not the same as nothing matching, and a `note` says which case you are in.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
-AN EMPTY ANSWER NAMES WHAT IT LOOKED THROUGH, as searched.
+EVERY ANSWER NAMES WHAT IT LEFT OUT, as left_out, with the argument that returns it; an empty answer also says what it looked through, as searched.
 The matching and corpus notes ride your first search of a session and every answer of fewer than three hits.
 Each argument's own description holds the rest.
 ```
@@ -3730,9 +3730,13 @@ gave you, and an inference nobody confirmed, are both `open`.
 #### `search` — argument `/inputSchema.status`
 
 ```text
-`active` (the default) or `archived`. An archived fact is **excluded
-unless asked for by name** — a claim already moved past must not come
-back as current truth.
+`active` or `archived`. **Left unset, the search behaves like a mail
+client**: active claims first, then archived ones — a claim that was
+true once and was replaced or moved past — ranked below every active
+one, and a hit that was replaced names the claim that replaced it in
+`superseded_by`. A claim taken back as never true (retracted) is left
+out. `active` is current truth only. `archived` reads every archived
+claim, the retracted ones too.
 ```
 
 #### `search` — argument `/inputSchema.subject`
