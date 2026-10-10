@@ -76,9 +76,9 @@ fn dependency(handle: &str, why: Why) -> Blocker {
 #[test]
 fn work_whose_dependencies_are_all_finished_is_ready() {
     let world = World::new()
-        .work("work:bart", "done")
-        .work("work:lisa", "done");
-    let milhouse = bag(&[("depends_on", "work:bart, work:lisa")]);
+        .work("work:phi", "done")
+        .work("work:sigma", "done");
+    let milhouse = bag(&[("depends_on", "work:phi, work:sigma")]);
     assert!(is_ready(&item(&milhouse), &world));
     assert!(blocked_by(&item(&milhouse), &world).is_empty());
 }
@@ -87,26 +87,29 @@ fn work_whose_dependencies_are_all_finished_is_ready() {
 #[test]
 fn an_unfinished_dependency_blocks_and_is_named() {
     let world = World::new()
-        .work("work:bart", "done")
-        .work("work:homer", "now");
-    let milhouse = bag(&[("depends_on", "work:bart, work:homer")]);
+        .work("work:phi", "done")
+        .work("work:tau", "now");
+    let milhouse = bag(&[("depends_on", "work:phi, work:tau")]);
     assert!(!is_ready(&item(&milhouse), &world));
     assert_eq!(
         blocked_by(&item(&milhouse), &world),
-        [dependency("work:homer", Why::Unfinished)]
+        [dependency("work:tau", Why::Unfinished)]
     );
 }
 
 /// **A held waiting_on blocks and is named**; the same work without it is ready.
 #[test]
 fn a_held_waiting_on_blocks_and_is_named() {
-    let world = World::new().work("work:bart", "done");
-    let waiting = bag(&[("depends_on", "work:bart"), ("waiting_on", "person:marge")]);
-    let free = bag(&[("depends_on", "work:bart")]);
+    let world = World::new().work("work:phi", "done");
+    let waiting = bag(&[
+        ("depends_on", "work:phi"),
+        ("waiting_on", "person:milhouse"),
+    ]);
+    let free = bag(&[("depends_on", "work:phi")]);
     assert!(!is_ready(&item(&waiting), &world));
     assert_eq!(
         blocked_by(&item(&waiting), &world),
-        [Blocker::WaitingOn("person:marge".into())]
+        [Blocker::WaitingOn("person:milhouse".into())]
     );
     assert!(is_ready(&item(&free), &world));
 }
@@ -124,26 +127,26 @@ fn work_with_no_dependencies_is_ready() {
 /// status says done. Its pair is the same dependency, live.
 #[test]
 fn an_archived_dependency_blocks_and_is_named() {
-    let live = World::new().work("work:bart", "done");
-    let archived = World::new().archived_work("work:bart", "done");
-    let milhouse = bag(&[("depends_on", "work:bart")]);
+    let live = World::new().work("work:phi", "done");
+    let archived = World::new().archived_work("work:phi", "done");
+    let milhouse = bag(&[("depends_on", "work:phi")]);
     assert!(is_ready(&item(&milhouse), &live));
     assert!(!is_ready(&item(&milhouse), &archived));
     assert_eq!(
         blocked_by(&item(&milhouse), &archived),
-        [dependency("work:bart", Why::Archived)]
+        [dependency("work:phi", Why::Archived)]
     );
 }
 
 /// **A handle that names nothing blocks and is named as dangling.**
 #[test]
 fn a_dangling_dependency_blocks_and_is_named() {
-    let world = World::new().work("work:bart", "done");
-    let milhouse = bag(&[("depends_on", "work:bart, work:nobody")]);
+    let world = World::new().work("work:phi", "done");
+    let milhouse = bag(&[("depends_on", "work:phi, work:atlas-root")]);
     assert!(!is_ready(&item(&milhouse), &world));
     assert_eq!(
         blocked_by(&item(&milhouse), &world),
-        [dependency("work:nobody", Why::Dangling)]
+        [dependency("work:atlas-root", Why::Dangling)]
     );
 }
 
@@ -153,22 +156,22 @@ fn a_dangling_dependency_blocks_and_is_named() {
 fn a_cycle_is_blocked_on_both_sides() {
     let mut world = World::new();
     world.named.insert(
-        "work:bart".into(),
+        "work:phi".into(),
         (
             "work".into(),
-            bag(&[("status", "next"), ("depends_on", "work:lisa")]),
+            bag(&[("status", "next"), ("depends_on", "work:sigma")]),
             false,
         ),
     );
     world.named.insert(
-        "work:lisa".into(),
+        "work:sigma".into(),
         (
             "work".into(),
-            bag(&[("status", "next"), ("depends_on", "work:bart")]),
+            bag(&[("status", "next"), ("depends_on", "work:phi")]),
             false,
         ),
     );
-    for (holder, other) in [("work:bart", "work:lisa"), ("work:lisa", "work:bart")] {
+    for (holder, other) in [("work:phi", "work:sigma"), ("work:sigma", "work:phi")] {
         let fields = world.named[holder].1.clone();
         assert!(!is_ready(&item(&fields), &world), "{holder}");
         assert_eq!(
@@ -184,19 +187,19 @@ fn a_cycle_is_blocked_on_both_sides() {
 #[test]
 fn every_blocker_is_named_in_order() {
     let world = World::new()
-        .work("work:homer", "now")
-        .archived_work("work:bart", "done");
+        .work("work:tau", "now")
+        .archived_work("work:phi", "done");
     let milhouse = bag(&[
-        ("depends_on", "work:homer, work:bart, work:nobody"),
-        ("waiting_on", "person:marge"),
+        ("depends_on", "work:tau, work:phi, work:atlas-root"),
+        ("waiting_on", "person:milhouse"),
     ]);
     assert_eq!(
         blocked_by(&item(&milhouse), &world),
         [
-            dependency("work:homer", Why::Unfinished),
-            dependency("work:bart", Why::Archived),
-            dependency("work:nobody", Why::Dangling),
-            Blocker::WaitingOn("person:marge".into()),
+            dependency("work:tau", Why::Unfinished),
+            dependency("work:phi", Why::Archived),
+            dependency("work:atlas-root", Why::Dangling),
+            Blocker::WaitingOn("person:milhouse".into()),
         ]
     );
 }
@@ -206,19 +209,22 @@ fn every_blocker_is_named_in_order() {
 #[test]
 fn ready_is_exactly_nothing_blocking() {
     let world = World::new()
-        .work("work:bart", "done")
-        .work("work:homer", "now")
-        .archived_work("work:lisa", "done");
+        .work("work:phi", "done")
+        .work("work:tau", "now")
+        .archived_work("work:sigma", "done");
     let cases = [
         bag(&[]),
-        bag(&[("depends_on", "work:bart")]),
-        bag(&[("depends_on", "work:homer")]),
-        bag(&[("depends_on", "work:lisa")]),
-        bag(&[("depends_on", "work:nobody")]),
-        bag(&[("depends_on", "work:bart"), ("waiting_on", "person:marge")]),
-        bag(&[("waiting_on", "person:marge")]),
+        bag(&[("depends_on", "work:phi")]),
+        bag(&[("depends_on", "work:tau")]),
+        bag(&[("depends_on", "work:sigma")]),
+        bag(&[("depends_on", "work:atlas-root")]),
+        bag(&[
+            ("depends_on", "work:phi"),
+            ("waiting_on", "person:milhouse"),
+        ]),
+        bag(&[("waiting_on", "person:milhouse")]),
         bag(&[("status", "done")]),
-        bag(&[("status", "now"), ("depends_on", "work:bart")]),
+        bag(&[("status", "now"), ("depends_on", "work:phi")]),
     ];
     let ready: Vec<bool> = cases
         .iter()
@@ -251,18 +257,18 @@ fn finished_work_is_not_ready_and_says_so() {
 /// **Finished work that also waits on something names both**, finished first.
 #[test]
 fn finished_work_names_every_blocker() {
-    let world = World::new().work("work:homer", "now");
+    let world = World::new().work("work:tau", "now");
     let fields = bag(&[
         ("status", "done"),
-        ("depends_on", "work:homer"),
-        ("waiting_on", "person:marge"),
+        ("depends_on", "work:tau"),
+        ("waiting_on", "person:milhouse"),
     ]);
     assert_eq!(
         blocked_by(&item(&fields), &world),
         [
             Blocker::Finished,
-            dependency("work:homer", Why::Unfinished),
-            Blocker::WaitingOn("person:marge".into()),
+            dependency("work:tau", Why::Unfinished),
+            Blocker::WaitingOn("person:milhouse".into()),
         ]
     );
 }

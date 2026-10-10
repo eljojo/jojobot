@@ -532,11 +532,11 @@ fn all_finished() -> Filter {
 #[test]
 fn all_over_a_list_needs_every_named_thing() {
     let things = Things::new()
-        .with("work:bart", "work", &[("status", "done")], false)
-        .with("work:lisa", "work", &[("status", "done")], false)
-        .with("work:homer", "work", &[("status", "now")], false);
-    let both_done = [("depends_on", "work:bart, work:lisa")];
-    let one_open = [("depends_on", "work:bart, work:homer")];
+        .with("work:phi", "work", &[("status", "done")], false)
+        .with("work:sigma", "work", &[("status", "done")], false)
+        .with("work:tau", "work", &[("status", "now")], false);
+    let both_done = [("depends_on", "work:phi, work:sigma")];
+    let one_open = [("depends_on", "work:phi, work:tau")];
     assert!(things.holds(&all_finished(), "work", &both_done));
     assert!(!things.holds(&all_finished(), "work", &one_open));
 }
@@ -546,8 +546,8 @@ fn all_over_a_list_needs_every_named_thing() {
 #[test]
 fn any_over_a_list_needs_one_named_thing() {
     let things = Things::new()
-        .with("work:bart", "work", &[("status", "done")], false)
-        .with("work:homer", "work", &[("status", "now")], false);
+        .with("work:phi", "work", &[("status", "done")], false)
+        .with("work:tau", "work", &[("status", "now")], false);
     let any_finished = Filter::Refs {
         key: "depends_on".into(),
         quantifier: Quantifier::Any,
@@ -556,9 +556,9 @@ fn any_over_a_list_needs_one_named_thing() {
     assert!(things.holds(
         &any_finished,
         "work",
-        &[("depends_on", "work:homer, work:bart")]
+        &[("depends_on", "work:tau, work:phi")]
     ));
-    assert!(!things.holds(&any_finished, "work", &[("depends_on", "work:homer")]));
+    assert!(!things.holds(&any_finished, "work", &[("depends_on", "work:tau")]));
     assert!(!things.holds(&any_finished, "work", &[("depends_on", "")]));
     assert!(!things.holds(&any_finished, "work", &[]));
 }
@@ -567,38 +567,38 @@ fn any_over_a_list_needs_one_named_thing() {
 /// Its pair: the same filter over a one-item list of an unfinished thing fails.
 #[test]
 fn all_over_an_empty_list_holds() {
-    let things = Things::new().with("work:homer", "work", &[("status", "now")], false);
+    let things = Things::new().with("work:tau", "work", &[("status", "now")], false);
     assert!(things.holds(&all_finished(), "work", &[]));
     assert!(things.holds(&all_finished(), "work", &[("depends_on", "")]));
-    assert!(!things.holds(&all_finished(), "work", &[("depends_on", "work:homer")]));
+    assert!(!things.holds(&all_finished(), "work", &[("depends_on", "work:tau")]));
 }
 
 /// **A handle that names nothing fails**, under All and under Any, and it fails
 /// beside a finished neighbour: one good name does not cover for a bad one.
 #[test]
 fn a_dangling_handle_fails() {
-    let things = Things::new().with("work:bart", "work", &[("status", "done")], false);
-    assert!(things.holds(&all_finished(), "work", &[("depends_on", "work:bart")]));
+    let things = Things::new().with("work:phi", "work", &[("status", "done")], false);
+    assert!(things.holds(&all_finished(), "work", &[("depends_on", "work:phi")]));
     assert!(!things.holds(
         &all_finished(),
         "work",
-        &[("depends_on", "work:bart, work:nobody")]
+        &[("depends_on", "work:phi, work:atlas-root")]
     ));
     let any_finished = Filter::Refs {
         key: "depends_on".into(),
         quantifier: Quantifier::Any,
         then: Box::new(Filter::Finished),
     };
-    assert!(!things.holds(&any_finished, "work", &[("depends_on", "work:nobody")]));
+    assert!(!things.holds(&any_finished, "work", &[("depends_on", "work:atlas-root")]));
 }
 
 /// **An archived thing is not finished**, although its status says done. Its pair
 /// is the same thing, not archived.
 #[test]
 fn an_archived_thing_is_not_finished() {
-    let live = Things::new().with("work:bart", "work", &[("status", "done")], false);
-    let archived = Things::new().with("work:bart", "work", &[("status", "done")], true);
-    let wants = [("depends_on", "work:bart")];
+    let live = Things::new().with("work:phi", "work", &[("status", "done")], false);
+    let archived = Things::new().with("work:phi", "work", &[("status", "done")], true);
+    let wants = [("depends_on", "work:phi")];
     assert!(live.holds(&all_finished(), "work", &wants));
     assert!(!archived.holds(&all_finished(), "work", &wants));
 }
@@ -608,12 +608,12 @@ fn an_archived_thing_is_not_finished() {
 /// does, whatever its status says.
 #[test]
 fn finished_follows_the_instance_status_words() {
-    let wants = [("depends_on", "work:bart")];
+    let wants = [("depends_on", "work:phi")];
     let mapped = Things::new()
-        .with("work:bart", "work", &[("status", "shipped")], false)
+        .with("work:phi", "work", &[("status", "shipped")], false)
         .mapping("shipped", "done");
     assert!(mapped.holds(&all_finished(), "work", &wants));
-    let unmapped = Things::new().with("work:bart", "work", &[("status", "shipped")], false);
+    let unmapped = Things::new().with("work:phi", "work", &[("status", "shipped")], false);
     assert!(!unmapped.holds(&all_finished(), "work", &wants));
     let a_person = Things::new().with("person:bart", "person", &[("status", "done")], false);
     assert!(!a_person.holds(&all_finished(), "work", &[("depends_on", "person:bart")]));
@@ -624,13 +624,13 @@ fn finished_follows_the_instance_status_words() {
 /// holder only when it is asked of the dependency's fields correctly.
 #[test]
 fn the_question_is_asked_of_the_named_thing() {
-    let things = Things::new().with("work:homer", "work", &[("status", "now")], false);
+    let things = Things::new().with("work:tau", "work", &[("status", "now")], false);
     let wants_done = Filter::Refs {
         key: "depends_on".into(),
         quantifier: Quantifier::All,
         then: Box::new(Filter::equals("status", "done")),
     };
-    let holder = [("status", "done"), ("depends_on", "work:homer")];
+    let holder = [("status", "done"), ("depends_on", "work:tau")];
     assert!(!things.holds(&wants_done, "work", &holder));
     let wants_now = Filter::Refs {
         key: "depends_on".into(),
@@ -654,6 +654,6 @@ fn finished_at_the_top_asks_about_the_holder() {
 /// not answered true by being asked without them.
 #[test]
 fn without_a_lookup_nothing_resolves() {
-    assert!(!all_finished().holds(&bag(&[("depends_on", "work:bart")])));
+    assert!(!all_finished().holds(&bag(&[("depends_on", "work:phi")])));
     assert!(all_finished().holds(&bag(&[])));
 }
