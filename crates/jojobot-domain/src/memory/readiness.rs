@@ -1,7 +1,7 @@
 //! **Whether a piece of work can be started, and what stops it if it cannot.**
 //!
-//! Work is ready when every thing it `depends_on` is finished and nothing is
-//! held under `waiting_on`. The question is a filter tree ([`tree`]), so the
+//! Work is ready when it is not itself finished, every thing it `depends_on` is
+//! finished, and nothing is held under `waiting_on`. The question is a filter tree ([`tree`]), so the
 //! shipped behaviour runs on the same evaluator a bot's own view runs on.
 //! [`blocked_by`] answers the other half, which a boolean cannot: which
 //! dependency stops it, or what it waits on. It is computed for the work a
@@ -10,8 +10,6 @@
 //! **One hop.** A dependency is finished or it is not. What stops the
 //! dependency is its own record's business, so a cycle reads as blocked on both
 //! sides and no walk can loop.
-
-use std::collections::BTreeMap;
 
 use super::filter::{Filter, Lookup, Quantifier, Subject};
 use super::types::list_items;
@@ -28,6 +26,7 @@ pub const ASK: &str = "ready";
 /// **The tree for "can be started".**
 pub fn tree() -> Filter {
     Filter::All(vec![
+        Filter::negated(Filter::Finished),
         Filter::Refs {
             key: DEPENDS_ON.into(),
             quantifier: Quantifier::All,
@@ -51,17 +50,23 @@ pub enum Why {
 /// **One thing that stops the work.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Blocker {
+    /// The work is itself finished, so there is nothing to start.
+    Finished,
     /// A dependency, by the handle the work holds, and why it blocks.
     Dependency { handle: String, why: Why },
     /// What the work waits on, as it is held.
     WaitingOn(String),
 }
 
-/// **Everything that stops this work, in the order the work names it**:
-/// dependencies first, then what it waits on. Empty exactly when [`tree`]
-/// holds.
-pub fn blocked_by(fields: &BTreeMap<String, String>, lookup: &dyn Lookup) -> Vec<Blocker> {
+/// **Everything that stops this work, in the order the work names it**: that
+/// it is finished, then the dependencies, then what it waits on. Empty exactly
+/// when [`tree`] holds.
+pub fn blocked_by(subject: &Subject<'_>, lookup: &dyn Lookup) -> Vec<Blocker> {
+    let fields = subject.fields;
     let mut blockers = Vec::new();
+    if Filter::Finished.holds_in(subject, lookup) {
+        blockers.push(Blocker::Finished);
+    }
     let held = fields.get(DEPENDS_ON).map_or("", String::as_str);
     for handle in list_items(held) {
         let finished = Filter::Finished;
@@ -85,13 +90,8 @@ pub fn blocked_by(fields: &BTreeMap<String, String>, lookup: &dyn Lookup) -> Vec
 }
 
 /// **Whether this work can be started**, asked of the tree.
-pub fn is_ready(fields: &BTreeMap<String, String>, lookup: &dyn Lookup) -> bool {
-    let subject = Subject {
-        kind: super::EntityKind::WORK.as_token(),
-        fields,
-        archived: false,
-    };
-    tree().holds_in(&subject, lookup)
+pub fn is_ready(subject: &Subject<'_>, lookup: &dyn Lookup) -> bool {
+    tree().holds_in(subject, lookup)
 }
 
 #[cfg(test)]
