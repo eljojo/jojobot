@@ -359,6 +359,65 @@ async fn a_write_does_not_hide_a_change_made_past_the_writes() {
     );
 }
 
+/// **A fold reaches the things that held the folded one, and the search after
+/// it does not scan the store.** The holders are re-read one by one at the
+/// merge, so the answer does not depend on a scan the next read happens to take.
+#[tokio::test]
+async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let kept = EntityId("pet:contract-quokka-kept".into());
+    let spare = EntityId("pet:contract-wombat-spare".into());
+    let holder = EntityId::person("person:contract-bellringer");
+    for (id, name) in [
+        (&kept, "Kept Pet"),
+        (&spare, "Spare Pet"),
+        (&holder, "Bell Ringer"),
+    ] {
+        store
+            .add_entity(NewEntity::new(id.clone(), name, "user-named"))
+            .await
+            .expect("adds")
+            .written()
+            .expect("lands");
+    }
+    store
+        .capture(contract::state(NewFact {
+            fields: [("companion".to_string(), spare.as_str().to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "keeps the spare one", date(2026, 7, 1))
+        }))
+        .await
+        .expect("captures")
+        .written()
+        .expect("lands");
+    store
+        .merge(&spare, &kept, None, date(2026, 7, 2), &holder)
+        .await
+        .expect("the fold lands");
+
+    let scans = fake.full_scans();
+    let by_survivor = retrieval
+        .search(&SearchQuery {
+            holding: vec![jojobot_domain::memory::search::HeldField {
+                key: "companion".to_string(),
+                value: Some(kept.as_str().to_string()),
+            }],
+            ..SearchQuery::default()
+        })
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&by_survivor, &holder),
+        "the holder is found by the survivor: {by_survivor:?}"
+    );
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the fold re-read its holders, so the search scanned nothing"
+    );
+}
+
 /// The index forwards which keys of a record the store holds off the thing.
 #[tokio::test]
 async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {

@@ -249,6 +249,33 @@ impl IndexedMemory {
         }
         *summary = now;
     }
+
+    /// **The documents whose stored text names `folded`** by a field value, an
+    /// edge, a reference or a parent — the places a fold rewrites. Read from the
+    /// scan the index is current under, so it costs no statement, and read
+    /// before the fold, because after it the text names the survivor.
+    fn holders_of(&self, folded: &EntityId) -> Vec<EntityId> {
+        let names = |value: &String| value.split(',').any(|item| item.trim() == folded.as_str());
+        let cached = self.last_scan.read().expect("scan cache poisoned");
+        let Some((_, scan)) = cached.as_ref() else {
+            return Vec::new();
+        };
+        scan.iter()
+            .filter_map(|doc| {
+                let entity = doc.entity.as_ref()?;
+                let holds = entity.parent.as_ref() == Some(folded)
+                    || doc.fields.values().any(names)
+                    || doc.facts.iter().any(|fact| {
+                        fact.edge
+                            .as_ref()
+                            .is_some_and(|edge| &edge.object == folded)
+                            || fact.refs.contains(folded)
+                            || fact.fields.values().any(names)
+                    });
+                holds.then(|| entity.id.clone())
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -504,6 +531,14 @@ impl Memory for IndexedMemory {
     /// moved to the survivor, so an index still holding them would go on
     /// answering with a handle that is no longer a thing — the split this verb
     /// exists to close, reopened in the half a reader actually searches.
+    ///
+    /// **So is every document the fold rewrote.** A field value, an edge, a
+    /// reference or a parent that named the folded thing names the survivor now,
+    /// and the document holding it is re-read here, because the index is marked
+    /// current after this write and the next read does not scan the store for
+    /// them. The holders are read from the scan the index is current under,
+    /// before the fold: after it the text names the survivor and no longer says
+    /// who held the folded one.
     async fn merge(
         &self,
         folded: &EntityId,
@@ -513,20 +548,26 @@ impl Memory for IndexedMemory {
         caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
+        let holders = if began.is_some() {
+            self.holders_of(folded)
+        } else {
+            Vec::new()
+        };
         let done = self
             .inner
             .merge(folded, survivor, reason, date, caller)
             .await?;
         // The folded bot's runs read as the survivor's now.
         self.index.names_changed();
-        self.refresh(folded).await;
-        // ⚠️ **This line is not what makes the survivor findable by the names it
-        // just took.** Removing it leaves the name-carry contract green: the merge
-        // already appends an entity write for the survivor, and the index
-        // re-reads a doc whose write it has not seen. It stays as the explicit
-        // statement that both sides are re-read, and nothing should lean on it
-        // as the thing that carries the result.
-        self.refresh(survivor).await;
+        let mut reread = vec![self.refresh(folded).await, self.refresh(survivor).await];
+        for holder in holders
+            .iter()
+            .filter(|holder| *holder != folded && *holder != survivor)
+        {
+            reread.push(self.refresh(holder).await);
+        }
+        self.caught_up(began, reread).await;
         Ok(done)
     }
 
