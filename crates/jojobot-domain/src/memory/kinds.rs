@@ -310,10 +310,12 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // uses: `facts`, `prose`, `charter`. Optional, and a view that
             // names none answers with the things themselves.
             Field::new("shows", ValueType::Text),
-            // **The one question the graph answers that a selection cannot** —
-            // `overdue`. It is a named ask rather than a filter because being
-            // late is arithmetic over two dates and a cadence, not a value.
-            Field::one_of("asks", ["overdue"]),
+            // **A question the graph answers that a selection cannot** —
+            // `overdue`, which is arithmetic over two dates and a cadence, and
+            // `ready`, which asks about the things a reference list names.
+            // They are named asks rather than filters because neither is a
+            // value held on the thing itself.
+            Field::one_of("asks", ["overdue", super::readiness::ASK]),
         ],
         // **A seat, and the three keys the software knows about it.** All optional:
         // a released role has no holder, and a role nobody has claimed has none of

@@ -10,9 +10,9 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Two views ship, and that is deliberate rather than a first instalment of
-//! a catalogue.** They are the two the operator named, and a rich set is
-//! generated once the shape is settled. If this file starts growing a query
+//! **Three views ship, and that is deliberate rather than a first instalment of
+//! a catalogue.** Two are the ones the operator named and one asks what can be
+//! started, and a rich set is generated once the shape is settled. If this file starts growing a query
 //! per question somebody asks, it has taken the wrong turn.
 
 use std::collections::BTreeMap;
@@ -87,6 +87,18 @@ pub fn provisions() -> Vec<Provision> {
                 // what it left out, and an operator extends this by editing
                 // the record: a caller's own `keys` wins over it.
                 ("shows_keys", "one_liner, reports_to"),
+            ],
+        ),
+        // **What can be started.** Work that is not finished, whose
+        // dependencies are all finished, and that waits on nothing. The ask is
+        // the question; the answer counts what it left out and names the read
+        // that says why.
+        view(
+            "view:ready",
+            "Ready",
+            &[
+                ("selects", "work"),
+                ("asks", jojobot_domain::memory::readiness::ASK),
             ],
         ),
     ]

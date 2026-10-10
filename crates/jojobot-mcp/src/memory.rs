@@ -24,6 +24,7 @@ pub mod due;
 pub mod list_entities;
 pub mod merge_entities;
 pub mod parse;
+pub mod ready;
 pub mod recall;
 pub mod rename_entity;
 pub mod retract;

@@ -756,6 +756,11 @@ pub struct Asked {
     /// **Only what has fallen due.** Arithmetic over dates rather than a value
     /// to filter on, which is why it is a named ask rather than a key filter.
     pub overdue: bool,
+    /// **Only what can be started**, with what blocks the rest — see
+    /// [`super::readiness`]. A named ask for the same reason `overdue` is: it
+    /// asks about the things a reference list names, which a key filter on the
+    /// thing cannot.
+    pub ready: bool,
     /// **A key filter for every record on the view that carries one** — see
     /// [`asked_by_view`] for the shape a filter record takes. Several
     /// filters are several records; nothing here caps it at one per key.
@@ -877,6 +882,7 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
         filters,
         charter: shows("charter"),
         overdue: held.get("asks").map(String::as_str) == Some("overdue"),
+        ready: held.get("asks").map(String::as_str) == Some(super::readiness::ASK),
         answers_type: held.get("answers_type").cloned(),
         follow,
         // **A list of blanks names no key**, so it narrows nothing, the same

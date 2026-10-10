@@ -7300,3 +7300,367 @@ async fn a_browse_that_does_not_fit_reads_only_what_it_serves_and_counts_the_res
     }
     assert_eq!(served, handles, "every place once, in handle order");
 }
+
+// ---------------------------------------------------------------------------
+// The shipped `ready` view: what can be started next.
+// ---------------------------------------------------------------------------
+
+/// Make a piece of work with its first fields, through the surface.
+async fn work_with(jojobot: &Jojobot, handle: &str, sets: &[(&str, &str)]) {
+    let slug = handle.strip_prefix("work:").expect("a work handle");
+    work_with_slug(jojobot, slug, sets).await;
+}
+
+/// [`work_with`], by the slug alone.
+async fn work_with_slug(jojobot: &Jojobot, slug: &str, sets: &[(&str, &str)]) {
+    let handle = format!("work:{slug}");
+    let result = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            sets: Some(
+                sets.iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            ),
+            sid: Some(writing_as(jojobot)),
+            ..add_args("work", slug, slug)
+        }))
+        .await
+        .expect("add_entity call ok");
+    assert_ne!(
+        json_of(&result)["status"],
+        "blocked",
+        "{handle} was blocked: {}",
+        json_of(&result)
+    );
+}
+
+/// What the `ready` view answers, optionally for one named piece of work.
+async fn ready_view(jojobot: &Jojobot, subject: Option<&str>) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("ready".into()),
+                subject: subject.map(str::to_string),
+                facts: None,
+                sid: Some(writing_as(jojobot)),
+                ..recall_args("work:phi")
+            }))
+            .await
+            .expect("recall ok"),
+    )
+}
+
+/// The handles an answer lists, in order.
+fn listed(body: &serde_json::Value) -> Vec<String> {
+    body["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|object| object["id"].as_str().expect("an id").to_string())
+        .collect()
+}
+
+/// **Work whose dependencies are all finished is listed, and the finished ones are
+/// not.** Two finished items and one that depends on both: only the third is
+/// ready, so the list says what to start and not what is over.
+#[tokio::test]
+async fn ready_lists_work_whose_dependencies_are_finished() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:sigma", &[("status", "done")]).await;
+    work_with(&jojobot, "work:tau", &[("status", "done")]).await;
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", "work:sigma, work:tau")],
+    )
+    .await;
+    let body = ready_view(&jojobot, None).await;
+    assert_eq!(listed(&body), ["work:phi"], "{body}");
+    assert_eq!(body["objects"][0]["ready"], true, "{body}");
+    assert!(
+        body["objects"][0].get("blocked_by").is_none(),
+        "a ready item has nothing blocking it: {body}"
+    );
+}
+
+/// **An unfinished dependency keeps the work off the list, the answer counts what
+/// it left out and names the read that shows why, and that read says what
+/// blocks.** The unfinished dependency is itself ready, so it is listed: the
+/// positive beside the negative.
+#[tokio::test]
+async fn an_unfinished_dependency_blocks_and_the_left_out_count_names_the_read() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:sigma", &[("status", "done")]).await;
+    work_with(&jojobot, "work:loop-check-in", &[("status", "now")]).await;
+    work_with(
+        &jojobot,
+        "work:first-mix",
+        &[
+            ("status", "next"),
+            ("depends_on", "work:sigma, work:loop-check-in"),
+        ],
+    )
+    .await;
+    let body = ready_view(&jojobot, None).await;
+    assert_eq!(listed(&body), ["work:loop-check-in"], "{body}");
+    // The finished one and the blocked one are both left out.
+    assert_eq!(body["ready_left_out"]["count"], 2, "{body}");
+    let how = body["ready_left_out"]["how_to_read"]
+        .as_str()
+        .expect("the count names the read");
+    assert!(
+        how.contains("view") && how.contains("subject"),
+        "the count must name the call that shows why: {how}"
+    );
+
+    let named = ready_view(&jojobot, Some("work:first-mix")).await;
+    assert_eq!(listed(&named), ["work:first-mix"], "{named}");
+    let object = &named["objects"][0];
+    assert_eq!(object["ready"], false, "{named}");
+    assert_eq!(
+        object["blocked_by"],
+        serde_json::json!([
+            {"blocker": "dependency", "handle": "work:loop-check-in", "why": "unfinished"}
+        ]),
+        "{named}"
+    );
+}
+
+/// **A held waiting_on blocks, and the read names what it waits on.**
+#[tokio::test]
+async fn a_held_waiting_on_blocks_and_is_named() {
+    let jojobot = crate::harness::handler_shipped();
+    ensure(&jojobot, "person:milhouse").await;
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "waiting"), ("waiting_on", "person:milhouse")],
+    )
+    .await;
+    work_with(&jojobot, "work:sigma", &[("status", "next")]).await;
+    let body = ready_view(&jojobot, None).await;
+    assert_eq!(listed(&body), ["work:sigma"], "{body}");
+    let named = ready_view(&jojobot, Some("work:phi")).await;
+    assert_eq!(named["objects"][0]["ready"], false, "{named}");
+    assert_eq!(
+        named["objects"][0]["blocked_by"],
+        serde_json::json!([{"blocker": "waiting_on", "handle": "person:milhouse"}]),
+        "{named}"
+    );
+}
+
+/// **Work with no dependencies is ready**, and so is work with an empty list.
+#[tokio::test]
+async fn work_with_no_dependencies_is_listed() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:sigma", &[("status", "next")]).await;
+    let body = ready_view(&jojobot, None).await;
+    assert_eq!(listed(&body), ["work:sigma"], "{body}");
+}
+
+/// **An archived dependency blocks and is named as archived**, although it was
+/// done when it was archived.
+#[tokio::test]
+async fn an_archived_dependency_blocks_and_is_named() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:sigma", &[("status", "done")]).await;
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", "work:sigma")],
+    )
+    .await;
+    assert_eq!(listed(&ready_view(&jojobot, None).await), ["work:phi"]);
+    jojobot
+        .archive_entity(Parameters(ArchiveEntityArgs {
+            handle: "work:sigma".into(),
+            reason: "no longer tracked".into(),
+            restore: None,
+            sid: Some(writing_as(&jojobot)),
+        }))
+        .await
+        .expect("archive ok");
+    let body = ready_view(&jojobot, None).await;
+    assert!(listed(&body).is_empty(), "{body}");
+    let named = ready_view(&jojobot, Some("work:phi")).await;
+    assert_eq!(
+        named["objects"][0]["blocked_by"],
+        serde_json::json!([{"blocker": "dependency", "handle": "work:sigma", "why": "archived"}]),
+        "{named}"
+    );
+}
+
+/// **A cycle reads as blocked on both sides.** Each names the other.
+#[tokio::test]
+async fn a_cycle_is_blocked_on_both_sides() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:phi", &[("status", "next")]).await;
+    work_with(
+        &jojobot,
+        "work:sigma",
+        &[("status", "next"), ("depends_on", "work:phi")],
+    )
+    .await;
+    let closed = jojobot
+        .capture(Parameters(CaptureArgs {
+            sets: Some([("depends_on".to_string(), "work:sigma".to_string())].into()),
+            ..capture_args("work:phi", "now needs the other one")
+        }))
+        .await
+        .expect("capture ok");
+    assert_ne!(
+        json_of(&closed)["status"],
+        "blocked",
+        "{}",
+        json_of(&closed)
+    );
+    let body = ready_view(&jojobot, None).await;
+    assert!(listed(&body).is_empty(), "{body}");
+    for (holder, other) in [("work:phi", "work:sigma"), ("work:sigma", "work:phi")] {
+        let named = ready_view(&jojobot, Some(holder)).await;
+        assert_eq!(
+            named["objects"][0]["blocked_by"],
+            serde_json::json!([{"blocker": "dependency", "handle": other, "why": "unfinished"}]),
+            "{named}"
+        );
+    }
+}
+
+/// **Finished work is not listed, and a read of it says it is finished.**
+#[tokio::test]
+async fn finished_work_is_not_ready() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:phi", &[("status", "done")]).await;
+    let body = ready_view(&jojobot, None).await;
+    assert!(listed(&body).is_empty(), "{body}");
+    let named = ready_view(&jojobot, Some("work:phi")).await;
+    assert_eq!(
+        named["objects"][0]["blocked_by"],
+        serde_json::json!([{"blocker": "finished"}]),
+        "{named}"
+    );
+}
+
+/// **Readiness is computed on the view's answer only.** An ordinary read of work
+/// carries neither `ready` nor `blocked_by`, so no other read pays for it.
+#[tokio::test]
+async fn an_ordinary_read_of_work_carries_no_readiness() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:sigma", &[("status", "next")]).await;
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("work".into()),
+                subject: None,
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:sigma")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(listed(&body), ["work:sigma"], "{body}");
+    let object = &body["objects"][0];
+    assert!(object.get("ready").is_none(), "{body}");
+    assert!(object.get("blocked_by").is_none(), "{body}");
+    assert!(body["ready_left_out"].is_null(), "{body}");
+}
+
+/// **A piece of work naming hundreds of unfinished dependencies still answers
+/// under the ceiling, and says how many blockers it left out.** The slugs are
+/// long, so a count alone would not bound the object.
+#[tokio::test]
+async fn a_hostile_dependency_list_is_cut_to_a_room_and_the_rest_counted() {
+    let jojobot = crate::harness::handler_shipped();
+    let mut depends_on = Vec::new();
+    for n in 0..60u64 {
+        // Long and unlike each other, so the near-slug screen waves each through.
+        let mut state = 0x9e37_79b9_u64.wrapping_mul(n + 1);
+        let slug: String = (0..110)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                char::from(b'a' + ((state >> 33) % 26) as u8)
+            })
+            .collect();
+        work_with_slug(&jojobot, &slug, &[("status", "next")]).await;
+        depends_on.push(format!("work:{slug}"));
+    }
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", &depends_on.join(", "))],
+    )
+    .await;
+    let named = ready_view(&jojobot, Some("work:phi")).await;
+    let object = &named["objects"][0];
+    assert_eq!(object["ready"], false, "{named}");
+    let shown = object["blocked_by"].as_array().expect("blockers").len();
+    let left_out = object["blocked_by_left_out"]["count"]
+        .as_u64()
+        .expect("the rest is counted") as usize;
+    assert!(shown >= 1 && shown < 60, "{shown} of 60 shown");
+    assert!(
+        object["blocked_by"].to_string().len() <= crate::memory::ready::BLOCKED_BY_ROOM,
+        "the blockers stay inside their room: {named}"
+    );
+    assert_eq!(shown + left_out, 60, "{named}");
+    assert!(
+        named.to_string().len() < jojobot_domain::text::ANSWER_CEILING,
+        "the answer is {} characters",
+        named.to_string().len()
+    );
+    // Paired: a short list is shown whole and says nothing was left out.
+    work_with(
+        &jojobot,
+        "work:sigma",
+        &[
+            ("status", "next"),
+            ("depends_on", &depends_on[..3].join(", ")),
+        ],
+    )
+    .await;
+    let short = ready_view(&jojobot, Some("work:sigma")).await;
+    assert_eq!(
+        short["objects"][0]["blocked_by"]
+            .as_array()
+            .expect("blockers")
+            .len(),
+        3,
+        "{short}"
+    );
+    assert!(
+        short["objects"][0]["blocked_by_left_out"].is_null(),
+        "{short}"
+    );
+}
+
+/// **A dependency finished by a status word the instance maps to done counts as
+/// finished.** The same dependency, before the word is mapped, does not: the
+/// negative comes first and the positive follows the mapping.
+#[tokio::test]
+async fn a_dependency_finished_by_a_mapped_status_word_does_not_block() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:sigma", &[("status", "shipped")]).await;
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", "work:sigma")],
+    )
+    .await;
+    let before = ready_view(&jojobot, Some("work:phi")).await;
+    assert_eq!(before["objects"][0]["ready"], false, "{before}");
+    let mapped = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            sets: Some([("status_word/shipped".to_string(), "done".to_string())].into()),
+            ..capture_args("topic:instance", "how this instance words its statuses")
+        },
+    )
+    .await;
+    assert_ne!(mapped["status"], "blocked", "{mapped}");
+    let after = ready_view(&jojobot, None).await;
+    assert_eq!(listed(&after), ["work:phi"], "{after}");
+}

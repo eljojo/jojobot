@@ -518,8 +518,13 @@ pub struct RecallArgs {
     /// A name that is no view comes back blocked, with the views that exist.
     ///
     /// `view: "colleagues"` lists the identities here and what each is for; `view:
-    /// "loops"` lists the recurring things (rhythms) and what each last recorded. A
-    /// view carries its own `shows_keys`, and a `keys` you send wins over it.
+    /// "loops"` lists the recurring things (rhythms) and what each last recorded;
+    /// `view: "ready"` lists the work that can be started now, which is work not
+    /// yet finished whose dependencies are all finished and that waits on nothing.
+    /// The blocked work is counted as left out, and the answer names the call that
+    /// says why: send the view with `subject` set to one piece of work and it comes
+    /// back with `ready: false` and `blocked_by`. A view carries its own
+    /// `shows_keys`, and a `keys` you send wins over it.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -927,7 +932,7 @@ impl Jojobot {
         &self,
         named: &str,
         args: RecallArgs,
-    ) -> Result<(RecallArgs, Vec<graph::FieldFilter>), Box<CallToolResult>> {
+    ) -> Result<(RecallArgs, Vec<graph::FieldFilter>, bool), Box<CallToolResult>> {
         let handle = match named.trim().split_once(':') {
             Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
                 EntityId(named.trim().to_string())
@@ -1018,6 +1023,7 @@ impl Jojobot {
                 ..args
             },
             view_filters,
+            asked.ready,
         ))
     }
 }
@@ -1710,8 +1716,8 @@ impl Jojobot {
         // the call in: the note an object leaves when it is narrowed tells a
         // different way back for keys a view supplied.
         let caller_named_keys = args.keys.is_some();
-        let (args, view_filters) = match args.view.clone() {
-            None => (args, Vec::new()),
+        let (args, view_filters, asks_ready) = match args.view.clone() {
+            None => (args, Vec::new(), false),
             Some(named) => match self.asked_by_name(&named, args).await {
                 Ok(filled) => filled,
                 Err(refused) => return Ok(*refused),
@@ -2387,6 +2393,45 @@ impl Jojobot {
                     .collect(),
             );
         }
+        // **What can be started, when the view asked.** Asked of the work the
+        // selection found, against the things its `depends_on` names, and of
+        // nothing else: an ordinary read never reaches here. Work that is not
+        // ready is left out and counted, **except the one thing a call named**,
+        // which always comes back so a caller can read why. The count names the
+        // call that does.
+        let mut readiness: Option<Vec<crate::memory::ready::Verdict>> = None;
+        let mut ready_left_out: Option<usize> = None;
+        if asks_ready {
+            let verdicts = {
+                let asked: Vec<crate::memory::ready::Asked<'_>> = found
+                    .iter()
+                    .map(|object| crate::memory::ready::Asked {
+                        kind: object.entity.kind.as_token(),
+                        fields: &object.fields,
+                        archived: object.entity.archived.is_some(),
+                    })
+                    .collect();
+                match crate::memory::ready::verdicts_of(&*self.memory, &asked).await {
+                    Ok(verdicts) => verdicts,
+                    Err(e) => return memory_declined("recall", e),
+                }
+            };
+            let named = query.select.subject.clone();
+            let mut kept = Vec::with_capacity(found.len());
+            let mut kept_blockers = Vec::with_capacity(found.len());
+            let mut left_out = 0usize;
+            for (object, verdict) in found.drain(..).zip(verdicts) {
+                if verdict.ready || named.as_ref() == Some(&object.entity.id) {
+                    kept.push(object);
+                    kept_blockers.push(verdict);
+                } else {
+                    left_out += 1;
+                }
+            }
+            found = kept;
+            readiness = Some(kept_blockers);
+            ready_left_out = Some(left_out);
+        }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
         // gets them in, ranked, without knowing there was anything to ask.
@@ -2596,6 +2641,15 @@ impl Jojobot {
             // day is one nobody can check.
             "overdue_as_of": as_of.map(|d| d.to_string()),
             "overdue_excluded": overdue_excluded,
+            // **How many pieces of work the ready question left out, and the
+            // call that says why.** Absent when no readiness was asked, and
+            // when nothing was left out.
+            "ready_left_out": ready_left_out.filter(|left| *left > 0).map(|left| serde_json::json!({
+                "count": left,
+                "how_to_read": "recall again with this view and subject set to one piece of \
+                                work: it comes back with ready: false and blocked_by naming \
+                                what stops it",
+            })),
             // **The day, the window and the clock this read used**, and null
             // when it asked about no day. A caller that let jojobot supply
             // today has no other way to learn which day that was.
@@ -2705,6 +2759,9 @@ impl Jojobot {
                             Some(days) => days.into(),
                             None => serde_json::Value::Null,
                         };
+                    }
+                    if let Some(all) = &readiness {
+                        crate::memory::ready::render(&mut rendered, &all[idx]);
                     }
                     // **Beside the distance it cannot give**: which keys of the
                     // schedule the thing lacks or holds unreadably. Absent on an
