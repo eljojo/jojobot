@@ -91,6 +91,11 @@ fn repository() -> PathBuf {
     }
     fs::write(dir.join("Cargo.toml"), "[workspace]\n").expect("write");
     fs::write(dir.join("Makefile"), "all:\n").expect("write");
+    // **The bar writes its log under `target/` in the repository it runs in**, and
+    // the real repository ignores that directory. Without the same line here, the
+    // log reads as an untracked path in no package on a machine whose git config
+    // ignores nothing, such as the build sandbox, and a clean tree is refused.
+    fs::write(dir.join(".gitignore"), "/target\n").expect("write");
     git(&dir, &["init", "-q", "-b", "main"]);
     git(&dir, &["add", "-A"]);
     git(&dir, &["commit", "-q", "-m", "start"]);
