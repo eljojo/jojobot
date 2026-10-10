@@ -3622,4 +3622,83 @@ mod tests {
             assert_eq!(run_name(&jojobot, &new_key), name, "{step}");
         }
     }
+
+    /// **Two pick-ups of one quiet run, started together, hand a key to one.**
+    /// The first is parked in the gap between the quiet check and the new key —
+    /// the voucher listing that comes between them waits on a hold — and the
+    /// second is started while it is there. Without the bot's lock the second
+    /// meets a run that still reads as quiet and is handed a key too; with it
+    /// the second waits, and when the first is let go it meets a run that was
+    /// just taken and is refused.
+    ///
+    /// **Nothing here waits on a clock or a scheduler.** The gap is held open
+    /// by the case, and the second pick-up either finishes while the first is
+    /// parked or is stuck behind the lock; the case lets the first go after the
+    /// second has had every turn it can use.
+    #[tokio::test]
+    async fn two_pick_ups_of_one_quiet_run_are_not_both_handed_a_key() {
+        use crate::session::scripted::{Hold, Scripted};
+        let scripted = Arc::new(Scripted::over(Arc::new(InMemoryMemory::seeded())));
+        let jojobot = Jojobot::new(
+            scripted.clone(),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        )
+        .quiet_after(jiff::SignedDuration::from_millis(200));
+        name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        let key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &key, "started").await;
+        let name = run_name(&jojobot, &key);
+        // The run goes quiet by the clock the quiet rule reads.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let hold = Hold::new();
+        scripted.script(|s| s.hold_listing_of = Some((EntityKind::VOUCHER, hold.clone())));
+        let second_is_over = std::sync::atomic::AtomicBool::new(false);
+        let first = boot_answering(&jojobot, "gamma", &name);
+        let second = async {
+            let answer = boot_answering(&jojobot, "gamma", &name).await;
+            second_is_over.store(true, std::sync::atomic::Ordering::SeqCst);
+            answer
+        };
+        let letting_go = async {
+            hold.parked().await;
+            // The first is in the gap. The second has every turn there is to
+            // run to its end; when nothing lets it, it is waiting on the lock.
+            for _ in 0..1000 {
+                if second_is_over.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            hold.release();
+        };
+        let (first, second, ()) = tokio::join!(first, second, letting_go);
+
+        let keys: Vec<String> = [&first, &second]
+            .into_iter()
+            .filter_map(|answer| answer["session"]["sid"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            keys.len(),
+            1,
+            "exactly one pick-up is handed a key: {first} / {second}"
+        );
+        // The refusal of the other says whose run it is, and hands out nothing.
+        let refused = if first["session"]["sid"].is_null() {
+            &first
+        } else {
+            &second
+        };
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(refused.to_string().contains(&name), "{refused}");
+        // The positive the count depends on: the key handed out opens the run,
+        // and the one it replaced does not.
+        assert_eq!(run_name(&jojobot, &keys[0]), name);
+        assert!(jojobot.caller(Some(&key)).is_err());
+    }
 }
