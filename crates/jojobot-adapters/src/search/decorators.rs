@@ -14,7 +14,16 @@ pub struct IndexedMemory {
     /// [`Memory::write_summary`] on every call so an unchanged store can be
     /// answered from here instead of paying for [`Memory::scan`] again.
     last_scan: RwLock<Option<(WriteSummary, Vec<DocScan>)>>,
+    /// **One write at a time passes through this store.** The index is marked
+    /// current only when the write is the sole change since it was current, and
+    /// a second write landing inside that window would be taken in under the
+    /// first one's mark without being read.
+    write_gate: tokio::sync::Mutex<()>,
 }
+
+/// **A document the per-write path just re-read**: the entity it is, and the
+/// scan the store answered with, or `None` when the document is gone.
+type Reread = (EntityId, Option<DocScan>);
 
 impl IndexedMemory {
     /// Wrap a store with an **empty** index. The index is filled by
@@ -25,6 +34,7 @@ impl IndexedMemory {
             inner,
             index: Arc::new(FullTextIndex::open()?),
             last_scan: RwLock::new(None),
+            write_gate: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -133,15 +143,15 @@ impl IndexedMemory {
     /// has vanished is dropped from the index rather than left as a ghost — by
     /// the id its postings were stored under, which is the store's, not the
     /// handle (see [`FullTextIndex::forget`]).
-    pub(crate) async fn reindex(&self, entity: &EntityId) -> Result<(), MemoryError> {
+    pub(crate) async fn reindex(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
         match self.inner.scan_entity(entity).await? {
             Some(scan) => {
                 let history = self.history_terms(entity).await?;
                 self.index.ingest_doc(&scan, &history)?;
                 report_consistency(&scan, &self.index.known_entities());
-                Ok(())
+                Ok(Some(scan))
             }
-            None => self.index.forget(entity),
+            None => self.index.forget(entity).map(|()| None),
         }
     }
 
@@ -158,9 +168,12 @@ impl IndexedMemory {
     /// makes `search` say so on every answer afterwards. Swallowing the failure
     /// without that mark would trade a wrong answer to one caller for a wrong
     /// answer to every later one.
-    async fn refresh(&self, entity: &EntityId) {
+    async fn refresh(&self, entity: &EntityId) -> Option<Reread> {
         match self.reindex(entity).await {
-            Ok(()) => self.index.current(entity),
+            Ok(scan) => {
+                self.index.current(entity);
+                Some((entity.clone(), scan))
+            }
             Err(e) => {
                 self.index.behind(entity);
                 tracing::warn!(
@@ -171,17 +184,82 @@ impl IndexedMemory {
                      itself partial until a write to this document succeeds or the server \
                      restarts. The write itself landed; the memory verbs are unaffected."
                 );
+                None
             }
         }
+    }
+
+    /// **The summary the store answers with before a write**, when the index
+    /// could be current under it: some read has filled the index, no refresh is on
+    /// record as failed, and the store offers a signal. [`caught_up`] records the
+    /// index as current only if the scan it holds was taken under this very
+    /// summary — a change made past this store leaves the two apart, and a later
+    /// write must not take that change in under its own mark.
+    ///
+    /// [`caught_up`]: IndexedMemory::caught_up
+    async fn summary_before_a_write(&self) -> Option<WriteSummary> {
+        if self.index.memory_refresh_pending()
+            || self
+                .last_scan
+                .read()
+                .expect("scan cache poisoned")
+                .is_none()
+        {
+            return None;
+        }
+        self.inner.write_summary().await.ok()?
+    }
+
+    /// **Record that the index has caught up with a write**, so the next read
+    /// does not scan the store for it.
+    ///
+    /// `began` is the summary the store answered with before the write; with
+    /// none, with a scan the index holds that was taken under another summary, or
+    /// with any document the index could not re-read, this records nothing and
+    /// the next read scans, as it always did. Otherwise the cached
+    /// scan takes the re-read documents and the summary the store answers with
+    /// now. A scan that replaced the cache in the meantime is left alone.
+    async fn caught_up(&self, began: Option<WriteSummary>, reread: Vec<Option<Reread>>) {
+        let Some(began) = began else { return };
+        let Some(reread) = reread.into_iter().collect::<Option<Vec<Reread>>>() else {
+            return;
+        };
+        let Ok(Some(now)) = self.inner.write_summary().await else {
+            return;
+        };
+        let mut cached = self.last_scan.write().expect("scan cache poisoned");
+        let Some((summary, scan)) = cached.as_mut() else {
+            return;
+        };
+        if *summary != began {
+            return;
+        }
+        for (entity, doc) in reread {
+            let at = scan
+                .iter()
+                .position(|d| d.entity.as_ref().is_some_and(|e| e.id == entity));
+            match (at, doc) {
+                (Some(i), Some(doc)) => scan[i] = doc,
+                (Some(i), None) => {
+                    scan.remove(i);
+                }
+                (None, Some(doc)) => scan.push(doc),
+                (None, None) => {}
+            }
+        }
+        *summary = now;
     }
 }
 
 #[async_trait]
 impl Memory for IndexedMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let written = self.inner.add_entity(new).await?;
         if let Guarded::Written(entity) = &written {
-            self.refresh(&entity.id).await;
+            let reread = self.refresh(&entity.id).await;
+            self.caught_up(began, vec![reread]).await;
         }
         Ok(written)
     }
@@ -194,9 +272,12 @@ impl Memory for IndexedMemory {
         new: NewEntity,
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let written = self.inner.add_entity_with_first_claim(new, first).await?;
         if let Guarded::Written((entity, _)) = &written {
-            self.refresh(&entity.id).await;
+            let reread = self.refresh(&entity.id).await;
+            self.caught_up(began, vec![reread]).await;
         }
         Ok(written)
     }
@@ -209,6 +290,7 @@ impl Memory for IndexedMemory {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let written = self
             .inner
             .update_entity_with_claim(handle, patch, claim)
@@ -232,6 +314,7 @@ impl Memory for IndexedMemory {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let written = self.inner.update_entity(handle, patch).await?;
         if let Guarded::Written(entity) = &written {
             self.refresh(&entity.id).await;
@@ -251,6 +334,7 @@ impl Memory for IndexedMemory {
         date: Date,
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let written = self
             .inner
             .rename_entity(from, to, parent, date, override_token)
@@ -264,21 +348,26 @@ impl Memory for IndexedMemory {
     }
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let entity = self.inner.archive_entity(id, reason).await?;
         self.refresh(&entity.id).await;
         Ok(entity)
     }
 
     async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let restored = self.inner.restore_entity(id).await?;
         self.refresh(&restored.0.id).await;
         Ok(restored)
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let written = self.inner.capture(fact).await?;
         if let Guarded::Written(fact) = &written {
-            self.refresh(&fact.home).await;
+            let reread = self.refresh(&fact.home).await;
+            self.caught_up(began, vec![reread]).await;
         }
         Ok(written)
     }
@@ -382,9 +471,12 @@ impl Memory for IndexedMemory {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let written = self.inner.update_fact(address, patch, caller).await?;
         if let Guarded::Written(fact) = &written {
-            self.refresh(&fact.home).await;
+            let reread = self.refresh(&fact.home).await;
+            self.caught_up(began, vec![reread]).await;
         }
         Ok(written)
     }
@@ -400,8 +492,11 @@ impl Memory for IndexedMemory {
         date: Date,
         caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
+        let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let taken_back = self.inner.retract(address, reason, date, caller).await?;
-        self.refresh(&taken_back.retracted.home).await;
+        let reread = self.refresh(&taken_back.retracted.home).await;
+        self.caught_up(began, vec![reread]).await;
         Ok(taken_back)
     }
 
@@ -417,6 +512,7 @@ impl Memory for IndexedMemory {
         date: Date,
         caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let done = self
             .inner
             .merge(folded, survivor, reason, date, caller)
@@ -439,6 +535,7 @@ impl Memory for IndexedMemory {
     /// other write takes, and for the same reason: without it, the one part of
     /// a bot that is pure prose would be the one part search could not see.
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let stored = self.inner.set_prose(entity, prose).await?;
         self.refresh(entity).await;
         Ok(stored)
@@ -469,6 +566,7 @@ impl Memory for IndexedMemory {
     // forces the NEXT read to take a real scan rather than serve one taken
     // under the old declarations.
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+        let _gate = self.write_gate.lock().await;
         let written = self.inner.declare_type(declared).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(written)
@@ -490,6 +588,7 @@ impl Memory for IndexedMemory {
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
     ) -> Result<(), MemoryError> {
+        let _gate = self.write_gate.lock().await;
         self.inner.declare_kind(token, origin, fields).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(())
@@ -505,6 +604,7 @@ impl Memory for IndexedMemory {
     /// held it falls back to newest-write-wins once reclaimed, for every doc
     /// answering to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        let _gate = self.write_gate.lock().await;
         self.inner.reclaim_kind(token).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(())

@@ -206,6 +206,159 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
     );
 }
 
+/// **An index that has caught up with a write is current, so the next search
+/// does not scan the store.** The store is the in-memory one with its write
+/// summary and its count of whole-store scans: a write the index re-read one
+/// document for moves the summary, and a read that finds the summary moved and
+/// scans everything anyway pays the cost of the whole corpus for one claim.
+async fn an_index_over_the_fake() -> (Arc<InMemoryMemory>, Arc<IndexedMemory>, Retrieval) {
+    let fake = Arc::new(InMemoryMemory::booted());
+    let store = Arc::new(IndexedMemory::new(fake.clone()).expect("index opens"));
+    store.rebuild().await.expect("the boot scan reads");
+    let retrieval = Retrieval::new(store.index(), vec![store.clone()]);
+    (fake, store, retrieval)
+}
+
+fn a_hit_names(hits: &[Hit], who: &EntityId) -> bool {
+    hits.iter().any(|h| match h {
+        Hit::Entity { entity, .. } => &entity.id == who,
+        Hit::Fact { subject, .. } => &subject.id == who,
+        _ => false,
+    })
+}
+
+/// **After a write the search finds it and the store is not scanned.** Paired
+/// with [`a_change_made_past_the_writes_is_still_found_by_a_scan`] so a fix that
+/// simply never scans cannot pass.
+#[tokio::test]
+async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let bart = EntityId::person("person:bart");
+    store
+        .add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
+        .await
+        .expect("adds")
+        .written()
+        .expect("lands");
+    store
+        .capture(NewFact::about(
+            bart.clone(),
+            "keeps a lasagna in the cellar",
+            date(2026, 7, 1),
+        ))
+        .await
+        .expect("captures")
+        .written()
+        .expect("lands");
+
+    let scans = fake.full_scans();
+    let hits = retrieval
+        .search(&SearchQuery::text("lasagna"))
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&hits, &bart),
+        "the claim just written is found: {hits:?}"
+    );
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the index had read the written document, so the search scanned nothing"
+    );
+}
+
+/// **A change the writes did not make is still found, by a scan.** A row staged
+/// past the writes stands for an edit made directly against the real tables.
+#[tokio::test]
+async fn a_change_made_past_the_writes_is_still_found_by_a_scan() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let bart = EntityId::person("person:bart");
+    store
+        .add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
+        .await
+        .expect("adds")
+        .written()
+        .expect("lands");
+    let scans = fake.full_scans();
+    let hand_made = EntityId::person("person:kenny");
+    fake.past_the_guard(Entity {
+        id: hand_made.clone(),
+        kind: EntityKind::PERSON,
+        name: "Kenny".into(),
+        aliases: Vec::new(),
+        source: "contract-fixture".into(),
+        crm: None,
+        parent: None,
+        boot: Default::default(),
+        merged_into: None,
+        badge: None,
+        archived: None,
+    });
+
+    let hits = retrieval
+        .search(&SearchQuery::text("Kenny"))
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&hits, &hand_made),
+        "a row staged past the writes is found: {hits:?}"
+    );
+    assert_eq!(
+        fake.full_scans(),
+        scans + 1,
+        "the summary moved without a write, so the search scanned"
+    );
+}
+
+/// **A write made after a change past the writes does not hide that change.**
+/// The index is current only when it was current before the write: a write that
+/// marked the index current over a staged row would carry the staged row's
+/// summary with it, and the row would never be scanned in.
+#[tokio::test]
+async fn a_write_does_not_hide_a_change_made_past_the_writes() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let bart = EntityId::person("person:bart");
+    store
+        .add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
+        .await
+        .expect("adds")
+        .written()
+        .expect("lands");
+    let hand_made = EntityId::person("person:kenny");
+    fake.past_the_guard(Entity {
+        id: hand_made.clone(),
+        kind: EntityKind::PERSON,
+        name: "Kenny".into(),
+        aliases: Vec::new(),
+        source: "contract-fixture".into(),
+        crm: None,
+        parent: None,
+        boot: Default::default(),
+        merged_into: None,
+        badge: None,
+        archived: None,
+    });
+    store
+        .capture(NewFact::about(
+            bart.clone(),
+            "keeps a lasagna in the cellar",
+            date(2026, 7, 1),
+        ))
+        .await
+        .expect("captures")
+        .written()
+        .expect("lands");
+
+    let hits = retrieval
+        .search(&SearchQuery::text("Kenny"))
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&hits, &hand_made),
+        "the staged row is found after a write: {hits:?}"
+    );
+}
+
 /// The index forwards which keys of a record the store holds off the thing.
 #[tokio::test]
 async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {
