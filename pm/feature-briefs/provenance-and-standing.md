@@ -13,7 +13,7 @@
 
 ## Inference is the default
 
-**A derived claim reads back as a hypothesis, never as truth.** Only the operator's explicit confirmation promotes it.
+**A derived claim reads back as a hypothesis, never as truth.** Only a receipt promotes it: the operator's explicit confirmation, or a check that ran.
 
 This is the whole defence against the failure the project is named after. **An unmarked guess loads on the next boot carrying the authority of something that was said** — and nothing downstream can tell the difference, because the marking is the only difference there ever was.
 
