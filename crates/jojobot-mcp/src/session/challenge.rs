@@ -763,7 +763,9 @@ mod tests {
     }
 
     /// A handler over a store that misbehaves on cue, an operator and a bot
-    /// called `gamma`.
+    /// called `gamma`. **It states its clock on [`day`]**, so a case that builds
+    /// a later clock from a later day is after the first challenge's window
+    /// whatever the wall clock says.
     async fn scripted_instance() -> (Jojobot, Arc<Scripted>) {
         let scripted = Arc::new(Scripted::over(Arc::new(InMemoryMemory::seeded())));
         let jojobot = Jojobot::new(
@@ -773,7 +775,8 @@ mod tests {
             Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
             Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             seeded_registry(),
-        );
+        )
+        .on_clock(jojobot_domain::clock::Clock::stating(day()));
         crate::mailboxes::testing::name_the_operator(&jojobot, "milhouse").await;
         make_bot(&jojobot, "gamma").await;
         (jojobot, scripted)
@@ -897,13 +900,12 @@ mod tests {
             .await
             .unwrap_or_else(|_| panic!("the right code verifies"));
         // The first challenge expires, then a newer request replaces it.
+        let later_day = day() + jiff::Span::new().days(2);
         let later = jojobot
             .clone()
-            .on_clock(jojobot_domain::clock::Clock::stating(jiff::civil::date(
-                2026, 10, 11,
-            )));
+            .on_clock(jojobot_domain::clock::Clock::stating(later_day));
         later
-            .ask_for_code(&gamma(), jiff::civil::date(2026, 10, 11))
+            .ask_for_code(&gamma(), later_day)
             .await
             .expect("ask answers");
         let spent = jojobot.redeem_code(&verified, "abcd", day()).await;
@@ -1194,13 +1196,12 @@ mod tests {
             .expect("ask answers");
         assert!(json_of(&other)["challenge"]["handle"].is_string());
 
+        let later_day = day() + jiff::Span::new().days(2);
         let later = jojobot
             .clone()
-            .on_clock(jojobot_domain::clock::Clock::stating(jiff::civil::date(
-                2026, 10, 11,
-            )));
+            .on_clock(jojobot_domain::clock::Clock::stating(later_day));
         let renewed = later
-            .ask_for_code(&gamma(), jiff::civil::date(2026, 10, 11))
+            .ask_for_code(&gamma(), later_day)
             .await
             .expect("ask answers");
         assert!(json_of(&renewed)["challenge"]["handle"].is_string());
