@@ -503,12 +503,13 @@ the work named in `subject`.
 
 ## A label on one claim
 
-A key you write on a claim becomes a field of the claim's subject. A label that
-belongs to one claim, such as a ticket number or a cross-reference, is not a
-key: put it in the claim's words or in its `details`. Six keys describe their own
-record and do not fold onto the subject: `read_from`, `read_ref`, `starred`,
-`subject`, `purpose` and `recorded_by`. Any other key folds onto the subject, as
-every field does.
+A label that belongs to one claim, such as a ticket number or a cross-reference,
+is not a property of the thing the claim is about. Put it under `fields`, where
+it stays on the record, or in the claim's words or its `details`. A key that is
+a property of the thing goes under `sets`, and only a key under `sets` reaches
+the thing. Six keys describe their own record: `read_from`, `read_ref`,
+`starred`, `subject`, `purpose` and `recorded_by`. They go under `fields`, and
+`sets` refuses them.
 
 ## A retrospective
 
@@ -1243,26 +1244,33 @@ mod tests {
         );
     }
 
-    /// **A label on one claim is not a key, and the six keys that describe
-    /// their record are named from the declaration, not typed here.** A key
-    /// written on a claim becomes a field of the claim's subject, so a decision
-    /// number or a cross-reference written as a key folds onto the thing the
-    /// claim is about. The six exceptions are read off the shipped
-    /// `record-labels` type, so a key added to it must be named in the section.
+    /// **A label on one claim is not a property of the thing, and the route to
+    /// the thing is `sets`.** A key under `fields` stays on the record; only a
+    /// key under `sets` reaches the thing the claim is about. The six keys that
+    /// describe their record are read off the shipped `record-labels` type, so a
+    /// key added to it must be named in the section. The old teaching, that any
+    /// key written on a claim folds onto its subject, must not come back.
     #[test]
     fn the_projects_procedure_says_a_label_on_one_claim_is_not_a_key() {
         let section = projects_section("A label on one claim");
         for word in [
-            "field",
-            "subject",
+            "sets",
+            "fields",
+            "stays",
+            "record",
             "details",
-            "folds",
             "cross-reference",
             "ticket",
         ] {
             assert!(
                 names(&section, word),
                 "the label section does not say {word:?}: {section}"
+            );
+        }
+        for stale in ["folds onto", "becomes a field"] {
+            assert!(
+                !section.contains(stale),
+                "the label section teaches the fold from before `sets`: {section}"
             );
         }
         let declared = crate::seed::shipped_types()

@@ -460,12 +460,13 @@ the work named in `subject`.
 
 ## A label on one claim
 
-A key you write on a claim becomes a field of the claim's subject. A label that
-belongs to one claim, such as a ticket number or a cross-reference, is not a
-key: put it in the claim's words or in its `details`. Six keys describe their own
-record and do not fold onto the subject: `read_from`, `read_ref`, `starred`,
-`subject`, `purpose` and `recorded_by`. Any other key folds onto the subject, as
-every field does.
+A label that belongs to one claim, such as a ticket number or a cross-reference,
+is not a property of the thing the claim is about. Put it under `fields`, where
+it stays on the record, or in the claim's words or its `details`. A key that is
+a property of the thing goes under `sets`, and only a key under `sets` reaches
+the thing. Six keys describe their own record: `read_from`, `read_ref`,
+`starred`, `subject`, `purpose` and `recorded_by`. They go under `fields`, and
+`sets` refuses them.
 
 ## A retrospective
 
