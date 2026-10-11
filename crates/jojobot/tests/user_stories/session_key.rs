@@ -297,7 +297,11 @@ async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_land
             .await
             .says("\"wrote\":false")
             .says(&name)
-            .never_says(&key);
+            .never_says(&key)
+            // A key belongs in `sid` and nowhere else: sent as `resume` it is
+            // refused, so the refusal must not offer that route.
+            .says("`sid`")
+            .never_says("`resume`");
     }
 
     // ── the positive: a digest of the same length is only text ──────────────
@@ -326,7 +330,11 @@ async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_land
                    "content": format!("the code is {code}")}),
         )
         .await
-        .says(&name);
+        .says(&name)
+        // A wrap code belongs in `resume`, never in `sid`.
+        .says("`resume`")
+        .never_says("`sid`")
+        .never_says(&code);
     story.finish().await;
 }
 

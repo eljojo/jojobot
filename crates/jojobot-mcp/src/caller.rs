@@ -289,12 +289,15 @@ impl Jojobot {
             }
         }
         let (name, what) = leaked?;
+        // **Each credential has one argument**: a key is sent as `sid`, and sent as
+        // `resume` it is refused; a wrap code is sent as `resume`.
+        let argument = if what == "key" { "sid" } else { "resume" };
         Some(handle_declined(
             "",
             format!(
                 "{NOTHING_RAN}. This call holds the live {what} of run {name}, written into \
                  text that others can read. Take it out and send the call again. A {what} is \
-                 a credential: it belongs in `sid` or `resume` and nowhere else."
+                 a credential: it belongs in `{argument}` and nowhere else."
             ),
         ))
     }
