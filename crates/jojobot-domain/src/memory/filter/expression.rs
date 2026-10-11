@@ -28,6 +28,17 @@ use super::{Filter, Op};
 use crate::memory::MemoryError;
 use crate::memory::types::ValueType;
 
+/// **How many characters an expression may have.** A real filter is a line;
+/// this is far above one. Past it the text is refused before it is read, naming
+/// the first character over.
+pub const MAX_LENGTH: usize = 4096;
+
+/// **How deep an expression may nest**, counting each `(` and each `!` that
+/// stands before a term. A real filter nests a few levels. The tree, its clone,
+/// its drop and its evaluation all recurse over this depth, so it is bounded
+/// where the tree is made.
+pub const MAX_DEPTH: usize = 32;
+
 /// Read an expression into a filter tree. `today` is the asker's day, which a
 /// relative date is resolved against.
 pub fn parse(text: &str, today: Date) -> Result<Filter, MemoryError> {
@@ -43,6 +54,15 @@ pub fn value_words(text: &str) -> Result<Vec<ValueWord>, MemoryError> {
 }
 
 fn read(text: &str, today: Date) -> Result<(Filter, Vec<ValueWord>), MemoryError> {
+    // **Checked before anything is read**, so text a caller makes huge costs
+    // one count and no tokens.
+    if text.chars().count() > MAX_LENGTH {
+        return Err(refused(format!(
+            "the expression does not parse: it is longer than {MAX_LENGTH} characters, and the \
+             first character over the limit is at position {}. Write a shorter line",
+            MAX_LENGTH + 1
+        )));
+    }
     let tokens = lex(text)?;
     if tokens.is_empty() {
         return Err(refused(
@@ -53,6 +73,7 @@ fn read(text: &str, today: Date) -> Result<(Filter, Vec<ValueWord>), MemoryError
     let mut reader = Reader {
         tokens,
         at: 0,
+        depth: 0,
         today,
         values: Vec::new(),
     };
@@ -191,6 +212,8 @@ fn lex(text: &str) -> Result<Vec<Token>, MemoryError> {
 struct Reader {
     tokens: Vec<Token>,
     at: usize,
+    /// How many `(` and `!` the term being read stands inside. See [`MAX_DEPTH`].
+    depth: usize,
     today: Date,
     /// The values the expression compares against with `=`, `!=`, `in` and
     /// `contains`, where they sit.
@@ -249,6 +272,22 @@ impl Reader {
         ))
     }
 
+    /// **Step one level in**, refusing at the token that passes [`MAX_DEPTH`].
+    /// Every level is a recursion here and in everything that later walks the
+    /// tree, so the bound is taken where the tree is made.
+    fn enter(&mut self, token: &Token) -> Result<(), MemoryError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(refused(format!(
+                "the expression does not parse: '{}' at position {} nests deeper than \
+                 {MAX_DEPTH} levels. Write a flatter line",
+                token.spelled(),
+                token.position,
+            )));
+        }
+        Ok(())
+    }
+
     fn or(&mut self) -> Result<Filter, MemoryError> {
         let mut branches = vec![self.and()?];
         while self.peek().is_some_and(|t| t.kind == Kind::Or) {
@@ -273,9 +312,16 @@ impl Reader {
             return Err(self.ended(start));
         };
         match &token.kind {
-            Kind::Not => Ok(Filter::negated(self.unary()?)),
+            Kind::Not => {
+                self.enter(&token)?;
+                let inner = self.unary()?;
+                self.depth -= 1;
+                Ok(Filter::negated(inner))
+            }
             Kind::Open => {
+                self.enter(&token)?;
                 let inner = self.or()?;
+                self.depth -= 1;
                 match self.take() {
                     Some(Token {
                         kind: Kind::Close, ..
@@ -427,10 +473,12 @@ impl Reader {
             (Ok(count), "w") => Some(i64::from(count) * 7),
             _ => None,
         };
+        // **Fallible at both steps**: the span holds a bounded number of days, and
+        // a date a span reaches may be past the calendar. Either is no relative
+        // date, never a panic.
         let moved = days.and_then(|days| {
-            self.today
-                .checked_add(jiff::Span::new().days(sign * days))
-                .ok()
+            let span = jiff::Span::new().try_days(sign * days).ok()?;
+            self.today.checked_add(span).ok()
         });
         match moved {
             Some(day) => Ok(Operand::Day(day.to_string())),

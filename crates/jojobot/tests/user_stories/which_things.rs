@@ -703,3 +703,70 @@ async fn a_call_naming_no_kind_asks_each_objects_own_kind_and_counts_what_it_lef
     named.never_says("left_out_unlicensed");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_hostile_where_is_refused_on_every_door_and_the_server_answers_the_next_call() {
+    use jojobot_domain::memory::filter::expression::{MAX_DEPTH, MAX_LENGTH};
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    a_board(&s).await;
+    s.add("view:open-work", "Open Work").await;
+    let deep = format!(
+        "{}status = now{}",
+        "(".repeat(MAX_DEPTH + 1),
+        ")".repeat(MAX_DEPTH + 1)
+    );
+    let huge = "(".repeat(100_000);
+    // A line a view can hold at all (the size guard comes first for a huge one)
+    // and that is over the expression limit.
+    let long_for_a_view = "(".repeat(MAX_LENGTH + 1000);
+    let calendar = "due < today+1043498w";
+
+    // ── a view's where is refused at the write ──────────────────────────────
+    for (line, limit) in [(&deep, MAX_DEPTH), (&long_for_a_view, MAX_LENGTH)] {
+        s.refused(
+            "capture",
+            json!({
+                "subject": "view:open-work", "content": "a hostile line",
+                "provenance": "testimony", "sets": { "where": line },
+            }),
+        )
+        .await
+        .says(&limit.to_string());
+    }
+    s.refused(
+        "capture",
+        json!({
+            "subject": "view:open-work", "content": "a day past the calendar",
+            "provenance": "testimony", "sets": { "where": calendar },
+        }),
+    )
+    .await
+    .says("relative");
+
+    // ── a recall's where, and a walk's keeping ──────────────────────────────
+    for (line, limit) in [(&deep, MAX_DEPTH), (&huge, MAX_LENGTH)] {
+        s.refused("recall", json!({ "kind": "thing", "where": line }))
+            .await
+            .says(&limit.to_string());
+        s.refused(
+            "recall",
+            json!({
+                "subject": "person:milhouse",
+                "follow": { "direction": "in", "keeping": line },
+            }),
+        )
+        .await
+        .says(&limit.to_string());
+    }
+    s.refused("recall", json!({ "kind": "thing", "where": calendar }))
+        .await
+        .says("relative");
+
+    // The positive: nothing was taken down, and the same board answers.
+    assert_eq!(
+        which(&s, "status != done").await,
+        ["thing:delta", "thing:gamma"]
+    );
+    story.finish().await;
+}

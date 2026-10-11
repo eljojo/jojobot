@@ -191,6 +191,73 @@ fn a_relative_date_with_a_wide_character_is_refused_with_its_word_and_position()
     );
 }
 
+/// **Nothing a caller sends may take the parser down.** Text past the length
+/// limit is refused before it is read, naming the limit and the first character
+/// over it; nesting past the depth limit is refused at the token that passes it.
+/// Each hostile shape is its own line, because a stack that overflows takes the
+/// whole test thread with it. The edges parse: the limit itself is allowed.
+#[test]
+fn an_expression_past_the_length_or_depth_limit_is_refused_with_the_limit_named() {
+    let limit = MAX_LENGTH.to_string();
+    for hostile in [
+        "(".repeat(100_000),
+        format!("{}a = 1", "!".repeat(100_000)),
+        format!("status = {}", "x".repeat(MAX_LENGTH)),
+    ] {
+        let words = refusal(&hostile);
+        assert!(words.contains(&limit), "{}: {words}", &hostile[..16]);
+        assert!(
+            words.contains(&format!("position {}", MAX_LENGTH + 1)),
+            "{}: {words}",
+            &hostile[..16]
+        );
+    }
+    let depth = MAX_DEPTH.to_string();
+    let nested = |n: usize| format!("{}a = 1{}", "(".repeat(n), ")".repeat(n));
+    let negated = |n: usize| format!("{}a = 1", "!".repeat(n));
+    for (hostile, position) in [
+        (nested(MAX_DEPTH + 1), MAX_DEPTH + 1),
+        (negated(MAX_DEPTH + 1), MAX_DEPTH + 1),
+        (
+            format!("{}{}a = 1", "(".repeat(MAX_DEPTH), "!"),
+            MAX_DEPTH + 1,
+        ),
+    ] {
+        let words = refusal(&hostile);
+        assert!(words.contains(&depth), "{words}");
+        assert!(words.contains(&format!("position {position}")), "{words}");
+    }
+    // The edge parses, and so does a long ordinary line under the length limit.
+    parse(&nested(MAX_DEPTH), day("2026-10-09")).expect("the limit itself is allowed");
+    parse(&negated(MAX_DEPTH), day("2026-10-09")).expect("the limit itself is allowed");
+    // Each term is 13 characters and each joint 4, so n terms take 17n - 4.
+    let long = vec!["status = done"; (MAX_LENGTH + 4) / 17].join(" && ");
+    assert!(long.chars().count() <= MAX_LENGTH);
+    parse(&long, day("2026-10-09")).expect("a long flat line is not nesting");
+}
+
+/// **A day count past what a date can hold is refused, never a panic.** The span
+/// type holds a bounded number of days; a count past it, or a date past the
+/// calendar, is the same refusal as any other word that is no relative date.
+/// The ordinary counts still name their days.
+#[test]
+fn a_relative_date_past_the_calendar_is_refused_not_a_panic() {
+    for text in [
+        "due < today+8000000d",
+        "due < today+1043498w",
+        "due < today-1043498w",
+        "due < today+4294967295d",
+        "due < today+4294967295w",
+        "due < today+7000000d",
+    ] {
+        let words = refusal(text);
+        assert!(words.contains("relative"), "{text}: {words}");
+        assert!(words.contains("position 7"), "{text}: {words}");
+    }
+    assert_eq!(tree("due = today+3d"), Filter::equals("due", "2026-10-12"));
+    assert_eq!(tree("due = today-2w"), Filter::equals("due", "2026-09-25"));
+}
+
 /// **The values are the words an equality, an any-of or a `contains` compares
 /// against, with the characters they sit at**, a quoted one without its quotes.
 /// A key and an ordering's operand are not values.
