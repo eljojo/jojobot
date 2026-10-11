@@ -175,6 +175,9 @@ mod skill_calls;
 mod sourcing;
 #[path = "user_stories/spotlight.rs"]
 mod spotlight;
+/// An edit made against a revision the claim has moved past is refused.
+#[path = "user_stories/stale_edit.rs"]
+mod stale_edit;
 #[path = "user_stories/stale_handle.rs"]
 mod stale_handle;
 #[path = "user_stories/statusbar.rs"]

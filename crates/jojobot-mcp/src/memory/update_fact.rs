@@ -239,6 +239,14 @@ pub struct UpdateFactArgs {
     /// it is this alone, or an ordinary edit naming what changes.
     #[serde(default)]
     pub(crate) keep: Option<bool>,
+    /// **The revision you read**, when the edit is only right if nobody has
+    /// touched the claim since: the `revision_count` `recall` served for it. A
+    /// claim `recall` serves without one has been written once, so it is
+    /// revision 1. When the claim has been written since, the edit is refused
+    /// with `retry`, naming the revision it is at now, and nothing is written.
+    /// Leave it off and the edit lands as it always did.
+    #[serde(default)]
+    pub(crate) expected_revision: Option<u32>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -275,7 +283,9 @@ impl Jojobot {
                        answers with a receipt, not the record: the write is read back from \
                        the store before it is called a success, and recall the subject reads \
                        the record. A call that names nothing to change is refused; keep: true \
-                       alone is the designed way to touch a claim unchanged. An address that \
+                       alone is the designed way to touch a claim unchanged. \
+                       expected_revision (recall's revision_count) refuses the edit with retry \
+                       if the claim was written since. An address that \
                        names no claim comes back blocked with the addresses that exist. Each \
                        argument's own description holds its rules."
     )]
@@ -425,6 +435,7 @@ impl Jojobot {
             session: None,
             sets: set_keys,
             derived,
+            expected_revision: None,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently
@@ -554,6 +565,7 @@ impl Jojobot {
         // above, because it names no change.
         let mut patch = patch;
         patch.session = Some(caller.sid.as_str().to_string());
+        patch.expected_revision = args.expected_revision.map(|revision| revision as usize);
         if address.home.kind() == Some(EntityKind::BOT)
             && (patch
                 .edge

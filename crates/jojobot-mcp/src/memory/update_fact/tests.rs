@@ -227,6 +227,99 @@ fn postcondition_line(body: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// 🚨 **An edit made against a revision the claim has moved past is
+/// refused, says so with `retry`, names the revision now current and the read
+/// that shows what changed — and writes nothing.**
+///
+/// Revision is the count `recall` serves as `revision_count`, so the numbers
+/// in the refusal are the numbers a caller read. **Both halves in one case**:
+/// the edit against the current revision lands, the one against the revision
+/// it has passed does not, and the claim holds the first.
+#[tokio::test]
+async fn an_edit_against_a_stale_revision_is_refused_with_retry_and_the_current_revision() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+
+    let landed = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            provenance: Some("inference".into()),
+            content: Some("works at the second place".into()),
+            expected_revision: Some(1),
+            ..update_args("person:alpha#f1")
+        },
+    )
+    .await;
+    assert_eq!(
+        landed["content_head"], "works at the second place",
+        "{landed}"
+    );
+
+    let refused = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                provenance: Some("inference".into()),
+                content: Some("works at the third place".into()),
+                expected_revision: Some(1),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("a stale edit is an answer, not an error"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(refused["fix_by"], "retry", "{refused}");
+    let way = refused["how_to_proceed"].as_str().expect("a way forward");
+    assert!(
+        way.contains("expected_revision: 2"),
+        "the refusal does not name the revision now current: {way}"
+    );
+    assert!(
+        way.contains("history_record"),
+        "the refusal does not name the read that shows what changed: {way}"
+    );
+
+    let current = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            provenance: Some("inference".into()),
+            content: Some("works at the third place".into()),
+            expected_revision: Some(2),
+            ..update_args("person:alpha#f1")
+        },
+    )
+    .await;
+    assert_eq!(
+        current["content_head"], "works at the third place",
+        "{current}"
+    );
+}
+
+/// **The revision on its own is not a change**, so naming it does not turn an
+/// empty edit into a write. Without this a caller could append a write to a
+/// claim's history by sending only the number it read.
+#[tokio::test]
+async fn an_expected_revision_alone_still_names_no_change() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+    let refused = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                expected_revision: Some(1),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .is_some_and(|way| way.contains("keep")),
+        "the refusal for an empty edit names keep: {refused}"
+    );
+}
+
 /// Update through the handler, expecting the guard to wave it through.
 async fn update_ok(jojobot: &Jojobot, args: UpdateFactArgs) -> serde_json::Value {
     let body = json_of(

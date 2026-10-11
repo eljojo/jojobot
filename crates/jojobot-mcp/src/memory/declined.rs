@@ -291,6 +291,9 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnconfirmedSettling => Some(FixBy::Person),
         // A held role frees when its lease ends; a collision clears on the next try.
         MemoryError::RoleTaken { .. } | MemoryError::Conflict => Some(FixBy::Retry),
+        // The claim moved on after the caller read it: read it again, then send the
+        // edit against the revision now current.
+        MemoryError::StaleRevision { .. } => Some(FixBy::Retry),
         MemoryError::Store(_) => memory_store_failure_word(),
         MemoryError::FoldBehind { .. } => None,
     }
@@ -452,6 +455,22 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // are not rewritten in place, so "send it again" would loop; the sentence
         // names the two calls that do it and says the original stays readable, so
         // a caller can tell the operator so.
+        // **The way forward is the read, then the same edit against the revision the
+        // read shows.** The sentence names the revision the claim is at now and the
+        // call that returns what the other write changed.
+        MemoryError::StaleRevision {
+            ref address,
+            current,
+            ..
+        } => Ok(blocked_body(
+            &EntityId(address.clone()),
+            &[],
+            WayForward::retry(format!(
+                "Nothing was written: {e}. Read the claim again with recall (history_record: \
+                 \"{address}\") to see what changed, then send the edit again with \
+                 expected_revision: {current} if it still stands."
+            )),
+        )),
         MemoryError::TestimonyRewritten { ref address } => Ok(blocked_body(
             &EntityId(address.clone()),
             &[],
@@ -1435,6 +1454,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::ChallengeIssued { .. }
         | MemoryError::UnknownRight { .. }
         | MemoryError::RoleTaken { .. }
+        | MemoryError::StaleRevision { .. }
         | MemoryError::TestimonyRewritten { .. }
         | MemoryError::KeyInOtherBag { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
@@ -1910,6 +1930,15 @@ pub(crate) mod tests {
                     why: s("a rule"),
                 },
                 Some("change"),
+            ),
+            (
+                "StaleRevision",
+                MemoryError::StaleRevision {
+                    address: s("person:alpha#f1"),
+                    expected: 1,
+                    current: 2,
+                },
+                Some("retry"),
             ),
             (
                 "TestimonyRewritten",

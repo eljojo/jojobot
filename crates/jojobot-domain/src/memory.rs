@@ -852,6 +852,34 @@ pub struct FactPatch {
     /// They reach the thing whatever bag the caller's keys go in
     /// ([`classes_for_write`]).
     pub derived: std::collections::BTreeSet<String>,
+    /// **The revision of the claim the caller read**, when it wants the edit
+    /// refused if the claim has moved on since: the number of times the claim
+    /// has been written, which `recall` serves as `revision_count` (a claim
+    /// written once is revision 1). A store compares it with the claim's
+    /// writes inside the transaction that would append the next one, and a
+    /// difference is [`MemoryError::StaleRevision`] with nothing written.
+    /// `None` is the edit as it always was.
+    pub expected_revision: Option<usize>,
+}
+
+/// **The refusal of an edit made against a revision the claim has moved past**,
+/// or nothing when the edit names no revision or names the one the claim is at.
+///
+/// `current` is the number of writes the claim holds, counted by the store in
+/// the transaction that would append the next one. Both stores call this, so
+/// the rule is stated once.
+pub fn refuses_a_stale_revision(
+    address: &FactAddress,
+    expected: Option<usize>,
+    current: usize,
+) -> Option<MemoryError> {
+    expected
+        .filter(|expected| *expected != current)
+        .map(|expected| MemoryError::StaleRevision {
+            address: address.to_string(),
+            expected,
+            current,
+        })
 }
 
 /// **The role an entity IS, when it is a role object**: the slug of its handle.
@@ -5400,6 +5428,23 @@ pub enum MemoryError {
         attempted: String,
         /// Addresses that do exist, nearest first.
         nearest: Vec<String>,
+    },
+    /// **The edit was made against a revision the claim has moved past.**
+    ///
+    /// The caller named the revision it read, and the claim has been written
+    /// since. Nothing was written. The way forward is to read the claim
+    /// again, see what the other write changed, and send the edit against the
+    /// revision now current.
+    #[error(
+        "{address} is at revision {current}, and this edit was made against revision {expected}"
+    )]
+    StaleRevision {
+        /// The claim's address.
+        address: String,
+        /// The revision the caller said it read.
+        expected: usize,
+        /// The revision the claim is at now.
+        current: usize,
     },
     /// **The named object exists and belongs to another identity.**
     ///

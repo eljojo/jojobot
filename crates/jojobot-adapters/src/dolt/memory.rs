@@ -4384,6 +4384,26 @@ impl Memory for DoltMemory {
                     .to_string(),
             });
         }
+        // **An edit made against a revision the claim has moved past is refused
+        // before anything is written**, counted in the transaction the write
+        // appends in.
+        if patch.expected_revision.is_some() {
+            let current: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND fact_id = ?",
+            )
+            .bind(key.as_str())
+            .bind(address.local.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
+            if let Some(refused) = jojobot_domain::memory::refuses_a_stale_revision(
+                address,
+                patch.expected_revision,
+                current as usize,
+            ) {
+                return Err(refused);
+            }
+        }
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same transaction, so a

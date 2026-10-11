@@ -4316,6 +4316,7 @@ confirmed_by_user is required for exactly two moves of an existing claim: anythi
 Reopening is free, and a fresh capture is taken at its word.
 It answers with a receipt, not the record: the write is read back from the store before it is called a success, and recall the subject reads the record.
 A call that names nothing to change is refused; keep: true alone is the designed way to touch a claim unchanged.
+expected_revision (recall's revision_count) refuses the edit with retry if the claim was written since.
 An address that names no claim comes back blocked with the addresses that exist.
 Each argument's own description holds its rules.
 ```
@@ -4407,6 +4408,15 @@ Each argument's own description holds its rules.
         "default": null,
         "type": [
           "string",
+          "null"
+        ]
+      },
+      "expected_revision": {
+        "default": null,
+        "format": "uint32",
+        "minimum": 0,
+        "type": [
+          "integer",
           "null"
         ]
       },
@@ -4656,6 +4666,17 @@ named claim must exist.
 Replacement details; pass an empty string to clear them. They may hold
 paragraph breaks and read back with every one. Carries `@kind:slug`
 mentions exactly as `content` does.
+```
+
+#### `update_fact` — argument `/inputSchema.expected_revision`
+
+```text
+**The revision you read**, when the edit is only right if nobody has
+touched the claim since: the `revision_count` `recall` served for it. A
+claim `recall` serves without one has been written once, so it is
+revision 1. When the claim has been written since, the edit is refused
+with `retry`, naming the revision it is at now, and nothing is written.
+Leave it off and the edit lands as it always did.
 ```
 
 #### `update_fact` — argument `/inputSchema.fields`

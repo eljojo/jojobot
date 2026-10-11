@@ -3917,6 +3917,120 @@ pub async fn update_fact_edits_in_place<M: Memory>(store: &M) {
     );
 }
 
+/// How many times a claim has been written: its revision, as `recall` serves it.
+async fn writes_of_claim<M: Memory>(store: &M, address: &FactAddress) -> usize {
+    store
+        .claim_history(address)
+        .await
+        .expect("claim_history should succeed")
+        .len()
+}
+
+/// **An edit made against a revision the claim has moved past is refused,
+/// and nothing is written.**
+///
+/// Two sessions read a claim at revision 1. The first edits against 1 and
+/// lands. The second edits against 1 too, and the claim is at revision 2 by
+/// then: it is refused with both numbers, the claim holds the first edit, and
+/// its history gained no write. **Both halves are one case** — a store that
+/// refused every edit that named a revision would satisfy the second half
+/// alone, and one that ignored the number would satisfy the first.
+///
+/// An edit naming the revision the claim is at lands, and one naming none
+/// lands as it always did.
+pub async fn an_edit_against_a_stale_revision_is_refused_and_writes_nothing<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-moved-on-claim");
+    let captured = capture(
+        store,
+        NewFact::about(subject.clone(), "works at the old place", date(2026, 7, 1)),
+    )
+    .await;
+    let address = captured.address();
+    assert_eq!(
+        writes_of_claim(store, &address).await,
+        1,
+        "a claim written once is revision 1"
+    );
+
+    // The first session lands.
+    edit(
+        store,
+        &address,
+        FactPatch {
+            content: Some("works at the second place".into()),
+            provenance: Some(Provenance::Inference),
+            expected_revision: Some(1),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(writes_of_claim(store, &address).await, 2);
+
+    // The second session read the same revision and is refused.
+    let refused = store
+        .update_fact(
+            &address,
+            FactPatch {
+                content: Some("works at the third place".into()),
+                provenance: Some(Provenance::Inference),
+                expected_revision: Some(1),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    match refused {
+        Err(MemoryError::StaleRevision {
+            expected, current, ..
+        }) => {
+            assert_eq!(expected, 1);
+            assert_eq!(current, 2);
+        }
+        other => panic!("an edit against revision 1 of a claim at revision 2 was {other:?}"),
+    }
+    let seen = read_back(store, &subject, &captured.id).await;
+    assert_eq!(
+        seen.content, "works at the second place",
+        "the claim must hold the first edit"
+    );
+    assert_eq!(
+        writes_of_claim(store, &address).await,
+        2,
+        "a refused edit appends no write"
+    );
+
+    // The revision now current lands.
+    edit(
+        store,
+        &address,
+        FactPatch {
+            content: Some("works at the third place".into()),
+            provenance: Some(Provenance::Inference),
+            expected_revision: Some(2),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(writes_of_claim(store, &address).await, 3);
+
+    // Naming none lands as it always did.
+    edit(
+        store,
+        &address,
+        FactPatch {
+            content: Some("works at the fourth place".into()),
+            provenance: Some(Provenance::Inference),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(writes_of_claim(store, &address).await, 4);
+    assert_eq!(
+        read_back(store, &subject, &captured.id).await.content,
+        "works at the fourth place"
+    );
+}
+
 /// **An edit can carry a new day, and one that names none leaves the
 /// record's day alone.**
 ///
@@ -16034,6 +16148,7 @@ macro_rules! all_cases {
 
         $m!(facts_carry_a_usable_address($store));
         $m!(update_fact_edits_in_place($store));
+        $m!(an_edit_against_a_stale_revision_is_refused_and_writes_nothing($store));
         $m!(an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone($store));
         $m!(a_refutation_is_an_ordinary_content_edit($store));
         $m!(promotion_to_testimony_needs_confirmation($store));

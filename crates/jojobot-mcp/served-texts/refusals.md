@@ -240,6 +240,20 @@ answer: {
 }
 ```
 
+### Memory refusal `StaleRevision`
+
+```text
+reads: person:alpha#f1 is at revision 2, and this edit was made against revision 1
+answer: {
+  "attempted": "person:alpha#f1",
+  "candidates": [],
+  "fix_by": "retry",
+  "how_to_proceed": "Nothing was written: person:alpha#f1 is at revision 2, and this edit was made against revision 1. Read the claim again with recall (history_record: \"person:alpha#f1\") to see what changed, then send the edit again with expected_revision: 2 if it still stands.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `TestimonyRewritten`
 
 ```text
