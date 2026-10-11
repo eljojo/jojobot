@@ -1438,6 +1438,116 @@ async fn a_view_stored_with_a_filter_record_answers_as_before_on_the_current_bin
     drop(scratch);
 }
 
+/// **Three claims an older build wrote, each naming a thing by its stored mark**:
+/// in plain words, inside an inline code span and inside a fenced block. Before
+/// text in code was literal (rule 450), a handle written in a span was resolved
+/// like any other, so the row holds the mark there.
+///
+/// **The column shape is copied, not guessed.** Each insert uses the column list
+/// of the `fact` and `fact_write` rows in the recordings (for instance entity
+/// `gwd5wp`, claim `f3`, in the `upgrade` dump) and the values
+/// `plant_a_view_with_a_filter_record` gives a claim. **Only the content is new.**
+/// Neither recording holds a mark in a claim's words, so these three rows are an
+/// invention of the shape; the recordings hold the mark only as a field value.
+/// The host is the blue thing and the mark is the red thing's badge.
+async fn plant_claims_naming_a_thing_by_its_stored_mark(pool: &sqlx::MySqlPool) {
+    for (fact, content) in [
+        ("f3", "see @#red001 for the plain case"),
+        ("f4", "the form is `@#red001` in a span"),
+        ("f5", "the form in a block:\n```\n@#red001\n```\nends"),
+    ] {
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                               recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                               derived_from_id, inserted_at, stale_after, happened_at,
+                               happened_through)
+             VALUES ('blue01', ?, ?, NULL, 'testimony', 'settled', 'active',
+                     '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                     NULL, NULL)",
+        )
+        .bind(fact)
+        .bind(content)
+        .execute(pool)
+        .await
+        .expect("the claim lands");
+        sqlx::query(
+            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                    standing, status, recorded_at, edge_shape, edge_object,
+                                    derived_from, derived_from_id, inserted_at, stale_after,
+                                    written_at, happened_at, happened_through, session)
+             VALUES ('blue01', ?, 1, ?, NULL, 'testimony', 'settled', 'active',
+                     '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                     '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+        )
+        .bind(fact)
+        .bind(content)
+        .execute(pool)
+        .await
+        .expect("the claim's first write lands");
+    }
+}
+
+/// **A stored mark inside code reads as the handle it answers to, as one outside
+/// code does.** The mark is jojobot's own, so the reader resolves it wherever it
+/// sits (rule 450 makes a WRITTEN handle in code literal, and nothing rewrites
+/// what an older build stored). The boot holds to the gate's bar: no warning, no
+/// error line. The plain claim is the positive the two in code depend on.
+#[tokio::test]
+async fn a_stored_mark_inside_code_reads_as_the_handle_on_the_current_binary() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "mark-in-code").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_view_with_a_filter_record(store.pool()).await;
+    plant_claims_naming_a_thing_by_its_stored_mark(store.pool()).await;
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let answer = surface
+        .call("recall", json!({"subject": OLD_VIEW_BLUE, "facts": true}))
+        .await;
+    booted.stop().await;
+    let answer: serde_json::Value = serde_json::from_str(&answer)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the thing did not answer: {answer}"));
+    let content_of = |fact: &str| -> String {
+        answer["objects"][0]["facts"]
+            .as_array()
+            .and_then(|all| {
+                all.iter().find(|claim| {
+                    claim["address"]
+                        .as_str()
+                        .is_some_and(|address| address.ends_with(&format!("#{fact}")))
+                })
+            })
+            .and_then(|claim| claim["content"].as_str())
+            .unwrap_or_else(|| panic!("recorded at {git_ref}: no claim {fact}: {answer}"))
+            .to_string()
+    };
+    for (fact, shape) in [("f3", ""), ("f4", "`"), ("f5", "```")] {
+        let content = content_of(fact);
+        assert!(
+            content.contains(OLD_VIEW_RED),
+            "recorded at {git_ref}: claim {fact} reads the mark as the handle: {content}"
+        );
+        assert!(
+            !content.contains("red001"),
+            "recorded at {git_ref}: claim {fact} still shows the badge: {content}"
+        );
+        assert!(
+            content.contains(shape),
+            "recorded at {git_ref}: claim {fact} keeps its code around the handle: {content}"
+        );
+    }
+    drop(scratch);
+}
+
 /// **Every stored record that no answer could carry whole**, found by reading
 /// each thing's records back through the served surface the way a caller does,
 /// one part after another. A record is over when the answer that carries it is
