@@ -334,10 +334,18 @@ impl Jojobot {
         // a basis is a write like any other write that could move the due
         // moment — the mechanism does not care that this one is a patch
         // rather than a fresh capture.
+        //
+        // **Only what reaches the thing counts.** A key sent as the claim's own
+        // field stays on the claim, so it moves no due moment.
+        let reaching: std::collections::BTreeMap<String, String> = fields
+            .iter()
+            .filter(|(key, _)| set_keys.contains(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         let (due_on_computed, due_on_derived) = self
             .moved_due_moment(
                 &address.home,
-                &fields,
+                &reaching,
                 &cleared,
                 self.dated(None, args.sid.as_deref()).await?,
             )

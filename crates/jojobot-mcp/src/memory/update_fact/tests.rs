@@ -3011,13 +3011,24 @@ async fn a_status_write_that_is_not_finishing_leaves_a_leftover_due_moment() {
     let memory = std::sync::Arc::new(InMemoryMemory::booted());
     let jojobot = handler_over(memory.clone());
     ensure(&jojobot, "work:phi").await;
-    memory.fields_past_the_guard(
-        &EntityId("work:phi".into()),
-        &[("due_on", "2026-06-01"), ("status", "now")],
-    );
-    let held = "work:phi#f1".to_string();
+    memory.fields_past_the_guard(&EntityId("work:phi".into()), &[("due_on", "2026-06-01")]);
+    // The status is a setting on the thing, written the way a caller writes one.
+    let claim = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            sets: Some(
+                [("status".to_string(), "now".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:phi", "wire the shed")
+        },
+    )
+    .await;
+    let held = claim["address"].as_str().expect("an address").to_string();
     let status = |value: &str| UpdateFactArgs {
-        fields: Some(
+        sets: Some(
             [("status".to_string(), value.to_string())]
                 .into_iter()
                 .collect(),

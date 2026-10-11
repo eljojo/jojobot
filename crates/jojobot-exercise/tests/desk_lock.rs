@@ -82,7 +82,7 @@ async fn desk_with_its_march_deadline(surface: &Surface, sid: &str) {
                 "derived_from": "thing:standing-desk#f1",
                 "details": "Worked out, not stated: thirty days counted from the 6th of \
                             February, the day it came.",
-                "fields": {"runs_out": "2026-03-08"},
+                "sets": {"runs_out": "2026-03-08"},
                 "provenance": "inference",
                 "standing": "open",
                 "recorded_at": "2026-02-08",

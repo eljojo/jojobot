@@ -411,3 +411,119 @@ async fn the_due_moment_follows_a_setting_that_moves_without_changing_bag() {
         .says("\"due_on\":\"2026-12-15\"");
     story.finish().await;
 }
+
+/// **A day sent as the claim's own field does not make the thing fall due.** A
+/// decide-by day is a key the work kind reads off the THING. Sent in `sets` it
+/// reaches the thing and jojobot works the due moment out from it. Sent in `fields`
+/// it stays on the claim, so the thing is not owed and the receipt does not say
+/// jojobot set a due moment. **Paired**, on a capture and on an edit, in one story.
+#[tokio::test]
+async fn a_day_sent_as_an_own_field_does_not_make_the_thing_fall_due() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add_under("project:atlas", "work:sigma", "The Rigging")
+        .await;
+    s.add_under("project:atlas", "work:phi", "The Wiring").await;
+    s.add_under("project:atlas", "work:tau", "The Anchors")
+        .await;
+    let owed = || {
+        s.call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": "2027-01-01"}}),
+        )
+    };
+
+    // Positive: the day under `sets` reaches the thing, and the thing falls due.
+    let set = s
+        .call(
+            "capture",
+            json!({
+                "subject": "work:sigma", "content": "the rigging is decided by November",
+                "provenance": "testimony",
+                "sets": {"decide_by": "2026-11-01"},
+            }),
+        )
+        .await
+        .json();
+    assert_eq!(
+        set["reached_the_thing"],
+        json!(["decide_by", "due_on"]),
+        "{set}"
+    );
+    owed().await.says("work:sigma");
+
+    // Negative: the same day under `fields` stays on the claim. Nothing reaches
+    // the thing, no due moment is stored and the thing is not owed.
+    let own = s
+        .call(
+            "capture",
+            json!({
+                "subject": "work:phi", "content": "the wiring is decided by November",
+                "provenance": "testimony",
+                "fields": {"decide_by": "2026-11-01"},
+            }),
+        )
+        .await
+        .json();
+    assert!(
+        own["reached_the_thing"]
+            .as_array()
+            .is_none_or(|reached| reached.is_empty()),
+        "an own field reaches nothing, and neither does a day worked out from it: {own}",
+    );
+    assert_eq!(own["stayed_on_the_record"], json!(["decide_by"]), "{own}");
+    s.call("recall", json!({"subject": "work:phi"}))
+        .await
+        .never_says("due_on");
+    owed().await.never_says("work:phi");
+
+    // The same pair on an edit: a claim with no day, edited to carry one.
+    let claim = s
+        .call(
+            "capture",
+            json!({
+                "subject": "work:tau", "content": "the anchors need a decision",
+                "provenance": "testimony",
+            }),
+        )
+        .await
+        .json();
+    let address = claim["address"].as_str().expect("an address").to_string();
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"decide_by": "2026-11-01"}}),
+        )
+        .await
+        .json();
+    assert!(
+        edited["reached_the_thing"]
+            .as_array()
+            .is_none_or(|reached| reached.is_empty()),
+        "{edited}",
+    );
+    s.call("recall", json!({"subject": "work:tau"}))
+        .await
+        .never_says("due_on");
+    owed().await.never_says("work:tau");
+    s.call(
+        "update_fact",
+        json!({"address": address, "clear_fields": ["decide_by"]}),
+    )
+    .await;
+    let set_by_edit = s
+        .call(
+            "update_fact",
+            json!({"address": address, "sets": {"decide_by": "2026-11-01"}}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        set_by_edit["reached_the_thing"],
+        json!(["decide_by", "due_on"]),
+        "{set_by_edit}",
+    );
+    owed().await.says("work:tau");
+    story.finish().await;
+}

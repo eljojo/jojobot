@@ -880,10 +880,20 @@ impl Jojobot {
         // by a plain capture is a write like any other, and the due moment it
         // carries is jojobot's own arithmetic riding along in the same
         // record — exactly as a check-in's own computed keys already do.
+        //
+        // **Only what reaches the thing counts.** A key the caller sent as the
+        // claim's own field stays on the claim, so it moves no due moment: the
+        // arithmetic reads the settings and what jojobot computed, never the
+        // merged map the guards above read.
+        let reaching: std::collections::BTreeMap<String, String> = fields
+            .iter()
+            .filter(|(key, _)| set_keys.contains(*key) || derived.contains(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         let (due_on_computed, due_on_derived) = self
             .moved_due_moment(
                 &subject,
-                &fields,
+                &reaching,
                 &[],
                 self.dated(None, args.sid.as_deref()).await?,
             )

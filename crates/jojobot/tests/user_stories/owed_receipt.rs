@@ -112,7 +112,7 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
     let set = s
         .call(
             "update_fact",
-            json!({"address": address, "fields": {"decide_by": "2026-11-01"}}),
+            json!({"address": address, "sets": {"decide_by": "2026-11-01"}}),
         )
         .await;
     let line = the_line(&set);
