@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod document;
 pub mod entitlement;
 pub mod filter;
 pub mod graph;
