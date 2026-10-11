@@ -1872,6 +1872,68 @@ async fn a_node_page_shows_the_forty_newest_keys_and_counts_the_rest() {
     assert_eq!(left_out(&at, "fields-left-out"), None, "{at}");
 }
 
+/// The text of the first table row of this class on a page, or nothing.
+fn row_of<'a>(page: &'a str, class: &str) -> Option<&'a str> {
+    let anchor = format!("<tr class=\"{class}\">");
+    let start = page.find(&anchor)?;
+    let rest = &page[start..];
+    Some(&rest[..rest.find("</tr>")?])
+}
+
+/// 🚨 **A record shows what it set on its thing apart from its own fields**, the
+/// way every served read does. A claim with an own `note` and a set `status`
+/// showed both on one line of "fields", so a reader took the label for a property
+/// of the thing. Two lines now: the record's own fields, then its settings.
+///
+/// **Both halves**: each line carries its keys and not the other's, and a claim
+/// that set nothing has no settings line.
+#[tokio::test]
+async fn a_record_shows_its_own_fields_and_its_settings_on_separate_lines() {
+    let memory = seeded_memory().await;
+    let mut both = NewFact::about(
+        EntityId("person:alpha".into()),
+        "a claim with one of each",
+        Date::constant(2026, 4, 1),
+    );
+    both.fields = [
+        ("note".to_string(), "kept on the claim".to_string()),
+        ("status".to_string(), "now".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    both.sets = ["status".to_string()].into_iter().collect();
+    memory.capture(both).await.expect("the claim is written");
+
+    let page = page_over(seeded_board_over(memory.clone()).await, "/person:alpha/").await;
+    let own = row_of(&page, "fields").unwrap_or_else(|| panic!("no fields line: {page}"));
+    let set = row_of(&page, "sets").unwrap_or_else(|| panic!("no sets line: {page}"));
+    assert!(own.contains("note = kept on the claim"), "{own}");
+    assert!(
+        !own.contains("status"),
+        "a setting is not an own field: {own}"
+    );
+    assert!(set.contains("status = now"), "{set}");
+    assert!(
+        !set.contains("note"),
+        "an own field is not a setting: {set}"
+    );
+
+    // A claim that set nothing has no settings line.
+    let memory = seeded_memory().await;
+    let mut label = NewFact::about(
+        EntityId("person:alpha".into()),
+        "a claim that only labels itself",
+        Date::constant(2026, 4, 2),
+    );
+    label.fields = [("note".to_string(), "only a label".to_string())]
+        .into_iter()
+        .collect();
+    memory.capture(label).await.expect("the claim is written");
+    let page = page_over(seeded_board_over(memory).await, "/person:alpha/").await;
+    assert!(row_of(&page, "fields").is_some(), "{page}");
+    assert!(row_of(&page, "sets").is_none(), "{page}");
+}
+
 // --- the operator's own mail ------------------------------------------------
 
 /// What the operator cases read back: the id of the one message left in the

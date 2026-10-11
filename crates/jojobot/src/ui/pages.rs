@@ -988,27 +988,45 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
     out
 }
 
-/// **The fields this one record carries**, on a line of its own under it.
+/// **The keys this one record carries**, on lines of their own under it: its own
+/// fields, then what it set on its thing.
 ///
 /// Not an eighth column. The seven columns are each one value and each present
-/// on every row; a record's fields are a map of any size and are on few rows,
-/// so a column would be empty almost everywhere and would push the address out
-/// of a readable width when it was not. A line under the row keeps the columns
-/// meaning what they say and puts the fields where the record is.
+/// on every row; a record's keys are a map of any size and are on few rows, so a
+/// column would be empty almost everywhere and would push the address out of a
+/// readable width when it was not. A line under the row keeps the columns
+/// meaning what they say and puts the keys where the record is.
 ///
-/// Empty for a record carrying none, which is most of them.
+/// **Two lines, as every served read splits them.** A key the record set on its
+/// thing is a property of the thing, and a key it kept as its own is a label on
+/// this claim; one line for both let a reader take a label for a property.
+///
+/// Nothing for a record carrying no key, which is most of them, and no line for
+/// a bag that holds none.
 fn record_fields(fact: &Fact) -> String {
-    if fact.fields.is_empty() {
-        return String::new();
+    let mut own: Vec<String> = Vec::new();
+    let mut set: Vec<String> = Vec::new();
+    for (key, value) in &fact.fields {
+        let pair = format!("{} = {}", escape(key), escape(value));
+        if fact.sets.contains(key) {
+            set.push(pair);
+        } else {
+            own.push(pair);
+        }
     }
-    let pairs: Vec<String> = fact
-        .fields
-        .iter()
-        .map(|(key, value)| format!("{} = {}", escape(key), escape(value)))
-        .collect();
+    let line = |class: &str, label: &str, pairs: &[String]| {
+        if pairs.is_empty() {
+            return String::new();
+        }
+        format!(
+            "<tr class=\"{class}\"><td colspan=\"7\"><small>{label}: {}</small></td></tr>\n",
+            pairs.join(" · ")
+        )
+    };
     format!(
-        "<tr class=\"fields\"><td colspan=\"7\"><small>{}</small></td></tr>\n",
-        pairs.join(" · ")
+        "{}{}",
+        line("fields", "fields", &own),
+        line("sets", "sets", &set)
     )
 }
 
