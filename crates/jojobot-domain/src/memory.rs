@@ -32,6 +32,7 @@ pub mod owned;
 pub mod readiness;
 pub mod search;
 pub mod stored;
+pub mod text_edit;
 pub mod types;
 pub mod words;
 
@@ -5428,6 +5429,22 @@ pub enum MemoryError {
         attempted: String,
         /// Addresses that do exist, nearest first.
         nearest: Vec<String>,
+    },
+    /// **The words an edit looks for do not occur exactly once.**
+    ///
+    /// `found` is how many times they occur in the text the edit was applied
+    /// to: 0 or two and more. Nothing was written. The caller is not looking at
+    /// the text it thinks it is, or the words name more than one place.
+    #[error(
+        "the text to find occurs {found} times in the {field} of {address}, and it has to occur exactly once"
+    )]
+    TextEditMatches {
+        /// The claim's address.
+        address: String,
+        /// The text searched, `content` or `details`.
+        field: String,
+        /// How many times the words occur in it.
+        found: usize,
     },
     /// **The edit was made against a revision the claim has moved past.**
     ///

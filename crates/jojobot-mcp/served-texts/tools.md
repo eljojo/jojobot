@@ -4313,11 +4313,12 @@ A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 confirmed_by_user is required for exactly two moves of an existing claim: anything to testimony, and open to settled.
-Reopening is free, and a fresh capture is taken at its word.
-It answers with a receipt, not the record: the write is read back from the store before it is called a success, and recall the subject reads the record.
-A call that names nothing to change is refused; keep: true alone is the designed way to touch a claim unchanged.
-expected_revision (recall's revision_count) refuses the edit with retry if the claim was written since.
-An address that names no claim comes back blocked with the addresses that exist.
+Reopening is free; a fresh capture is taken at its word.
+It answers with a receipt, not the record (the write is read back from the store first); recall the subject reads the record.
+A call naming no change is refused; keep: true alone is the way to touch a claim unchanged.
+expected_revision (recall's revision_count): a claim written since is refused with retry.
+find, replace, field (content or details): change one span, if find occurs once.
+An unknown address comes back blocked with the addresses that exist.
 Each argument's own description holds its rules.
 ```
 
@@ -4420,6 +4421,13 @@ Each argument's own description holds its rules.
           "null"
         ]
       },
+      "field": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "fields": {
         "additionalProperties": {
           "type": "string"
@@ -4427,6 +4435,13 @@ Each argument's own description holds its rules.
         "default": null,
         "type": [
           "object",
+          "null"
+        ]
+      },
+      "find": {
+        "default": null,
+        "type": [
+          "string",
           "null"
         ]
       },
@@ -4466,6 +4481,13 @@ Each argument's own description holds its rules.
         ]
       },
       "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "replace": {
         "default": null,
         "type": [
           "string",
@@ -4679,6 +4701,15 @@ with `retry`, naming the revision it is at now, and nothing is written.
 Leave it off and the edit lands as it always did.
 ```
 
+#### `update_fact` — argument `/inputSchema.field`
+
+```text
+**Which text `find` searches: `content` or `details`.** Required with
+`find`, and no default, so the edit never lands on the wrong text by
+being left out. The receipt's `text_edit` says what was taken out, what
+was put in, and the bytes before and after.
+```
+
 #### `update_fact` — argument `/inputSchema.fields`
 
 ```text
@@ -4693,6 +4724,19 @@ names which key that was.
 A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as you wrote it and nothing acts on it: it never makes a thing fall due or appear in what is owed.
 
 `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by` describe their own claim and never fold onto the thing: read them back with `facts: true`, and find by them with a `fields` filter with `scope: record`.
+```
+
+#### `update_fact` — argument `/inputSchema.find`
+
+```text
+**Words to find in the claim's text, to change just that part.** Send it
+with `replace` and `field`, and nothing else of the text has to be sent
+back. The match is exact, case-sensitive and byte for byte; no pattern.
+The words have to occur exactly once in the text as it stands now:
+none, or more than one, is refused naming the count, and nothing is
+written. Not combined with a whole `content` (or `details`) for the
+same field; the other field may be sent. Works with `expected_revision`
+and without it.
 ```
 
 #### `update_fact` — argument `/inputSchema.happened_at`
@@ -4767,6 +4811,13 @@ forever.
 refused** — the receipt carries `recorded_at_note`, one sentence
 naming both days, so a sitting acting out a different period does not
 silently record under the wrong one by mistake.
+```
+
+#### `update_fact` — argument `/inputSchema.replace`
+
+```text
+**The words that take the place of `find`.** An empty string deletes
+them. Sent with `find`, never alone.
 ```
 
 #### `update_fact` — argument `/inputSchema.sets`

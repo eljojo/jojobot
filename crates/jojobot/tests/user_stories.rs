@@ -125,6 +125,9 @@ mod owed_receipt;
 mod owed_unreadable;
 #[path = "user_stories/paragraphs.rs"]
 mod paragraphs;
+/// An edit names the words to change, and only that span changes.
+#[path = "user_stories/partial_edit.rs"]
+mod partial_edit;
 #[path = "user_stories/party.rs"]
 mod party;
 #[path = "user_stories/pets.rs"]

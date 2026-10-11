@@ -4031,6 +4031,122 @@ pub async fn an_edit_against_a_stale_revision_is_refused_and_writes_nothing<M: M
     );
 }
 
+/// **A text edit lands on the text it read, and is refused when the claim
+/// moved between the read and the write.**
+///
+/// The edit is applied above the store to the claim's newest text and written
+/// as an ordinary edit carrying the revision it read, so the store's own check
+/// decides whether the text it was applied to is still the claim's. Two readers
+/// read the same revision: the first lands, and the second is refused with
+/// nothing written, though its find would still match.
+///
+/// **The text is asserted whole**, so a store that wrote anything but the read
+/// text with the one change fails.
+pub async fn a_text_edit_lands_on_the_text_it_read_and_is_refused_when_the_claim_moved<
+    M: Memory,
+>(
+    store: &M,
+) {
+    use super::super::super::text_edit::{TextEdit, TextField, read_text_edit};
+    let subject = EntityId::person("person:contract-partial-edit");
+    let mut new = NewFact::about(subject.clone(), "a claim", date(2026, 7, 1));
+    new.details = Some("one fish\n\ntwo fish\n\nred fish, blue fish".to_string());
+    let captured = capture(store, new).await;
+    let address = captured.address();
+    let edit = |find: &str, replace: &str| TextEdit {
+        field: TextField::Details,
+        find: find.into(),
+        replace: replace.into(),
+    };
+
+    // Both readers read revision 1.
+    let first = read_text_edit(store, &address, &edit("two fish", "2 fish"), None)
+        .await
+        .expect("a unique find");
+    let second = read_text_edit(store, &address, &edit("red fish", "RED fish"), None)
+        .await
+        .expect("a unique find");
+    assert_eq!(first.revision, 1);
+    assert_eq!(second.revision, 1);
+    assert_eq!(first.text, "one fish\n\n2 fish\n\nred fish, blue fish");
+
+    edit_with(store, &address, first.text.clone(), first.revision).await;
+    assert_eq!(
+        read_back(store, &subject, &captured.id).await.details,
+        Some("one fish\n\n2 fish\n\nred fish, blue fish".to_string()),
+        "the first edit lands and every other byte of the details is unchanged"
+    );
+
+    // The second reader's find still matches, and its write is refused.
+    let refused = store
+        .update_fact(
+            &address,
+            FactPatch {
+                details: Some(second.text.clone()),
+                expected_revision: Some(second.revision),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(MemoryError::StaleRevision {
+                expected: 1,
+                current: 2,
+                ..
+            })
+        ),
+        "an edit applied to a text the claim has moved past was {refused:?}"
+    );
+    assert_eq!(
+        read_back(store, &subject, &captured.id).await.details,
+        Some("one fish\n\n2 fish\n\nred fish, blue fish".to_string()),
+        "the refused edit wrote nothing"
+    );
+
+    // Read again, the second edit applies to the text that is there now.
+    let again = read_text_edit(store, &address, &edit("red fish", "RED fish"), None)
+        .await
+        .expect("a unique find");
+    assert_eq!(again.revision, 2);
+    edit_with(store, &address, again.text, again.revision).await;
+    assert_eq!(
+        read_back(store, &subject, &captured.id).await.details,
+        Some("one fish\n\n2 fish\n\nRED fish, blue fish".to_string())
+    );
+
+    // A caller's own expected revision that is not the claim's is refused
+    // before the text is looked at.
+    let stale = read_text_edit(store, &address, &edit("nothing here", "x"), Some(1)).await;
+    assert!(
+        matches!(stale, Err(MemoryError::StaleRevision { .. })),
+        "a stale expected revision answers first: {stale:?}"
+    );
+    // A find that matches twice is refused naming the count, and nothing moves.
+    let twice = read_text_edit(store, &address, &edit("fish", "cat"), None).await;
+    assert!(
+        matches!(twice, Err(MemoryError::TextEditMatches { found: 4, .. })),
+        "{twice:?}"
+    );
+    assert_eq!(writes_of_claim(store, &address).await, 3);
+}
+
+/// Write `text` as the claim's details, against the revision it was read at.
+async fn edit_with<M: Memory>(store: &M, address: &FactAddress, text: String, revision: usize) {
+    edit(
+        store,
+        address,
+        FactPatch {
+            details: Some(text),
+            expected_revision: Some(revision),
+            ..Default::default()
+        },
+    )
+    .await;
+}
+
 /// **An edit can carry a new day, and one that names none leaves the
 /// record's day alone.**
 ///
@@ -16149,6 +16265,7 @@ macro_rules! all_cases {
         $m!(facts_carry_a_usable_address($store));
         $m!(update_fact_edits_in_place($store));
         $m!(an_edit_against_a_stale_revision_is_refused_and_writes_nothing($store));
+        $m!(a_text_edit_lands_on_the_text_it_read_and_is_refused_when_the_claim_moved($store));
         $m!(an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone($store));
         $m!(a_refutation_is_an_ordinary_content_edit($store));
         $m!(promotion_to_testimony_needs_confirmation($store));

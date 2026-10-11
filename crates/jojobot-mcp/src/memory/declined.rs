@@ -294,6 +294,8 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         // The claim moved on after the caller read it: read it again, then send the
         // edit against the revision now current.
         MemoryError::StaleRevision { .. } => Some(FixBy::Retry),
+        // The words do not occur once in the text: the call has to name them differently.
+        MemoryError::TextEditMatches { .. } => Some(FixBy::Change),
         MemoryError::Store(_) => memory_store_failure_word(),
         MemoryError::FoldBehind { .. } => None,
     }
@@ -455,6 +457,38 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // are not rewritten in place, so "send it again" would loop; the sentence
         // names the two calls that do it and says the original stays readable, so
         // a caller can tell the operator so.
+        // **The count is a key**, so a caller branches on a number and does not read
+        // a sentence for it. Two or more means the words name more than one place;
+        // none means the text is not what the caller thinks it is.
+        MemoryError::TextEditMatches {
+            ref address,
+            ref field,
+            found,
+        } => {
+            let way = if found == 0 {
+                format!(
+                    "Nothing was written: {e}. Read the {field} with recall to see the text as \
+                     it stands, then send `find` with words that occur in it. The match is \
+                     exact and case-sensitive."
+                )
+            } else {
+                format!(
+                    "Nothing was written: {e}. Send a longer `find`, with the words around the \
+                     place you mean, so it names one place."
+                )
+            };
+            let mut body = serde_json::json!({
+                "status": "blocked",
+                "attempted": address,
+                "wrote": false,
+                "candidates": [],
+                "matches": found,
+            });
+            WayForward::from(way).write_into(&mut body);
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         // **The way forward is the read, then the same edit against the revision the
         // read shows.** The sentence names the revision the claim is at now and the
         // call that returns what the other write changed.
@@ -1455,6 +1489,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::UnknownRight { .. }
         | MemoryError::RoleTaken { .. }
         | MemoryError::StaleRevision { .. }
+        | MemoryError::TextEditMatches { .. }
         | MemoryError::TestimonyRewritten { .. }
         | MemoryError::KeyInOtherBag { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
@@ -1928,6 +1963,15 @@ pub(crate) mod tests {
                 MemoryError::NotRetractable {
                     attempted: s("person:alpha#f1"),
                     why: s("a rule"),
+                },
+                Some("change"),
+            ),
+            (
+                "TextEditMatches",
+                MemoryError::TextEditMatches {
+                    address: s("person:alpha#f1"),
+                    field: s("details"),
+                    found: 2,
                 },
                 Some("change"),
             ),

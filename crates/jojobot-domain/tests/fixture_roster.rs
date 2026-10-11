@@ -846,6 +846,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-readback",
     "person:contract-redated",
     "person:contract-moved-on-claim",
+    "person:contract-partial-edit",
     "person:contract-ref-guarded",
     "person:contract-refutable",
     "person:contract-relation-owner",

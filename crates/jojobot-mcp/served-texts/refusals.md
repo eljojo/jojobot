@@ -240,6 +240,21 @@ answer: {
 }
 ```
 
+### Memory refusal `TextEditMatches`
+
+```text
+reads: the text to find occurs 2 times in the details of person:alpha#f1, and it has to occur exactly once
+answer: {
+  "attempted": "person:alpha#f1",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: the text to find occurs 2 times in the details of person:alpha#f1, and it has to occur exactly once. Send a longer `find`, with the words around the place you mean, so it names one place.",
+  "matches": 2,
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `StaleRevision`
 
 ```text

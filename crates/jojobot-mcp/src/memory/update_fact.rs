@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use jojobot_domain::attention;
+use jojobot_domain::memory::text_edit::{TextEdit, TextField};
 
 use super::clauses::{happened_at_clause, stale_after_clause};
 use super::*;
@@ -239,6 +240,26 @@ pub struct UpdateFactArgs {
     /// it is this alone, or an ordinary edit naming what changes.
     #[serde(default)]
     pub(crate) keep: Option<bool>,
+    /// **Words to find in the claim's text, to change just that part.** Send it
+    /// with `replace` and `field`, and nothing else of the text has to be sent
+    /// back. The match is exact, case-sensitive and byte for byte; no pattern.
+    /// The words have to occur exactly once in the text as it stands now:
+    /// none, or more than one, is refused naming the count, and nothing is
+    /// written. Not combined with a whole `content` (or `details`) for the
+    /// same field; the other field may be sent. Works with `expected_revision`
+    /// and without it.
+    #[serde(default)]
+    pub(crate) find: Option<String>,
+    /// **The words that take the place of `find`.** An empty string deletes
+    /// them. Sent with `find`, never alone.
+    #[serde(default)]
+    pub(crate) replace: Option<String>,
+    /// **Which text `find` searches: `content` or `details`.** Required with
+    /// `find`, and no default, so the edit never lands on the wrong text by
+    /// being left out. The receipt's `text_edit` says what was taken out, what
+    /// was put in, and the bytes before and after.
+    #[serde(default)]
+    pub(crate) field: Option<String>,
     /// **The revision you read**, when the edit is only right if nobody has
     /// touched the claim since: the `revision_count` `recall` served for it. A
     /// claim `recall` serves without one has been written once, so it is
@@ -258,36 +279,38 @@ pub struct UpdateFactArgs {
 #[tool_router(router = update_fact_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Edit one addressed claim in place — fix the source, never an addendum. \
-                       It changes `content`, `details`, `recorded_at` (the day the claim was \
-                       MADE, never the day you call), `status`, `provenance`, `standing`, \
-                       `fields`, `sets` and the claim's edge; `stands_for` marks a record as \
-                       a synthesis of other claims. ARCHIVE, RETRACT OR REWRITE — one rule, \
-                       stated the same in update_fact, its status argument and retract. A \
-                       claim that was true and has changed, or that was never true: archive \
-                       it with update_fact (status: archived, the reason in details) and \
-                       capture the replacement, naming the old claim in derived_from. A claim \
-                       about a past EVENT that turned out never to have happened: retract it, \
-                       which also leaves a dated record of the retraction. A mistyped or \
-                       reworded claim: rewrite it. Archiving and retracting are one-way for a \
-                       claim: nothing edits an archived claim, status included, so there is \
-                       no un-archive (an archived ENTITY comes back with restore: true). A \
-                       rewrite destroys nothing — every earlier wording stays readable \
-                       (recall with history_record: the address) — so a claim you disagree \
-                       with is safe to correct, except testimony from an earlier session: \
-                       TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and \
-                       any other is archived and replaced, with derived_from naming the \
-                       archived claim. confirmed_by_user is required for exactly two moves of \
-                       an existing claim: anything to testimony, and open to settled. \
-                       Reopening is free, and a fresh capture is taken at its word. It \
-                       answers with a receipt, not the record: the write is read back from \
-                       the store before it is called a success, and recall the subject reads \
-                       the record. A call that names nothing to change is refused; keep: true \
-                       alone is the designed way to touch a claim unchanged. \
-                       expected_revision (recall's revision_count) refuses the edit with retry \
-                       if the claim was written since. An address that \
-                       names no claim comes back blocked with the addresses that exist. Each \
-                       argument's own description holds its rules."
+        description = "Edit one addressed claim in place — fix the source, never an \
+                       addendum. It changes `content`, `details`, `recorded_at` (the day \
+                       the claim was MADE, never the day you call), `status`, \
+                       `provenance`, `standing`, `fields`, `sets` and the claim's edge; \
+                       `stands_for` marks a record as a synthesis of other claims. \
+                       ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in \
+                       update_fact, its status argument and retract. A claim that was \
+                       true and has changed, or that was never true: archive it with \
+                       update_fact (status: archived, the reason in details) and capture \
+                       the replacement, naming the old claim in derived_from. A claim \
+                       about a past EVENT that turned out never to have happened: retract \
+                       it, which also leaves a dated record of the retraction. A mistyped \
+                       or reworded claim: rewrite it. Archiving and retracting are \
+                       one-way for a claim: nothing edits an archived claim, status \
+                       included, so there is no un-archive (an archived ENTITY comes back \
+                       with restore: true). A rewrite destroys nothing — every earlier \
+                       wording stays readable (recall with history_record: the address) — \
+                       so a claim you disagree with is safe to correct, except testimony \
+                       from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY \
+                       THE SESSION THAT WROTE IT, and any other is archived and replaced, \
+                       with derived_from naming the archived claim. confirmed_by_user is \
+                       required for exactly two moves of an existing claim: anything to \
+                       testimony, and open to settled. Reopening is free; a fresh capture \
+                       is taken at its word. It answers with a receipt, not the record \
+                       (the write is read back from the store first); recall the subject \
+                       reads the record. A call naming no change is refused; keep: true \
+                       alone is the way to touch a claim unchanged. \
+                       expected_revision (recall's revision_count): a claim written \
+                       since is refused with retry. find, replace, field (content or \
+                       details): change one span, if find occurs once. An unknown address \
+                       comes back blocked with the addresses that exist. Each argument's \
+                       own description holds its rules."
     )]
     pub(crate) async fn update_fact(
         &self,
@@ -300,6 +323,38 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        // **A find/replace is applied above the store, to the text it reads, and
+        // written as an ordinary edit carrying the revision of that read.** The
+        // store's own revision check then refuses it if the claim has been
+        // written since, so the words are never applied to a text the claim has
+        // moved past.
+        let mut args = args;
+        let text_edit = match text_edit_of(&args) {
+            Ok(edit) => edit,
+            Err(refused) => return memory_declined("update_fact", refused),
+        };
+        let mut edited_words = None;
+        let mut revision_read = None;
+        if let Some(edit) = &text_edit {
+            match jojobot_domain::memory::text_edit::read_text_edit(
+                self.memory.as_ref(),
+                &address,
+                edit,
+                args.expected_revision.map(|revision| revision as usize),
+            )
+            .await
+            {
+                Ok(read) => {
+                    match edit.field {
+                        TextField::Content => args.content = Some(read.text),
+                        TextField::Details => args.details = Some(read.text),
+                    }
+                    revision_read = Some(read.revision);
+                    edited_words = Some(read.edited);
+                }
+                Err(refused) => return memory_declined("update_fact", refused),
+            }
+        }
         let declared = Declared::of(&args);
         let cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
@@ -565,7 +620,10 @@ impl Jojobot {
         // above, because it names no change.
         let mut patch = patch;
         patch.session = Some(caller.sid.as_str().to_string());
-        patch.expected_revision = args.expected_revision.map(|revision| revision as usize);
+        patch.expected_revision = args
+            .expected_revision
+            .map(|revision| revision as usize)
+            .or(revision_read);
         if address.home.kind() == Some(EntityKind::BOT)
             && (patch
                 .edge
@@ -647,6 +705,9 @@ impl Jojobot {
                     crate::answer::note_recorded_at_mismatch(&mut body, stated, explicit);
                 }
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact));
+                if let Some(edited) = &edited_words {
+                    crate::answer::note_text_edit(&mut body, edited);
+                }
                 let mut line = self
                     .what_an_update_left_standing(&fact, &cleared, keep)
                     .await;
@@ -748,6 +809,44 @@ impl Jojobot {
             )),
         }
     }
+}
+
+/// **The find/replace this call asks for, or the refusal of a call that asks for
+/// half of one.** `find`, `replace` and `field` go together; `field` names the
+/// text and has no default, and a whole replacement of that same text in the
+/// same call is two edits to one text.
+fn text_edit_of(args: &UpdateFactArgs) -> Result<Option<TextEdit>, MemoryError> {
+    let (Some(find), Some(replace), Some(field)) = (&args.find, &args.replace, &args.field) else {
+        if args.find.is_none() && args.replace.is_none() && args.field.is_none() {
+            return Ok(None);
+        }
+        return Err(MemoryError::InvalidFact(
+            "`find`, `replace` and `field` go together: send all three, or none. `replace` \
+             may be an empty string, which deletes the found words"
+                .into(),
+        ));
+    };
+    let Some(field) = TextField::parse(field) else {
+        return Err(MemoryError::InvalidFact(format!(
+            "`field` is '{field}', and it is `content` or `details`: the text `find` searches"
+        )));
+    };
+    let whole = match field {
+        TextField::Content => args.content.is_some(),
+        TextField::Details => args.details.is_some(),
+    };
+    if whole {
+        return Err(MemoryError::InvalidFact(format!(
+            "`find` edits part of the {0}, and a whole `{0}` replaces all of it: send one of the \
+             two. The other text may be sent in the same call",
+            field.as_str()
+        )));
+    }
+    Ok(Some(TextEdit {
+        field,
+        find: find.clone(),
+        replace: replace.clone(),
+    }))
 }
 
 /// **Every value this edit declared that the record does not carry**, and the

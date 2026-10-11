@@ -616,6 +616,44 @@ pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Differen
     );
 }
 
+/// How many bytes of the removed or inserted words a receipt shows. Over this
+/// the words are cut and the receipt says so, with their full length.
+const TEXT_EDIT_SHOWN_BYTES: usize = 240;
+
+/// **What a find/replace edit changed**, so a loss is visible in the answer to
+/// the call that made it: the words taken out and the words put in, the bytes
+/// before and after, and where the inserted words sit in the new text.
+///
+/// The words are cut at [`TEXT_EDIT_SHOWN_BYTES`] on a character boundary, and a
+/// cut is marked with `removed_cut` (or `inserted_cut`) and the full length
+/// beside it. A cut that marked nothing would read as the whole.
+pub(crate) fn note_text_edit(
+    body: &mut serde_json::Value,
+    edited: &jojobot_domain::memory::text_edit::TextEdited,
+) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let mut shown = serde_json::json!({
+        "field": edited.field.as_str(),
+        "bytes_before": edited.bytes_before,
+        "bytes_after": edited.bytes_after,
+        "changed_span": {"start": edited.start, "end": edited.end},
+    });
+    for (key, words) in [("removed", &edited.removed), ("inserted", &edited.inserted)] {
+        let mut end = words.len().min(TEXT_EDIT_SHOWN_BYTES);
+        while !words.is_char_boundary(end) {
+            end -= 1;
+        }
+        shown[key] = words[..end].into();
+        if end < words.len() {
+            shown[format!("{key}_cut")] = true.into();
+            shown[format!("{key}_bytes")] = words.len().into();
+        }
+    }
+    fields.insert("text_edit".into(), shown);
+}
+
 /// **Say when an explicit `recorded_at` differs from the day this run is
 /// in.** Call it only when both are true — the caller sent one and it does
 /// not match the run's own stated day — so the note stays silent on an

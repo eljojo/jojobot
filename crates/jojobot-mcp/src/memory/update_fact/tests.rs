@@ -320,6 +320,356 @@ async fn an_expected_revision_alone_still_names_no_change() {
     );
 }
 
+/// A claim for the find/replace cases: the content is one line, the details are
+/// three paragraphs, so a rewrite of the text around a match shows.
+const PARAGRAPHS: &str = "first paragraph\n\nsecond paragraph has a typo in it\n\nthird paragraph";
+
+async fn claim_with_details(jojobot: &Jojobot) {
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            details: Some(PARAGRAPHS.into()),
+            provenance: Some("inference".into()),
+            ..capture_args("alpha", "a line with a typo")
+        },
+    )
+    .await;
+}
+
+/// The claim `person:alpha#f1` as `recall` serves it.
+async fn recalled_claim(jojobot: &Jojobot) -> serde_json::Value {
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("person:alpha")))
+            .await
+            .expect("recall ok"),
+    );
+    body["objects"][0]["facts"][0].clone()
+}
+
+fn find_args(field: &str, find: &str, replace: &str) -> UpdateFactArgs {
+    UpdateFactArgs {
+        provenance: Some("inference".into()),
+        find: Some(find.into()),
+        replace: Some(replace.into()),
+        field: Some(field.into()),
+        ..update_args("person:alpha#f1")
+    }
+}
+
+/// 🚨 **A unique find in the details lands, and every other byte of the
+/// details is unchanged.** The whole text is asserted. The content is not
+/// touched either.
+#[tokio::test]
+async fn a_unique_find_in_the_details_changes_that_span_and_nothing_else() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+
+    update_ok(&jojobot, find_args("details", "a typo", "a fix")).await;
+
+    let claim = recalled_claim(&jojobot).await;
+    assert_eq!(
+        claim["details"], "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph",
+        "{claim}"
+    );
+    assert_eq!(claim["content"], "a line with a typo", "{claim}");
+}
+
+/// **The same edit on the content**, where the details hold the same words and
+/// are left alone.
+#[tokio::test]
+async fn a_unique_find_in_the_content_leaves_the_details_alone() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+
+    update_ok(&jojobot, find_args("content", "a typo", "a fix")).await;
+
+    let claim = recalled_claim(&jojobot).await;
+    assert_eq!(claim["content"], "a line with a fix", "{claim}");
+    assert_eq!(claim["details"], PARAGRAPHS, "{claim}");
+}
+
+/// 🚨 **A find that matches twice is refused naming the count, and the text is
+/// unchanged.** Paired with the positive above, so a build that refused every
+/// find would not satisfy it. The first match is not taken.
+#[tokio::test]
+async fn a_find_that_matches_twice_is_refused_with_the_count_and_the_text_stays() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+
+    let refused = json_of(
+        &jojobot
+            .update_fact(Parameters(find_args("details", "paragraph", "part")))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["matches"], 3, "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(recalled_claim(&jojobot).await["details"], PARAGRAPHS);
+}
+
+/// **A find that matches nothing is refused with a count of 0, and the text is
+/// unchanged.** The match is exact, so a different case is no match.
+#[tokio::test]
+async fn a_find_that_matches_nothing_is_refused_with_a_count_of_zero() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+
+    let refused = json_of(
+        &jojobot
+            .update_fact(Parameters(find_args("details", "A TYPO", "a fix")))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["matches"], 0, "{refused}");
+    assert_eq!(recalled_claim(&jojobot).await["details"], PARAGRAPHS);
+}
+
+/// 🚨 **The receipt shows what was lost.** It names the exact words removed and
+/// the exact words inserted, the bytes before and after, and where the inserted
+/// words are in the new text. **The negative is the whole text**: a receipt that
+/// is right about the span while the edit rewrote its surroundings would pass
+/// the positive alone.
+#[tokio::test]
+async fn the_receipt_of_a_find_shows_the_removed_and_inserted_words() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+
+    let receipt = update_ok(&jojobot, find_args("details", "a typo", "a fix")).await;
+
+    let edit = &receipt["text_edit"];
+    assert_eq!(edit["field"], "details", "{receipt}");
+    assert_eq!(edit["removed"], "a typo", "{receipt}");
+    assert_eq!(edit["inserted"], "a fix", "{receipt}");
+    assert_eq!(edit["bytes_before"], PARAGRAPHS.len(), "{receipt}");
+    assert_eq!(edit["bytes_after"], PARAGRAPHS.len() - 1, "{receipt}");
+    let start = PARAGRAPHS.find("a typo").expect("the words are there");
+    assert_eq!(edit["changed_span"]["start"], start, "{receipt}");
+    assert_eq!(
+        edit["changed_span"]["end"],
+        start + "a fix".len(),
+        "{receipt}"
+    );
+    assert!(
+        edit.get("removed_cut").is_none() && edit.get("inserted_cut").is_none(),
+        "words within the bound are shown whole and are not marked cut: {receipt}"
+    );
+    assert_eq!(
+        recalled_claim(&jojobot).await["details"],
+        "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph"
+    );
+}
+
+/// **Words over the bound are shown cut, and the receipt says so and says how
+/// long they were.** A cut that marked nothing would read as the whole.
+#[tokio::test]
+async fn removed_words_over_the_bound_are_shown_cut_and_marked() {
+    let jojobot = handler();
+    let long = "x".repeat(900);
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            details: Some(format!("keep {long} keep")),
+            provenance: Some("inference".into()),
+            ..capture_args("alpha", "a line")
+        },
+    )
+    .await;
+
+    let receipt = update_ok(&jojobot, find_args("details", &long, "short")).await;
+
+    let edit = &receipt["text_edit"];
+    assert_eq!(edit["removed_cut"], true, "{receipt}");
+    assert_eq!(edit["removed_bytes"], 900, "{receipt}");
+    let shown = edit["removed"].as_str().expect("the words shown");
+    assert!(shown.len() < 900 && long.starts_with(shown), "{receipt}");
+    assert_eq!(edit["inserted"], "short", "{receipt}");
+    assert_eq!(recalled_claim(&jojobot).await["details"], "keep short keep");
+}
+
+/// **A call that does not say what it edits is refused, and nothing is
+/// written.** Each of these is one mistake in the three arguments or in how
+/// they sit beside a whole replacement of the same text.
+#[tokio::test]
+async fn a_find_call_that_is_not_whole_is_refused_and_writes_nothing() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+    // **Each broken call also carries a real change the find does not touch**, so
+    // a build that let the call through would write it. Without that, a refusal of
+    // "names no change" would stand in for the refusal under test, and a change
+    // to the content would be refused by the same-text rule instead.
+    let also = |args: UpdateFactArgs| UpdateFactArgs {
+        happened_at: Some("2026-01-01".into()),
+        ..args
+    };
+    let broken = [
+        (
+            "find without field",
+            also(UpdateFactArgs {
+                field: None,
+                ..find_args("details", "a typo", "a fix")
+            }),
+        ),
+        (
+            "find without replace",
+            also(UpdateFactArgs {
+                replace: None,
+                ..find_args("details", "a typo", "a fix")
+            }),
+        ),
+        (
+            "replace without find",
+            also(UpdateFactArgs {
+                find: None,
+                ..find_args("details", "a typo", "a fix")
+            }),
+        ),
+        ("an empty find", also(find_args("details", "", "a fix"))),
+        (
+            "a field that is no text",
+            also(find_args("fields", "a typo", "a fix")),
+        ),
+        (
+            "a whole replacement of the same text",
+            UpdateFactArgs {
+                details: Some("something else".into()),
+                ..find_args("details", "a typo", "a fix")
+            },
+        ),
+    ];
+    for (what, args) in broken {
+        let refused = json_of(
+            &jojobot
+                .update_fact(Parameters(args))
+                .await
+                .expect("an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{what}: {refused}");
+        assert_eq!(refused["fix_by"], "change", "{what}: {refused}");
+        assert_eq!(refused["wrote"], false, "{what}: {refused}");
+    }
+    let untouched = recalled_claim(&jojobot).await;
+    assert_eq!(untouched["details"], PARAGRAPHS);
+    assert_eq!(untouched["content"], "a line with a typo");
+    assert!(
+        untouched["happened_at"].is_null(),
+        "a refused call wrote its other change: {untouched}"
+    );
+
+    // **The other text may be replaced whole in the same call.** Without this the
+    // refusal above could be a build that refuses any second argument.
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            content: Some("a whole new line".into()),
+            ..find_args("details", "a typo", "a fix")
+        },
+    )
+    .await;
+    let claim = recalled_claim(&jojobot).await;
+    assert_eq!(claim["content"], "a whole new line", "{claim}");
+    assert_eq!(
+        claim["details"],
+        "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph"
+    );
+}
+
+/// **A find composes with `expected_revision`, and works without it.** A claim
+/// written since the revision the caller read is refused with `retry` before the
+/// words are looked at, and the revision now current lands.
+#[tokio::test]
+async fn a_find_composes_with_the_revision_the_caller_read() {
+    let jojobot = handler();
+    claim_with_details(&jojobot).await;
+    // Revision 2: somebody else corrected the content.
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            provenance: Some("inference".into()),
+            content: Some("a corrected line".into()),
+            ..update_args("person:alpha#f1")
+        },
+    )
+    .await;
+
+    let stale = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                expected_revision: Some(1),
+                ..find_args("details", "a typo", "a fix")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(stale["status"], "blocked", "{stale}");
+    assert_eq!(stale["fix_by"], "retry", "{stale}");
+    assert_eq!(recalled_claim(&jojobot).await["details"], PARAGRAPHS);
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            expected_revision: Some(2),
+            ..find_args("details", "a typo", "a fix")
+        },
+    )
+    .await;
+    assert_eq!(
+        recalled_claim(&jojobot).await["details"],
+        "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph"
+    );
+}
+
+/// 🚨 **A find is applied to the text it read, and the write that carries it is
+/// refused when the claim was written in between.** A second session edits the
+/// claim right after this call reads it. The find would still match, so only
+/// the revision of the read stands between the call and a write over the other
+/// session's edit. The call is refused with `retry`, nothing of it is written,
+/// and sent again it reads the claim as it is now and lands.
+#[tokio::test]
+async fn a_find_is_refused_when_the_claim_is_written_between_the_read_and_the_write() {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    claim_with_details(&jojobot).await;
+    let racing = Jojobot::new(
+        Arc::new(MovesAfterTheRead {
+            inner: memory,
+            armed: std::sync::atomic::AtomicBool::new(true),
+        }),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+
+    let refused = json_of(
+        &racing
+            .update_fact(Parameters(find_args("details", "a typo", "a fix")))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["fix_by"], "retry", "{refused}");
+    let claim = recalled_claim(&jojobot).await;
+    assert_eq!(
+        claim["details"], PARAGRAPHS,
+        "the refused edit wrote nothing"
+    );
+    assert_eq!(
+        claim["content"], "moved on while the text was read",
+        "{claim}"
+    );
+
+    update_ok(&racing, find_args("details", "a typo", "a fix")).await;
+    assert_eq!(
+        recalled_claim(&jojobot).await["details"],
+        "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph"
+    );
+}
+
 /// Update through the handler, expecting the guard to wave it through.
 async fn update_ok(jojobot: &Jojobot, args: UpdateFactArgs) -> serde_json::Value {
     let body = json_of(
