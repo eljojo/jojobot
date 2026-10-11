@@ -318,7 +318,9 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 # DIR is relative to crates/jojobot and defaults to the gate's first fixture. The
 # gate's second one, for the build the operator's third deploy shipped (its
 # commit is in that fixture's ref.txt), is recorded with
-# DIR=tests/fixtures/upgrade_deploy3.
+# DIR=tests/fixtures/upgrade_deploy3, and its third, for the build the fourth
+# deploy shipped, with DIR=tests/fixtures/upgrade_deploy4. The recording needs a
+# build that takes `sets` and writes a closing entry on a wrap.
 REF ?= origin/main
 DIR ?=
 refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)

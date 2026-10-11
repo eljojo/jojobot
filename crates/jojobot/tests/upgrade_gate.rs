@@ -29,6 +29,11 @@ const FIXTURE_DIR: &str = "tests/fixtures/upgrade";
 /// a store that build filled is what a deployed instance holds when it takes
 /// this one.
 const DEPLOY_3_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy3";
+/// The fixture recorded from the build deploy 4 shipped, the build the operator
+/// runs now. It holds rows no older build writes: role objects in their own
+/// shape, a key written under `sets`, a closing entry on a wrapped run, a moment
+/// on every write and a wrap window.
+const DEPLOY_4_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy4";
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -307,6 +312,202 @@ async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_
 #[tokio::test]
 async fn the_current_binary_boots_on_a_store_the_deploy_3_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_3_FIXTURE_DIR, "boots-deploy3").await;
+}
+
+/// The same proof over the store the build deploy 4 shipped filled.
+#[tokio::test]
+async fn the_current_binary_boots_on_a_store_the_deploy_4_binary_filled() {
+    boots_on_a_store_filled_by(DEPLOY_4_FIXTURE_DIR, "boots-deploy4").await;
+}
+
+/// **The rows only the deployed build writes, read back by the current binary.**
+/// A key written under `sets`, a role object in its own shape, a closing entry on
+/// a wrapped run, a moment on every write and a wrap window are in no older
+/// recording. The case reads them in the recording BEFORE any boot, with plain
+/// SQL, so a fixture that lacks them fails here and not somewhere later; then
+/// boots the current binary over the store and reads the same things through the
+/// served surface.
+#[tokio::test]
+async fn the_rows_only_the_deploy_4_build_writes_read_back_on_the_current_binary() {
+    the_rows_only_the_recording_build_writes_read_back(DEPLOY_4_FIXTURE_DIR, "rows-deploy4").await;
+}
+
+/// **The case above reads the new fixture, and it fails on an older one.** Pointed
+/// at the deploy 3 recording it stops at the first row that build did not write,
+/// naming what is missing. Without this, a case that read the wrong directory and
+/// asserted nothing the old recording could not also pass would stay green.
+#[tokio::test]
+#[should_panic(expected = "does not hold what only the deploy 4 build writes")]
+async fn the_rows_case_fails_on_a_fixture_an_older_build_recorded() {
+    the_rows_only_the_recording_build_writes_read_back(DEPLOY_3_FIXTURE_DIR, "rows-on-deploy3")
+        .await;
+}
+
+/// The closing story the recording's wrap told, and the label the run's focus
+/// held at the close. Both are spelled in the recorder and stored in the
+/// fixture, and nothing but the fixture declares them.
+const RECORDED_CLOSING_STORY: &str = "closed the recording run after it seeded the store";
+const RECORDED_CLOSING_FOCUS: &str = "claimed the upgrade-fixture-recorder role";
+
+async fn the_rows_only_the_recording_build_writes_read_back(fixture_dir: &str, label: &str) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let fail = |what: &str, body: &str| -> ! {
+        panic!(
+            "the fixture recorded at {git_ref} does not hold what only the deploy 4 build \
+             writes: {what}: {body}"
+        )
+    };
+    let role_holder = std::fs::read_to_string(format!("{fixture_dir}/role_holder.txt"))
+        .unwrap_or_else(|e| panic!("reading {fixture_dir}/role_holder.txt: {e}"))
+        .trim()
+        .to_string();
+
+    // ── in the recording, before any boot ───────────────────────────────────
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool();
+    // A key written under `sets` wears the class `sets`.
+    let classes: Vec<String> = sqlx::query_scalar(
+        "SELECT write_class FROM field_write WHERE `key` = 'upgrade_fixture_setting'",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|e| fail("the write class of a key", &e.to_string()));
+    if classes != ["sets"] {
+        fail(
+            "a key written under sets in the class sets",
+            &format!("{classes:?}"),
+        );
+    }
+    // Every write carries the moment the store stamped at the append.
+    let unstamped: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM field_write WHERE written_at IS NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|e| fail("the moment of a write", &e.to_string()));
+    if unstamped != 0 {
+        fail(
+            "a moment on every write",
+            &format!("{unstamped} writes have none"),
+        );
+    }
+    // A wrapped run's closing entry is its own row, with the focus beside the story.
+    // The recording wrapped two runs, so two rows carry the mark; the case holds
+    // the first run's, whose handover a later boot reads.
+    let closing: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT text, closing_focus FROM journal_entry WHERE closing = 1 ORDER BY ordinal",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|e| fail("the closing mark of an entry", &e.to_string()));
+    let recorded = (
+        RECORDED_CLOSING_STORY.to_string(),
+        Some(RECORDED_CLOSING_FOCUS.to_string()),
+    );
+    if !closing.contains(&recorded) {
+        fail(
+            "a closing entry with the run's focus beside the story",
+            &format!("{closing:?}"),
+        );
+    }
+    // A wrapped run that is its bot's newest holds its wrap window open.
+    let open_windows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session WHERE wrap_window IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|e| fail("the wrap window of a run", &e.to_string()));
+    if open_windows < 1 {
+        fail("a wrap window held open", "no run holds one");
+    }
+    // The role is an object of its own, holding who has it.
+    let role_kind: Option<String> =
+        sqlx::query_scalar("SELECT kind FROM entity WHERE id = 'role:upgrade-fixture-holder'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or_else(|e| fail("the role object", &e.to_string()));
+    if role_kind.as_deref() != Some("role") {
+        fail("a role object of its own", &format!("{role_kind:?}"));
+    }
+    let holder: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE `key` = 'holder' AND entity = \
+         (SELECT COALESCE(badge, id) FROM entity WHERE id = 'role:upgrade-fixture-holder') \
+         ORDER BY ordinal DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or_else(|e| fail("the role object's holder", &e.to_string()));
+    if holder.as_deref() != Some(role_holder.as_str()) {
+        fail(
+            "the role object holding the recorded run",
+            &format!("{holder:?}"),
+        );
+    }
+    store.stop().await;
+
+    // ── the current binary over it, read through the served surface ─────────
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    first.stop().await;
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let say = |what: &'static str, read: String| -> serde_json::Value {
+        serde_json::from_str(&read).unwrap_or_else(|_| fail(what, &read))
+    };
+    // The key written under sets reaches its thing.
+    let thing = say(
+        "the thing a key was set on",
+        surface
+            .call(
+                "recall",
+                json!({"subject": "person:upgrade-fixture-person"}),
+            )
+            .await,
+    );
+    if thing["objects"][0]["fields"]["upgrade_fixture_setting"] != "kept-under-sets" {
+        fail(
+            "the key written under sets, served on its thing",
+            &thing.to_string(),
+        );
+    }
+    // The role object reads back with its holder.
+    let role = say(
+        "the role object",
+        surface
+            .call("recall", json!({"subject": "role:upgrade-fixture-holder"}))
+            .await,
+    );
+    if role["objects"][0]["fields"]["holder"] != role_holder.as_str()
+        || role["objects"][0]["fields"]["claimed_at"]
+            .as_str()
+            .is_none()
+    {
+        fail(
+            "the role object served with its holder and its moment",
+            &role.to_string(),
+        );
+    }
+    // The handover a later boot reads is the run's closing entry.
+    let boot = say(
+        "the boot of the shipped identity",
+        surface
+            .call("start_here", json!({"bot": "assistant", "brief": true}))
+            .await,
+    );
+    if boot["session"]["handover"]["story"] != RECORDED_CLOSING_STORY {
+        fail(
+            "the handover served as the closing entry",
+            &boot["session"]["handover"].to_string(),
+        );
+    }
+    surface.finish().await;
+    second.stop().await;
+    drop(scratch);
 }
 
 async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
@@ -1318,7 +1519,7 @@ fn is_left_as_text_under(line: &str, key: &str) -> bool {
 /// field value is `'<key>',<ordinal>,'<value>'` in the dump, and a plain handle
 /// is a value that starts with a kind, where a stored id starts with the mark.
 fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
-    let dir = [FIXTURE_DIR, DEPLOY_3_FIXTURE_DIR]
+    let dir = [FIXTURE_DIR, DEPLOY_3_FIXTURE_DIR, DEPLOY_4_FIXTURE_DIR]
         .into_iter()
         .find(|dir| {
             std::fs::read_to_string(format!("{dir}/ref.txt"))
@@ -1841,14 +2042,15 @@ async fn assert_every_thing_holds_what_it_held(
     }
 }
 
-/// **A fixture whose rows all join leaves nothing out of the comparison.** Both
-/// recordings come from builds that badge, so every held value belongs to an
+/// **A fixture whose rows all join leaves nothing out of the comparison.** Every
+/// recording comes from a build that badges, so every held value belongs to an
 /// entity that wears the badge it is keyed by.
 #[tokio::test]
 async fn every_recorded_held_value_joins_to_an_entity() {
     for (fixture_dir, label) in [
         (FIXTURE_DIR, "joins-first"),
         (DEPLOY_3_FIXTURE_DIR, "joins-second"),
+        (DEPLOY_4_FIXTURE_DIR, "joins-third"),
     ] {
         let restored = restore_a_fixture(fixture_dir, label).await;
         assert!(
@@ -3829,6 +4031,11 @@ async fn a_second_boot_does_not_read_the_field_passes_again_on_the_deploy_3_stor
     a_settled_store_is_not_read_again(DEPLOY_3_FIXTURE_DIR, "settled-deploy3").await;
 }
 
+#[tokio::test]
+async fn a_second_boot_does_not_read_the_field_passes_again_on_the_deploy_4_store() {
+    a_settled_store_is_not_read_again(DEPLOY_4_FIXTURE_DIR, "settled-deploy4").await;
+}
+
 /// **A link table lost after the lowering finished is rebuilt at the next
 /// boot.** The lowering is marked and reads no field write, but the table is a
 /// derived index: a boot compares it with the writes cheaply and rebuilds it,
@@ -3912,6 +4119,11 @@ async fn a_lost_link_table_is_rebuilt_at_the_next_boot() {
 #[tokio::test]
 async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_3_store() {
     a_lost_link_table_is_rebuilt(DEPLOY_3_FIXTURE_DIR, "rebuilt-deploy3").await;
+}
+
+#[tokio::test]
+async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_4_store() {
+    a_lost_link_table_is_rebuilt(DEPLOY_4_FIXTURE_DIR, "rebuilt-deploy4").await;
 }
 
 /// **What a real store's pool logs when a statement runs past the alert

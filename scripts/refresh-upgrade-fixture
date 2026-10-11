@@ -7,7 +7,10 @@
 # REF defaults to origin/main. DIR is the fixture directory to record into,
 # relative to crates/jojobot, and defaults to the gate's first fixture; the gate
 # keeps a second one (tests/fixtures/upgrade_deploy3) for the build the
-# operator's third deploy shipped, whose commit is in that directory's ref.txt.
+# operator's third deploy shipped, and a third (tests/fixtures/upgrade_deploy4)
+# for the build the fourth shipped. The commit of each is in that directory's
+# ref.txt. The recording needs a build that takes `sets` and writes a closing
+# entry on a wrap, which no build before the fourth deploy's does.
 # The ref is built in a DETACHED worktree, so
 # this script never moves this checkout's HEAD and never creates a branch.
 # The worktree is removed on exit, success or failure alike.

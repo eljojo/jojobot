@@ -590,6 +590,25 @@ async fn seed_representative_records(surface: &Surface) -> String {
 
     seed_what_a_real_store_holds_beyond_the_plain_records(surface, &sid).await;
 
+    // **A key written under `sets`, which a build that has the argument stores
+    // in a class of its own.** The gate reads it back on the thing and reads the
+    // class in the store, so a recording from a build without the argument cannot
+    // serve this case: that build refuses the argument, and the recording fails
+    // here rather than recording a store that lacks the row.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "a property of the thing, set by this claim",
+                "provenance": "testimony",
+                "sets": {"upgrade_fixture_setting": "kept-under-sets"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the key written under sets is captured");
+
     // A session, journalled and then wrapped — the one this recording ran
     // in, so the gate reads back a real wrapped run rather than a bare
     // fixture record nothing ever produced.
@@ -600,10 +619,14 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("a beat is journalled before the session wraps");
+    // **The story differs from the beat above on purpose.** A wrap whose story
+    // is already in the chronology adds no entry, so the same words would record
+    // a wrapped run with no closing entry in it. The run's focus is still the
+    // label the claim set, so the closing entry carries it beside the story.
     surface
         .must(
             "wrap_session",
-            json!({"sid": sid, "story": "recorded the upgrade fixture"}),
+            json!({"sid": sid, "story": "closed the recording run after it seeded the store"}),
         )
         .await
         .expect("the session wraps");
@@ -623,10 +646,51 @@ async fn seed_representative_records(surface: &Surface) -> String {
         held["session"]["claim"]["status"], "taken",
         "the second run did not get its role claim: {held}"
     );
-    held["session"]["sid"]
+    let held_sid = held["session"]["sid"]
         .as_str()
         .expect("a fresh boot carries a session id")
-        .to_string()
+        .to_string();
+
+    // **A wrapped run that is its bot's newest, so its wrap window stays open.**
+    // The first run is `assistant`'s and a newer `assistant` run follows it, which
+    // ends its window. This bot has one run and wraps it, so the store holds a
+    // window that is still open for the gate to read after the upgrade. The
+    // second run, still open, writes the bot in: the first is wrapped and cannot.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "bot", "handle": "upgrade-fixture-wrapper",
+                   "name": "A Recorded Wrapper", "source": "test", "sid": held_sid}),
+        )
+        .await
+        .expect("the second bot is added");
+    let wrapper = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-wrapper", "brief": true}),
+        )
+        .await
+        .expect("the second bot boots");
+    let wrapper_sid = wrapper["session"]["sid"]
+        .as_str()
+        .expect("a fresh boot carries a session id")
+        .to_string();
+    surface
+        .must(
+            "journal",
+            json!({"entry": "did one thing before wrapping", "sid": wrapper_sid}),
+        )
+        .await
+        .expect("the second bot journals a beat");
+    surface
+        .must(
+            "wrap_session",
+            json!({"sid": wrapper_sid, "story": "wrapped the only run this bot had"}),
+        )
+        .await
+        .expect("the second bot's run wraps");
+
+    held_sid
 }
 
 /// **Whether a `declare_type` answer leaves the recording where it meant to be.**
