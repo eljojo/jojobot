@@ -7821,3 +7821,69 @@ async fn the_ready_view_refuses_a_subject_that_is_not_work() {
         "{answered}"
     );
 }
+
+/// **A record's address is no subject for the ready view, and through
+/// `history_record` it selects nothing.** The address of a record on a piece of
+/// work in `subject` is refused as no handle, as in every recall, and answers
+/// for nothing. The address of a record on anything else in `subject` is
+/// refused as its thing is. With the view and `history_record` alone the view's
+/// own kind has already narrowed the call, so the address fills no subject and
+/// the answer is the list of ready work, the same whichever thing the address
+/// belongs to. The addresses are the ones captures answered with.
+#[tokio::test]
+async fn a_record_address_is_no_subject_for_the_ready_view_and_selects_nothing_beside_it() {
+    let jojobot = crate::harness::handler_shipped();
+    crate::memory::testing::ensure(&jojobot, "person:kenny").await;
+    work_with(&jojobot, "work:sigma", &[("status", "next")]).await;
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", "work:sigma")],
+    )
+    .await;
+    let on_work = capture_ok(&jojobot, capture_args("work:phi", "a note on the work")).await;
+    let on_person = capture_ok(&jojobot, capture_args("person:kenny", "a note on a person")).await;
+    let work_address = on_work["address"].as_str().expect("an address").to_string();
+    let person_address = on_person["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    assert!(work_address.starts_with("work:phi#"), "{on_work}");
+    assert!(person_address.starts_with("person:kenny#"), "{on_person}");
+
+    // As a subject: neither address answers, and the person's names the work kind.
+    let work_subject = ready_view(&jojobot, Some(&work_address)).await;
+    assert_eq!(work_subject["status"], "blocked", "{work_subject}");
+    assert_eq!(work_subject["fix_by"], "change", "{work_subject}");
+    assert!(work_subject.get("objects").is_none(), "{work_subject}");
+    let person_subject = ready_view(&jojobot, Some(&person_address)).await;
+    assert_eq!(person_subject["status"], "blocked", "{person_subject}");
+    assert_eq!(person_subject["fix_by"], "change", "{person_subject}");
+    assert!(
+        person_subject.to_string().contains("work"),
+        "{person_subject}"
+    );
+
+    // Through history_record alone: the same ready list for either address,
+    // and the positive beside it, that the view does list ready work.
+    for address in [&work_address, &person_address] {
+        let listed_by_address = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    view: Some("ready".into()),
+                    history_record: Some(address.clone()),
+                    subject: None,
+                    facts: None,
+                    sid: Some(writing_as(&jojobot)),
+                    ..recall_args("work:phi")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            listed(&listed_by_address),
+            ["work:sigma"],
+            "{address}: {listed_by_address}"
+        );
+    }
+}
