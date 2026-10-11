@@ -7749,3 +7749,41 @@ async fn the_blockers_share_the_ceiling_with_the_row_they_ride_on() {
         tight.to_string().len()
     );
 }
+
+/// **`ready` belongs to the work kind.** A call that uses the view and sends any
+/// other kind is refused, the refusal names the work kind as the one the ask
+/// answers for, and the same call with the work kind is answered.
+#[tokio::test]
+async fn the_ready_view_refuses_a_kind_that_is_not_work() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:phi", &[("status", "next")]).await;
+    let ask = |kind: &str| RecallArgs {
+        view: Some("ready".into()),
+        kind: Some(kind.into()),
+        facts: None,
+        sid: Some(writing_as(&jojobot)),
+        ..recall_args("work:phi")
+    };
+    let refused = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: None,
+                ..ask("person")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+    assert!(refused.to_string().contains("work"), "{refused}");
+    let answered = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: None,
+                ..ask("work")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(listed(&answered), ["work:phi"], "{answered}");
+}

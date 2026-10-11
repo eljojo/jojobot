@@ -1723,6 +1723,26 @@ impl Jojobot {
                 Err(refused) => return Ok(*refused),
             },
         };
+        // **Readiness is a question about work, and only work answers it.** The
+        // view selects the work kind; a caller that sent another kind beside it
+        // would be handed `ready` for things that have no dependencies to wait on.
+        if asks_ready
+            && args
+                .kind
+                .as_deref()
+                .map(parse_kind)
+                .transpose()?
+                .is_some_and(|kind| kind != EntityKind::WORK)
+        {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(
+                    "the ready view answers for the work kind only: leave kind off, or send \
+                     kind: work"
+                        .into(),
+                ),
+            );
+        }
         // **The name is resolved to its declaration here, once**, exactly as
         // `search` resolves it: everything below takes the keys rather than
         // the name, and a name nobody declared is answered where the roster to
