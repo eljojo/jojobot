@@ -177,16 +177,28 @@ pub(crate) fn fact_receipt_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_
         // the caller sent; how many landed is what says the write took them.
         fields.insert("fields".into(), serde_json::Value::Null);
         fields.insert("fields_elided".into(), true.into());
-        fields.insert(
-            "fields_count".into(),
-            (fact.fields.len() - fact.sets.len()).into(),
-        );
+        // **Each count is the keys held in that bag, counted on its own.** A key is
+        // a setting when the claim holds it and names it in `sets`, and an own field
+        // when it holds it and does not. Neither count is the other taken away from
+        // the total, so a `sets` naming a key the claim no longer holds can neither
+        // panic here nor count a key that is not there.
+        let set_count = fact
+            .fields
+            .keys()
+            .filter(|key| fact.sets.contains(*key))
+            .count();
+        let own_count = fact
+            .fields
+            .keys()
+            .filter(|key| !fact.sets.contains(*key))
+            .count();
+        fields.insert("fields_count".into(), own_count.into());
         // The same count for what the record set on its thing, only when it set
         // something, as `sets` itself is.
-        if !fact.sets.is_empty() {
+        if set_count > 0 {
             fields.insert("sets".into(), serde_json::Value::Null);
             fields.insert("sets_elided".into(), true.into());
-            fields.insert("sets_count".into(), fact.sets.len().into());
+            fields.insert("sets_count".into(), set_count.into());
         }
     }
     body
@@ -449,6 +461,59 @@ fn title_cased(token: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 🚨 **A receipt never takes the number of settings from the number of
+    /// keys.** A claim whose `sets` names keys it no longer holds, which an
+    /// edit that cleared a setting once answered with, panicked the server on a
+    /// subtraction. The counts are the keys held in each bag, by membership, so
+    /// the answer is the same whatever a stale `sets` names.
+    ///
+    /// **Both halves**: the keys the claim holds are counted where they belong, and
+    /// the keys it does not hold are counted nowhere.
+    #[tokio::test]
+    async fn a_receipt_counts_the_bags_by_membership_when_sets_names_a_key_that_is_gone() {
+        use crate::harness::handler_over;
+        use crate::memory::testing::{capture_args, capture_ok};
+        let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let jojobot = handler_over(memory.clone());
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("mood".to_string(), "x".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                sets: Some(
+                    [("hat".to_string(), "red".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "at the party")
+            },
+        )
+        .await;
+        let mut fact =
+            jojobot_domain::memory::Memory::recall(&*memory, &EntityId::person("person:alpha"))
+                .await
+                .expect("recall")
+                .pop()
+                .expect("the claim");
+        assert_eq!(fact.sets.len(), 1, "{fact:?}");
+        // The state a stale answer had: a setting gone from the fields and still
+        // named in `sets`, and a key that was never there.
+        fact.fields.remove("hat");
+        fact.sets.insert("ghost".to_string());
+        let day = jiff::civil::date(2026, 10, 11);
+        let receipt = fact_receipt_json(&fact, day);
+        assert_eq!(receipt["fields_count"], 1, "{receipt}");
+        assert!(receipt.get("sets_count").is_none(), "{receipt}");
+        // …and one that does hold a setting counts it.
+        fact.fields.insert("hat".to_string(), "red".to_string());
+        let held = fact_receipt_json(&fact, day);
+        assert_eq!(held["fields_count"], 1, "{held}");
+        assert_eq!(held["sets_count"], 1, "{held}");
+    }
 
     /// **The response vocabulary, whole.** Every kind renders its schema.org
     /// name — and the table is walked from `EntityKind::ALL`, so a new kind

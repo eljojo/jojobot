@@ -2152,19 +2152,6 @@ impl DoltMemory {
         Ok(held)
     }
 
-    /// **A record's fields, projected from the writes it made.**
-    ///
-    /// One value per key: the newest write of that key inside this record. A
-    /// key whose newest write here took it off is not on the record — the write
-    /// stays where it is, and the key stops being current.
-    async fn fields_of(
-        tx: &mut Transaction<'_, MySql>,
-        entity: &EntityId,
-        fact: &FactId,
-    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        Ok(Self::fields_and_sets_of(tx, entity, fact).await?.0)
-    }
-
     /// **A record's fields, and which of them it set on its thing.** The second
     /// is the keys whose newest write on this record was made under
     /// [`WriteClass::Sets`](jojobot_domain::memory::WriteClass::Sets); a key
@@ -4781,7 +4768,11 @@ impl Memory for DoltMemory {
         .await?;
         // Read back from the substrate rather than from what the patch
         // believed, so the answer is the projection a later read will give.
-        let mut fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
+        // **The keys and the bag each is held in come from the same rows**, so the
+        // answer's `sets` is the claim as it stands after this write and never the
+        // one it had before it: a setting this edit cleared must not stay in `sets`
+        // with no value left in `fields`.
+        let (mut fields, sets) = Self::fields_and_sets_of(&mut tx, &fact.home, &fact.id).await?;
         self.compose_reference_fields(&mut tx, &mut fields).await?;
         // **Served under the handle, stored under the key.**
         let served_derived_from = match &fact.derived_from {
@@ -4815,6 +4806,7 @@ impl Memory for DoltMemory {
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact {
             fields,
+            sets,
             home: handle.clone(),
             subject: handle,
             derived_from: served_derived_from,

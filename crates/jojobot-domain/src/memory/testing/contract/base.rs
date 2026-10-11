@@ -16002,6 +16002,113 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
         .expect("nothing blocks it");
 }
 
+/// 🚨 **A write answers with the claim as a read of it will serve it**, bags and
+/// all.
+///
+/// An edit that cleared a setting answered with the claim's `fields` as they
+/// stood after the write and its `sets` as they stood before it, so `sets` named
+/// a key `fields` no longer held. A receipt that counts the two apart took one
+/// from the other and the server panicked. The invariants are checked after every
+/// kind of edit that changes a bag: a setting cleared, written again, an own field
+/// moved to the settings, and an own field cleared. Each answer is compared with a
+/// read of the same claim, and `sets` is never a key the claim does not hold.
+pub async fn a_write_answers_with_the_bags_a_read_of_the_claim_serves<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-answer-bags");
+    let mut new = NewFact::about(subject.clone(), "two bags", date(2026, 9, 1));
+    new.fields = [
+        ("own_key".to_string(), "o".to_string()),
+        ("set_key".to_string(), "s".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    new.sets = ["set_key".to_string()].into_iter().collect();
+    let captured = capture(store, new).await;
+    let address = captured.address();
+    let keys = |fact: &Fact| {
+        fact.fields
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let consistent = |what: &str, answered: &Fact, read: &Fact| {
+        assert!(
+            answered.sets.is_subset(&keys(answered)),
+            "{what}: the answer's sets names a key its fields lack: {answered:?}"
+        );
+        assert_eq!(answered.fields, read.fields, "{what}: fields");
+        assert_eq!(answered.sets, read.sets, "{what}: sets");
+    };
+    let edit_with = |fields: &[(&str, &str)], sets: &[&str], clear: &[&str]| FactPatch {
+        fields: fields
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        sets: sets.iter().map(|k| k.to_string()).collect(),
+        clear_fields: clear.iter().map(|k| k.to_string()).collect(),
+        session: Some("session-answer-bags".to_string()),
+        ..Default::default()
+    };
+    consistent(
+        "the capture",
+        &captured,
+        &read_back(store, &subject, &captured.id).await,
+    );
+
+    // A setting cleared: it leaves `fields` and `sets` together.
+    let cleared = edit(store, &address, edit_with(&[], &[], &["set_key"])).await;
+    assert!(cleared.sets.is_empty(), "{cleared:?}");
+    consistent(
+        "a setting cleared",
+        &cleared,
+        &read_back(store, &subject, &captured.id).await,
+    );
+
+    // The same key set again.
+    let again = edit(
+        store,
+        &address,
+        edit_with(&[("set_key", "t")], &["set_key"], &[]),
+    )
+    .await;
+    assert!(again.sets.contains("set_key"), "{again:?}");
+    consistent(
+        "a setting written again",
+        &again,
+        &read_back(store, &subject, &captured.id).await,
+    );
+
+    // An own field moved to the settings: the answer already says so.
+    let moved = edit(
+        store,
+        &address,
+        edit_with(&[("own_key", "p")], &["own_key"], &[]),
+    )
+    .await;
+    assert!(moved.sets.contains("own_key"), "{moved:?}");
+    consistent(
+        "an own field moved",
+        &moved,
+        &read_back(store, &subject, &captured.id).await,
+    );
+
+    // A setting cleared in the same call that sets another.
+    let swapped = edit(
+        store,
+        &address,
+        edit_with(&[("third", "x")], &["third"], &["own_key"]),
+    )
+    .await;
+    assert!(
+        swapped.sets.contains("third") && !swapped.sets.contains("own_key"),
+        "{swapped:?}"
+    );
+    consistent(
+        "one setting cleared and another set",
+        &swapped,
+        &read_back(store, &subject, &captured.id).await,
+    );
+}
+
 /// **An entity is edited and a claim sets keys on it in one act, made whole or
 /// not at all.**
 ///
@@ -16138,6 +16245,7 @@ macro_rules! all_cases {
         $m!(a_resend_of_a_handle_valued_field_on_another_sessions_testimony_is_not_a_rewrite($store));
         $m!(a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal($store));
         $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
+        $m!(a_write_answers_with_the_bags_a_read_of_the_claim_serves($store));
         $m!(an_entity_edited_with_a_claim_is_made_whole_or_not_at_all($store));
         $m!(edge_whitespace_is_normalized($store));
         $m!(multiple_facts_all_recallable($store));
