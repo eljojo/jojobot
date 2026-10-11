@@ -307,6 +307,31 @@ mod tests {
         );
     }
 
+    /// **The word `sets` means one thing in the essay: the argument.** A sentence
+    /// about "the sets on a loop" meant closed lists of values, beside `sets` the
+    /// argument that decides what a thing holds, and a reader took one for the
+    /// other. So outside backticks the bare word does not appear.
+    #[test]
+    fn the_essay_uses_the_word_sets_only_for_the_argument() {
+        for (what, text) in [
+            ("the core", super::ORIENTATION_CORE.as_str()),
+            ("the remainder", super::ORIENTATION_REMAINDER),
+        ] {
+            let mut outside = String::new();
+            for (n, piece) in text.split('`').enumerate() {
+                if n % 2 == 0 {
+                    outside.push_str(piece);
+                    outside.push(' ');
+                }
+            }
+            let bare = outside
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|word| word.eq_ignore_ascii_case("sets"))
+                .count();
+            assert_eq!(bare, 0, "{what} uses the bare word sets {bare} times");
+        }
+    }
+
     /// **The core alone still teaches the structural type questions** —
     /// `answers_type` and `fits_type` — the same reasoning as the kind test
     /// above, applied to the other half of what a cut boot must not lose.

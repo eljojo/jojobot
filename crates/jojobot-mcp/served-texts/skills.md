@@ -70,6 +70,9 @@ the bot that carries it. Two loops on one object are two rhythms.
 
 ## What a rhythm holds
 
+A loop's keys are properties of the loop, so you write them in `sets`. A key sent
+in `fields` stays on the claim, and the loop never holds it.
+
 `cadence_days` is how long one cycle lasts. A cadence is always time. What the
 check measures — a reading, a distance, a count — belongs on the check-in and
 is never a unit of the schedule.
@@ -80,7 +83,7 @@ day the check-in happened. It has no default. Whose loop it is says who picks
 it, and the rhythm's `parent` says whose loop it is. On a loop in the
 operator's own life, the operator picks, for each rhythm. A loop under the bot
 that carries it is that bot's own work, and that bot picks. When the operator
-hands the pick over, you pick: write both keys with `capture` on the rhythm,
+hands the pick over, you pick: write both keys in `sets` with `capture` on the rhythm,
 with `provenance: "inference"`, and say in `details` that the operator handed
 the pick over. A wrong pick is silent: every late check-in re-arms the loop it
 was meant to settle.
@@ -95,7 +98,7 @@ neither is allowed, and you write it at once.
 
 If the loop is in the operator's own life and the operator gave a cadence
 without saying which date it counts from, ask which. Write the loop without `cadence_days` while you wait. When the operator
-answers, send both keys in one call. The loop itself is never a reason to wait.
+answers, send both keys in `sets` in one call. The loop itself is never a reason to wait.
 
 A loop with neither key has no schedule, and it is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
@@ -127,7 +130,7 @@ the operator names one.
 one. Two promises can be about one thing, and each keeps its own events.
 
 A promise ends when you record how: `ended` takes `delivered`, `withdrawn` or
-`overtaken`. Capture it on the promise, with the day it happened. An ended
+`overtaken`. Capture it on the promise with `ended` in `sets`, with the day it happened. An ended
 promise is no longer owed, and the record still says which of the three it was.
 Being shown in the owed answer ends nothing.
 
@@ -136,7 +139,7 @@ To see what is owed, loops and promises together, call `recall` with
 the promises alone.
 
 `due_on` is the key you ask by, and jojobot sets it. Do not write it and do not
-clear it: a write that sends it is refused. Write the day on the thing that
+clear it: a write that sends it is refused. Write the day in `sets` on the thing that
 carries it (`promised_by` on a promise, `runs_out`, `decide_by`, or a loop's
 cadence), and jojobot keeps `due_on` current. To move a day, change that key.
 To take `runs_out` or `decide_by` away, clear that key. A promise is the exception: it

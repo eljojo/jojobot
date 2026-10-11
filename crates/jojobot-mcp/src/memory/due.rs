@@ -42,8 +42,11 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
         .collect();
     let mut sentences: Vec<String> = Vec::new();
     if !dates.is_empty() {
+        // **The bag is named in the first sentence**: a key sent under `fields`
+        // stays on its claim and moves nothing, so a caller told which keys act
+        // has to be told where they act.
         sentences.push(format!(
-            "A date under {} makes a thing fall due on that day.",
+            "A date under {} in `sets` makes a thing fall due on that day.",
             named(&dates, "or"),
         ));
     }
@@ -76,8 +79,8 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
         ));
     }
     sentences.push(
-        "Every other key is kept as you wrote it and nothing acts on it: it never makes a \
-         thing fall due or appear in what is owed."
+        "Every other key is kept as written and acts on nothing: it never makes a thing fall \
+         due or appear in what is owed."
             .to_string(),
     );
     sentences.join(" ")

@@ -19,7 +19,7 @@ use crate::teaching::{
 pub struct UpdateFactArgs {
     /// The fact's global address, `kind:slug#local-id` — exactly as `recall`
     /// returned it. **A claim cannot change subject:** to move one filed on the
-    /// wrong thing, capture it on the right one, re-sending its dates, fields and
+    /// wrong thing, capture it on the right one, re-sending its dates, `fields`, `sets` and
     /// edge, with `derived_from` naming this claim, then archive this one.
     pub(crate) address: String,
     /// Replacement claim.

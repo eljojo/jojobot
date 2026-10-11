@@ -1276,10 +1276,12 @@ fn every_key_a_shipped_carrier_reads_is_named_where_a_write_is_described() {
             .find(|t| t.name.as_ref() == verb)
             .unwrap_or_else(|| panic!("the surface offers {verb}"));
         let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
-        let described = schema["properties"]["fields"]["description"]
+        // **The `sets` argument**, the bag that makes a key act on a thing: a date
+        // under `fields` stays on the claim and moves nothing.
+        let described = schema["properties"]["sets"]["description"]
             .as_str()
-            .unwrap_or_else(|| panic!("{verb}'s fields argument carries a description"));
-        places.push((format!("{verb}'s fields argument"), described.to_string()));
+            .unwrap_or_else(|| panic!("{verb}'s sets argument carries a description"));
+        places.push((format!("{verb}'s sets argument"), described.to_string()));
     }
     assert_eq!(places.len(), 3, "three places describe a write");
     for (place, text) in &places {
@@ -1290,6 +1292,88 @@ fn every_key_a_shipped_carrier_reads_is_named_where_a_write_is_described() {
             );
         }
     }
+}
+
+/// 🚨 **What makes a thing fall due is taught on `sets` and nowhere on
+/// `fields`.** A date sent under `fields` stays on the claim and moves nothing, so
+/// a paragraph on `fields` that named the keys sent a bot to write them there and
+/// nothing came up. The served instructions' copy names the bag too.
+#[test]
+fn the_falls_due_paragraph_is_on_sets_and_says_so() {
+    let tools = Jojobot::tool_router().list_all();
+    let carriers = jojobot_domain::attention::shipped();
+    let key = carriers
+        .iter()
+        .flat_map(|carrier| carrier.interface().fields)
+        .map(|field| field.key)
+        .next()
+        .expect("a carrier reads a key");
+    for verb in ["capture", "update_fact"] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == verb)
+            .unwrap_or_else(|| panic!("the surface offers {verb}"));
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let on = |property: &str| {
+            schema["properties"][property]["description"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{verb}'s {property} argument is described"))
+                .to_string()
+        };
+        let sets = on("sets");
+        assert!(
+            sets.contains(&format!("`{key}`")),
+            "{verb}'s sets does not name `{key}`"
+        );
+        assert!(
+            sets.contains("in `sets`"),
+            "{verb}'s paragraph does not say the bag: {sets}"
+        );
+        assert!(
+            !on("fields").contains(&format!("`{key}`")),
+            "{verb}'s fields argument still names `{key}`, a key that does nothing there"
+        );
+    }
+    let instructions = crate::instructions();
+    let at = instructions
+        .find("WHAT FALLS DUE")
+        .expect("the instructions say what falls due");
+    assert!(
+        instructions[at..].contains("in `sets`"),
+        "the instructions copy does not say the bag: {instructions}"
+    );
+}
+
+/// **The recipe for moving a claim to another subject re-sends its settings.** A
+/// claim moved by capture-and-archive that re-sent only its `fields` lost every
+/// key it had set on the old thing.
+#[test]
+fn the_recipe_for_moving_a_claim_re_sends_its_sets() {
+    let tools = Jojobot::tool_router().list_all();
+    let tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "update_fact")
+        .expect("the surface offers update_fact");
+    let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+    let address = schema["properties"]["address"]["description"]
+        .as_str()
+        .expect("the address argument is described");
+    assert!(address.contains("`sets`"), "{address}");
+}
+
+/// **The scope of a key filter says that a claim's own field is found with
+/// `scope: record`**, because no thing holds it.
+#[test]
+fn the_scope_of_a_key_filter_names_the_claims_own_fields() {
+    let schema = serde_json::to_value(schemars::schema_for!(crate::memory::recall::KeyFilterArgs))
+        .expect("the schema serializes");
+    let scope = schema["properties"]["scope"]["description"]
+        .as_str()
+        .expect("scope is described");
+    assert!(
+        scope.contains("`fields`") && scope.contains("record"),
+        "{scope}"
+    );
 }
 
 /// **The keys that describe their claim are taught where a write is described,
@@ -1389,10 +1473,11 @@ fn every_place_a_write_is_described_says_a_finished_piece_of_work_is_not_owed() 
             .find(|t| t.name.as_ref() == verb)
             .unwrap_or_else(|| panic!("the surface offers {verb}"));
         let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
-        let described = schema["properties"]["fields"]["description"]
+        // The paragraph that says what is owed is on `sets`, the bag that acts.
+        let described = schema["properties"]["sets"]["description"]
             .as_str()
-            .unwrap_or_else(|| panic!("{verb}'s fields argument carries a description"));
-        places.push((format!("{verb}'s fields argument"), described.to_string()));
+            .unwrap_or_else(|| panic!("{verb}'s sets argument carries a description"));
+        places.push((format!("{verb}'s sets argument"), described.to_string()));
     }
     for (place, text) in &places {
         for named in finishing

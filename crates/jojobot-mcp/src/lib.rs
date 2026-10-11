@@ -208,41 +208,40 @@ impl Jojobot {
         )
     }
 
-    /// **The two write verbs' `fields` description, ended with the keys that
-    /// make a thing fall due.** Every other line a model reads at the write says
-    /// a key it invents is kept, and nothing there said which keys are acted on.
-    /// The text is built from the shipped carriers, so it cannot name a key no
-    /// carrier reads or miss one that does.
+    /// **The two write verbs' `sets` description, ended with the keys that make
+    /// a thing fall due, and their `fields` description, ended with the keys that
+    /// only label a claim.** Every other line a model reads at the write says a
+    /// key it invents is kept, and nothing there said which keys are acted on, or
+    /// where. A date sent under `fields` stays on the claim and moves nothing, so
+    /// the falls-due paragraph belongs to the bag that acts. The text is built
+    /// from the shipped carriers, so it cannot name a key no carrier reads or miss
+    /// one that does.
     fn publishing_what_falls_due(mut router: ToolRouter<Self>) -> ToolRouter<Self> {
         let carriers = jojobot_domain::attention::shipped();
         let carriers: Vec<&dyn jojobot_domain::attention::Carrier> =
             carriers.iter().map(std::convert::AsRef::as_ref).collect();
         let labels = seed::describing_keys();
-        let falls_due = [
-            memory::due::what_makes_a_thing_fall_due(&carriers),
-            memory::due::what_describes_its_claim(&labels),
-        ]
-        .into_iter()
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-        if falls_due.is_empty() {
-            return router;
-        }
+        let on_sets = memory::due::what_makes_a_thing_fall_due(&carriers);
+        let on_fields = memory::due::what_describes_its_claim(&labels);
         for verb in ["capture", "update_fact"] {
             let Some(route) = router.map.get_mut(verb) else {
                 continue;
             };
             let schema = Arc::make_mut(&mut route.attr.input_schema);
-            let Some(described) = schema
-                .get_mut("properties")
-                .and_then(|properties| properties.get_mut("fields"))
-                .and_then(|fields| fields.get_mut("description"))
-            else {
-                continue;
-            };
-            if let Some(text) = described.as_str() {
-                *described = serde_json::Value::String(format!("{text}\n\n{falls_due}"));
+            for (property, text) in [("sets", &on_sets), ("fields", &on_fields)] {
+                if text.is_empty() {
+                    continue;
+                }
+                let Some(described) = schema
+                    .get_mut("properties")
+                    .and_then(|properties| properties.get_mut(property))
+                    .and_then(|argument| argument.get_mut("description"))
+                else {
+                    continue;
+                };
+                if let Some(existing) = described.as_str() {
+                    *described = serde_json::Value::String(format!("{existing}\n\n{text}"));
+                }
             }
         }
         router

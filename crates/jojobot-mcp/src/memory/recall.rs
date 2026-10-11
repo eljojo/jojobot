@@ -56,6 +56,11 @@ pub struct KeyFilterArgs {
     /// is this one — it is about what happened, not about what anybody holds
     /// now, and no folding can answer it.
     ///
+    /// ⚠️ **A key a claim holds as one of its own `fields` is held by no thing.**
+    /// It stays on that claim, so the default `thing` scope never finds it: ask for
+    /// it with `scope: record`. A key sent in `sets` is held by the thing and is
+    /// found by either scope.
+    ///
     /// ⚠️ **The two scopes combine in one list, and every `record` filter must
     /// hold on the SAME record** — they describe a single record rather than a
     /// list of separate questions.
@@ -3155,6 +3160,24 @@ impl Jojobot {
                 "drop a filter, or call search with the words a record would use",
             )
             .into();
+        }
+        // **A filter on the thing that selected nothing says the other scope
+        // exists.** A key a claim holds as one of its own `fields` is held by no
+        // thing, so the default scope cannot find it, and the empty answer read as
+        // the data being absent. Told only to an empty answer that carried a
+        // key filter asked of the thing.
+        if found.is_empty()
+            && args
+                .fields
+                .iter()
+                .flatten()
+                .any(|filter| filter.scope.as_deref() != Some("record"))
+        {
+            body["scope_note"] =
+                "a key filter asks what the THING holds, and a key a claim holds as one \
+                 of its own `fields` is held by no thing: to find a claim by it, ask again with \
+                 `scope: record`"
+                    .into();
         }
         if own_runs_excluded > 0 {
             body["own_runs_excluded"] = own_runs_excluded.into();

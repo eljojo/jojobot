@@ -348,7 +348,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'cadence_days' and no 'due_date', so nothing could say when its next cycle falls due. Send 'due_date' in the same call, as a number of days. To switch the schedule off, clear both keys in one call. A loop with no schedule at all is allowed and needs neither.",
+  "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'cadence_days' and no 'due_date', so nothing could say when its next cycle falls due. Send 'due_date' in `sets` in the same call, as a number of days. To switch the schedule off, clear both keys in one call. A loop with no schedule at all is allowed and needs neither.",
   "status": "blocked",
   "wrote": false
 }

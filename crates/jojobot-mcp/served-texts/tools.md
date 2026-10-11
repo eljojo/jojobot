@@ -751,8 +751,6 @@ calendar entry: each is its own claim. Recall the holder with facts to read
 what they hold, or recall the event and read its `held` block, which ranks
 who holds what, live first.
 
-A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as you wrote it and nothing acts on it: it never makes a thing fall due or appear in what is owed.
-
 `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by` describe their own claim and never fold onto the thing: read them back with `facts: true`, and find by them with a `fields` filter with `scope: record`.
 ```
 
@@ -846,6 +844,8 @@ in the other is refused with the way to move it. A key that only labels
 the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
 The keys that make a thing fall due act on it only when sent here.
+
+A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 
 #### `capture` — argument `/inputSchema.shape`
@@ -2674,6 +2674,11 @@ single record of its answers every `record` filter, and it arrives
 carrying the records that answered. *Which visits cost more than fifty*
 is this one — it is about what happened, not about what anybody holds
 now, and no folding can answer it.
+
+⚠️ **A key a claim holds as one of its own `fields` is held by no thing.**
+It stays on that claim, so the default `thing` scope never finds it: ask for
+it with `scope: record`. A key sent in `sets` is held by the thing and is
+found by either scope.
 
 ⚠️ **The two scopes combine in one list, and every `record` filter must
 hold on the SAME record** — they describe a single record rather than a
@@ -4723,7 +4728,7 @@ Each argument's own description holds its rules.
 ```text
 The fact's global address, `kind:slug#local-id` — exactly as `recall`
 returned it. **A claim cannot change subject:** to move one filed on the
-wrong thing, capture it on the right one, re-sending its dates, fields and
+wrong thing, capture it on the right one, re-sending its dates, `fields`, `sets` and
 edge, with `derived_from` naming this claim, then archive this one.
 ```
 
@@ -4880,8 +4885,6 @@ A field you set that equals what jojobot ships as its default today is
 stored exactly as you sent it either way, and the receipt's echoes_defaults
 names which key that was.
 
-A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as you wrote it and nothing acts on it: it never makes a thing fall due or appear in what is owed.
-
 `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by` describe their own claim and never fold onto the thing: read them back with `facts: true`, and find by them with a `fields` filter with `scope: record`.
 ```
 
@@ -4991,6 +4994,8 @@ off with `clear_fields`, then write it under `fields`. A key that only
 labels the claim is never a
 property of the thing and is refused here by name. The keys that make a
 thing fall due act on it only when sent here.
+
+A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 
 #### `update_fact` — argument `/inputSchema.shape`

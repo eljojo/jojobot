@@ -17,6 +17,6 @@ jojobot — a personal-assistant server with two worlds.
 
 A write returns a receipt, and eliding is never silent: the answer says what it left out and which call returns it. `start_here` has the vocabulary.
 
-**WHAT FALLS DUE.** A date under `runs_out`, `decide_by` or `promised_by` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as you wrote it and nothing acts on it: it never makes a thing fall due or appear in what is owed.
+**WHAT FALLS DUE.** A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 

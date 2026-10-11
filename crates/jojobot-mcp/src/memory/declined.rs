@@ -724,13 +724,13 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &[],
             if accepts.is_empty() {
                 format!(
-                    "Nothing was written: {e}. Send '{missing}' in the same call, as a number of \
-                     days. To switch the schedule off, clear both keys in one call. A loop with \
+                    "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as a number \
+                     of days. To switch the schedule off, clear both keys in one call. A loop with \
                      no schedule at all is allowed and needs neither."
                 )
             } else {
                 format!(
-                    "Nothing was written: {e}. Send '{missing}' in the same call, as {} — \
+                    "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as {} — \
                      'due_date' keeps the loop on its own days, 'check_in_date' counts from the \
                      day each check-in happens. A loop with no 'cadence_days' at all is allowed \
                      and needs neither.",
@@ -2282,6 +2282,32 @@ pub(crate) mod tests {
             ),
         ];
         rows
+    }
+
+    /// 🚨 **The refusal of half a schedule says where the other half goes.** A
+    /// caller told only to send the key "in the same call" sent it under
+    /// `fields`, where it stays on the claim and the loop is still half a loop.
+    /// Both wordings of the refusal, with and without the accepted values, name
+    /// `sets`.
+    #[test]
+    fn the_refusal_of_half_a_schedule_says_to_send_the_key_in_sets() {
+        for accepts in [
+            Vec::new(),
+            vec!["due_date".to_string(), "check_in_date".to_string()],
+        ] {
+            let refused = memory_declined(
+                "capture",
+                MemoryError::BreaksSchedule {
+                    held: "cadence_days".into(),
+                    missing: "advances_from".into(),
+                    accepts,
+                },
+            )
+            .expect("an answer");
+            let body = json_of(&refused);
+            let way = body["how_to_proceed"].as_str().expect("a way forward");
+            assert!(way.contains("`sets`"), "{way}");
+        }
     }
 
     /// 🚨 **Every refusal kind this lane answers wears the word its fix needs.**

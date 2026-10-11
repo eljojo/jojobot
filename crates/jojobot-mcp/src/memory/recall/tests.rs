@@ -4124,6 +4124,91 @@ async fn a_record_scoped_filter_says_what_it_left_out() {
     );
 }
 
+/// 🚨 **A key a claim holds as its own field is held by no thing, and an empty
+/// answer to a filter on the thing says so.** A filter asks what the THING holds
+/// by default. A key sent under `fields` stays on the claim, so the thing never
+/// held it and the filter finds nothing; the model read that as the data being
+/// absent. The empty answer names the other scope.
+///
+/// **Paired both ways.** The record scope finds the claim and carries no note,
+/// and a thing-scope filter that selects something carries none either, so the
+/// note is told only to the answer that needs it.
+#[tokio::test]
+async fn an_empty_thing_scoped_key_filter_says_a_claims_own_field_needs_record_scope() {
+    let jojobot = handler_indexed();
+    ensure(&jojobot, "ralph").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [("mood".to_string(), "happy".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            sets: Some(
+                [("hat".to_string(), "red".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("ralph", "at the party")
+        },
+    )
+    .await;
+    let filter = |key: &str, value: &str, scope: Option<&str>| RecallArgs {
+        kind: Some("person".into()),
+        fields: Some(vec![KeyFilterArgs {
+            key: Some(key.into()),
+            value: Some(value.into()),
+            compare: None,
+            scope: scope.map(str::to_string),
+        }]),
+        ..of_nothing()
+    };
+
+    let asked = json_of(
+        &jojobot
+            .recall(Parameters(filter("mood", "happy", None)))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(asked["count"], 0, "{asked}");
+    let note = asked["scope_note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{asked}"));
+    assert!(
+        note.contains("scope: record") && note.contains("`fields`"),
+        "{note}"
+    );
+
+    // The record scope finds the claim and has nothing to add.
+    let found = json_of(
+        &jojobot
+            .recall(Parameters(filter("mood", "happy", Some("record"))))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(found["count"], 1, "{found}");
+    assert!(found.get("scope_note").is_none(), "{found}");
+    // A thing-scope filter that selects something has nothing to add either.
+    let held = json_of(
+        &jojobot
+            .recall(Parameters(filter("hat", "red", None)))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(held["count"], 1, "{held}");
+    assert!(held.get("scope_note").is_none(), "{held}");
+    // …and an empty record-scope answer is not told to use the scope it used.
+    let none = json_of(
+        &jojobot
+            .recall(Parameters(filter("mood", "sad", Some("record"))))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(none["count"], 0, "{none}");
+    assert!(none.get("scope_note").is_none(), "{none}");
+}
+
 /// **A query that narrows nothing is refused**, with a way forward rather
 /// than a protocol failure — and the same call with one filter is served,
 /// so the refusal is about the argument and not about the verb.

@@ -247,6 +247,9 @@ the bot that carries it. Two loops on one object are two rhythms.
 
 ## What a rhythm holds
 
+A loop's keys are properties of the loop, so you write them in `sets`. A key sent
+in `fields` stays on the claim, and the loop never holds it.
+
 `cadence_days` is how long one cycle lasts. A cadence is always time. What the
 check measures — a reading, a distance, a count — belongs on the check-in and
 is never a unit of the schedule.
@@ -257,7 +260,7 @@ day the check-in happened. It has no default. Whose loop it is says who picks
 it, and the rhythm's `parent` says whose loop it is. On a loop in the
 operator's own life, the operator picks, for each rhythm. A loop under the bot
 that carries it is that bot's own work, and that bot picks. When the operator
-hands the pick over, you pick: write both keys with `capture` on the rhythm,
+hands the pick over, you pick: write both keys in `sets` with `capture` on the rhythm,
 with `provenance: "inference"`, and say in `details` that the operator handed
 the pick over. A wrong pick is silent: every late check-in re-arms the loop it
 was meant to settle.
@@ -272,7 +275,7 @@ neither is allowed, and you write it at once.
 
 If the loop is in the operator's own life and the operator gave a cadence
 without saying which date it counts from, ask which. Write the loop without `cadence_days` while you wait. When the operator
-answers, send both keys in one call. The loop itself is never a reason to wait.
+answers, send both keys in `sets` in one call. The loop itself is never a reason to wait.
 
 A loop with neither key has no schedule, and it is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
@@ -304,7 +307,7 @@ the operator names one.
 one. Two promises can be about one thing, and each keeps its own events.
 
 A promise ends when you record how: `ended` takes `delivered`, `withdrawn` or
-`overtaken`. Capture it on the promise, with the day it happened. An ended
+`overtaken`. Capture it on the promise with `ended` in `sets`, with the day it happened. An ended
 promise is no longer owed, and the record still says which of the three it was.
 Being shown in the owed answer ends nothing.
 
@@ -313,7 +316,7 @@ To see what is owed, loops and promises together, call `recall` with
 the promises alone.
 
 `due_on` is the key you ask by, and jojobot sets it. Do not write it and do not
-clear it: a write that sends it is refused. Write the day on the thing that
+clear it: a write that sends it is refused. Write the day in `sets` on the thing that
 carries it (`promised_by` on a promise, `runs_out`, `decide_by`, or a loop's
 cadence), and jojobot keeps `due_on` current. To move a day, change that key.
 To take `runs_out` or `decide_by` away, clear that key. A promise is the exception: it
@@ -681,6 +684,69 @@ mod tests {
         assert!(
             asking.contains("no entity of their own"),
             "the asking skill does not say how to ask for a person with no entity"
+        );
+    }
+
+    /// 🚨 **The rhythms skill says which bag a loop's keys go in.** Paid runs
+    /// wrote a loop's cadence and a promise's day under `fields`, where they stay
+    /// on the claim and nothing falls due. So the section on what a rhythm holds
+    /// opens with the convention, and every paragraph that tells a caller to write
+    /// one of the loop keys names `sets`.
+    ///
+    /// **The keys are the carriers' own**, read off the shipped interfaces, so a
+    /// key added to a loop is covered with no edit here.
+    #[test]
+    fn the_rhythms_skill_says_which_bag_a_loops_keys_go_in() {
+        let rhythms = body("rhythms");
+        let holds = rhythms
+            .split("## What a rhythm holds")
+            .nth(1)
+            .expect("the section on what a rhythm holds");
+        let first = holds
+            .trim_start()
+            .split("\n\n")
+            .next()
+            .expect("a first paragraph");
+        assert!(
+            first.contains("`sets`"),
+            "the section does not open with the bag: {first}"
+        );
+        let carriers = jojobot_domain::attention::shipped();
+        let keys: Vec<String> = carriers
+            .iter()
+            .flat_map(|carrier| carrier.interface().fields)
+            .map(|field| field.key)
+            .chain(["ended".to_string()])
+            .collect();
+        assert!(
+            keys.len() >= 7,
+            "the corpus of loop keys is empty: {keys:?}"
+        );
+        let mut writing = 0;
+        for paragraph in rhythms.split("\n\n") {
+            let tells_to_write = [
+                "`capture`",
+                "Write the",
+                "write both",
+                "send both",
+                "Capture it",
+            ]
+            .iter()
+            .any(|verb| paragraph.contains(verb));
+            let names_a_key = keys
+                .iter()
+                .any(|key| paragraph.contains(&format!("`{key}`")));
+            if tells_to_write && names_a_key {
+                writing += 1;
+                assert!(
+                    paragraph.contains("`sets`"),
+                    "a paragraph tells a caller to write a loop key and names no bag: {paragraph}"
+                );
+            }
+        }
+        assert!(
+            writing >= 4,
+            "only {writing} paragraphs tell a caller to write a key"
         );
     }
 
