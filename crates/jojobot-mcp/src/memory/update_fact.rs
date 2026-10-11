@@ -27,6 +27,8 @@ pub struct UpdateFactArgs {
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as the
     /// handle that thing wears today, even after a rename.
+    /// Text inside backticks or a fenced block is literal: a handle there is
+    /// kept as written and never becomes a link.
     ///
     /// An edit that would leave the claim too big to be read back whole in one
     /// answer is refused with the claim unchanged: shorten it, split it into claims

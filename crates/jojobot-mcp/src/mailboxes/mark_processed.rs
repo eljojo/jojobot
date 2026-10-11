@@ -15,6 +15,8 @@ pub struct MarkProcessedArgs {
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as
     /// the handle that thing wears today, even after a rename.
+    /// Text inside backticks or a fenced block is literal: a handle there is
+    /// kept as written and never becomes a link.
     ///
     /// Write the outcome you actually have: a note longer than the record holds is
     /// CUT to fit and says so (a trailing ellipsis, and a delta naming what was

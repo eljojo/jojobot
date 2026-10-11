@@ -16,6 +16,8 @@ pub struct WrapSessionArgs {
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as
     /// the handle that thing wears today, even after a rename.
+    /// Text inside backticks or a fenced block is literal: a handle there is
+    /// kept as written and never becomes a link.
     pub(crate) story: String,
     /// Your session id — the session to wrap.
     pub(crate) sid: String,

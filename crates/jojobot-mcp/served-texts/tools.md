@@ -320,6 +320,8 @@ whole.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 ```
 
 #### `amend_journal` — argument `/inputSchema.sid`
@@ -662,6 +664,8 @@ The crisp claim to remember — single line, no line breaks. Put the rest in
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 
 A claim too big to be read back whole in one answer is refused with nothing
 written: shorten it, split it into claims that each say one thing, or keep
@@ -1228,6 +1232,8 @@ wrong. Prose — paragraphs are fine.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 ```
 
 #### `journal` — argument `/inputSchema.focus`
@@ -1626,6 +1632,8 @@ What happened — including a failure. Optional, one plain line.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 
 Write the outcome you actually have: a note longer than the record holds is
 CUT to fit and says so (a trailing ellipsis, and a delta naming what was
@@ -1874,6 +1882,8 @@ The message itself. Prose: paragraphs are fine.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 ```
 
 #### `post_message` — argument `/inputSchema.in_reply_to`
@@ -3989,6 +3999,8 @@ sending that back comes back blocked with nothing written.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 ```
 
 #### `set_charter` — argument `/inputSchema.sid`
@@ -4829,6 +4841,8 @@ Replacement claim.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 
 An edit that would leave the claim too big to be read back whole in one
 answer is refused with the claim unchanged: shorten it, split it into claims
@@ -5138,5 +5152,7 @@ handed it as the handover, so it is not private to the session.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Text inside backticks or a fenced block is literal: a handle there is
+kept as written and never becomes a link.
 ```
 

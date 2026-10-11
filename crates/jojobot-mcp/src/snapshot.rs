@@ -636,6 +636,64 @@ fn no_description_passes_the_length_clients_cut_at() {
     );
 }
 
+/// **Wherever a writer is told a handle in text becomes a link, the same
+/// description says code is literal** (rule 450). A writer who is taught the
+/// link and not its exception shows a handle in backticks and finds it resolved,
+/// or refused when it names nothing. The verbs are listed, so a verb that loses
+/// the link sentence is a failure here rather than a quiet pass.
+#[test]
+fn every_argument_that_teaches_a_link_in_text_says_code_is_literal() {
+    fn descriptions(node: &serde_json::Value, found: &mut Vec<String>) {
+        match node {
+            serde_json::Value::Object(map) => {
+                if let Some(text) = map.get("description").and_then(|d| d.as_str()) {
+                    found.push(text.to_string());
+                }
+                map.values().for_each(|child| descriptions(child, found));
+            }
+            serde_json::Value::Array(items) => {
+                items.iter().for_each(|child| descriptions(child, found))
+            }
+            _ => {}
+        }
+    }
+    let taught_on = [
+        "capture",
+        "update_fact",
+        "set_charter",
+        "journal",
+        "amend_journal",
+        "wrap_session",
+        "post_message",
+        "mark_processed",
+    ];
+    let tools = Jojobot::tool_router().list_all();
+    for verb in taught_on {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == verb)
+            .unwrap_or_else(|| panic!("the surface serves {verb}"));
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let mut all = Vec::new();
+        descriptions(&schema, &mut all);
+        let teaching: Vec<&String> = all
+            .iter()
+            .filter(|text| text.contains("to link to something that already exists"))
+            .collect();
+        assert!(
+            !teaching.is_empty(),
+            "{verb} no longer teaches that a handle in text is a link, so this pin has gone \
+             blind: {all:?}"
+        );
+        for text in teaching {
+            assert!(
+                text.contains("literal"),
+                "{verb} teaches the link and not that code is literal: {text}"
+            );
+        }
+    }
+}
+
 /// **A teaching added to `teaching.rs` is in the snapshot.** The list above is
 /// written by hand, so this reads the source for every teaching constant and
 /// holds the list to it.
