@@ -524,6 +524,45 @@ async fn the_rows_only_the_recording_build_writes_read_back(fixture_dir: &str, l
             &thing.to_string(),
         );
     }
+    // **And the record that wrote it still serves it under `sets`, and an own key
+    // on another record still serves under `fields`.** The thing's fold serves the
+    // value whichever bag the reader puts it in, so the read above cannot tell the
+    // two apart; the record can. A reader that put every key under `fields` would
+    // pass the read above and fail here.
+    let records = say(
+        "the records on the thing",
+        surface
+            .call(
+                "recall",
+                json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+            )
+            .await,
+    );
+    let facts = records["objects"][0]["facts"]
+        .as_array()
+        .unwrap_or_else(|| fail("the records behind the thing", &records.to_string()));
+    let setter = facts
+        .iter()
+        .find(|fact| fact["content"] == "a property of the thing, set by this claim")
+        .unwrap_or_else(|| fail("the record that set the key", &records.to_string()));
+    if setter["sets"]["upgrade_fixture_setting"] != "kept-under-sets"
+        || !setter["fields"]["upgrade_fixture_setting"].is_null()
+    {
+        fail(
+            "the key under the record's sets and not under its fields",
+            &setter.to_string(),
+        );
+    }
+    let owner = facts
+        .iter()
+        .find(|fact| fact["content"] == "lives at the recorded place")
+        .unwrap_or_else(|| fail("the record that holds an own key", &records.to_string()));
+    if owner["fields"]["since"] != "2026-01-01" || !owner["sets"].is_null() {
+        fail(
+            "an own key under the record's fields and nothing under its sets",
+            &owner.to_string(),
+        );
+    }
     // The role object reads back with its holder.
     let role = say(
         "the role object",
