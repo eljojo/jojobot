@@ -537,7 +537,7 @@ async fn february(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "place:wonder-wharf", "content": "the bridge is shut so I went in by the wharf road Friday the 6th — 52 minutes, never again",
+        json!({"subject": "place:wonder-wharf", "content": "the bridge is shut so I went in by the wharf road, the one through Wonder Wharf, Friday the 6th — 52 minutes, never again",
                "provenance": "testimony", "sets": {"minutes": "52"}}),
     )
     .await;
@@ -1204,4 +1204,36 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
              it was fixed, or the lock changed, and the exception is stale",
         );
     }
+}
+
+/// **The wharf locks recall `place:wonder-wharf`, so the operator's own words
+/// have to say that the wharf road is that place.** The furnished place is
+/// bare, and a sitting that is told only "the wharf road" has nothing to tie
+/// it to the place the locks read. The tie is the operator's: the sentence
+/// that says *wharf road* in February's entry names the place as the room
+/// furnishes it. No lock accepts a place by guess.
+#[test]
+fn the_february_entry_ties_the_wharf_road_to_the_furnished_place() {
+    let source = std::fs::read_to_string(expectations::room_document(expectations::VAULT_ROOM))
+        .expect("the shipped room reads");
+    let furnished = source
+        .lines()
+        .find_map(|line| line.strip_prefix("entity  place:wonder-wharf |"))
+        .expect("the room furnishes the place the wharf locks recall")
+        .trim()
+        .to_string();
+    let february = room_document()
+        .phases
+        .into_iter()
+        .find(|phase| phase.prompt.contains("8 February 2026"))
+        .expect("the room has a February entry");
+    let sentence = february
+        .prompt
+        .split(". ")
+        .find(|sentence| sentence.contains("wharf road"))
+        .expect("February's entry speaks of the wharf road");
+    assert!(
+        sentence.contains(&furnished),
+        "the sentence on the wharf road does not name {furnished}: {sentence}"
+    );
 }

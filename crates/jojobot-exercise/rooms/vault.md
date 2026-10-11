@@ -257,7 +257,7 @@ say     January: the operator's own timing is on record as a guess rather than a
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 8 February 2026. The standing desk came on the 6th; I have thirty days from then to send it back if I don't get on with it. Storm week: the Ocean Avenue bridge is shut for repairs until the 20th, so on Friday the 6th I went in by the wharf road — 52 minutes, never again. Teddy has had a set of my house keys since the lockout last year. Still can't decide on the shed; the kit's on offer again. And I swam on Tuesday the 3rd.
+> start jojobot as assistant — it is 8 February 2026. The standing desk came on the 6th; I have thirty days from then to send it back if I don't get on with it. Storm week: the Ocean Avenue bridge is shut for repairs until the 20th, so on Friday the 6th I went in by the wharf road, the one through Wonder Wharf — 52 minutes, never again. Teddy has had a set of my house keys since the lockout last year. Still can't decide on the shed; the kit's on offer again. And I swam on Tuesday the 3rd.
 
 ```locks
 # 🚨 **A window that is a RETURN PERIOD rather than cover, on a thing the
