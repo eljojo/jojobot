@@ -2466,6 +2466,9 @@ async fn assert_every_recorded_record_reads_back(
     if landed["provenance"] != "testimony"
         || landed["edge"]["object"] != "place:upgrade-fixture-place"
         || landed["fields"]["since"] != "2026-01-01"
+        // A claim written before the bags were kept apart was an own field that
+        // reached, and it reads as it always did: under `fields`, with no `sets`.
+        || !landed["sets"].is_null()
     {
         fail("the recorded fact's provenance, edge or fields", &read);
     }

@@ -144,7 +144,7 @@ async fn which_of_the_loops_have_gone_quiet() {
     .await
     // Four keys computed on the way in: the outcome, the day, the date the
     // next cycle counts from, and the due moment that basis now works out to.
-    .says("\"fields_count\":4");
+    .says("\"sets_count\":4");
 
     // The worming is not happening this week and it is not being written off:
     // a snooze consumes nothing, and it names the day the loop comes back.
@@ -160,7 +160,7 @@ async fn which_of_the_loops_have_gone_quiet() {
     // FOUR keys: the outcome, the day, the day it was sent with, and the due
     // moment that day now moves. No date the schedule counts from is written,
     // because a snooze consumes nothing.
-    .says("\"fields_count\":4");
+    .says("\"sets_count\":4");
 
     // ── the same question, a day later ──────────────────────────────────────
     let after = s
@@ -201,7 +201,7 @@ async fn which_of_the_loops_have_gone_quiet() {
     .await
     // Four again: a skip advances the schedule, and the due moment, exactly
     // as a run does.
-    .says("\"fields_count\":4");
+    .says("\"sets_count\":4");
 
     // A cadence is always TIME, so what the check measured rides on the record
     // as the caller's own key. This one ran, and it read something.
@@ -216,7 +216,7 @@ async fn which_of_the_loops_have_gone_quiet() {
     .await
     // Outcome, day, counts_from, wear_mm, and the due moment that basis now
     // works out to.
-    .says("\"fields_count\":5");
+    .says("\"sets_count\":5");
 
     // **The statistics question.** A skipped cycle and a completed one moved
     // the schedule identically, and the history of the outcome key is the only

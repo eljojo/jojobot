@@ -7169,11 +7169,9 @@ async fn dolt_keeps_the_bag_each_write_was_made_under() {
             .map(|(_, _, class)| class.as_str())
             .collect()
     };
-    assert_eq!(
-        classes("own_key"),
-        ["stays", "stays", "stays", "sets"],
-        "{rows:?}"
-    );
+    // **Written as an own field, moved to the settings by a call that named it
+    // there, and patched as a setting afterwards.**
+    assert_eq!(classes("own_key"), ["stays", "sets", "sets"], "{rows:?}");
     assert_eq!(
         classes("set_key"),
         ["sets", "sets", "sets", "stays"],
@@ -7190,7 +7188,7 @@ async fn dolt_keeps_the_bag_each_write_was_made_under() {
 /// The column's default is the migration's, so a row inserted without one is the
 /// shape every existing row has. It still reaches the thing, a patch through
 /// `fields` corrects the thing and keeps the class, and a patch naming the same
-/// key as a setting is refused by name.
+/// key as a setting moves it to the setting bag in one call.
 #[tokio::test]
 async fn dolt_reads_a_row_from_before_the_class_as_legacy_and_keeps_it_so() {
     let scratch = Scratch::new("legacy-class");
@@ -7281,7 +7279,30 @@ async fn dolt_reads_a_row_from_before_the_class_as_legacy_and_keeps_it_so() {
     assert_eq!(newest, "legacy", "a patch keeps the key's class");
     assert_eq!(memory.fields(&thing).await.expect("fields")["plain"], "q");
 
-    let refused = memory
+    // **A legacy row is an own field that reached**, so the claim reads it as one,
+    // with nothing set on the thing.
+    let read = |memory: &DoltMemory| {
+        let memory = memory.clone();
+        let thing = thing.clone();
+        let id = claim.id.clone();
+        async move {
+            memory
+                .recall(&thing)
+                .await
+                .expect("recall")
+                .into_iter()
+                .find(|fact| fact.id == id)
+                .expect("the claim is there")
+        }
+    };
+    assert!(
+        read(&memory).await.sets.is_empty(),
+        "a legacy key is not a setting"
+    );
+
+    // **Named as a setting, it moves to the setting bag in one call**, and the
+    // class of that write is `sets`.
+    memory
         .update_fact(
             &claim.address(),
             FactPatch {
@@ -7294,11 +7315,19 @@ async fn dolt_reads_a_row_from_before_the_class_as_legacy_and_keeps_it_so() {
             &EntityId("bot:sigma".into()),
         )
         .await
-        .expect_err("a legacy key is an own key, so it is not named as a setting");
-    assert!(
-        matches!(&refused, MemoryError::KeyInOtherBag { key, .. } if key == "plain"),
-        "{refused:?}",
-    );
+        .expect("a legacy key named as a setting moves")
+        .written()
+        .expect("nothing blocks it");
+    let moved: String = sqlx::query_scalar(
+        "SELECT write_class FROM field_write WHERE entity = ? AND `key` = 'plain' AND ordinal = 3",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the move's row reads");
+    assert_eq!(moved, "sets");
+    assert_eq!(memory.fields(&thing).await.expect("fields")["plain"], "r");
+    assert!(read(&memory).await.sets.contains("plain"));
 
     store.stop().await;
 }

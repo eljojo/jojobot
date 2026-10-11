@@ -220,6 +220,7 @@ mod tests {
             fields.insert(VALID_UNTIL.to_string(), until.to_string());
         }
         Fact {
+            sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId(holder.into()),
             subject: EntityId(holder.into()),

@@ -203,6 +203,9 @@ mod thread_decisions;
 /// One claim, two runs, two zones — and both answers are right.
 #[path = "user_stories/timezones.rs"]
 mod timezones;
+/// A claim reads its settings and its own labels apart; one call moves a label.
+#[path = "user_stories/two_bags.rs"]
+mod two_bags;
 
 #[path = "user_stories/typing.rs"]
 mod typing;

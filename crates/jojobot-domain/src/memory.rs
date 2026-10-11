@@ -3341,8 +3341,10 @@ pub fn reaches_the_thing(class: WriteClass) -> bool {
 /// under (a legacy key stays legacy, so correcting an old claim still corrects the
 /// thing) and is a new own field when new: [`WriteClass::Stays`] once own fields
 /// have stopped reaching their thing (`own_fields_stay`), [`WriteClass::Own`]
-/// before. A key named in `sets` is `Sets` when new or already `Sets`. Anything
-/// else is [`MemoryError::KeyInOtherBag`], which names the route. A clear keeps
+/// before. A key named in `sets` is `Sets` when new, when already `Sets`, and when
+/// it was an own field: that one MOVES to the setting bag in the same write.
+/// A setting named as an own field is [`MemoryError::KeyInOtherBag`], which names
+/// the route. A clear keeps
 /// the class of the key it clears, so `clear_fields` takes a key off whichever
 /// bag holds it.
 ///
@@ -3411,12 +3413,14 @@ pub fn classes_for_write(
                     named: "one of the record's own fields",
                 });
             }
+            // **An own field named as a setting MOVES to the setting bag in this
+            // write.** It is the same key on the same record with the value the
+            // caller sent, and from this write the thing holds it. The other way
+            // is still two calls (a clear, then a write), because a setting made
+            // an own field would take a key off the thing without anybody saying
+            // so.
             (Some(WriteClass::Legacy | WriteClass::Own | WriteClass::Stays), true) => {
-                return Err(MemoryError::KeyInOtherBag {
-                    key: key.to_string(),
-                    held: "one of the record's own fields",
-                    named: "a setting on the thing",
-                });
+                WriteClass::Sets
             }
         };
         classes.insert(key.to_string(), class);
@@ -4413,6 +4417,15 @@ pub struct Fact {
     /// supersedes them, moves them, or changes their status; each stays its
     /// own row, at its own address, independently walkable.
     pub stands_for: Vec<FactAddress>,
+    /// **The keys of [`Fact::fields`] this record set on its thing**, as against
+    /// its own labels. A key is here when the newest write of it on this record
+    /// was made under [`WriteClass::Sets`]. A key written before the class was
+    /// kept ([`WriteClass::Legacy`]) was an own field that reached, and it is not
+    /// here: a reader sees such a record as it always read.
+    ///
+    /// **Every key here is also a key of `fields`**, which holds both bags. A
+    /// reader that wants the two apart splits `fields` by this set.
+    pub sets: std::collections::BTreeSet<String>,
 }
 
 impl Fact {
@@ -5879,13 +5892,14 @@ pub enum MemoryError {
         /// The claim a rewrite of its words or its fields was refused on.
         address: String,
     },
-    /// **A key is written under one bag at a time.** A record holds a key as its
-    /// own field or as a setting on its thing, and a write naming it under the
-    /// other bag is refused rather than moving it.
+    /// **A setting is not turned into an own field by a write that names it.** A
+    /// record holds a key as a setting on its thing, and a write naming it as one
+    /// of the record's own fields is refused rather than taking it off the thing
+    /// unasked. (An own field named as a setting moves, and is not this.)
     #[error(
-        "'{key}' on this record is held as {held}, and this call names it as {named}. A key stays \
-         in the bag it was first written under: clear it with clear_fields, which takes a key off \
-         whichever bag holds it, then write it under the other"
+        "'{key}' on this record is held as {held}, and this call names it as {named}. A setting \
+         is not made an own field by naming it: clear it with clear_fields, which takes a key \
+         off whichever bag holds it, then write it under the other"
     )]
     KeyInOtherBag {
         /// The key.

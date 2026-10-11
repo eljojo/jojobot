@@ -951,6 +951,7 @@ mod tests {
             archived: None,
         };
         let row = |id: &str, subject: &str| Fact {
+            sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId(subject.into()),
@@ -1037,6 +1038,7 @@ mod tests {
             archived: None,
         };
         let row = |id: &str, subject: &str| Fact {
+            sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId(subject.into()),

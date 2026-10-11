@@ -264,6 +264,14 @@ impl Jojobot {
             .filter(|key| reach.kept.contains(*key) && read.contains(*key))
             .cloned()
             .collect();
+        // **Told first, for every key this call sent as an own field that stayed**
+        // — the keys that only label a claim are not in `kept`, and "send it in
+        // sets" would be wrong for them.
+        let told: Vec<&String> = own_sent
+            .iter()
+            .filter(|key| reach.kept.contains(*key))
+            .collect();
+        crate::answer::note_keys_stayed_off_the_thing(body, &fact.subject, &told);
         crate::answer::note_reach(body, reach.reached, stayed);
         if to_move.is_empty() {
             return;

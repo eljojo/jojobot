@@ -154,11 +154,12 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to set on the thing this claim is about**, as key/value pairs,
-    /// apart from `fields`, which are the claim's own. A key stays in the bag it
-    /// was first written under on this record: naming under `sets` a key the
-    /// record holds as its own, or under `fields` one it holds as a setting, is
-    /// refused with the way to move it — take it off with `clear_fields`, then
-    /// write it under the other. A key that only labels the claim is never a
+    /// apart from `fields`, which are the claim's own. **Naming under `sets` a
+    /// key the record holds as its own field MOVES it to the settings in this
+    /// call**, with the value you send, and the receipt says it moved. The other
+    /// way is two calls: a setting named under `fields` is refused, so take it
+    /// off with `clear_fields`, then write it under `fields`. A key that only
+    /// labels the claim is never a
     /// property of the thing and is refused here by name. The keys that make a
     /// thing fall due act on it only when sent here.
     #[serde(default)]
@@ -302,14 +303,10 @@ impl Jojobot {
                        with derived_from naming the archived claim. confirmed_by_user is \
                        required for exactly two moves of an existing claim: anything to \
                        testimony, and open to settled. Reopening is free; a fresh capture \
-                       is taken at its word. It answers with a receipt, not the record \
-                       (the write is read back from the store first); recall the subject \
-                       reads the record. A call naming no change is refused; keep: true \
-                       alone is the way to touch a claim unchanged. \
-                       expected_revision (recall's revision_count): a claim written \
-                       since is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. An unknown address \
-                       comes back blocked with the addresses that exist. Each argument's \
+                       is taken at its word. It answers with a receipt, not the record (read back from the store first); recall the subject \
+                       reads the record. A call naming no change is refused; keep: true alone touches a claim unchanged. \
+                       expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with the addresses that exist. Each argument's \
                        own description holds its rules."
     )]
     pub(crate) async fn update_fact(
@@ -598,6 +595,23 @@ impl Jojobot {
         // copy is: this is what THIS write actually sent, not what the fact
         // ends up carrying.
         let patch_fields = patch.fields.clone();
+        // **The keys this call moves from the record's own fields to its settings**:
+        // named in `sets` and held off the thing until now. Read before the write,
+        // because after it they reach the thing and nothing tells them apart. A
+        // store that cannot answer leaves the note out; the write is not held up.
+        let moved_to_sets: Vec<String> = if patch.sets.is_empty() {
+            Vec::new()
+        } else {
+            match self.memory.keys_kept_off_the_thing(&address).await {
+                Ok(kept) => patch
+                    .sets
+                    .iter()
+                    .filter(|key| kept.contains(*key))
+                    .cloned()
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see
         // `refuses_a_boot_floor_over`.
@@ -735,7 +749,23 @@ impl Jojobot {
                     line.push(' ');
                     line.push_str(&due);
                 }
+                if !moved_to_sets.is_empty() {
+                    line.push(' ');
+                    line.push_str(&format!(
+                        "{} moved from the claim's own fields to its settings: {} holds {} now.",
+                        moved_to_sets.join(", "),
+                        fact.subject,
+                        if moved_to_sets.len() == 1 {
+                            "it"
+                        } else {
+                            "them"
+                        },
+                    ));
+                }
                 crate::answer::note_postcondition(&mut body, line);
+                if !moved_to_sets.is_empty() {
+                    body["moved_to_sets"] = serde_json::json!(moved_to_sets);
+                }
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
                 if let Some((subject, before)) = held_before_archive {
                     self.note_what_left(&mut body, &subject, before).await;

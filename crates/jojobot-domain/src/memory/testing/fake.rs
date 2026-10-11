@@ -429,6 +429,7 @@ impl InMemoryMemory {
             facts.iter().filter(|f| f.home == home).count() + 1
         ));
         let stored = Fact {
+            sets: Default::default(),
             id,
             home: home.clone(),
             subject: home,
@@ -1003,14 +1004,29 @@ impl InMemoryMemory {
     fn project(fact: &Fact, mut mine: Vec<&StoredWrite>) -> Fact {
         mine.sort_by_key(|w| w.ordinal);
         let mut fields = std::collections::BTreeMap::new();
+        let mut sets = std::collections::BTreeSet::new();
         for write in mine {
             match &write.value {
-                Some(value) => fields.insert(write.key.clone(), value.clone()),
-                None => fields.remove(&write.key),
+                Some(value) => {
+                    fields.insert(write.key.clone(), value.clone());
+                    // **The class of the newest write decides the bag**, as the
+                    // real store reads it: a key set on the thing is here, and
+                    // one rewritten as an own field is not.
+                    if write.class == super::super::WriteClass::Sets {
+                        sets.insert(write.key.clone());
+                    } else {
+                        sets.remove(&write.key);
+                    }
+                }
+                None => {
+                    fields.remove(&write.key);
+                    sets.remove(&write.key);
+                }
             };
         }
         Fact {
             fields,
+            sets,
             ..fact.clone()
         }
     }
@@ -2150,6 +2166,7 @@ impl Memory for InMemoryMemory {
             .map(|(key, value)| (key.clone(), Some(value.clone())))
             .collect();
         let stored = Fact {
+            sets: Default::default(),
             id,
             home: home.clone(),
             // One column, stored into both fields — the real store reads
@@ -2206,6 +2223,16 @@ impl Memory for InMemoryMemory {
         // keeps it, so a claim nobody has corrected answers with one write.
         self.append_claim_write(&stored, fact.session.clone());
         self.append_writes(&stored.home, &stored.id, wrote, &classes);
+        // **The keys this record set on its thing**, as the bags were decided above
+        // and as a read of it will answer.
+        let stored = Fact {
+            sets: classes
+                .iter()
+                .filter(|(_, class)| **class == super::super::WriteClass::Sets)
+                .map(|(key, _)| key.clone())
+                .collect(),
+            ..stored
+        };
         // **Stored under the storage key; served under the handle.** The row
         // just pushed keeps the badge, exactly as every other row does; the
         // caller that just wrote it reads back the handle it wrote with,
@@ -3219,6 +3246,7 @@ impl Memory for InMemoryMemory {
 
         let existing = facts.iter().filter(|f| f.home == survivor_key).count();
         let record = Fact {
+            sets: Default::default(),
             id: FactId(format!("f{}", existing + 1)),
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
@@ -3331,6 +3359,7 @@ impl Memory for InMemoryMemory {
         let home = target.home.clone();
         let existing = facts.iter().filter(|f| f.home == home).count();
         let record = Fact {
+            sets: Default::default(),
             id: FactId(format!("f{}", existing + 1)),
             home: home.clone(),
             subject: home,

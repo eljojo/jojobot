@@ -49,7 +49,11 @@ async fn record_and_thing(
         .iter()
         .find(|fact| fact["address"] == address)
         .unwrap_or_else(|| panic!("{address} is not among the records: {body}"));
-    (keys(&record["fields"]), keys(&object["fields"]))
+    // The keys the record holds, whichever bag: a key jojobot computed is set on
+    // the thing, so it sits under `sets`.
+    let mut held = keys(&record["fields"]);
+    held.extend(keys(&record["sets"]));
+    (held, keys(&object["fields"]))
 }
 
 /// A value a field of this type accepts, generated from the declaration.

@@ -15782,14 +15782,15 @@ pub async fn own_fields_stay_while_settings_and_computed_keys_reach<M: Memory>(s
 }
 
 /// **A record sets keys on its thing from a bag of its own, and a key stays in
-/// the bag it was first written under.**
+/// the bag it was first written under, except that an own field may be moved to
+/// the setting bag in one call.**
 ///
-/// One capture records a claim and sets the thing: both bags' keys reach the
-/// thing today, and the claim still carries both. A key the record holds as one
-/// bag's cannot be named under the other, in either direction, until it is taken
-/// off; then it may be written under the other. A key named in both bags of one
-/// call is refused, and so is a key that only describes the claim in the setting
-/// bag.
+/// One capture records a claim and sets the thing: the claim carries both bags
+/// and only the settings are on the thing. A setting named as an own field is
+/// refused until it is taken off; then it may be written as an own field. An own
+/// field named as a setting moves, in one call, and reaches the thing from that
+/// write on. A key named in both bags of one call is refused, and so is a key
+/// that only describes the claim in the setting bag.
 pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memory>(store: &M) {
     let thing = EntityId("thing:contract-bags".into());
     add(
@@ -15849,7 +15850,8 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
             "{key} is refused by name: {err:?}",
         );
     };
-    // A setting named as an own field, and an own field named as a setting.
+    // **A setting named as an own field is refused**: that direction still takes
+    // a clear and a second write.
     refused(
         store
             .update_fact(
@@ -15860,30 +15862,47 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
             .await,
         "set_key",
     );
-    refused(
-        store
-            .update_fact(
-                &claim.address(),
-                patch(&[("own_key", "p")], &["own_key"], &[]),
-                &other_caller(),
-            )
-            .await,
-        "own_key",
+    // **An own field named as a setting MOVES, in the one call.** It stayed on the
+    // claim; from this write it is set on the thing, with the value sent, and the
+    // claim reads it as a setting.
+    assert!(
+        !store
+            .fields(&thing)
+            .await
+            .expect("fields")
+            .contains_key("own_key"),
+        "before the move the thing does not hold it",
     );
-    let after_refusals = store.fields(&thing).await.expect("fields read");
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[("own_key", "p")], &["own_key"], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("an own field named as a setting is moved")
+        .written()
+        .expect("nothing blocks it");
     assert_eq!(
-        (
-            after_refusals.get("own_key").map(String::as_str),
-            after_refusals["set_key"].as_str()
-        ),
-        (None, "s"),
-        "a refused write moves nothing",
+        store.fields(&thing).await.expect("fields")["own_key"],
+        "p",
+        "after the move the thing holds it",
+    );
+    let moved = read_back(store, &thing, &claim.id).await;
+    assert_eq!(
+        moved.sets,
+        named(&["own_key", "set_key"]),
+        "the claim reads both as settings now"
     );
     // **Each bag may still patch its own keys.**
     store
         .update_fact(
             &claim.address(),
-            patch(&[("own_key", "o2"), ("set_key", "s2")], &["set_key"], &[]),
+            patch(
+                &[("own_key", "o2"), ("set_key", "s2")],
+                &["own_key", "set_key"],
+                &[],
+            ),
             &other_caller(),
         )
         .await
@@ -15901,40 +15920,8 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
         "the history of a key on the thing is every write that reaches it",
     );
 
-    // **The route**: take the key off, then write it under the other bag.
-    store
-        .update_fact(
-            &claim.address(),
-            patch(&[], &[], &["own_key"]),
-            &other_caller(),
-        )
-        .await
-        .expect("a clear takes a key off whichever bag holds it")
-        .written()
-        .expect("nothing blocks it");
-    assert!(
-        !store
-            .fields(&thing)
-            .await
-            .expect("fields")
-            .contains_key("own_key"),
-        "the clear took it off the thing",
-    );
-    store
-        .update_fact(
-            &claim.address(),
-            patch(&[("own_key", "now a setting")], &["own_key"], &[]),
-            &other_caller(),
-        )
-        .await
-        .expect("once taken off it is written under the other bag")
-        .written()
-        .expect("nothing blocks it");
-    assert_eq!(
-        store.fields(&thing).await.expect("fields")["own_key"],
-        "now a setting",
-    );
-    // …and now it is a setting, so naming it as an own field is the refusal again.
+    // **The other direction is still two calls**: a setting named as an own field
+    // is refused, even after the move above.
     refused(
         store
             .update_fact(

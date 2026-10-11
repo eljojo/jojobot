@@ -715,6 +715,111 @@ async fn a_find_that_named_a_revision_is_refused_in_the_words_about_that_revisio
     assert_eq!(recalled_claim(&jojobot).await["details"], PARAGRAPHS);
 }
 
+/// 🚨 **A key sent as an own field and then named in `sets` MOVES in one call.**
+///
+/// Paid runs left a key under `fields` that the thing needed, and the only way
+/// out was a clear and a second write. Now `update_fact` with `sets` naming a key
+/// the claim holds as its own moves it, nothing is refused, the thing holds the
+/// key from that write, and the receipt says it moved.
+///
+/// **Both halves**: before the move the thing does not hold the key (so a build
+/// that never kept it off would pass the second half alone), and after it the
+/// claim reads the key under `sets` and no longer under `fields`.
+#[tokio::test]
+async fn an_own_key_named_in_sets_moves_to_the_thing_in_one_call() {
+    let jojobot = handler();
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [("mood".to_string(), "delighted".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("person:alpha", "the kiln was lit")
+        },
+    )
+    .await;
+    let recalled = |jojobot: &Jojobot| {
+        let jojobot = jojobot.clone();
+        async move {
+            json_of(
+                &jojobot
+                    .recall(Parameters(recall_args("person:alpha")))
+                    .await
+                    .expect("recall ok"),
+            )
+        }
+    };
+    let before = recalled(&jojobot).await;
+    assert!(
+        before["objects"][0]["fields"]["mood"].is_null(),
+        "before the move the thing does not hold it: {before}"
+    );
+    assert_eq!(
+        before["objects"][0]["facts"][0]["fields"]["mood"], "delighted",
+        "{before}"
+    );
+
+    let moved = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                sets: Some(
+                    [("mood".to_string(), "delighted".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert_ne!(
+        moved["status"], "blocked",
+        "the move is not refused: {moved}"
+    );
+    assert_eq!(
+        moved["moved_to_sets"],
+        serde_json::json!(["mood"]),
+        "{moved}"
+    );
+    assert!(
+        moved.get("a_key_stayed_off_the_thing").is_none(),
+        "nothing stayed off the thing on this write: {moved}"
+    );
+
+    let after = recalled(&jojobot).await;
+    assert_eq!(
+        after["objects"][0]["fields"]["mood"], "delighted",
+        "after the move the thing holds it: {after}"
+    );
+    assert_eq!(
+        after["objects"][0]["facts"][0]["sets"]["mood"], "delighted",
+        "{after}"
+    );
+    assert!(
+        after["objects"][0]["facts"][0]["fields"]["mood"].is_null(),
+        "and the claim no longer carries it as an own field: {after}"
+    );
+
+    // **A key that was never an own field does not report a move**, so the
+    // receipt's list is the keys that moved and not the keys that were sent.
+    let plain = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                sets: Some(
+                    [("weather".to_string(), "clear".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert!(plain.get("moved_to_sets").is_none(), "{plain}");
+}
+
 /// Update through the handler, expecting the guard to wave it through.
 async fn update_ok(jojobot: &Jojobot, args: UpdateFactArgs) -> serde_json::Value {
     let body = json_of(
@@ -945,7 +1050,8 @@ async fn update_fact_sets_and_clears_a_field() {
     // is the answer to both halves at once: the key named was rewritten
     // rather than added, and the key the patch did not name is still
     // there. What each one HOLDS is read below, off the record.
-    assert_eq!(set["fields_count"], 2, "{set}");
+    assert_eq!(set["sets_count"], 2, "{set}");
+    assert_eq!(set["fields_count"], 0, "{set}");
 
     let cleared = json_of(
         &jojobot
@@ -957,7 +1063,7 @@ async fn update_fact_sets_and_clears_a_field() {
             .expect("update ok"),
     );
     assert_eq!(
-        cleared["fields_count"], 1,
+        cleared["sets_count"], 1,
         "the key named is gone and the other is not: {cleared}"
     );
 
@@ -970,7 +1076,7 @@ async fn update_fact_sets_and_clears_a_field() {
             .expect("recall ok"),
     );
     assert_eq!(
-        recalled["objects"][0]["facts"][0]["fields"],
+        recalled["objects"][0]["facts"][0]["sets"],
         serde_json::json!({"cost": "45"}),
         "{recalled}"
     );
@@ -2330,14 +2436,18 @@ async fn a_record_can_be_marked_and_the_mark_can_be_changed() {
     )
     .await;
 
+    // **Everything the record carries, whichever bag holds it**: this case is
+    // about the mark surviving a round trip, not about which bag it sits in.
     let recall_fields = |recalled: &serde_json::Value, addr: &str| -> serde_json::Value {
-        recalled["objects"][0]["facts"]
+        let fact = recalled["objects"][0]["facts"]
             .as_array()
             .expect("facts")
             .iter()
             .find(|f| f["address"] == addr)
-            .unwrap_or_else(|| panic!("{addr} is there: {recalled}"))["fields"]
-            .clone()
+            .unwrap_or_else(|| panic!("{addr} is there: {recalled}"));
+        let mut carried = fact["fields"].as_object().cloned().unwrap_or_default();
+        carried.extend(fact["sets"].as_object().cloned().unwrap_or_default());
+        serde_json::Value::Object(carried)
     };
 
     let recalled = json_of(

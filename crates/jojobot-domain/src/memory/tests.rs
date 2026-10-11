@@ -781,6 +781,7 @@ fn the_ageing_setting_is_written_the_way_the_capacity_is() {
 
 fn thought(id: &str, pointer: &str) -> Fact {
     Fact {
+        sets: Default::default(),
         id: FactId(id.into()),
         home: EntityId("bot:contract-thought-capacity".into()),
         subject: EntityId("bot:contract-thought-capacity".into()),
@@ -1394,11 +1395,12 @@ fn the_class_of_a_key_follows_its_bag_and_whether_jojobot_computed_it() {
         class_of(&[("a", WriteClass::Stays)], &["a"], &[], &["a"], true, "a"),
         Ok(WriteClass::Sets)
     );
-    // A key never changes bag: a setting over an own field, and the reverse, are refused.
+    // An own field named as a setting MOVES to the setting bag, whichever class it
+    // is held under; a setting named as an own field is refused.
     for held in [WriteClass::Legacy, WriteClass::Own, WriteClass::Stays] {
         assert_eq!(
             class_of(&[("a", held)], &["a"], &["a"], &[], true, "a"),
-            Err(()),
+            Ok(WriteClass::Sets),
             "{held:?}"
         );
     }
@@ -2374,6 +2376,7 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     let starred = |n: usize| -> Vec<Fact> {
         (1..=n)
             .map(|i| Fact {
+                sets: Default::default(),
                 id: FactId(format!("f{i}")),
                 home: EntityId("bot:gamma".into()),
                 subject: EntityId("bot:gamma".into()),

@@ -2650,6 +2650,7 @@ mod tests {
             archived: None,
         };
         let fact = Fact {
+            sets: Default::default(),
             id: FactId("f3".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),
@@ -2841,6 +2842,7 @@ mod tests {
     /// as counting the right one.
     fn fact_missing_and_holding_happened_at() -> (Fact, Fact, Fact) {
         let base = Fact {
+            sets: Default::default(),
             id: FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),

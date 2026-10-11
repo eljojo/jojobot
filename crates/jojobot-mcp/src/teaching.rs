@@ -1174,6 +1174,7 @@ mod tests {
         use jojobot_domain::memory::{Fact, FactId, FactStatus, Provenance, Standing};
 
         let fact = Fact {
+            sets: Default::default(),
             id: FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),

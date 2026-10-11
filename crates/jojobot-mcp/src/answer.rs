@@ -735,6 +735,36 @@ pub(crate) fn note_reach(body: &mut serde_json::Value, reached: Vec<String>, sta
     fields.insert("stayed_on_the_record".into(), stayed.into());
 }
 
+/// **Tell a caller, first, that a key it sent as one of a claim's own fields did
+/// not reach the thing**, in words that state what that costs and what to do.
+///
+/// The key's name sorts before every other key of a receipt, so the sentence is
+/// the first thing in the text a reader gets: paid runs read the lists of keys
+/// that stayed 465 to 790 characters in and kept going. One sentence per key.
+pub(crate) fn note_keys_stayed_off_the_thing(
+    body: &mut serde_json::Value,
+    thing: &jojobot_domain::memory::EntityId,
+    keys: &[&String],
+) {
+    if keys.is_empty() {
+        return;
+    }
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let said = keys
+        .iter()
+        .map(|key| {
+            format!(
+                "{thing} does not hold {key}; a read or filter on {key} will not find it. If \
+                 {key} is a property of {thing}, send it in sets."
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    fields.insert("a_key_stayed_off_the_thing".into(), said.into());
+}
+
 /// **The sentence that ends a write's line when the write gave the thing a day to
 /// fall due on**: the thing and the day, so a day written onto the wrong thing is
 /// seen when it is written. A write that moved nothing says nothing. **A write

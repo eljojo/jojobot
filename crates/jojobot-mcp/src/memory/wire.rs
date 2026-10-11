@@ -75,7 +75,15 @@ pub(crate) fn fact_json(
         // **Always present, empty when the record carries none.** A reader must
         // not have to branch on whether the key is there to learn that a record
         // has no fields.
-        "fields": fact.fields,
+        //
+        // **Only the record's OWN keys.** What the record set on its thing is
+        // `sets`, below, so a reader sees the two bags apart and a key under
+        // `fields` is one the thing does not hold because of this claim.
+        "fields": fact
+            .fields
+            .iter()
+            .filter(|(key, _)| !fact.sets.contains(*key))
+            .collect::<std::collections::BTreeMap<_, _>>(),
         // Links whose meaning is deliberately unrecorded — see
         // `EdgeShape::Connection` for why these are not `about`.
         "refs": fact.refs.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
@@ -89,6 +97,17 @@ pub(crate) fn fact_json(
         // as `refs`, because most records are not a synthesis of others.
         "stands_for": fact.stands_for.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
     });
+    // **What this record set on its thing**, beside `fields`. Omitted when it set
+    // nothing, because a key holding nothing carries no information; a record
+    // written before the bags were kept apart has none, and reads as it did.
+    let set: std::collections::BTreeMap<_, _> = fact
+        .fields
+        .iter()
+        .filter(|(key, _)| fact.sets.contains(*key))
+        .collect();
+    if !set.is_empty() {
+        rendered["sets"] = serde_json::json!(set);
+    }
     // **A key that holds nothing carries no information, so it is omitted
     // rather than spelled out as its own name plus `null`** — a field earns
     // its place (rule 300). `stale_after` is the one field of its shape with
@@ -158,7 +177,17 @@ pub(crate) fn fact_receipt_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_
         // the caller sent; how many landed is what says the write took them.
         fields.insert("fields".into(), serde_json::Value::Null);
         fields.insert("fields_elided".into(), true.into());
-        fields.insert("fields_count".into(), fact.fields.len().into());
+        fields.insert(
+            "fields_count".into(),
+            (fact.fields.len() - fact.sets.len()).into(),
+        );
+        // The same count for what the record set on its thing, only when it set
+        // something, as `sets` itself is.
+        if !fact.sets.is_empty() {
+            fields.insert("sets".into(), serde_json::Value::Null);
+            fields.insert("sets_elided".into(), true.into());
+            fields.insert("sets_count".into(), fact.sets.len().into());
+        }
     }
     body
 }
@@ -579,6 +608,7 @@ mod tests {
     #[test]
     fn a_facts_happened_through_reaches_the_caller_beside_happened_at() {
         let fact = Fact {
+            sets: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),

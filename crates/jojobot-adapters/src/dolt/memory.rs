@@ -1905,6 +1905,7 @@ impl DoltMemory {
         }
         let id = Self::mint(tx, &home).await?;
         let stored = Fact {
+            sets: Default::default(),
             id,
             home: home.clone(),
             // One column, stored into both fields — read back into both the
@@ -2007,6 +2008,13 @@ impl DoltMemory {
             edge: served_edge,
             refs: served_refs,
             fields: served_fields,
+            // **The keys this record set on its thing**, as the bags were decided
+            // above and as a read of it will answer.
+            sets: classes
+                .iter()
+                .filter(|(_, class)| **class == jojobot_domain::memory::WriteClass::Sets)
+                .map(|(key, _)| key.clone())
+                .collect(),
             ..stored
         }))
     }
@@ -2036,7 +2044,7 @@ impl DoltMemory {
         for row in rows {
             let entity = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
-            let fields = Self::fields_of(tx, &entity, &id).await?;
+            let (fields, sets) = Self::fields_and_sets_of(tx, &entity, &id).await?;
             let refs = sqlx::query(
                 "SELECT entity FROM fact_event_ref
                  WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
@@ -2072,6 +2080,7 @@ impl DoltMemory {
             let handle = self.current_handle(tx, &entity).await?;
             let raw = fact_from(row, entity, id, fields, refs, stands_for)?;
             let mut served = raw;
+            served.sets = sets;
             served.home = handle.clone();
             served.subject = handle;
             if let Some(source) = &served.derived_from {
@@ -2153,8 +2162,28 @@ impl DoltMemory {
         entity: &EntityId,
         fact: &FactId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        Ok(Self::fields_and_sets_of(tx, entity, fact).await?.0)
+    }
+
+    /// **A record's fields, and which of them it set on its thing.** The second
+    /// is the keys whose newest write on this record was made under
+    /// [`WriteClass::Sets`](jojobot_domain::memory::WriteClass::Sets); a key
+    /// written before the class was kept reads as an own field, as it always did.
+    /// Both come from the one set of rows, so the two cannot disagree about which
+    /// write is the newest.
+    async fn fields_and_sets_of(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+        fact: &FactId,
+    ) -> Result<
+        (
+            std::collections::BTreeMap<String, String>,
+            std::collections::BTreeSet<String>,
+        ),
+        MemoryError,
+    > {
         let rows = sqlx::query(
-            "SELECT `key`, value FROM field_write
+            "SELECT `key`, value, write_class FROM field_write
              WHERE entity = ? AND fact_id = ? ORDER BY `key`, ordinal",
         )
         .bind(entity.as_str())
@@ -2163,14 +2192,28 @@ impl DoltMemory {
         .await
         .map_err(store)?;
         let mut fields = std::collections::BTreeMap::new();
+        let mut sets = std::collections::BTreeSet::new();
         for row in &rows {
             let key: String = row.try_get("key").map_err(store)?;
             match row.try_get::<Option<String>, _>("value").map_err(store)? {
-                Some(value) => fields.insert(key, value),
-                None => fields.remove(&key),
+                Some(value) => {
+                    let token: String = row.try_get("write_class").map_err(store)?;
+                    if jojobot_domain::memory::WriteClass::from_token(&token)
+                        == jojobot_domain::memory::WriteClass::Sets
+                    {
+                        sets.insert(key.clone());
+                    } else {
+                        sets.remove(&key);
+                    }
+                    fields.insert(key, value);
+                }
+                None => {
+                    fields.remove(&key);
+                    sets.remove(&key);
+                }
             };
         }
-        Ok(fields)
+        Ok((fields, sets))
     }
 
     /// **Every write on this thing, each with the standing of the record that
@@ -3395,6 +3438,7 @@ fn fact_from(
         _ => None,
     };
     Ok(Fact {
+        sets: Default::default(),
         id,
         // **One column, read into both fields.** The record above this adapter
         // still has a home and a subject; here they are the same value, so
@@ -5068,6 +5112,7 @@ impl Memory for DoltMemory {
         }
 
         let record = Fact {
+            sets: Default::default(),
             id: Self::mint(&mut tx, &survivor_key).await?,
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
@@ -5190,6 +5235,7 @@ impl Memory for DoltMemory {
         let account = retraction_of(&served_target, reason, date)?;
         let standing = standing_of(&account);
         let record = Fact {
+            sets: Default::default(),
             id: Self::mint(&mut tx, &key).await?,
             home: key.clone(),
             subject: key.clone(),

@@ -1304,6 +1304,97 @@ async fn a_backdated_claim_is_receipted_as_of_today() {
     );
 }
 
+/// 🚨 **A key sent as one of a claim's own fields, which then stays on the
+/// claim, is told so FIRST in the receipt, in words that state what it costs.**
+///
+/// Paid runs lost 31 writes to the same step: a key under `fields`, a receipt
+/// that listed it among the keys that stayed 465 to 790 characters in, and a
+/// later read or filter on the thing that found nothing. The sentence is in a
+/// key that sorts before every other key, so it leads the serialized body, and
+/// it names the key, the thing and the way out (`sets`).
+///
+/// **The negatives are what keep it worth reading.** A key sent in `sets`
+/// reaches the thing and gets none, and neither does a key that only ever
+/// labels a claim (`read_from`): "send it in sets" would be wrong for it.
+#[tokio::test]
+async fn an_own_key_that_stayed_is_told_first_and_a_setting_or_a_label_is_not() {
+    let jojobot = handler();
+    ensure(&jojobot, "person:alpha").await;
+    const LEAD: &str = "a_key_stayed_off_the_thing";
+
+    let stayed = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                fields: Some(
+                    [("mood".to_string(), "delighted".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "the kiln was lit")
+            }))
+            .await
+            .expect("capture ok"),
+    );
+    let said = stayed[LEAD].as_str().unwrap_or_else(|| panic!("{stayed}"));
+    for word in ["mood", "person:alpha", "sets"] {
+        assert!(
+            said.contains(word),
+            "the sentence does not name {word}: {said}"
+        );
+    }
+    // **First by sort and first in the text a reader gets.**
+    assert_eq!(
+        stayed
+            .as_object()
+            .expect("an object")
+            .keys()
+            .next()
+            .map(String::as_str),
+        Some(LEAD),
+        "{stayed}"
+    );
+    assert!(
+        stayed.to_string().starts_with(&format!("{{\"{LEAD}\"")),
+        "{stayed}"
+    );
+    // …and it lists the key as data too, as the receipt always did.
+    assert_eq!(stayed["stayed_on_the_record"], serde_json::json!(["mood"]));
+
+    // **A setting reaches the thing: nothing stayed, nothing is said.**
+    let set = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                sets: Some(
+                    [("weather".to_string(), "clear".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "the weather was clear")
+            }))
+            .await
+            .expect("capture ok"),
+    );
+    assert!(set.get(LEAD).is_none(), "{set}");
+
+    // **A key that only labels a claim can never be set on a thing**, so the
+    // sentence that says to send it in `sets` is not told for it.
+    let labelled = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                provenance: Some("observation".into()),
+                fields: Some(
+                    [("read_from".to_string(), "the kiln log".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "the log says it was lit")
+            }))
+            .await
+            .expect("capture ok"),
+    );
+    assert!(labelled.get(LEAD).is_none(), "{labelled}");
+}
+
 /// **A capture is answered with a receipt, not with the record.**
 ///
 /// The content, the details and the fields are what the caller sent in
@@ -1352,7 +1443,7 @@ async fn a_capture_is_receipted_without_reading_the_record_back() {
         "…and the nuance beside it: {body}"
     );
     assert_eq!(
-        body["fields_count"], 1,
+        body["sets_count"], 1,
         "how many keys landed, not which: {body}"
     );
 
@@ -1404,7 +1495,10 @@ async fn a_capture_carries_fields_with_no_label_and_reads_its_keys_back() {
             .expect("capture ok"),
     );
     assert_ne!(body["status"], "blocked", "no label is asked for: {body}");
-    assert_eq!(body["fields_count"], 2, "both keys landed: {body}");
+    // **Both keys were sent as settings, so the receipt counts them under `sets`**
+    // and counts none as the record's own.
+    assert_eq!(body["sets_count"], 2, "both keys landed: {body}");
+    assert_eq!(body["fields_count"], 0, "neither is an own field: {body}");
     assert_eq!(body["refs"], serde_json::json!(["person:milhouse"]));
 
     // …and they are on the record a later reader takes, not only in the
@@ -1416,8 +1510,12 @@ async fn a_capture_carries_fields_with_no_label_and_reads_its_keys_back() {
             .expect("recall ok"),
     );
     assert_eq!(
-        recalled["objects"][0]["facts"][0]["fields"]["mood"], "delighted",
+        recalled["objects"][0]["facts"][0]["sets"]["mood"], "delighted",
         "{recalled}"
+    );
+    assert!(
+        recalled["objects"][0]["facts"][0]["fields"]["mood"].is_null(),
+        "a setting is not also one of the record's own fields: {recalled}"
     );
     assert_eq!(
         recalled["objects"][0]["facts"][0]["refs"],

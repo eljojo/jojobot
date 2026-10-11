@@ -4470,11 +4470,12 @@ Archiving and retracting are one-way for a claim: nothing edits an archived clai
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 confirmed_by_user is required for exactly two moves of an existing claim: anything to testimony, and open to settled.
 Reopening is free; a fresh capture is taken at its word.
-It answers with a receipt, not the record (the write is read back from the store first); recall the subject reads the record.
-A call naming no change is refused; keep: true alone is the way to touch a claim unchanged.
-expected_revision (recall's revision_count): a claim written since is refused with retry.
+It answers with a receipt, not the record (read back from the store first); recall the subject reads the record.
+A call naming no change is refused; keep: true alone touches a claim unchanged.
+expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
-An unknown address comes back blocked with the addresses that exist.
+Naming an own key in `sets` moves it.
+An unknown address is blocked with the addresses that exist.
 Each argument's own description holds its rules.
 ```
 
@@ -4980,11 +4981,12 @@ them. Sent with `find`, never alone.
 
 ```text
 **Fields to set on the thing this claim is about**, as key/value pairs,
-apart from `fields`, which are the claim's own. A key stays in the bag it
-was first written under on this record: naming under `sets` a key the
-record holds as its own, or under `fields` one it holds as a setting, is
-refused with the way to move it — take it off with `clear_fields`, then
-write it under the other. A key that only labels the claim is never a
+apart from `fields`, which are the claim's own. **Naming under `sets` a
+key the record holds as its own field MOVES it to the settings in this
+call**, with the value you send, and the receipt says it moved. The other
+way is two calls: a setting named under `fields` is refused, so take it
+off with `clear_fields`, then write it under `fields`. A key that only
+labels the claim is never a
 property of the thing and is refused here by name. The keys that make a
 thing fall due act on it only when sent here.
 ```

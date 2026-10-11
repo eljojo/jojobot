@@ -3002,7 +3002,7 @@ fn no_agent_facing_text_says_a_kind_holds_a_thing_to_nothing() {
         .expect("the essay a fresh session reads is in the corpus");
     let floor_rule = essay
         .split("\n\n")
-        .find(|paragraph| paragraph.contains("A record carries FIELDS"))
+        .find(|paragraph| paragraph.contains("`fits_type`"))
         .expect("the essay has the paragraph that teaches fields and the floor rule");
     let unsaid: Vec<String> = holding
         .iter()
