@@ -7566,15 +7566,11 @@ async fn an_ordinary_read_of_work_carries_no_readiness() {
     assert!(body["ready_left_out"].is_null(), "{body}");
 }
 
-/// **A piece of work naming hundreds of unfinished dependencies still answers
-/// under the ceiling, and says how many blockers it left out.** The slugs are
-/// long, so a count alone would not bound the object.
-#[tokio::test]
-async fn a_hostile_dependency_list_is_cut_to_a_room_and_the_rest_counted() {
-    let jojobot = crate::harness::handler_shipped();
-    let mut depends_on = Vec::new();
-    for n in 0..60u64 {
-        // Long and unlike each other, so the near-slug screen waves each through.
+/// Make `count` unfinished pieces of work with long, unlike slugs and return their
+/// handles. Long and unlike each other, so the near-slug screen waves each through.
+async fn hostile_dependencies(jojobot: &Jojobot, count: u64) -> Vec<String> {
+    let mut handles = Vec::new();
+    for n in 0..count {
         let mut state = 0x9e37_79b9_u64.wrapping_mul(n + 1);
         let slug: String = (0..110)
             .map(|_| {
@@ -7584,9 +7580,19 @@ async fn a_hostile_dependency_list_is_cut_to_a_room_and_the_rest_counted() {
                 char::from(b'a' + ((state >> 33) % 26) as u8)
             })
             .collect();
-        work_with_slug(&jojobot, &slug, &[("status", "next")]).await;
-        depends_on.push(format!("work:{slug}"));
+        work_with_slug(jojobot, &slug, &[("status", "next")]).await;
+        handles.push(format!("work:{slug}"));
     }
+    handles
+}
+
+/// **A piece of work naming hundreds of unfinished dependencies still answers
+/// under the ceiling, and says how many blockers it left out.** The slugs are
+/// long, so a count alone would not bound the object.
+#[tokio::test]
+async fn a_hostile_dependency_list_is_cut_to_a_room_and_the_rest_counted() {
+    let jojobot = crate::harness::handler_shipped();
+    let depends_on = hostile_dependencies(&jojobot, 60).await;
     work_with(
         &jojobot,
         "work:phi",
@@ -7663,4 +7669,83 @@ async fn a_dependency_finished_by_a_mapped_status_word_does_not_block() {
     assert_ne!(mapped["status"], "blocked", "{mapped}");
     let after = ready_view(&jojobot, None).await;
     assert_eq!(listed(&after), ["work:phi"], "{after}");
+}
+
+/// **The blockers' room comes out of the answer ceiling, not on top of it.** A
+/// piece of work whose own row nearly fills the answer gets the blockers that
+/// still fit, and the rest are counted; the same dependencies on a piece of work
+/// with room are shown in the full blockers room. The first blocker is always
+/// kept, because an object naming none would say it is ready.
+#[tokio::test]
+async fn the_blockers_share_the_ceiling_with_the_row_they_ride_on() {
+    let jojobot = crate::harness::handler_shipped();
+    let depends_on = hostile_dependencies(&jojobot, 40).await;
+    let list = depends_on.join(", ");
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", &list)],
+    )
+    .await;
+    // Grow the row a piece at a time, as far as the write guard lets it go: one
+    // write cannot, because the guard counts the record beside the row. The
+    // row ends with less room under it than the blockers' own room.
+    let mut grown = 0;
+    for part in [1_500, 200, 20] {
+        loop {
+            let landed = json_of(
+                &jojobot
+                    .capture(Parameters(CaptureArgs {
+                        sets: Some([(format!("part_{grown}"), "x".repeat(part))].into()),
+                        sid: Some(writing_as(&jojobot)),
+                        ..capture_args("work:phi", "a part of the row")
+                    }))
+                    .await
+                    .expect("capture call ok"),
+            );
+            if landed["status"] == "blocked" {
+                break;
+            }
+            grown += 1;
+            assert!(grown < 80, "the write guard never stopped the row");
+        }
+    }
+    assert!(grown >= 8, "only {grown} parts landed");
+    work_with(
+        &jojobot,
+        "work:sigma",
+        &[("status", "next"), ("depends_on", &list)],
+    )
+    .await;
+    let tight = ready_view(&jojobot, Some("work:phi")).await;
+    let roomy = ready_view(&jojobot, Some("work:sigma")).await;
+    let shown_of = |body: &serde_json::Value| {
+        body["objects"][0]["blocked_by"]
+            .as_array()
+            .expect("blockers")
+            .len()
+    };
+    let left_of = |body: &serde_json::Value| {
+        body["objects"][0]["blocked_by_left_out"]["count"]
+            .as_u64()
+            .unwrap_or(0) as usize
+    };
+    // The positive: with room, the blockers take the full room and the rest are counted.
+    assert!(shown_of(&roomy) > 1, "{roomy}");
+    assert_eq!(shown_of(&roomy) + left_of(&roomy), 40, "{roomy}");
+    // The negative: beside a row that fills the answer, fewer blockers are shown,
+    // at least one, none of the 40 are lost from the count, and the whole answer
+    // is under the ceiling.
+    assert!(
+        (1..shown_of(&roomy)).contains(&shown_of(&tight)),
+        "tight {} of roomy {}",
+        shown_of(&tight),
+        shown_of(&roomy)
+    );
+    assert_eq!(shown_of(&tight) + left_of(&tight), 40, "{tight}");
+    assert!(
+        tight.to_string().len() <= jojobot_domain::text::ANSWER_CEILING,
+        "the answer is {} characters",
+        tight.to_string().len()
+    );
 }

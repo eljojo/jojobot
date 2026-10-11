@@ -3084,6 +3084,7 @@ impl Jojobot {
                 tracing::warn!(error = %e, "the moment a charter was read could not be kept");
             }
         }
+        crate::memory::ready::fit_under_ceiling(&mut body);
         fit_recall(
             &mut body,
             offset - skipped,
