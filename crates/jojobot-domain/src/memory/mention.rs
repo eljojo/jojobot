@@ -1134,15 +1134,31 @@ impl super::Memory for Mentioning {
     /// **A thing's folded fields, as the store serves them.** A thing-scope
     /// filter compares this map and a record-scope filter compares a resolved
     /// fact's, so both have to show today's handle under a reference-typed key.
-    /// Nothing is resolved here, because the layers below already do it: a store
-    /// keeps the permanent id a reference names and serves the handle its thing
-    /// wears now on every read, and the fold drops a cached copy that names a
-    /// renamed handle. A resolution here changed no answer on either store.
+    /// No reference is resolved here, because the layers below already do it: a
+    /// store keeps the permanent id a reference names and serves the handle its
+    /// thing wears now on every read, and the fold drops a cached copy that names
+    /// a renamed handle.
+    ///
+    /// **A key declared to hold an expression is the exception**, because this
+    /// layer bound it on the way in: the store holds the badge in the line's own
+    /// text, which no layer below can serve as a handle. A view's `where` is read
+    /// through here, so it is unbound here, and only when a key holds one.
     async fn fields(
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, super::MemoryError> {
-        Ok(self.inner.fields(entity).await?.open())
+        let mut fields = self.inner.fields(entity).await?.open();
+        let declared = self.declared().await?;
+        if !fields.keys().any(|key| holds_an_expression(key, &declared)) {
+            return Ok(fields);
+        }
+        let known = self.known().await?;
+        for (key, value) in fields.iter_mut() {
+            if holds_an_expression(key, &declared) {
+                *value = unbound_expression(value, &known);
+            }
+        }
+        Ok(fields)
     }
     /// **A key's backing carries the note its record carried**, the same
     /// text under the same name [`Self::history`] already renders — read
@@ -1458,6 +1474,68 @@ mod tests {
             unbound_expression(&saved, &[thing("person:ralph", Some("k7h2mn"))]),
             r#"owner = person:ralph && status in (now, "person:ralph") && due < 2026-11-01"#,
             "the badge answers to the new handle after a rename",
+        );
+    }
+
+    /// **A thing's folded fields show a saved expression with the handles it
+    /// names, not the permanent ids it is stored with.** The write binds the
+    /// handles of a key declared to hold an expression; the fields door is the
+    /// read a view's `where` takes, so it unbinds them. A key that holds plain
+    /// text is served as written. Paired with the stored row, which does hold the
+    /// binding, so the case cannot pass on a build that never bound anything.
+    #[tokio::test]
+    async fn a_thing_serves_a_saved_expression_with_the_handles_it_names() {
+        use crate::memory::types::{DeclaredType, Field, ValueType};
+        use crate::memory::{Memory, NewEntity, NewFact};
+        let inner = std::sync::Arc::new(crate::memory::testing::InMemoryMemory::booted());
+        let store = Mentioning::new(inner.clone());
+        store
+            .declare_type(DeclaredType::new(
+                "saved",
+                vec![Field::new("line", ValueType::Expression)],
+            ))
+            .await
+            .expect("a declaration the store keeps");
+        let holder = EntityId("thing:delta".into());
+        let named = EntityId("thing:gamma".into());
+        for (id, name) in [(&holder, "Delta"), (&named, "Gamma")] {
+            store
+                .add_entity(NewEntity::new(id.clone(), name, "test"))
+                .await
+                .expect("add ok")
+                .written()
+                .expect("nothing collides");
+        }
+        let fields: std::collections::BTreeMap<String, String> = [
+            ("line".to_string(), "owner = thing:gamma".to_string()),
+            ("note".to_string(), "thing:gamma at home".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        store
+            .capture(NewFact {
+                sets: fields.keys().cloned().collect(),
+                fields,
+                ..NewFact::about(
+                    holder.clone(),
+                    "keeps a line",
+                    jiff::civil::date(2026, 8, 1),
+                )
+            })
+            .await
+            .expect("a line that names a thing that exists is stored")
+            .written()
+            .expect("nothing blocks it");
+        let stored = inner.fields(&holder).await.expect("the stored map");
+        assert_ne!(
+            stored["line"], "owner = thing:gamma",
+            "the store holds the binding, or this proves nothing: {stored:?}"
+        );
+        let served = store.fields(&holder).await.expect("the served map");
+        assert_eq!(served["line"], "owner = thing:gamma");
+        assert_eq!(
+            served["note"], "thing:gamma at home",
+            "a key that holds plain text is served as written"
         );
     }
 
