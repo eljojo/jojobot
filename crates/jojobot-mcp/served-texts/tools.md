@@ -4866,17 +4866,16 @@ claim. The receipt of an archive names the keys the thing lost, under
 
 ```text
 End your session and tell its story.
-Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways, so nothing appends to it afterwards and nothing reopens it except through the wrap_code described below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked.
-A wrap you have to retry finishes what the first attempt started rather than repeating it.
+Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it, nothing reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked.
+A retried wrap finishes what the first attempt started instead of repeating it.
 Write the story for somebody with none of your context: what this run was for, what actually happened, what is left.
-It is also what the next boot of this identity is handed as the handover, so it is not private to the session.
+The next boot of this identity is handed it as the handover, so it is not private.
 A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
-When the work continues but this run has gotten long, wrapping is also how you ROTATE: wrap, then boot again for a fresh sid.
-Work that must move to another agent NOW is a wrap too: the wrap frees your role at once and the next agent boots fresh and reads your story.
+Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
-THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run's own sid back for one last change while the run stays wrapped; the window ends when you wrap a second time (a second closing entry, no new code) or a newer run of the bot starts.
+THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run's own sid back for one last change while the run stays wrapped; the window ends when you wrap a second time or a newer run of the bot starts.
 A second wrap's answer carries no `wrap_code`.
-THE ANSWER IS A RECEIPT: the story is not read back, and the chronology it hands back is the newest of the record (`entry_count` is the whole length, `chronology_elided` and `entries_omitted` say how much is not here; nothing was dropped).
+THE ANSWER IS A RECEIPT: the story is not read back, and the chronology it hands back is the newest of the record (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
 The closing entry carries the focus as it stood as `closing_focus`.
 Pass your `sid` on every call.
 ```
