@@ -270,6 +270,69 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
 }
 
 #[tokio::test]
+async fn a_record_holding_only_some_of_a_types_keys_is_kept_and_found_with_what_it_lacks_named() {
+    // **A session that read the keys of a trip and held back, because it did not
+    // know where the trip starts.** The empty answer is where it decides, so the
+    // note there names the bag that sets keys on a thing and says that a record
+    // holding only what is known is kept and found.
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let empty = s
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert!(
+        empty["objects"].as_array().is_some_and(Vec::is_empty),
+        "nothing carries a trip's keys yet, or this proves nothing: {empty}"
+    );
+    let note = empty["teaching"][0]
+        .as_str()
+        .unwrap_or_else(|| panic!("the first empty read of a shipped type teaches: {empty}"));
+    assert!(note.contains("sets"), "the note names the bag: {note}");
+    assert!(
+        note.contains("partial"),
+        "the note says a partial record is kept and found: {note}"
+    );
+    // `required: true` is the spelling type_keys serves; the note says what it is for.
+    assert_eq!(
+        empty["type_keys"][0]["fields"][0]["required"], true,
+        "{empty}"
+    );
+    assert!(
+        note.contains("required") && note.contains("fits_type"),
+        "the note says required is for fitting: {note}"
+    );
+
+    // ── what the note says, done: only the two dates are known ──────────────
+    s.add(
+        "event:gorge-safety-inspection",
+        "The Gorge Safety Inspection",
+    )
+    .await;
+    s.add("event:krusty-fest", "The Krusty Fest").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "event:gorge-safety-inspection",
+            "content": "four days up the gorge, nobody has said from where",
+            "provenance": "testimony",
+            "sets": { "leaves_on": "2026-09-03", "returns_on": "2026-09-07" },
+        }),
+    )
+    .await;
+    // The positive: the record with some of the keys is found, and says by name
+    // which it lacks. The negative beside it: the event that holds none of them
+    // is not a weak match.
+    let found = s
+        .call("search", json!({ "answers_type": "trip", "limit": 50 }))
+        .await;
+    found.says("event:gorge-safety-inspection");
+    found.says("\"lacking\":[\"departs_from\",\"arrives_at\"]");
+    found.never_says("event:krusty-fest");
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_and_says_it_once() {
     // **A session that read, concluded, and kept the conclusion in prose.** An
     // empty answer under a type the software ships is the moment it decides

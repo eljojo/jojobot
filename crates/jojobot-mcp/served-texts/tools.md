@@ -2704,7 +2704,9 @@ An answer that selects nothing still says what the type is: it carries
 under it is in the empty answer. The first such answer in a session, under a
 type the software ships and with nothing else narrowing the read, also
 carries a teaching: reading again finds nothing, and what you worked out is
-kept by capturing under those keys.
+kept by capturing under those keys. In `type_keys`, `required: true` means
+required to FIT the type, never required to write: a record that holds some
+of the keys is kept and found here, with what it lacks named.
 ```
 
 #### `recall` — argument `/inputSchema.backing`
@@ -3584,7 +3586,9 @@ exist.
 
 An answers_type that matches nothing carries `type_keys`, the type's keys,
 and the first such answer in a session under a type the software ships, with
-nothing else narrowing the search, also carries a teaching. Reach for
+nothing else narrowing the search, also carries a teaching. In `type_keys`,
+`required: true` means required to FIT the type, never required to write:
+a record that holds some of the keys is kept and found here. Reach for
 answers_type unless you have a reason not to: a thing that arrives with its
 gaps named can be judged, and a thing fits_type leaves out looks exactly
 like a thing that is not there.

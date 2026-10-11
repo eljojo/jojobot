@@ -260,8 +260,11 @@ pub(crate) const EMPTY_SHIPPED_TYPE_DOMAIN: &str = "empty-shipped-type";
 pub(crate) fn empty_shipped_type_teaching(name: &str) -> String {
     format!(
         "No record answers the type {name} yet, and reading again will not find one. To keep \
-         what you just worked out, capture it under the keys of {name} listed in type_keys, with \
-         the provenance that is true of it."
+         what you just worked out, capture it with the keys of {name} listed in type_keys, in \
+         `sets`, with the provenance that is true of it. A record that holds only the keys you \
+         know is kept. It is a partial record: answers_type finds it, and the answer names the \
+         keys it lacks. `required: true` in type_keys means required to fit the type with \
+         fits_type. It never means required to write."
     )
 }
 
