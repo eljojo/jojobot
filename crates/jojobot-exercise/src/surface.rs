@@ -266,6 +266,32 @@ impl Seed {
         Ok(self)
     }
 
+    /// **Declare a type: a name and the keys a thing of it carries, each with what
+    /// it holds.** A comparison, an ordering or a `contains` asked of a key needs
+    /// the key declared a number, a date or a list, and nothing else in the room
+    /// declares the keys a room invents. Written as the occupant, through the same
+    /// verb a session uses, so the declaration is the one the surface serves.
+    ///
+    /// Each key says what it holds (`number`, `date`, `text`, `list:text`, …), and
+    /// a key with none is refused here rather than declared as text, which
+    /// licenses no comparison.
+    pub fn declare_type(mut self, name: &str, keys: &[(String, String)]) -> Result<Seed> {
+        anyhow::ensure!(!name.is_empty(), "a type has a name");
+        anyhow::ensure!(
+            !keys.is_empty(),
+            "the type {name:?} names no key, so nobody could query by it",
+        );
+        let fields: Vec<Value> = keys
+            .iter()
+            .map(|(key, holds)| json!({"key": key, "holds": holds}))
+            .collect();
+        self.writes.push(Write::AsTheOccupant(
+            "declare_type".to_string(),
+            json!({"name": name, "fields": fields}),
+        ));
+        Ok(self)
+    }
+
     /// Leave a message waiting in a bot's box, from the shipped identity.
     ///
     /// **The one piece of furniture that speaks.** Everything else a seed

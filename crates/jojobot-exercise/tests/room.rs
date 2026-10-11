@@ -310,6 +310,84 @@ async fn a_seed_furnishes_two_same_kind_people_two_edits_apart() {
     surface.finish().await;
 }
 
+/// **A declared key is compared as what it was declared, in a furnished room.**
+/// A seed declares `position` a number and furnishes two things holding 2 and 10.
+/// The question `position < 5` keeps the first and not the second, which only a
+/// number does: read as text, "10" sorts before "5". **Paired with the same
+/// question in a room that declared nothing**, where no key is licensed to be
+/// compared, the question is refused and lists neither thing, so the declaration
+/// is what made the first answer.
+#[tokio::test]
+async fn a_seed_declares_a_type_and_the_room_compares_the_key_as_declared() {
+    async fn asked(declaring: bool) -> serde_json::Value {
+        let (_room, surface) =
+            Room::open_with_client(&server_binary().expect("a jojobot binary to run"))
+                .await
+                .expect("a room");
+        let mut seed = Seed::new()
+            .entity("work", "phi", "Phi")
+            .expect("a piece of work is furniture")
+            .record(
+                "work:phi",
+                "second in line",
+                serde_json::json!({"position": "2"}),
+            )
+            .expect("a record is furniture")
+            .entity("work", "sigma", "Sigma")
+            .expect("a piece of work is furniture")
+            .record(
+                "work:sigma",
+                "tenth in line",
+                serde_json::json!({"position": "10"}),
+            )
+            .expect("a record is furniture");
+        if declaring {
+            seed = seed
+                .declare_type("board", &[("position".to_string(), "number".to_string())])
+                .expect("a type is furniture");
+        }
+        seed.furnish(&surface).await.expect("the room is furnished");
+        let booted = surface
+            .must(
+                "start_here",
+                serde_json::json!({"bot": "assistant", "brief": true}),
+            )
+            .await
+            .expect("the shipped identity boots");
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .expect("a handle")
+            .to_string();
+        let answer = surface
+            .call(
+                "recall",
+                serde_json::json!({"kind": "work", "where": "position < 5", "sid": sid}),
+            )
+            .await;
+        surface.finish().await;
+        serde_json::from_str(&answer).unwrap_or_else(|_| panic!("recall answered: {answer}"))
+    }
+
+    let declared = asked(true).await;
+    let handles: Vec<&str> = declared["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the declared room answered no objects: {declared}"))
+        .iter()
+        .filter_map(|object| object["id"].as_str())
+        .collect();
+    assert_eq!(
+        handles,
+        ["work:phi"],
+        "position < 5 keeps 2 and drops 10 only as a number: {declared}"
+    );
+    let undeclared = asked(false).await;
+    let kept = undeclared["objects"].as_array().map_or(0, Vec::len);
+    assert_eq!(
+        kept, 0,
+        "a room that declared nothing licenses no comparison, so it lists neither: {undeclared}"
+    );
+}
+
 /// **A room that cannot come up is reported after every attempt, not the
 /// first.**
 ///

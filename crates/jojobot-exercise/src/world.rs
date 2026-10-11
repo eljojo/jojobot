@@ -24,6 +24,7 @@
 //! message dev | The brief | what somebody left waiting
 //! bot     bot:lisa | Lisa | keeps the household's paperwork
 //! sitting bot:lisa | 2026-02-10 | the garden | planted the beans
+//! type    board | position=number, touches=list:text
 //! ```
 //!
 //! **`bot` and `sitting` furnish a SECOND bot** and the sittings it already had.
@@ -187,6 +188,30 @@ fn item(seed: Seed, line: &str) -> Result<Seed> {
             seed.record(&text(0)?, &text(2)?, fields)
         }
         "message" => Ok(seed.message(&text(0)?, &text(1)?, &text(2)?)),
+        // **A type, and what each of its keys holds.** `type board | position=number,
+        // carry=date`: the keys a room invents are compared and ordered only once a
+        // type declares them, and nothing else in the world can say so.
+        "type" => {
+            let name = text(0)?;
+            let keys = text(1)?
+                .split(',')
+                .map(|entry| {
+                    let entry = entry.trim();
+                    let (key, holds) = entry.split_once('=').with_context(|| {
+                        format!(
+                            "{entry:?} does not say what it holds — write `key=holds`, as \
+                             `position=number` does",
+                        )
+                    })?;
+                    anyhow::ensure!(
+                        !key.trim().is_empty() && !holds.trim().is_empty(),
+                        "{entry:?} wants a key and what it holds, as `position=number` does",
+                    );
+                    Ok((key.trim().to_string(), holds.trim().to_string()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            seed.declare_type(&name, &keys)
+        }
         // **A second bot and the sittings it already had.** The occupant is
         // refused by either line: see [`Seed::house_bot`].
         "bot" => {
@@ -204,7 +229,7 @@ fn item(seed: Seed, line: &str) -> Result<Seed> {
         // does not have fails somewhere else entirely.
         other => bail!(
             "{other:?} furnishes nothing — the world is written in entity, child, fact, record, \
-             message, bot and sitting",
+             message, bot, sitting and type",
         ),
     }
 }
@@ -270,6 +295,68 @@ mod tests {
             body.contains("still owing"),
             "the continued line is in the body: {body}",
         );
+    }
+
+    /// **A type line furnishes a declaration, and each key says what it holds.**
+    /// The keys are the ones a question later compares or orders by, so the line
+    /// carries what each holds: a number orders as a number, a date as a date, a
+    /// list answers `contains`. The line reaches the builder as the declaration
+    /// call a session would make, with every key and what it holds.
+    #[test]
+    fn a_type_line_furnishes_a_declaration_of_what_each_key_holds() {
+        let read = read(
+            "```world\n\
+             type    board | position=number, carry=date, touches=list:text, line=text\n\
+             ```\n",
+        )
+        .expect("the world reads");
+        assert_eq!(
+            read.len(),
+            1,
+            "the line furnished one declaration: {read:?}"
+        );
+        let said = format!("{read:?}");
+        for needle in [
+            "declare_type",
+            "board",
+            "position",
+            "number",
+            "carry",
+            "date",
+            "touches",
+            "list:text",
+            "line",
+            "text",
+        ] {
+            assert!(
+                said.contains(needle),
+                "{needle:?} is not in the declaration: {said}"
+            );
+        }
+    }
+
+    /// **A key with no word for what it holds is refused, naming the line.** A
+    /// bare key would be declared as text, which licenses no comparison, and a
+    /// room whose author believed it ordered by that key would be measured
+    /// against a declaration that does not do what it says. Paired with the line
+    /// that spells every key out, which reads.
+    #[test]
+    fn a_type_key_that_says_nothing_about_what_it_holds_is_refused() {
+        let refused = read("```world\ntype board | position, carry=date\n```\n")
+            .expect_err("a bare key is refused");
+        let said = format!("{refused:#}");
+        assert!(
+            said.contains("position") && said.contains("line 2"),
+            "the refusal names the key and where it is: {said}",
+        );
+        assert!(read("```world\ntype board | position=number, carry=date\n```\n").is_ok());
+    }
+
+    /// **A type with no keys is refused**, since a declaration with nothing under
+    /// it is one nobody can query by.
+    #[test]
+    fn a_type_with_no_keys_is_refused() {
+        assert!(read("```world\ntype board |\n```\n").is_err());
     }
 
     /// **A document with no world block furnishes nothing**, and that is a room
