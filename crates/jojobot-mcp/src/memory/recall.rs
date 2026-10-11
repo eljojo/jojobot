@@ -1724,24 +1724,37 @@ impl Jojobot {
             },
         };
         // **Readiness is a question about work, and only work answers it.** The
-        // view selects the work kind; a caller that sent another kind beside it
-        // would be handed `ready` for things that have no dependencies to wait on.
-        if asks_ready
-            && args
+        // view selects the work kind; a caller that sent another kind beside it,
+        // or named a subject of another kind, would be handed `ready` for things
+        // that have no dependencies to wait on.
+        if asks_ready {
+            if args
                 .kind
                 .as_deref()
                 .map(parse_kind)
                 .transpose()?
                 .is_some_and(|kind| kind != EntityKind::WORK)
-        {
-            return memory_declined(
-                "recall",
-                MemoryError::InvalidQuery(
-                    "the ready view answers for the work kind only: leave kind off, or send \
-                     kind: work"
-                        .into(),
-                ),
-            );
+            {
+                return memory_declined(
+                    "recall",
+                    MemoryError::InvalidQuery(
+                        "the ready view answers for the work kind only: leave kind off, or send \
+                         kind: work"
+                            .into(),
+                    ),
+                );
+            }
+            if let Some(subject) = args.subject.as_deref()
+                && EntityId::person(subject).kind_token() != EntityKind::WORK.as_token()
+            {
+                return memory_declined(
+                    "recall",
+                    MemoryError::InvalidQuery(format!(
+                        "the ready view answers for the work kind only, and '{subject}' is not \
+                         work: name a piece of work in subject, or leave subject off"
+                    )),
+                );
+            }
         }
         // **The name is resolved to its declaration here, once**, exactly as
         // `search` resolves it: everything below takes the keys rather than

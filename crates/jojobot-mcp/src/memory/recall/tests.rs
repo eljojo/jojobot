@@ -7787,3 +7787,31 @@ async fn the_ready_view_refuses_a_kind_that_is_not_work() {
     );
     assert_eq!(listed(&answered), ["work:phi"], "{answered}");
 }
+
+/// **The ready view refuses a subject that is not work, as it refuses a kind
+/// that is not work.** The thing exists, so the refusal is about the ask and not
+/// about a missing handle; a piece of work named the same way is answered with
+/// `ready` and what blocks it.
+#[tokio::test]
+async fn the_ready_view_refuses_a_subject_that_is_not_work() {
+    let jojobot = crate::harness::handler_shipped();
+    crate::memory::testing::ensure(&jojobot, "person:kenny").await;
+    work_with(&jojobot, "work:sigma", &[("status", "next")]).await;
+    work_with(
+        &jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", "work:sigma")],
+    )
+    .await;
+    let refused = ready_view(&jojobot, Some("person:kenny")).await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+    assert!(refused.to_string().contains("work"), "{refused}");
+    let answered = ready_view(&jojobot, Some("work:phi")).await;
+    assert_eq!(listed(&answered), ["work:phi"], "{answered}");
+    assert_eq!(answered["objects"][0]["ready"], false, "{answered}");
+    assert!(
+        answered["objects"][0]["blocked_by"].is_array(),
+        "{answered}"
+    );
+}
