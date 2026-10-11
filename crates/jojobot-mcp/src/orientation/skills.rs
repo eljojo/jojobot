@@ -115,6 +115,9 @@ then the keys.
     shows     what of each comes back: facts, prose, charter.
     asks      overdue, when the question is what has fallen due; ready, when
               it is which work can be started.
+    where     which of them, as one line over keys: status != done && owner = bot:gamma
+    order     a key, then ascending or descending.
+    scope     what `where` is asked of: thing (the default) or record.
 
 Anything you send beside the name wins, so a view is a starting point rather
 than a cage: `recall  view: "colleagues"  charter: true` is the shipped question
@@ -135,8 +138,15 @@ do.
 
 `recall` takes three axes and they combine into ONE question:
 
-- **which objects** — `subject` (one handle), `kind`, `answers_type`, or
-  `fields` (a key and its value)
+- **which objects** — `subject` (one handle), `kind`, `answers_type`,
+  `fields` (a key and its value), or `where`: one line over keys. `order`
+  puts them in order.
+
+      recall  kind: "work"  where: "status != done && due <= today+7d"  order: {"key": "due"}
+
+  It takes `=`, `!=`, `<`, `<=`, `>`, `>=`, `in (a, b)`, `contains`, `&&`, `||`,
+  `!` and parentheses. `status != done` keeps the things holding another
+  status, and `!(status = done)` also keeps the things holding none.
 - **what of each** — `facts`, `prose`, `charter`, `keys` (which of each object's
   fields come back) and `history`
 - **where to walk** — `follow`, which takes an edge or a key that holds a

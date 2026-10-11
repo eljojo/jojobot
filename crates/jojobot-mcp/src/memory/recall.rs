@@ -13,7 +13,7 @@ use super::*;
 use crate::session::session_declined;
 use jojobot_domain::memory::search::{Coverage, HeldField};
 use jojobot_domain::memory::types::Compare;
-use jojobot_domain::memory::{entitlement, graph};
+use jojobot_domain::memory::{entitlement, filter, graph};
 use jojobot_domain::text;
 
 /// One key filter of a `recall` — a key, and optionally the value it holds.
@@ -61,6 +61,30 @@ pub struct KeyFilterArgs {
     /// list of separate questions.
     #[serde(default)]
     pub(crate) scope: Option<String>,
+}
+
+/// **What a walk keeps of what it reaches**: key filters, or one expression.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum Keeping {
+    /// One expression over keys, asked of what each reached thing holds.
+    Expression(String),
+    /// Key filters, each with its own scope.
+    Filters(Vec<KeyFilterArgs>),
+}
+
+/// **The order the answer comes back in**: one key and a direction.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct OrderArgs {
+    /// The key the things are ordered by, as it is spelled where it was
+    /// written. A key declared a date or a number orders as one, so 2 comes
+    /// before 10; any other key orders as text, so 10 comes before 2, and the
+    /// answer says so when the values would have parsed.
+    pub(crate) key: String,
+    /// `ascending` (the default; smallest first) or `descending`. Things that
+    /// hold no such key come last in either direction.
+    #[serde(default)]
+    pub(crate) direction: Option<String>,
 }
 
 /// The `follow` argument of a `recall` — which edges to walk, and how far.
@@ -118,8 +142,15 @@ pub struct FollowArgs {
     /// asked of the thing arrives whole, because the fold answered and no
     /// record had to. An object reached and not kept leaves the object that
     /// points at it marked as having edges nobody followed.
+    ///
+    /// **It also takes one expression**, the same line a call's `where` takes
+    /// (see there): `status != done && owner = bot:gamma`. The expression is
+    /// asked of what each reached thing holds now, and of nothing else: a
+    /// `scope: record` sent beside it is refused. To keep what a walk reaches by
+    /// one record, send `keeping` as a list of key filters, each with
+    /// `scope: record`.
     #[serde(default)]
-    pub(crate) keeping: Option<Vec<KeyFilterArgs>>,
+    pub(crate) keeping: Option<Keeping>,
     /// **Keep only what FITS this type**, by name — the objects carrying EVERY
     /// key the type names, counted across everything recorded about each one.
     ///
@@ -215,6 +246,47 @@ pub struct RecallArgs {
     /// values, make two calls.
     #[serde(default)]
     pub(crate) fields: Option<Vec<KeyFilterArgs>>,
+    /// **Which things, in one short expression over keys**, for
+    /// example `status != done && owner = bot:gamma`,
+    /// `due <= today+7d`, `tags contains kitchen`. The words are `=`, `!=`, `<`,
+    /// `<=`, `>`, `>=`, `in (a, b)` (any of), `contains` (a list holds an item),
+    /// `&&`, `||`, `!` and parentheses; a bare key asks that it is there. There
+    /// are no wildcards. Quote a value that holds spaces or operator characters.
+    ///
+    /// **It reaches keys only.** `subject`, `kind`, `parent`, `answers_type` and
+    /// `follow` stay arguments beside it. It combines with `fields`: both must
+    /// hold.
+    ///
+    /// **One `scope` covers the whole expression**: what each thing holds now
+    /// (the default), or what one record says. A negation keeps only things that
+    /// hold the key: `status != done` is the things holding some other status,
+    /// and a thing with no status is not among them; `!(status = done)` is the
+    /// complement and does keep it. A comparison needs a declaration: `<`, `<=`,
+    /// `>`, `>=` need a key declared a date or a number, and `contains` a key
+    /// declared a list. A type named like a kind belongs to that kind, and its
+    /// word on a key wins for things of that kind; a type under any other name
+    /// licenses any thing carrying its key. Each thing is asked its own kind,
+    /// named or not. A thing the declarations do not license does not match, and
+    /// the answer counts what it left out by kind in `left_out_unlicensed`,
+    /// saying which key and what to declare.
+    /// `today`, `today+3d` and `today-2w` are dates relative to your day.
+    ///
+    /// A mistake is refused with the token, its position and the words accepted
+    /// there; a key that nothing holds is refused with the keys that are held,
+    /// rather than answering empty.
+    #[serde(default, rename = "where")]
+    pub(crate) expression: Option<String>,
+    /// **What `where` is asked of**: `thing` (the default) is what each thing
+    /// holds now, and `record` is what one record says, so every term must hold
+    /// on the same record and the object arrives with the records that answered.
+    /// Names neither scope for `fields`, which carry their own.
+    #[serde(default)]
+    pub(crate) scope: Option<String>,
+    /// **The order things come back in**, applied to the whole selection before
+    /// the answer is cut to size, so each part you read on with `offset` is a
+    /// part of that order. Things that hold no such key come last.
+    #[serde(default)]
+    pub(crate) order: Option<OrderArgs>,
     /// Whether each object's records come back — the claims its fields were
     /// written in, each with its own wording, provenance and the address that
     /// edits it.
@@ -510,7 +582,10 @@ pub struct RecallArgs {
     ///
     /// A view is a record that holds a query, so asking for one is naming it.
     /// **Some ship with the software and you can declare your own**, with
-    /// `add_entity` of kind `view` and the keys `selects`, `shows` and `asks`.
+    /// `add_entity` of kind `view` and the keys `selects`, `shows` and `asks`,
+    /// with `where` (a line over keys, as the call's own `where`), `order` (a
+    /// key, then `ascending` or `descending`) and `scope` (`thing` or `record`)
+    /// for which of them and in what order.
     /// Both are records of the same shape, so nothing about the answer depends
     /// on where the view came from.
     ///
@@ -654,6 +729,7 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
                 value: f.value.as_ref().map(|v| v.trim().to_string()),
                 compare: parse_compare(f.compare.as_deref())?,
                 scope: parse_scope(f.scope.as_deref())?,
+                tree: None,
             })
         })
         .collect()
@@ -1001,8 +1077,37 @@ impl Jojobot {
         } else {
             Vec::new()
         };
+        // **The view's ordering reads as one line**, and a view whose ordering
+        // does not read is a view that cannot be run: said here, with its name.
+        let view_order = match asked.ordering() {
+            Ok(order) => order.map(|order| OrderArgs {
+                direction: Some(
+                    match order.direction {
+                        filter::Direction::Ascending => "ascending",
+                        filter::Direction::Descending => "descending",
+                    }
+                    .to_string(),
+                ),
+                key: order.key,
+            }),
+            Err(why) => {
+                return Err(Box::new(blocked_body(
+                    &handle,
+                    &[],
+                    format!(
+                        "Nothing was read: the view '{}' cannot be run. {why}",
+                        handle.as_str()
+                    ),
+                )));
+            }
+        };
         Ok((
             RecallArgs {
+                // **The caller's own `where`, `scope` and `order` win whole**,
+                // exactly as the arguments a view fills in always do.
+                expression: args.expression.or(asked.expression),
+                scope: args.scope.or(asked.scope),
+                order: args.order.or(view_order),
                 kind: args.kind.or(asked.selects),
                 facts: args.facts.or(asked.facts.then_some(true)),
                 prose: args.prose.or(asked.prose.then_some(true)),
@@ -1664,9 +1769,10 @@ impl Jojobot {
                        you only have words for it. THREE AXES COMBINE INTO ONE QUESTION. \
                        WHICH OBJECTS: subject (one handle; a named subject always comes back, \
                        and a handle that names nothing is blocked with the nearest), kind, \
-                       parent, answers_type, fields (a key and the value it holds) or view (a \
-                       question already worked out, asked by name, so start with one if it \
-                       fits). A call that narrows nothing is refused: name one of subject, \
+                       parent, answers_type, fields (a key and the value it holds), where (one \
+                       line over keys, status != done && due <= today+7d, with order for \
+                       the sequence) or view (a question already worked out, asked by name, \
+                       so start with one if it fits). A call that narrows nothing is refused: name one of subject, \
                        kind, parent, answers_type or fields, or a record's own address \
                        (history_record or built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
@@ -1810,6 +1916,49 @@ impl Jojobot {
                 ),
             );
         }
+        // **The one clock read, taken here whether or not a question named a
+        // day.** What is held is asked as of a day like everything else, so a
+        // call that named one for `overdue` asks about the same day here, and
+        // the answer says which day it used either way.
+        let today = self.dated(None, args.sid.as_deref()).await?;
+        // **An expression is read here, once, against the asker's day**, so a
+        // relative date means that day and a mistake is refused before any read.
+        let keeping_expression = match args.follow.as_ref().and_then(|f| f.keeping.as_ref()) {
+            Some(Keeping::Expression(text)) => match filter::expression::parse(text, today) {
+                Ok(tree) => Some(tree),
+                Err(refused) => return memory_declined("recall", refused),
+            },
+            _ => None,
+        };
+        let where_expression = match args.expression.as_deref() {
+            None => None,
+            Some(text) => match filter::expression::parse(text, today) {
+                Ok(tree) => Some(tree),
+                Err(refused) => return memory_declined("recall", refused),
+            },
+        };
+        let where_scope = parse_scope(args.scope.as_deref())?;
+        // **A walk's expression is asked of what each reached thing holds now.**
+        // The call's `scope` would be silently dropped beside it, so it is
+        // refused, naming the form that does take a record scope.
+        if keeping_expression.is_some() && where_scope == graph::Scope::Record {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(
+                    "a keeping expression is asked of what each reached thing holds now, and \
+                     scope: record does not apply to it. To keep what a walk reaches by one \
+                     record, send keeping as a list of key filters, each with scope: record"
+                        .into(),
+                ),
+            );
+        }
+        let order = match args.order.as_ref() {
+            None => None,
+            Some(asked) => match filter::Order::asked(&asked.key, asked.direction.as_deref()) {
+                Ok(order) => Some(order),
+                Err(refused) => return memory_declined("recall", refused),
+            },
+        };
         let follow = args
             .follow
             .as_ref()
@@ -1830,7 +1979,14 @@ impl Jojobot {
                         .map(|d| parse_direction(Some(d)))
                         .transpose()?,
                     depth: f.depth.map_or(1, |d| d as usize),
-                    keeping: key_filters(f.keeping.as_deref().unwrap_or_default())?,
+                    keeping: match (&f.keeping, &keeping_expression) {
+                        (Some(Keeping::Filters(named)), _) => key_filters(named)?,
+                        (_, Some(tree)) => vec![graph::FieldFilter::expression(
+                            tree.clone(),
+                            graph::Scope::Thing,
+                        )],
+                        _ => Vec::new(),
+                    },
                     fits_type: fits_type.clone(),
                 })
             })
@@ -1846,11 +2002,6 @@ impl Jojobot {
                     .await?,
             ),
         };
-        // **The one clock read, taken here whether or not a question named a
-        // day.** What is held is asked as of a day like everything else, so a
-        // call that named one for `overdue` asks about the same day here, and
-        // the answer says which day it used either way.
-        let today = self.dated(None, args.sid.as_deref()).await?;
         // Every key some declaration made a reference — what makes a value a
         // link. Read once, here, so the ranking stays a function of what it is
         // handed.
@@ -1958,10 +2109,18 @@ impl Jojobot {
                 parent: args.parent.as_deref().map(EntityId::person),
                 answers_type,
                 candidates: None,
-                fields: match &args.fields {
-                    Some(named) => key_filters(named)?,
-                    None => view_filters,
+                fields: {
+                    let mut asked = match &args.fields {
+                        Some(named) => key_filters(named)?,
+                        None => view_filters,
+                    };
+                    asked.extend(
+                        where_expression
+                            .map(|tree| graph::FieldFilter::expression(tree, where_scope)),
+                    );
+                    asked
                 },
+                order,
                 near,
                 asked_by,
             },
@@ -2310,6 +2469,8 @@ impl Jojobot {
         });
         let graph::Selected {
             objects: mut found,
+            ordered,
+            unlicensed,
             withheld,
             unplaced,
             archived_excluded,
@@ -3018,6 +3179,37 @@ impl Jojobot {
                 ));
             }
             body["excluded_note"] = routes.join("; ").into();
+        }
+        // **A call naming no kind judges each object by its own kind's
+        // declaration**, so an object whose kind does not license a comparison
+        // is not matched. Never a silent shrink: the answer counts what it
+        // lost by kind and says what to declare.
+        if !unlicensed.is_empty() {
+            body["left_out_unlicensed"] = unlicensed
+                .iter()
+                .map(|u| {
+                    serde_json::json!({
+                        "kind": u.kind,
+                        "count": u.count,
+                        "because": u.because,
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into();
+        }
+        // **An ordering that read a key as text although its values parse as
+        // numbers or dates owes the caller the line saying so**: ten sorts before
+        // two as text, and nothing else in the answer would show the key was
+        // never declared.
+        if let (Some(asked), Some(ordered)) = (args.order.as_ref(), ordered)
+            && ordered.read_as_text_though_it_looks_otherwise
+        {
+            body["order_note"] = format!(
+                "'{}' was ordered as text, so 10 comes before 2: no type declares it a number \
+                 or a date. Declare one with declare_type to order it as one",
+                asked.key.trim()
+            )
+            .into();
         }
         // **A thread's archived decisions are named, not shown.** The decisions in
         // front are the standing ones; one that was replaced is archived with its

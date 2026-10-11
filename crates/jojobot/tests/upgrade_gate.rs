@@ -1031,6 +1031,130 @@ async fn a_link_an_older_fold_left_on_a_forwarding_row_is_repointed_by_the_first
     drop(scratch);
 }
 
+/// The view an older build stored, and the two things it asks about.
+const OLD_VIEW: &str = "view:upgrade-fixture-view";
+const OLD_VIEW_RED: &str = "thing:upgrade-fixture-red";
+const OLD_VIEW_BLUE: &str = "thing:upgrade-fixture-blue";
+
+/// **A view the way a build before the expression stored it**: a record on the
+/// view whose own fields name a key and a value, and no `where` anywhere. Written
+/// below the surface into the recorded schema, with the two things it separates.
+async fn plant_a_view_with_a_filter_record(pool: &sqlx::MySqlPool) {
+    for (id, kind, name, badge) in [
+        (OLD_VIEW, "view", "A Recorded View", "view01"),
+        (OLD_VIEW_RED, "thing", "A Red Thing", "red001"),
+        (OLD_VIEW_BLUE, "thing", "A Blue Thing", "blue01"),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
+                                 merged_into, archived_reason, archived_at)
+             VALUES (?, ?, ?, 'test', NULL, NULL, 'on-demand', '', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(name)
+        .bind(badge)
+        .execute(pool)
+        .await
+        .expect("the entity lands");
+        for fact in ["f1", "f2"] {
+            if fact == "f2" && kind != "view" {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                                   recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                                   derived_from_id, inserted_at, stale_after, happened_at,
+                                   happened_through)
+                 VALUES (?, ?, 'a recorded claim', NULL, 'testimony', 'settled', 'active',
+                         '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                         NULL, NULL)",
+            )
+            .bind(badge)
+            .bind(fact)
+            .execute(pool)
+            .await
+            .expect("the record lands");
+            sqlx::query(
+                "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                        standing, status, recorded_at, edge_shape, edge_object,
+                                        derived_from, derived_from_id, inserted_at, stale_after,
+                                        written_at, happened_at, happened_through, session)
+                 VALUES (?, ?, 1, 'a recorded claim', NULL, 'testimony', 'settled', 'active',
+                         '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                         '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+            )
+            .bind(badge)
+            .bind(fact)
+            .execute(pool)
+            .await
+            .expect("the record's first write lands");
+        }
+    }
+    for (badge, key, value, fact) in [
+        ("view01", "selects", "thing", "f1"),
+        ("view01", "key", "color", "f2"),
+        ("view01", "value", "red", "f2"),
+        ("red001", "color", "red", "f1"),
+        ("blue01", "color", "blue", "f1"),
+    ] {
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+             VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind(badge)
+        .bind(key)
+        .bind(value)
+        .bind(fact)
+        .execute(pool)
+        .await
+        .expect("the field lands");
+    }
+}
+
+/// **A view stored before the expression existed answers as it did.** Its
+/// filter is a record whose own fields name a key and a value, and the current
+/// binary reads it with no `where` on the view: the red thing is in, the blue one
+/// is out, and a second boot over the same store answers the same.
+#[tokio::test]
+async fn a_view_stored_with_a_filter_record_answers_as_before_on_the_current_binary() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "old-view").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_view_with_a_filter_record(store.pool()).await;
+    store.stop().await;
+
+    for boot in 0..2 {
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+            .await
+            .expect("connecting to the current binary");
+        let answer = surface
+            .call("recall", json!({"view": "upgrade-fixture-view"}))
+            .await;
+        booted.stop().await;
+        let answer: serde_json::Value = serde_json::from_str(&answer).unwrap_or_else(|_| {
+            panic!("recorded at {git_ref}: boot {boot}: the view did not answer: {answer}")
+        });
+        let handles: Vec<&str> = answer["objects"]
+            .as_array()
+            .map(|all| all.iter().filter_map(|o| o["id"].as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            handles,
+            [OLD_VIEW_RED],
+            "recorded at {git_ref}: boot {boot}: the stored filter record still separates red from \
+             blue: {answer}"
+        );
+    }
+    drop(scratch);
+}
+
 /// **Every stored record that no answer could carry whole**, found by reading
 /// each thing's records back through the served surface the way a caller does,
 /// one part after another. A record is over when the answer that carries it is

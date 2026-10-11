@@ -451,17 +451,14 @@ async fn keeping_track_of_bikes() {
         // reader has to know the meaning of.
         .says("\"cleared\":true");
 
-    // GAP — and no read orders the RECORDS or takes the newest one. A key's
-    // writes come back in order, which is the history above; "when did I last
-    // service it" is a question about the records, and it comes back as every
-    // service ever recorded with the session picking the latest date out by
-    // reading them. Ordering is how an answer comes back rather than a question
-    // of its own, so it arrives as an argument on the read and the tripwire
-    // watches for both halves of it.
+    // GAP — and no read takes the newest record of a thing. `order` now orders
+    // the THINGS a call selects by a key they hold, which is not this: a thing's
+    // own records still come back oldest first, and "when did I last service it"
+    // is a question about them. It comes back as every service ever recorded with
+    // the session picking the latest date out by reading them, so the tripwire
+    // watches for the argument that would take one.
     //   s.shape("the newest service",
-    //           json!({"subject": "thing:gravel-bike", "order": "expires", "newest": 1})).await;
-    s.has_no_argument("recall", "order", &["fields", "facts"])
-        .await;
+    //           json!({"subject": "thing:gravel-bike", "newest": 1})).await;
     s.has_no_argument("recall", "newest", &["fields", "facts"])
         .await;
 

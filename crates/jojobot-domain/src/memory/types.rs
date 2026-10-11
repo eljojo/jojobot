@@ -75,6 +75,11 @@ pub enum ValueType {
     /// a link whether or not the key was declared. This is what makes a
     /// cross-entity question answerable from a type's own fields.
     Reference,
+    /// **A line saying which things are wanted**, in the expression a recall's
+    /// `where` takes. It must parse, so a view holding one is never saved
+    /// unreadable, and a handle written in it is stored as the permanent id the
+    /// thing wears (see [`super::mention::bound_expression`]).
+    Expression,
 }
 
 /// **How a key's writes come down to the one value the key holds.**
@@ -303,6 +308,7 @@ impl ValueType {
             ValueType::DateRange => "date_range",
             ValueType::Boolean => "boolean",
             ValueType::Reference => "reference",
+            ValueType::Expression => "expression",
         }
     }
 
@@ -315,6 +321,7 @@ impl ValueType {
             "date_range" => Some(ValueType::DateRange),
             "boolean" => Some(ValueType::Boolean),
             "reference" => Some(ValueType::Reference),
+            "expression" => Some(ValueType::Expression),
             _ => None,
         }
     }
@@ -350,6 +357,10 @@ impl ValueType {
             // A handle, which is what makes it walkable. The kind has to be one
             // this store knows, or it is a string with a colon in it.
             ValueType::Reference => EntityId(value.to_string()).kind().is_some(),
+            // Read on a fixed day: whether it parses does not depend on which.
+            ValueType::Expression => {
+                super::filter::expression::parse(value, jiff::civil::date(2000, 1, 1)).is_ok()
+            }
         }
     }
 }
@@ -1214,6 +1225,23 @@ mod tests {
     /// it has never heard of. Paired with the negative it rests on — a record
     /// carrying none of the keys is not a match at all — because "it matched"
     /// means nothing if everything matches everything.
+    /// **An expression is a value type of its own, stored under a literal
+    /// token, and a line that does not read is not what the key was declared to
+    /// hold.** The token is written into declared types and nothing outside this
+    /// process declares it, so the spelling is pinned here as a literal.
+    #[test]
+    fn an_expression_key_holds_a_line_that_reads() {
+        assert_eq!(ValueType::Expression.as_token(), "expression");
+        assert_eq!(
+            ValueType::of_token("expression"),
+            Some(ValueType::Expression)
+        );
+        let wanted = Field::new("where", ValueType::Expression);
+        assert!(wanted.accepts("status != done && due <= today+7d"));
+        assert!(!wanted.accepts("status == done"));
+        assert!(!wanted.accepts("   "));
+    }
+
     #[test]
     fn a_record_answers_a_type_it_never_declared() {
         // **This case runs in a booted process.** It parses a handle and asserts

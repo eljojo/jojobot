@@ -41,6 +41,8 @@
 //! Reading a tree out of an argument, and answering a tree from an index, are
 //! other work.
 
+pub mod expression;
+
 use std::collections::BTreeMap;
 
 use super::types::{Compare, DeclaredType, ValueType, list_holds, list_items};
@@ -181,6 +183,24 @@ impl Op {
     }
 }
 
+impl Op {
+    /// The symbol an expression writes this ordering as.
+    fn symbol(self) -> &'static str {
+        match self {
+            Op::Less => "<",
+            Op::LessOrEqual => "<=",
+            Op::Greater => ">",
+            Op::GreaterOrEqual => ">=",
+        }
+    }
+
+    /// **The ordering as a refusal names it**: the word a key filter uses and the
+    /// symbol an expression uses, so a caller who wrote either recognises it.
+    fn said(self, holds: ValueType) -> String {
+        format!("'{}' ({})", self.token(holds), self.symbol())
+    }
+}
+
 impl Filter {
     /// A leaf asking that the key is carried.
     pub fn exists(key: &str) -> Filter {
@@ -301,6 +321,22 @@ impl Filter {
         records.any(|record| self.holds(record))
     }
 
+    /// **The keys the leaves name**, in the order they are met. A leaf that
+    /// asks about the value under any key names none.
+    pub fn keys(&self) -> Vec<&str> {
+        match self {
+            Filter::All(children) | Filter::Any(children) => {
+                children.iter().flat_map(Filter::keys).collect()
+            }
+            Filter::Not(inner) => inner.keys(),
+            Filter::Leaf(leaf) => leaf.key.as_deref().into_iter().collect(),
+            // The list key is this thing's; the inner question's keys belong to
+            // the things the list names, so they are not this thing's to hold.
+            Filter::Refs { key, .. } => vec![key.as_str()],
+            Filter::Finished => Vec::new(),
+        }
+    }
+
     /// **Refuse a filter that cannot be answered as asked, before any read.**
     ///
     /// `kind` is the kind the selection names, when it names one: that kind's
@@ -394,17 +430,33 @@ fn ordered(op: Op, holds: ValueType, held: &str, wanted: &str) -> bool {
     }
 }
 
-/// **Whether a declaration licenses `key` to hold what a leaf needs.** With a
-/// `kind`, only the declaration named for that kind is asked.
+/// **Whether a declaration licenses `key` to hold what a leaf needs.**
+///
+/// With no `kind`, any declaration does. With one, the key is asked of that
+/// kind: **a declaration named like a kind belongs to that kind**, so one kind's
+/// `due` never licenses another's. If the kind declares the key, its word is the
+/// answer, even against a type that says otherwise. If it does not, a type under
+/// any name that is no kind is vocabulary and licenses any object carrying the
+/// key.
 fn declares(
     declared: &[DeclaredType],
     kind: Option<&str>,
     key: &str,
     accepts: impl Fn(&super::types::Field) -> bool,
 ) -> bool {
+    let Some(kind) = kind else {
+        return declared.iter().any(|d| d.field(key).is_some_and(&accepts));
+    };
+    if let Some(field) = declared
+        .iter()
+        .find(|d| d.name == kind)
+        .and_then(|d| d.field(key))
+    {
+        return accepts(field);
+    }
     declared
         .iter()
-        .filter(|d| kind.is_none_or(|kind| d.name == kind))
+        .filter(|d| !super::kinds::known(&d.name))
         .any(|d| d.field(key).is_some_and(&accepts))
 }
 
@@ -439,10 +491,10 @@ impl Leaf {
                         .into(),
                 )),
                 Test::Order(op, holds, _) => Err(MemoryError::InvalidQuery(format!(
-                    "'{}' needs a key: an ordering is licensed by what that key was declared \
+                    "{} needs a key: an ordering is licensed by what that key was declared \
                      to hold, and a filter naming no key has no declaration to read. Name the \
                      key, or ask for the value itself",
-                    op.token(*holds),
+                    op.said(*holds),
                 ))),
                 Test::Equals(_) | Test::In(_) => Ok(()),
             };
@@ -462,23 +514,23 @@ impl Leaf {
             Test::Order(op, holds, wanted) => {
                 if !matches!(holds, ValueType::Date | ValueType::Number) {
                     return Err(MemoryError::InvalidQuery(format!(
-                        "'{}' orders dates and numbers, and '{}' is neither",
-                        op.token(*holds),
+                        "{} orders dates and numbers, and '{}' is neither",
+                        op.said(*holds),
                         holds.as_token(),
                     )));
                 }
                 if !holds.holds(wanted) {
                     return Err(MemoryError::InvalidQuery(format!(
-                        "'{}' asks about {}s and '{wanted}' is not one",
-                        op.token(*holds),
+                        "{} asks about {}s and '{wanted}' is not one",
+                        op.said(*holds),
                         holds.as_token(),
                     )));
                 }
                 if !declares(declared, kind, key, |field| field.holds == *holds) {
                     return Err(MemoryError::InvalidQuery(format!(
-                        "'{}' needs a type declaring '{}' to hold a {}. Declare one, or ask for \
+                        "{} needs a type declaring '{}' to hold a {}. Declare one, or ask for \
                          the value itself",
-                        op.token(*holds),
+                        op.said(*holds),
                         key,
                         holds.as_token(),
                     )));
@@ -552,6 +604,41 @@ impl Order {
         Order {
             key: key.trim().to_string(),
             direction,
+        }
+    }
+
+    /// **An ordering from the words a caller sends**: a key, and `ascending` or
+    /// `descending` (`asc` and `desc` too). No direction is ascending.
+    pub fn asked(key: &str, direction: Option<&str>) -> Result<Order, MemoryError> {
+        if key.trim().is_empty() {
+            return Err(MemoryError::InvalidQuery(
+                "an order names no key. Name the key the things are ordered by".into(),
+            ));
+        }
+        let direction = match direction.map(str::trim).filter(|d| !d.is_empty()) {
+            None | Some("ascending" | "asc") => Direction::Ascending,
+            Some("descending" | "desc") => Direction::Descending,
+            Some(other) => {
+                return Err(MemoryError::InvalidQuery(format!(
+                    "an order runs ascending or descending, and '{other}' is neither. Leave the \
+                     direction out for ascending"
+                )));
+            }
+        };
+        Ok(Order::new(key, direction))
+    }
+
+    /// **An ordering written as one line**, `due` or `due descending`, the way a
+    /// view holds it: the key, and a direction word when the last word is one.
+    pub fn in_words(words: &str) -> Result<Order, MemoryError> {
+        let words = words.trim();
+        match words.rsplit_once(char::is_whitespace) {
+            Some((key, direction))
+                if matches!(direction, "asc" | "ascending" | "desc" | "descending") =>
+            {
+                Order::asked(key, Some(direction))
+            }
+            _ => Order::asked(words, None),
         }
     }
 

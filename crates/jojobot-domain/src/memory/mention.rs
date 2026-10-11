@@ -496,6 +496,92 @@ fn is_badge_byte(b: u8) -> bool {
     crate::handle::ALPHABET.contains(&b)
 }
 
+/// **A saved expression, with every handle in it bound to the id its thing
+/// wears.** The values an expression compares keys against are read where they
+/// sit; one that is a handle becomes the stored mark and the badge, exactly as a
+/// mention in a claim's words does, so a rename of the thing changes what the
+/// expression reads as and nothing stored is rewritten.
+///
+/// **A handle that names nothing is refused with candidates**, the rule an
+/// edge's object faces. A value that is not shaped like a handle is left as
+/// written, and so is a handle of a record the build supplies, which wears no
+/// badge. An expression that does not parse is refused with the words the
+/// parser gives.
+pub fn bound_expression(text: &str, known: &[Entity]) -> Result<String, super::MemoryError> {
+    let values = super::filter::expression::value_words(text)?;
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut cut = 0;
+    for value in values {
+        let handle = EntityId(value.text.trim().to_string());
+        // A value is a handle when its kind is one this process knows; the rest
+        // is ordinary text, a time or a word with a colon in it.
+        if handle.kind().is_none() {
+            continue;
+        }
+        let Some(entity) = known.iter().find(|e| e.id == handle) else {
+            let nearest = super::guard::screen(&handle, &[], known);
+            return Err(super::MemoryError::UnknownEntity {
+                attempted: handle.to_string(),
+                nearest,
+            });
+        };
+        let Some(badge) = entity.badge.as_deref().filter(|badge| !badge.is_empty()) else {
+            continue;
+        };
+        out.extend(&chars[cut..value.start]);
+        out.push_str(&format!("{MARK}{badge}"));
+        cut = value.end;
+    }
+    out.extend(&chars[cut..]);
+    Ok(out)
+}
+
+/// **A saved expression as a reader sees it**: every stored mark and badge is the
+/// handle its thing wears today. A badge nothing wears stays as it is, so the
+/// expression still reads and matches nothing rather than naming a thing that
+/// is not there.
+pub fn unbound_expression(text: &str, known: &[Entity]) -> String {
+    // Only the stored mark is read here, and the mark is jojobot's own, so it is
+    // read inside code as well (rule 450, 2176).
+    rewrite(text, |at, _in_code| {
+        if !text[at..].starts_with(MARK) {
+            return None;
+        }
+        let badge = run_of(text, at + MARK.len(), is_badge_byte);
+        if badge.is_empty() {
+            return None;
+        }
+        let entity = wearing(known, badge)?;
+        Some((entity.id.to_string(), at + MARK.len() + badge.len()))
+    })
+}
+
+/// **Bind the handles in every key declared to hold an expression**, on the way
+/// in. The one place a field value is bound as text: a field that names a thing
+/// as a whole value is bound by the store, and one that holds a saved expression
+/// is bound here, so a view's `where` follows a rename.
+fn bind_expression_fields(
+    fields: &mut std::collections::BTreeMap<String, String>,
+    declared: &[super::types::DeclaredType],
+    known: &[Entity],
+) -> Result<(), super::MemoryError> {
+    for (key, value) in fields.iter_mut() {
+        if holds_an_expression(key, declared) {
+            *value = bound_expression(value, known)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether any declaration says this key holds an expression.
+fn holds_an_expression(key: &str, declared: &[super::types::DeclaredType]) -> bool {
+    declared
+        .iter()
+        .filter_map(|d| d.field(key))
+        .any(|f| f.holds == super::types::ValueType::Expression)
+}
+
 // --- the decorator ---------------------------------------------------------
 
 /// **A store whose text carries mentions.**
@@ -587,6 +673,10 @@ impl Mentioning {
         declared: &[super::types::DeclaredType],
     ) {
         for (key, value) in fields.iter_mut() {
+            if holds_an_expression(key, declared) {
+                *value = unbound_expression(value, known);
+                continue;
+            }
             let Some(field) = declared
                 .iter()
                 .filter_map(|d| d.field(key))
@@ -728,11 +818,14 @@ impl super::Memory for Mentioning {
         ) {
             return Ok(blocked);
         }
+        let mut fields = first.fields.clone();
+        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
         let written = self
             .inner
             .add_entity_with_first_claim(
                 new,
                 super::NewFact {
+                    fields,
                     content: resolved(&first.content, &known).map_err(unloaded)?,
                     details: first
                         .details
@@ -780,12 +873,15 @@ impl super::Memory for Mentioning {
         ) {
             return Ok(blocked);
         }
+        let mut fields = claim.fields.clone();
+        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
         let written = self
             .inner
             .update_entity_with_claim(
                 handle,
                 patch,
                 super::NewFact {
+                    fields,
                     content: resolved(&claim.content, &known).map_err(unloaded)?,
                     details: claim
                         .details
@@ -871,9 +967,12 @@ impl super::Memory for Mentioning {
         ) {
             return Ok(blocked);
         }
+        let mut fields = fact.fields.clone();
+        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
         let written = self
             .inner
             .capture(super::NewFact {
+                fields,
                 content: resolved(&fact.content, &known).map_err(unloaded)?,
                 details: fact
                     .details
@@ -923,11 +1022,14 @@ impl super::Memory for Mentioning {
         ) {
             return Ok(blocked);
         }
+        let mut fields = patch.fields.clone();
+        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
         let written = self
             .inner
             .update_fact(
                 address,
                 super::FactPatch {
+                    fields,
                     content: patch
                         .content
                         .as_deref()
@@ -1330,6 +1432,66 @@ mod tests {
             rendered("run @view:loops again", &known),
             "run @view:loops again",
         );
+    }
+
+    /// **A handle in a saved expression is stored as the badge its thing wears,
+    /// and read back as whatever handle wears it now.** The pair is the point: a
+    /// rename changes what the saved expression says and nothing is rewritten.
+    #[test]
+    fn a_handle_in_a_saved_expression_follows_the_thing_it_names() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let known = [thing("person:milhouse", Some("k7h2mn"))];
+        let saved = bound_expression(
+            r#"owner = person:milhouse && status in (now, "person:milhouse") && due < 2026-11-01"#,
+            &known,
+        )
+        .expect("a handle that exists binds");
+        assert_eq!(
+            saved,
+            r#"owner = @#k7h2mn && status in (now, "@#k7h2mn") && due < 2026-11-01"#,
+        );
+        assert_eq!(
+            unbound_expression(&saved, &known),
+            r#"owner = person:milhouse && status in (now, "person:milhouse") && due < 2026-11-01"#,
+        );
+        assert_eq!(
+            unbound_expression(&saved, &[thing("person:ralph", Some("k7h2mn"))]),
+            r#"owner = person:ralph && status in (now, "person:ralph") && due < 2026-11-01"#,
+            "the badge answers to the new handle after a rename",
+        );
+    }
+
+    /// **What is not a handle that exists is not bound, and what cannot be
+    /// bound is refused.** A time is not a handle; a handle of a record the build
+    /// supplies wears no badge; a handle naming nothing is refused with the
+    /// nearest; an expression that does not parse is refused by the parser.
+    #[test]
+    fn a_saved_expression_binds_only_what_exists() {
+        use super::super::MemoryError;
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let known = [
+            thing("person:milhouse", Some("k7h2mn")),
+            thing("view:loops", None),
+        ];
+        for kept in [
+            "starts = 12:30",
+            "view = view:loops",
+            "owner = milhouse",
+            "done",
+        ] {
+            assert_eq!(bound_expression(kept, &known).expect("it binds"), kept);
+        }
+        assert!(
+            matches!(
+                bound_expression("owner = person:ralph", &known),
+                Err(MemoryError::UnknownEntity { attempted, .. }) if attempted == "person:ralph"
+            ),
+            "a handle that names nothing is refused with candidates"
+        );
+        assert!(matches!(
+            bound_expression("owner = ", &known),
+            Err(MemoryError::InvalidQuery(_))
+        ));
     }
 
     /// **The render follows the row, not the spelling.** One badge, two

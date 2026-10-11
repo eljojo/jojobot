@@ -3194,6 +3194,48 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .await
         .expect("the filter record is written");
 
+    // The rhythm kind says `counts_from` holds a date, which is what licenses
+    // an ordering on it. The fake store declares no kind's keys on its own.
+    memory
+        .declare_type(DeclaredType::shipped(
+            "rhythm",
+            vec![Field::new("counts_from", ValueType::Date)],
+        ))
+        .await
+        .expect("the rhythm kind's date key is declared");
+    // **A view that narrows by an expression and orders by a key**, which is
+    // what the same page has to run beside a filter record. `counts_from` is a
+    // date the rhythm kind declares, so the comparison is licensed; the order
+    // runs against handle order, so a page that ignored it would list the other
+    // loop first.
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:latest-first".into()),
+            "Latest First",
+            "the operator",
+        ))
+        .await
+        .expect("the expression view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "rhythm".to_string()),
+                ("where".to_string(), "counts_from > 2021-01-01".to_string()),
+                ("order".to_string(), "counts_from descending".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:latest-first".into()),
+                "the loops counted from after 2021, latest first",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the expression is written");
+
     memory
 }
 
@@ -3302,6 +3344,44 @@ async fn a_views_page_runs_the_views_own_filter() {
     assert!(
         !answer.contains("rhythm:worming") && !answer.contains("rhythm:abseiling"),
         "the loops the filter excludes must not be in the answer: {answer}"
+    );
+    ct.cancel();
+}
+
+/// **A view's page runs the view's expression and its order.** The page reads
+/// `where` and `order` where the verb reads them, so the loop counted from
+/// before the cut is not on the page and the other two come latest first, against
+/// the handle order they would otherwise take.
+#[tokio::test]
+async fn a_views_page_runs_the_views_expression_and_order() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:latest-first/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let answer = page
+        .split_once("id=\"answer\"")
+        .unwrap_or_else(|| panic!("the page carries the view's answer: {page}"))
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+    assert!(
+        !answer.contains("rhythm:descale"),
+        "the loop counted from before the cut is not on the page: {answer}"
+    );
+    let (worming, abseiling) = (
+        answer.find("rhythm:worming"),
+        answer.find("rhythm:abseiling"),
+    );
+    assert!(
+        worming.is_some() && abseiling.is_some() && worming < abseiling,
+        "both later loops are there, latest first: {answer}"
     );
     ct.cancel();
 }

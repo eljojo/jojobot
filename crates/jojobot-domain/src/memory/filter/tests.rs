@@ -225,21 +225,53 @@ fn contains_on_a_key_not_declared_a_list_is_refused_by_name() {
     );
 }
 
-/// **When a selection names a kind, that kind's declaration alone governs.**
-/// A declaration under another name licenses nothing then, and licenses as
-/// before when no kind is named.
+/// **A declaration named like a kind belongs to that kind, and a type under any
+/// other name is vocabulary.** Vocabulary licenses any kind that carries its
+/// key; another kind's declaration licenses nothing; and where the kind and a
+/// vocabulary type disagree about one key, the kind's declaration wins.
 #[test]
-fn a_named_kind_is_governed_by_its_own_declaration_alone() {
+fn a_kind_named_declaration_belongs_to_its_kind() {
+    // Which names are kinds is what a booted process knows.
+    let _booted = crate::memory::testing::InMemoryMemory::booted();
     let greater = Filter::comparing("cost", Compare::Greater, "10");
     let tracked = [declaring("cost", ValueType::Number)];
     assert!(
         greater.validate(&tracked, None).is_ok(),
         "any type licenses"
     );
-    assert!(greater.validate(&tracked, Some("tracked")).is_ok());
     assert!(
-        greater.validate(&tracked, Some("other")).is_err(),
-        "the named kind has no declaration of cost"
+        greater.validate(&tracked, Some("other")).is_ok(),
+        "a type no kind is named for is vocabulary, and licenses any kind"
+    );
+    let work = |holds| DeclaredType::new("work", vec![Field::new("cost", holds)]);
+    assert!(
+        greater
+            .validate(&[work(ValueType::Number)], Some("work"))
+            .is_ok()
+    );
+    assert!(
+        greater
+            .validate(&[work(ValueType::Number)], Some("thing"))
+            .is_err(),
+        "work's declaration of cost is work's"
+    );
+    assert!(
+        greater
+            .validate(
+                &[work(ValueType::Date), declaring("cost", ValueType::Number)],
+                Some("work")
+            )
+            .is_err(),
+        "the kind declared cost a date, and that is its word against a vocabulary number"
+    );
+    assert!(
+        greater
+            .validate(
+                &[work(ValueType::Number), declaring("cost", ValueType::Date)],
+                Some("work")
+            )
+            .is_ok(),
+        "and a vocabulary date does not undo the kind's number"
     );
 }
 
@@ -437,12 +469,14 @@ fn a_key_declared_two_ways_orders_as_text() {
 }
 
 /// **A kind named by the selection governs how its key is read.** The same key
-/// is a number under the kind that declares it and text under one that does not.
+/// is a number under the kind that declares it, and text under another kind: a
+/// declaration named like a kind belongs to it. A type under any other name is
+/// vocabulary and reads the key as declared for every kind.
 #[test]
 fn the_kind_a_selection_names_decides_how_a_key_is_ordered() {
+    let _booted = crate::memory::testing::InMemoryMemory::booted();
     let items = [("ten", Some("10")), ("two", Some("2"))];
-    let declared = [declaring("size", ValueType::Number)];
-    let under = |kind: Option<&str>| {
+    let under = |declared: &[DeclaredType], kind: Option<&str>| {
         let mut rows: Vec<(&str, BTreeMap<String, String>)> = items
             .iter()
             .map(|(name, value)| (*name, bag(&[("size", value.unwrap())])))
@@ -450,13 +484,19 @@ fn the_kind_a_selection_names_decides_how_a_key_is_ordered() {
         Order::new("size", Direction::Ascending).sort(
             &mut rows,
             |(_, fields)| Some(fields),
-            &declared,
+            declared,
             kind,
         );
         rows.into_iter().map(|(name, _)| name).collect::<Vec<_>>()
     };
-    assert_eq!(under(Some("tracked")), ["two", "ten"]);
-    assert_eq!(under(Some("other")), ["ten", "two"]);
+    let work = [DeclaredType::new(
+        "work",
+        vec![Field::new("size", ValueType::Number)],
+    )];
+    assert_eq!(under(&work, Some("work")), ["two", "ten"]);
+    assert_eq!(under(&work, Some("thing")), ["ten", "two"]);
+    let vocabulary = [declaring("size", ValueType::Number)];
+    assert_eq!(under(&vocabulary, Some("thing")), ["two", "ten"]);
 }
 
 /// **A set of named things for a reference list to name.** Each is a kind, the

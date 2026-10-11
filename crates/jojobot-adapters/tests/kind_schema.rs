@@ -1297,6 +1297,7 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
                 value: Some("2026-06-01".to_string()),
                 compare: jojobot_domain::memory::types::Compare::After,
                 scope: graph::Scope::Thing,
+                tree: None,
             }],
             ..graph::Selection::default()
         },

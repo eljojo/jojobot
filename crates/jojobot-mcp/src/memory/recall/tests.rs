@@ -56,6 +56,9 @@ fn of(subject: &str) -> RecallArgs {
         parent: None,
         answers_type: None,
         fields: None,
+        expression: None,
+        scope: None,
+        order: None,
         facts: Some(true),
         stood_for: None,
         status: None,
@@ -4314,12 +4317,12 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
                 follow: Some(FollowArgs {
                     relation: Some("owner".into()),
                     direction: Some("in".into()),
-                    keeping: Some(vec![KeyFilterArgs {
+                    keeping: Some(Keeping::Filters(vec![KeyFilterArgs {
                         key: Some("born".into()),
                         value: Some("2020-01-01".into()),
                         compare: Some("before".into()),
                         scope: None,
-                    }]),
+                    }])),
                     ..no_follow()
                 }),
                 ..of_nothing()
@@ -4545,6 +4548,9 @@ fn of_nothing() -> RecallArgs {
         parent: None,
         answers_type: None,
         fields: None,
+        expression: None,
+        scope: None,
+        order: None,
         facts: None,
         stood_for: None,
         status: None,

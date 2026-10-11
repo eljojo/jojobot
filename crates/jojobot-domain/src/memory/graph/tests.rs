@@ -3732,6 +3732,65 @@ fn a_walk_keeps_only_what_answers_its_filters() {
     );
 }
 
+/// **A walk's filters ask each reached object's own kind**, because a walk
+/// reaches objects of any kind. The bike holds a `born` that matches, and its
+/// kind declares none, so the walk does not keep it and says an edge went
+/// unfollowed; a declaration for the bike's own kind keeps it. Both halves in one
+/// case, because either alone passes on a build that asks any declaration.
+#[test]
+fn a_walk_keeps_what_its_own_kind_licenses_the_comparison_on() {
+    let mut scanned = kennel();
+    let bike = scanned
+        .iter_mut()
+        .find(|d| d.doc_id == "thing:red-bike")
+        .expect("the kennel holds the bike");
+    bike.fields.insert("born".into(), "2018-01-01".into());
+    let born_before = |declarations: &[types::DeclaredType]| {
+        resolved(
+            &scanned,
+            declarations,
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId("person:bart".into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::Relation("owner".into()),
+                    direction: Some(Direction::In),
+                    keeping: vec![FieldFilter::comparing(
+                        "born",
+                        types::Compare::Before,
+                        "2020-01-01",
+                    )],
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("the pet's declaration licenses the comparison somewhere")
+    };
+    let only_pets = born_before(&[pet()]);
+    assert_eq!(
+        handles(&only_pets[0].connected),
+        vec!["pet:santas-little-helper"],
+        "the bike's kind declares nothing, so its born is not compared: {only_pets:?}",
+    );
+    assert!(
+        only_pets[0].unwalked,
+        "and the edge to it is marked unfollowed"
+    );
+    let bike_declared = types::DeclaredType::new(
+        "thing",
+        vec![types::Field::new("born", types::ValueType::Date)],
+    );
+    let both = born_before(&[pet(), bike_declared]);
+    assert_eq!(
+        handles(&both[0].connected),
+        vec!["pet:santas-little-helper", "thing:red-bike"],
+        "declared for its own kind, the bike is kept: {both:?}",
+    );
+}
+
 /// **A walk's filters are asked the same two ways a selection's are**, and
 /// which way decides both what the walk reaches and what each object brings.
 ///
@@ -4121,4 +4180,387 @@ async fn a_windowed_browse_reads_what_fits_and_counts_what_it_did_not() {
     );
     assert_eq!((later.skipped, later.left_over), (10, 14));
     assert_eq!(handles(&later.objects)[0], names[10].as_str());
+}
+
+/// Four pieces of work on a board: three with a status and a size, one holding
+/// neither. Each is the fields its thing holds.
+fn board() -> Vec<DocScan> {
+    let work = |handle: &str, held: &[(&str, &str)]| {
+        let held = held
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        doc_holding(entity(handle, handle), "", Vec::new(), held)
+    };
+    vec![
+        work(
+            "work:gamma",
+            &[("status", "now"), ("size", "10"), ("due", "2026-10-12")],
+        ),
+        work("work:delta", &[("status", "next"), ("size", "2")]),
+        work("work:epsilon", &[("status", "done")]),
+        work("work:zeta", &[("note", "holds no status")]),
+    ]
+}
+
+/// A query for the work on the board asked through one expression.
+fn asking_the_board(tree: crate::memory::filter::Filter, scope: Scope) -> GraphQuery {
+    GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            fields: vec![FieldFilter::expression(tree, scope)],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    }
+}
+
+/// **An expression selects through the tree it is.** A negation keeps the
+/// things that hold the key with another value, and the complement keeps the
+/// ones that hold no such key too: the pair is what says `!=` is not `!`.
+#[test]
+fn an_expression_selects_what_the_tree_says_and_negation_needs_the_key() {
+    use crate::memory::filter::Filter;
+    let board = board();
+    let ask = |tree| {
+        let query = asking_the_board(tree, Scope::Thing);
+        handles(&resolved(&board, &[], &query).expect("an expression is a selection"))
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ask(Filter::not_equals("status", "done")),
+        ["work:delta", "work:gamma"],
+        "has another status: the done one and the one with none are both absent"
+    );
+    assert_eq!(
+        ask(Filter::negated(Filter::equals("status", "done"))),
+        ["work:delta", "work:gamma", "work:zeta"],
+        "the complement keeps the one holding no status"
+    );
+    assert_eq!(
+        ask(Filter::Any(vec![
+            Filter::equals("status", "now"),
+            Filter::equals("size", "2")
+        ])),
+        ["work:delta", "work:gamma"]
+    );
+}
+
+/// **One expression asked of records is answered by one record, and the page
+/// narrows to the records that answered.**
+#[test]
+fn an_expression_asked_of_a_record_narrows_the_page() {
+    use crate::memory::filter::Filter;
+    let said = |id: &str, status: &str| Fact {
+        fields: [("status".to_string(), status.to_string())]
+            .into_iter()
+            .collect(),
+        ..fact("work:gamma", id, "where it stands")
+    };
+    let scanned = vec![doc_holding(
+        entity("work:gamma", "gamma"),
+        "",
+        vec![said("f1", "now"), said("f2", "done")],
+        [("status".to_string(), "done".to_string())]
+            .into_iter()
+            .collect(),
+    )];
+    let ask = |scope| {
+        resolved(
+            &scanned,
+            &[],
+            &asking_the_board(Filter::equals("status", "now"), scope),
+        )
+        .expect("an expression is a selection")
+    };
+    assert!(
+        ask(Scope::Thing).is_empty(),
+        "the thing now holds done, so the old value selects nothing"
+    );
+    let by_record = ask(Scope::Record);
+    assert_eq!(handles(&by_record), ["work:gamma"]);
+    assert_eq!(by_record[0].facts.len(), 1, "only the record that answered");
+}
+
+/// **An ordering is applied to the whole selection, by what a key was declared
+/// to hold**: declared a number, ten is above two; undeclared, it is text, ten
+/// sorts below two and the answer says it read the key as text.
+#[test]
+fn an_ordering_reads_the_key_the_way_it_was_declared() {
+    use crate::memory::filter::{Direction as Way, Order};
+    let board = board();
+    let by_size = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            order: Some(Order::new("size", Way::Descending)),
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    let numeric = types::DeclaredType::new(
+        "work",
+        vec![types::Field::new("size", types::ValueType::Number)],
+    );
+    let as_number = resolve(&board, &[numeric], &by_size).expect("an order is a selection");
+    assert_eq!(
+        handles(&as_number.objects),
+        ["work:gamma", "work:delta", "work:epsilon", "work:zeta"],
+        "ten above two; the two holding no size come last, in the order they came"
+    );
+    assert!(
+        as_number
+            .ordered
+            .is_some_and(|o| !o.read_as_text_though_it_looks_otherwise)
+    );
+    let as_text = resolve(&board, &[], &by_size).expect("an order is a selection");
+    assert_eq!(
+        handles(&as_text.objects),
+        ["work:delta", "work:gamma", "work:epsilon", "work:zeta"],
+        "as text, two sorts above ten when the order runs down"
+    );
+    assert!(
+        as_text
+            .ordered
+            .is_some_and(|o| o.read_as_text_though_it_looks_otherwise),
+        "and the answer owes the caller the line saying so"
+    );
+}
+
+/// **A declaration named like a kind belongs to that kind; a type under any
+/// other name is vocabulary and licenses any object that carries its key.** When
+/// the two disagree about what one key holds on an object, the kind's
+/// declaration wins. A call naming no kind is refused when no declaration
+/// anywhere licenses the ordering, and is judged per object otherwise: see
+/// [`a_call_naming_no_kind_asks_each_objects_own_kind`].
+#[test]
+fn a_kinds_declaration_belongs_to_it_and_any_other_type_is_vocabulary() {
+    use crate::memory::filter::{Filter, Op};
+    let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
+    let declaring = |name: &str, holds: types::ValueType| {
+        types::DeclaredType::new(name, vec![types::Field::new("due", holds)])
+    };
+    let about_work = asking_the_board(soon.clone(), Scope::Thing);
+    // A type under a name that is no kind licenses a call about work.
+    let vocabulary = resolved(
+        &board(),
+        &[declaring("tracked", types::ValueType::Date)],
+        &about_work,
+    )
+    .expect("vocabulary licenses any object carrying its key");
+    assert_eq!(handles(&vocabulary), ["work:gamma"]);
+    // A declaration named for ANOTHER kind belongs to that kind.
+    let refused = resolve(
+        &board(),
+        &[declaring("thing", types::ValueType::Date)],
+        &about_work,
+    )
+    .expect_err("thing's declaration is not work's");
+    assert!(
+        matches!(&refused, MemoryError::InvalidQuery(words) if words.contains("due") && words.contains("date")),
+        "{refused:?}"
+    );
+    // Work's own declaration licenses it.
+    let own = resolved(
+        &board(),
+        &[declaring("work", types::ValueType::Date)],
+        &about_work,
+    )
+    .expect("work's own declaration licenses it");
+    assert_eq!(handles(&own), ["work:gamma"]);
+    // **Where the kind and a vocabulary type disagree, the kind wins**, in both
+    // directions: a type licensing a date does not rescue a kind that declared a
+    // number, and a kind that declared a date is not undone by a number.
+    let kind_says_number = resolve(
+        &board(),
+        &[
+            declaring("work", types::ValueType::Number),
+            declaring("tracked", types::ValueType::Date),
+        ],
+        &about_work,
+    )
+    .expect_err("work declared due a number, and that is work's word");
+    assert!(
+        matches!(&kind_says_number, MemoryError::InvalidQuery(_)),
+        "{kind_says_number:?}"
+    );
+    let kind_says_date = resolved(
+        &board(),
+        &[
+            declaring("work", types::ValueType::Date),
+            declaring("tracked", types::ValueType::Number),
+        ],
+        &about_work,
+    )
+    .expect("work declared due a date, and a number elsewhere does not undo it");
+    assert_eq!(handles(&kind_says_date), ["work:gamma"]);
+    let no_kind = GraphQuery {
+        select: Selection {
+            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    assert!(
+        matches!(
+            resolve(&board(), &[], &no_kind),
+            Err(MemoryError::InvalidQuery(_))
+        ),
+        "with no kind named, an ordering no declaration licenses is still refused"
+    );
+}
+
+/// Work with a due date, a thing holding a due date its own kind declares as a
+/// number, and a thing holding one no declaration speaks for.
+fn due_on_three_kinds() -> Vec<DocScan> {
+    let holding = |handle: &str, due: &str| {
+        doc_holding(
+            entity(handle, handle),
+            "",
+            Vec::new(),
+            [("due".to_string(), due.to_string())].into_iter().collect(),
+        )
+    };
+    vec![
+        holding("work:gamma", "2026-10-12"),
+        holding("work:delta", "2027-01-01"),
+        holding("thing:gamma", "2026-10-13"),
+        holding("place:gamma", "2026-10-14"),
+    ]
+}
+
+/// **A call naming no kind asks each object's own kind.** `work` declares `due` a
+/// date, so an ordering by date reads it. `thing` declares a `due` of its own as a
+/// number, which is another key; `place` declares none. Neither matches an
+/// ordering by date, and the answer counts them by kind and names why, so a
+/// shrunk list is never mistaken for a short one. An object that would not have
+/// matched either way (work due next year) is not counted as left out.
+#[test]
+fn a_call_naming_no_kind_asks_each_objects_own_kind() {
+    use crate::memory::filter::{Filter, Op};
+    let declared = [
+        types::DeclaredType::new(
+            "work",
+            vec![types::Field::new("due", types::ValueType::Date)],
+        ),
+        types::DeclaredType::new(
+            "thing",
+            vec![types::Field::new("due", types::ValueType::Number)],
+        ),
+    ];
+    let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
+    let query = GraphQuery {
+        select: Selection {
+            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    let answer = resolve(&due_on_three_kinds(), &declared, &query).expect("work licenses it");
+    assert_eq!(
+        handles(&answer.objects),
+        ["work:gamma"],
+        "the thing's number-valued due and the place's undeclared one do not match"
+    );
+    let left_out: Vec<(&str, usize)> = answer
+        .unlicensed
+        .iter()
+        .map(|u| (u.kind.as_str(), u.count))
+        .collect();
+    assert_eq!(left_out, [("place", 1), ("thing", 1)]);
+    assert!(
+        answer.unlicensed.iter().all(|u| u.because.contains("due")),
+        "each says which key its kind does not license: {:?}",
+        answer.unlicensed
+    );
+    // **A type under no kind's name is vocabulary**: the place's kind is silent
+    // about `due`, so the vocabulary type licenses it. The thing's kind spoke
+    // (a number), so the vocabulary type does not override it.
+    let mut with_vocabulary = declared.to_vec();
+    with_vocabulary.push(types::DeclaredType::new(
+        "tracked",
+        vec![types::Field::new("due", types::ValueType::Date)],
+    ));
+    let widened = resolve(&due_on_three_kinds(), &with_vocabulary, &query).expect("licensed");
+    assert_eq!(handles(&widened.objects), ["place:gamma", "work:gamma"]);
+    assert_eq!(
+        widened
+            .unlicensed
+            .iter()
+            .map(|u| (u.kind.as_str(), u.count))
+            .collect::<Vec<_>>(),
+        [("thing", 1)],
+        "the kind's own declaration wins over the vocabulary type"
+    );
+    // The same call naming the kind that licenses it has nothing to leave out.
+    let named = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            ..query.select.clone()
+        },
+        ..GraphQuery::default()
+    };
+    let work = resolve(&due_on_three_kinds(), &declared, &named).expect("work licenses it");
+    assert_eq!(handles(&work.objects), ["work:gamma"]);
+    assert!(work.unlicensed.is_empty());
+}
+
+/// **A term on a key that nothing holds is refused**, naming the key and the
+/// keys that are held, because an empty answer would read as *there is none*. A
+/// key some type declares is a real question and answers empty. A key filter
+/// that is not an expression keeps answering empty, as it always did.
+#[test]
+fn a_term_on_a_key_nothing_holds_says_so() {
+    use crate::memory::filter::Filter;
+    let refused = resolved(
+        &board(),
+        &[],
+        &asking_the_board(Filter::equals("sttaus", "done"), Scope::Thing),
+    )
+    .expect_err("nothing holds sttaus");
+    assert!(
+        matches!(&refused, MemoryError::InvalidQuery(words)
+            if words.contains("sttaus") && words.contains("status")),
+        "{refused:?}"
+    );
+    // The same typo inside one branch of an OR is still a term on nothing.
+    assert!(
+        resolved(
+            &board(),
+            &[],
+            &asking_the_board(
+                Filter::Any(vec![
+                    Filter::equals("status", "now"),
+                    Filter::equals("sttaus", "done")
+                ]),
+                Scope::Thing
+            ),
+        )
+        .is_err()
+    );
+    let declared = types::DeclaredType::new(
+        "work",
+        vec![types::Field::new("owner", types::ValueType::Text)],
+    );
+    let none = resolved(
+        &board(),
+        &[declared],
+        &asking_the_board(Filter::equals("owner", "bot:gamma"), Scope::Thing),
+    )
+    .expect("a declared key is a real question");
+    assert!(none.is_empty());
+    let old_way = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            fields: vec![FieldFilter::holding("sttaus", "done")],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    assert!(
+        resolved(&board(), &[], &old_way)
+            .expect("a key filter that is no expression is unchanged")
+            .is_empty()
+    );
 }

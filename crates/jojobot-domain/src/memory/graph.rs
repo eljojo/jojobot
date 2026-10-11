@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use super::filter::{Filter, Test};
+use super::filter::{Filter, Order, Ordered, Test};
 
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FactStatus,
@@ -106,6 +106,11 @@ pub struct FieldFilter {
     /// **What this is asked of** — what the thing holds, or what one record
     /// says. [`Scope::Thing`] unless the caller says otherwise.
     pub scope: Scope,
+    /// **A whole expression, as one filter.** When it is here the filter IS this
+    /// tree, asked in `scope`, and `key`, `value` and `compare` say nothing. It is
+    /// how an expression a caller wrote rides where a key filter rides, so it
+    /// narrows a selection and a walk the way a key filter does.
+    pub tree: Option<Filter>,
 }
 
 impl FieldFilter {
@@ -116,6 +121,7 @@ impl FieldFilter {
             value: None,
             compare: types::Compare::Equals,
             scope: Scope::Thing,
+            tree: None,
         }
     }
 
@@ -132,6 +138,7 @@ impl FieldFilter {
             value: Some(value.trim().to_string()),
             compare: types::Compare::Equals,
             scope: Scope::Thing,
+            tree: None,
         }
     }
 
@@ -152,6 +159,18 @@ impl FieldFilter {
         }
     }
 
+    /// **A whole filter tree, asked in one scope** — what an expression reads
+    /// into.
+    pub fn expression(tree: Filter, scope: Scope) -> Self {
+        FieldFilter {
+            key: None,
+            value: None,
+            compare: types::Compare::Equals,
+            scope,
+            tree: Some(tree),
+        }
+    }
+
     /// The same filter asked of one record rather than of the thing.
     pub fn on_a_record(self) -> Self {
         FieldFilter {
@@ -165,6 +184,9 @@ impl FieldFilter {
     /// a key with a value asks the comparison; no key asks about the value under
     /// any key at all.
     pub fn as_filter(&self) -> Filter {
+        if let Some(tree) = &self.tree {
+            return tree.clone();
+        }
         match (&self.key, &self.value) {
             (Some(key), None) => Filter::exists(key),
             (Some(key), Some(wanted)) => Filter::comparing(key, self.compare, wanted),
@@ -193,6 +215,9 @@ fn all_of_scope<'f>(filters: impl Iterator<Item = &'f FieldFilter>, scope: Scope
 /// key nor a value: it selects everything or nothing depending on which way the
 /// predicate happens to fall, and neither is an answer anybody asked for.
 fn validate_filter(field: &FieldFilter) -> Result<(), MemoryError> {
+    if field.tree.is_some() {
+        return Ok(());
+    }
     match (&field.key, &field.value) {
         (Some(key), _) if key.trim().is_empty() => Err(MemoryError::InvalidQuery(
             "a key filter names no key".into(),
@@ -273,6 +298,10 @@ pub struct Selection {
     /// SAME record, because they describe a single record rather than a pair of
     /// separate questions.
     pub fields: Vec<FieldFilter>,
+    /// **The order the selected objects come back in**: a key and a direction,
+    /// applied to the whole selection before any cut, so a page of the answer is
+    /// a page of the order. `None` keeps handle order. See [`Order`].
+    pub order: Option<Order>,
     /// **Records around a day**, on the clock this names. See [`Nearness`].
     pub near: Option<Nearness>,
     /// **Who is asking**, filled from the session handle by the verb and never
@@ -670,9 +699,13 @@ impl GraphQuery {
     /// A relation is a relation because a declaration says so, and an ordering
     /// is licensed by one. Nothing else here has any use for them.
     pub fn needs_declarations(&self) -> bool {
-        let ordered =
-            |filters: &[FieldFilter]| filters.iter().any(|f| f.compare.licensed_by().is_some());
-        ordered(&self.select.fields)
+        let ordered = |filters: &[FieldFilter]| {
+            filters
+                .iter()
+                .any(|f| f.tree.is_some() || f.compare.licensed_by().is_some())
+        };
+        self.select.order.is_some()
+            || ordered(&self.select.fields)
             || self
                 .follow
                 .as_ref()
@@ -765,6 +798,15 @@ pub struct Asked {
     /// [`asked_by_view`] for the shape a filter record takes. Several
     /// filters are several records; nothing here caps it at one per key.
     pub filters: Vec<FieldFilter>,
+    /// **A whole question in one expression**, from the view's `where`. See
+    /// [`Asked::filters`], which reads it against the asker's day.
+    pub expression: Option<String>,
+    /// **What the expression is asked of**, `thing` or `record`, from the view's
+    /// `scope`. Absent is the thing.
+    pub scope: Option<String>,
+    /// **How the objects are ordered**, from the view's `order`: a key, and
+    /// `ascending` or `descending` after it. See [`Asked::ordering`].
+    pub order: Option<String>,
     /// **A type name to select structurally, by the key `answers_type`** —
     /// unresolved: the caller of [`asked_by_view`] still has to look the
     /// name up, the same way it already does for the argument of the same
@@ -778,6 +820,36 @@ pub struct Asked {
     /// `shows_keys`. `None` when it names none, which means every key — a
     /// different question from an empty list.
     pub keys: Option<Vec<String>>,
+}
+
+impl Asked {
+    /// **The view's key filters as a selection takes them**: its filter records,
+    /// then its expression, which is read against the asker's day and asked in
+    /// the view's scope. Both callers of [`asked_by_view`] run the view's question
+    /// through this, so the page and the verb cannot read `where` two ways.
+    pub fn filters(&self, today: jiff::civil::Date) -> Result<Vec<FieldFilter>, MemoryError> {
+        let mut all = self.filters.clone();
+        if let Some(text) = &self.expression {
+            let scope = match self.scope.as_deref().map(str::trim) {
+                None | Some("") => Scope::Thing,
+                Some(token) => Scope::of_token(token).ok_or_else(|| {
+                    MemoryError::InvalidQuery(format!(
+                        "a view's scope is thing or record, and '{token}' is neither"
+                    ))
+                })?,
+            };
+            all.push(FieldFilter::expression(
+                super::filter::expression::parse(text, today)?,
+                scope,
+            ));
+        }
+        Ok(all)
+    }
+
+    /// The view's ordering, when it holds one.
+    pub fn ordering(&self) -> Result<Option<Order>, MemoryError> {
+        self.order.as_deref().map(Order::in_words).transpose()
+    }
 }
 
 /// **A view's own relation walk, read off its fields — the pieces
@@ -845,6 +917,7 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
                 value,
                 compare,
                 scope,
+                tree: None,
             })
         })
         .collect();
@@ -877,6 +950,9 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
     };
     Asked {
         selects: held.get("selects").cloned(),
+        expression: held.get("where").cloned().filter(|w| !w.trim().is_empty()),
+        scope: held.get("scope").cloned(),
+        order: held.get("order").cloned().filter(|o| !o.trim().is_empty()),
         facts: shows("facts"),
         prose: shows("prose"),
         filters,
@@ -975,15 +1051,20 @@ fn check_declared(
     query: &GraphQuery,
     declarations: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
-    let filters = query
-        .select
-        .fields
+    // **The kind a selection names is the kind whose declaration governs its
+    // filters.** A walk's `keeping` reaches objects of any kind, so no one kind's
+    // declaration is asked of it and any declaration licenses.
+    let named_kind = query.select.kind.map(|kind| kind.as_token());
+    let selected = query.select.fields.iter().map(|field| (field, named_kind));
+    let kept = query
+        .follow
         .iter()
-        .chain(query.follow.iter().flat_map(|f| &f.keeping));
-    for field in filters {
+        .flat_map(|f| &f.keeping)
+        .map(|field| (field, None));
+    for (field, kind) in selected.chain(kept) {
         // A comparison against no value asks nothing the tree can read: the
         // leaf of a key with no value is only "is it carried".
-        if field.compare.licensed_by().is_some() && field.value.is_none() {
+        if field.tree.is_none() && field.compare.licensed_by().is_some() && field.value.is_none() {
             return Err(MemoryError::InvalidQuery(format!(
                 "'{}' compares against a value and none was given",
                 field.compare.as_token(),
@@ -992,7 +1073,7 @@ fn check_declared(
         // **The declaration is what licenses the operator**, and the tree judges
         // it: a comparison on a key nobody declared is refused, naming the
         // declaration that would license it.
-        field.as_filter().validate(declarations, None)?;
+        field.as_filter().validate(declarations, kind)?;
     }
     if let Some(Along::Relation(name)) = query.follow.as_ref().map(|f| &f.along)
         && relation_key(name, declarations).is_none()
@@ -1298,8 +1379,13 @@ impl History {
 /// out is indistinguishable from what was never there.
 #[derive(Debug, Clone)]
 pub struct Selected {
-    /// The objects the caller may read, in handle order.
+    /// The objects the caller may read, in handle order, or in the order the
+    /// selection asked for.
     pub objects: Vec<Object>,
+    /// **What the ordering did**, when the selection asked for one. It says
+    /// whether a key read as text although its values would have parsed as
+    /// numbers or dates, which the answer owes a caller who did not declare it.
+    pub ordered: Option<Ordered>,
     /// **How many this selection matched and withheld as another identity's.**
     /// A total, never a breakdown: how many is work status, and which identity
     /// holds them is a directory of who is busy.
@@ -1325,6 +1411,11 @@ pub struct Selected {
     /// reasons are different, and a reader who sees one number cannot tell
     /// which it is looking at. Zero for a selection naming a handle.
     pub merged_excluded: usize,
+    /// **What a call naming no kind left out because the object's own kind does
+    /// not license the comparison asked of its key**, by kind. Only objects that
+    /// would have matched had their kind licensed it are counted, so the list is
+    /// what the caller lost and not everything the call did not match.
+    pub unlicensed: Vec<Unlicensed>,
     /// **The decisions of a thread this read left out because they were
     /// archived**, named by handle. Empty unless the read named a thread. Each
     /// still answers by its own handle, which is how the one that replaced it
@@ -1340,6 +1431,16 @@ pub struct Selected {
     pub left_over: usize,
 }
 
+/// **The objects of one kind a comparison did not reach**, and why: the kind
+/// does not declare the key as the comparison needs, and `because` says which key
+/// and what to declare.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unlicensed {
+    pub kind: String,
+    pub count: usize,
+    pub because: String,
+}
+
 pub fn resolve(
     scanned: &[DocScan],
     declarations: &[types::DeclaredType],
@@ -1348,7 +1449,25 @@ pub fn resolve(
     query.validate()?;
     check_declared(query, declarations)?;
     let ctx = Ctx::of(scanned, declarations);
-    let roots = ctx.roots(&query.select)?;
+    ctx.check_expression_keys(query)?;
+    let mut roots = ctx.roots(&query.select)?;
+    let ordered = query.select.order.as_ref().map(|order| {
+        let mut keyed: Vec<_> = roots
+            .drain(..)
+            .map(|id| {
+                let held = ctx.held(&id);
+                (id, held)
+            })
+            .collect();
+        let ordered = order.sort(
+            &mut keyed,
+            |(_, held)| *held,
+            declarations,
+            query.select.kind.map(|kind| kind.as_token()),
+        );
+        roots.extend(keyed.into_iter().map(|(id, _)| id));
+        ordered
+    });
     let mut objects: Vec<Object> = roots
         .into_iter()
         .map(|id| {
@@ -1359,8 +1478,10 @@ pub fn resolve(
     let decisions_archived = ctx.put_standing_decisions_first(&mut objects, query);
     Ok(Selected {
         objects,
+        ordered,
         withheld: ctx.withheld(&query.select),
         unplaced: ctx.unplaced(&query.select),
+        unlicensed: ctx.unlicensed(&query.select),
         archived_excluded: ctx.archived_excluded(&query.select),
         merged_excluded: ctx.merged_excluded(&query.select),
         decisions_archived,
@@ -1370,6 +1491,65 @@ pub fn resolve(
 }
 
 impl Ctx<'_> {
+    /// **A term of an expression on a key nothing holds is refused**, naming the
+    /// keys that are held. An empty answer to it would read as *there is none*,
+    /// and the likelier truth is a misspelt key.
+    ///
+    /// The population is the things the call could select (its kind, and a
+    /// parent when it names one), asked in the scope the expression is asked in:
+    /// the folded fields of a thing, or the fields of a record. **A key some type
+    /// declares is a real question** even while nothing holds it. A key filter
+    /// that is not an expression is not asked: it has always answered empty.
+    fn check_expression_keys(&self, query: &GraphQuery) -> Result<(), MemoryError> {
+        let select = &query.select;
+        if select.subject.is_some() {
+            return Ok(());
+        }
+        let population: Vec<&Entity> = self
+            .entities
+            .values()
+            .copied()
+            .filter(|e| self.matches_kind_and_parent(e, select))
+            .collect();
+        for field in select.fields.iter().filter(|f| f.tree.is_some()) {
+            let tree = field.as_filter();
+            let held_keys: BTreeSet<&str> = match field.scope {
+                Scope::Thing => population
+                    .iter()
+                    .filter_map(|e| self.held(&e.id))
+                    .flat_map(|fields| fields.keys().map(String::as_str))
+                    .collect(),
+                Scope::Record => population
+                    .iter()
+                    .filter_map(|e| self.facts.get(&e.id))
+                    .flatten()
+                    .flat_map(|fact| fact.fields.keys().map(String::as_str))
+                    .collect(),
+            };
+            for key in tree.keys() {
+                let declared = self.declarations.iter().any(|d| d.field(key).is_some());
+                if declared || held_keys.contains(key) {
+                    continue;
+                }
+                let in_use = if held_keys.is_empty() {
+                    "none of the things this call selected holds any key".to_string()
+                } else {
+                    format!(
+                        "the keys held among them are: {}",
+                        held_keys.iter().copied().collect::<Vec<_>>().join(", ")
+                    )
+                };
+                return Err(MemoryError::InvalidQuery(format!(
+                    "no thing among the {} this call selected holds a key named '{key}', and no \
+                     type declares one, so asking about it could only answer empty. Check the \
+                     spelling: {in_use}",
+                    population.len(),
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// **Put the standing decisions of a thread ahead of it.** A read that names
     /// a thread gets its active `decision` children first, in handle order, each
     /// with its records whatever the caller asked of the thread: what was decided
@@ -1738,6 +1918,27 @@ impl<'a> Ctx<'a> {
     /// [`Ctx::admits`] and [`Ctx::archived_excluded`] cannot drift apart
     /// about what "everything else matched" means.
     fn admits_ignoring_archived(&self, entity: &Entity, select: &Selection) -> bool {
+        self.admits_if_licensed(entity, select) && self.licensed(entity, select).is_ok()
+    }
+
+    /// **Does this entity's own kind license every comparison the selection asks
+    /// of its keys.** A call naming a kind was judged against that kind's
+    /// declaration before any read, so this only has work to do when it names
+    /// none. Otherwise `Err` carries the refusal that kind earns.
+    fn licensed(&self, entity: &Entity, select: &Selection) -> Result<(), MemoryError> {
+        if select.kind.is_some() {
+            return Ok(());
+        }
+        select.fields.iter().try_for_each(|field| {
+            field
+                .as_filter()
+                .validate(self.declarations, Some(entity.kind.as_token()))
+        })
+    }
+
+    /// **Every filter `admits_ignoring_archived` asks except the kind's licence**,
+    /// so the objects a licence left out can be counted over the same question.
+    fn admits_if_licensed(&self, entity: &Entity, select: &Selection) -> bool {
         select.kind.is_none_or(|k| entity.kind == k)
             && select
                 .parent
@@ -1810,6 +2011,36 @@ impl<'a> Ctx<'a> {
             .filter(|e| e.archived.is_some())
             .filter(|e| self.admits_ignoring_archived(e, select))
             .count()
+    }
+
+    /// **What this selection would have matched and left out because the
+    /// object's own kind does not license the comparison.** Grouped by kind, in
+    /// kind order, each with the refusal that kind earns.
+    fn unlicensed(&self, select: &Selection) -> Vec<Unlicensed> {
+        if select.subject.is_some() || select.kind.is_some() {
+            return Vec::new();
+        }
+        let mut by_kind: BTreeMap<&str, (usize, String)> = BTreeMap::new();
+        for entity in self.entities.values().filter(|e| e.browsable()) {
+            if !self.admits_if_licensed(entity, select)
+                || (select.filters_records()
+                    && self.kept_facts(&entity.id, select).next().is_none())
+            {
+                continue;
+            }
+            if let Err(MemoryError::InvalidQuery(because)) = self.licensed(entity, select) {
+                let kind = entity.kind.as_token();
+                by_kind.entry(kind).or_insert((0, because)).0 += 1;
+            }
+        }
+        by_kind
+            .into_iter()
+            .map(|(kind, (count, because))| Unlicensed {
+                kind: kind.to_string(),
+                count,
+                because,
+            })
+            .collect()
     }
 
     /// **What this selection matched and left out because the thing was folded
@@ -1946,6 +2177,14 @@ impl<'a> Ctx<'a> {
                     // filter that meant the record here and the thing there
                     // would carry the defect this scope exists to remove.
                     if !holds_all(self.held(&reached), follow.keeping.iter())
+                        || self.entities.get(&reached).is_some_and(|entity| {
+                            follow.keeping.iter().any(|field| {
+                                field
+                                    .as_filter()
+                                    .validate(self.declarations, Some(entity.kind.as_token()))
+                                    .is_err()
+                            })
+                        })
                         || (follow.filters_records()
                             && self.reached_facts(&reached, Some(follow)).is_empty())
                     {
@@ -2533,6 +2772,9 @@ where
         && query.select.candidates.is_none()
         && query.select.kind != Some(super::EntityKind::SESSION)
         && !query.select.filters_facts()
+        // An ordering reads the values of a key, which the shells below do not
+        // hold: ordered over them, every object ties and handle order comes back.
+        && query.select.order.is_none()
     {
         let shells: Vec<DocScan> = entities
             .iter()

@@ -735,10 +735,22 @@ async fn view_section(
         // would be a second account of one refusal.
         Err(why) => return cannot_run(&escape(&why.to_string())),
     };
+    // **The server's own day, in the instance's zone.** A browser states no
+    // timezone, so the page takes the frame every unzoned read takes: the zone
+    // the instance's record holds, and UTC only when it holds none.
+    let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
+    let today = state.clock.today_in(&frame);
+    // **The view's expression and ordering are read where the verb reads them**
+    // (rule 51), against the same kind of day.
+    let (filters, order) = match (asked.filters(today), asked.ordering()) {
+        (Ok(filters), Ok(order)) => (filters, order),
+        (Err(why), _) | (_, Err(why)) => return cannot_run(&escape(&why.to_string())),
+    };
     let query = graph::GraphQuery {
         select: graph::Selection {
             kind: Some(kind),
-            fields: asked.filters.clone(),
+            fields: filters,
+            order,
             ..graph::Selection::default()
         },
         // **The objects, and nothing of each.** A view's `shows` says what of
@@ -770,11 +782,6 @@ async fn view_section(
         let carriers = attention::shipped();
         let carriers: Vec<&dyn attention::Carrier> =
             carriers.iter().map(std::convert::AsRef::as_ref).collect();
-        // **The server's own day, in the instance's zone.** A browser states no
-        // timezone, so the page takes the frame every unzoned read takes: the
-        // zone the instance's record holds, and UTC only when it holds none.
-        let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
-        let today = state.clock.today_in(&frame);
         // **The words the operator mapped**, so a status that means `done` here
         // finishes a thing exactly as it does in the verbs.
         let instance =

@@ -27,7 +27,7 @@
 
 **One scope covers the whole expression**: what a thing holds now, by default, or what one record says, when asked. A term can never pick its own, because an answer that mixed the two could not be read back as one question.
 
-**A declaration licenses the comparisons that need a type.** Before, after, less and more need a key declared a date or a number. `contains` needs a key declared a list. Equality, any-of, exists and their negations need nothing declared. A comparison used without its licence is refused, naming the declaration it needs. When the call names a kind, that kind's declaration governs.
+**A declaration licenses the comparisons that need a type.** Before, after, less and more need a key declared a date or a number. `contains` needs a key declared a list. Equality, any-of, exists and their negations need nothing declared. A comparison used without its licence is refused, naming the declaration it needs. A declaration named like a kind belongs to that kind, so one kind's `due` never licenses another's; a type under any other name is vocabulary and licenses any object that carries its key. Where the two disagree about a key, the kind's declaration wins. A call that names no kind asks each object's own kind, and the answer counts what it left out by kind rather than shrinking in silence.
 
 **A negation keeps only things that hold the key.** `status != done` is the things holding some other status. A thing with no status is not among them, because *has none* and *has another* are different answers. `!` is the complement within what the call selected, never the whole store.
 

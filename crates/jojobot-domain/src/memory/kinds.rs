@@ -316,6 +316,16 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // They are named asks rather than filters because neither is a
             // value held on the thing itself.
             Field::one_of("asks", ["overdue", super::readiness::ASK]),
+            // **Which things, as one expression over keys** — the line a recall's
+            // `where` takes. A handle written in it is bound to the permanent id
+            // when the view is written, so a rename does not break the view.
+            Field::new("where", ValueType::Expression),
+            // **What `where` is asked of**: what each thing holds now (`thing`,
+            // the default), or what one record says.
+            Field::one_of("scope", ["thing", "record"]),
+            // **The order the things come back in**: a key, then `ascending` or
+            // `descending`. Text, read when the view runs.
+            Field::new("order", ValueType::Text),
         ],
         // **A seat, and the three keys the software knows about it.** All optional:
         // a released role has no holder, and a role nobody has claimed has none of
