@@ -1665,7 +1665,11 @@ async fn off_vocabulary_job(room: &Surface, subject: &str, needle: &str) -> Opti
         .iter()
         .find(|fact| fact["address"] == address.as_str())?
         .clone();
-    let word = fact["fields"]["settled"].as_str().unwrap_or_default();
+    // The word is a key the record CARRIES, in whichever bag the sitting put it.
+    let word = fact["fields"]["settled"]
+        .as_str()
+        .or_else(|| fact["sets"]["settled"].as_str())
+        .unwrap_or_default();
     (!OPERATORS_WORDS.contains(&word)).then_some(address)
 }
 

@@ -701,7 +701,9 @@ fn authored(read: &str) -> Vec<String> {
                     said.push(text.to_string());
                 }
             }
+            // Both bags are words a session chose.
             written_values(&fact["fields"], &mut said);
+            written_values(&fact["sets"], &mut said);
         }
     }
     said
@@ -716,6 +718,18 @@ fn written_values(fields: &Value, said: &mut Vec<String>) {
             said.push(text.to_string());
         }
     }
+}
+
+/// **A key a record CARRIES, in whichever bag it is held.** A served claim reads
+/// its own labels under `fields` and what it set on its thing under `sets`, so a
+/// lock that asks whether a record says something reads both. A lock that asks
+/// whether a key is the record's OWN field, as against a setting, reads `fields`
+/// alone.
+fn carried<'a>(fact: &'a Value, key: &str) -> Option<&'a Value> {
+    fact["fields"]
+        .get(key)
+        .or_else(|| fact["sets"].get(key))
+        .filter(|value| !value.is_null())
 }
 
 /// The colleague's handle — whichever bot is not the one that ships.
@@ -840,7 +854,7 @@ async fn one_place_after_the_correction(seen: &Observed<'_>) -> Result<Option<St
     };
     if home_active
         .iter()
-        .any(|fact| fact["fields"].get("merged_from").is_some())
+        .any(|fact| carried(fact, "merged_from").is_some())
     {
         return Ok(Some(format!(
             "route: merge — {home} carries both claims and a merge record naming the handle that went"
@@ -1773,7 +1787,7 @@ fn fact_drawing<'a>(facts: &'a [Value], shape: &str, object: Option<&str>) -> Op
 fn is_retracted(facts: &[Value], address: &str) -> bool {
     facts
         .iter()
-        .any(|f| f["fields"]["retracts"].as_str() == Some(address))
+        .any(|f| carried(f, "retracts").and_then(Value::as_str) == Some(address))
 }
 
 /// The sitting that first makes the claim [`aprils_move_archives_the_springfield_claim`]
@@ -2470,17 +2484,11 @@ async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Resu
     // A record is a TURN when it says which day the loop was last done. That
     // is the claim this lock is about, whoever wrote it and however.
     let turn_on = |fact: &Value| -> Option<String> {
-        fact["fields"]
-            .get(TURNS)
+        carried(fact, TURNS)
             .and_then(Value::as_str)
             .map(str::to_string)
     };
-    let checked_in = |fact: &Value| {
-        fact["fields"]
-            .get(OUTCOME)
-            .and_then(Value::as_str)
-            .is_some()
-    };
+    let checked_in = |fact: &Value| carried(fact, OUTCOME).and_then(Value::as_str).is_some();
 
     // **The positive the whole lock rests on.** Without it a store where
     // January never ran reports every turn as a derivation, vacuously, because
@@ -2945,8 +2953,8 @@ async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> R
         .iter()
         .filter(|f| {
             f["status"] == "active"
-                && f["fields"]["was"].is_null()
-                && f["fields"]["settled"].is_null()
+                && carried(f, "was").is_none()
+                && carried(f, "settled").is_none()
         })
         .collect();
     let [fact] = active.as_slice() else {
@@ -3372,8 +3380,12 @@ async fn late_decembers_corrections_name_the_jobs_they_replace(
         let facts = parsed["objects"][0]["facts"].as_array().ok_or_else(|| {
             format!("{subject} has no records to read the job's correction from: {read}")
         })?;
-        let costs = |fact: &&Value| fact["fields"]["cost"] == cost;
-        let word_of = |fact: &Value| fact["fields"]["settled"].as_str().map(str::to_string);
+        let costs = |fact: &&Value| carried(fact, "cost").is_some_and(|value| *value == cost);
+        let word_of = |fact: &Value| {
+            carried(fact, "settled")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
         let standing_right = |fact: &&Value| {
             fact["status"] == "active"
                 && word_of(fact).is_some_and(|word| OPERATORS_WORDS.contains(&word.as_str()))
@@ -3899,6 +3911,34 @@ async fn marjorine_is_the_april_plus_one_under_her_new_name(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
+    use super::carried;
+
+    /// 🚨 **A key a record carries is found in whichever bag holds it.** A served
+    /// claim reads its own labels under `fields` and what it set on its thing
+    /// under `sets`; a lock that asks whether a record says something reads both,
+    /// and a lock that read `fields` alone stopped seeing every key a worked year
+    /// had set. **Both halves**: a key in either bag is found, a key in neither
+    /// is not, and a null is no key.
+    #[test]
+    fn a_key_is_found_in_the_bag_that_holds_it() {
+        let fact = json!({
+            "fields": {"note": "kept", "gone": null},
+            "sets": {"status": "now"},
+        });
+        assert_eq!(carried(&fact, "note"), Some(&json!("kept")));
+        assert_eq!(carried(&fact, "status"), Some(&json!("now")));
+        assert_eq!(carried(&fact, "absent"), None);
+        assert_eq!(carried(&fact, "gone"), None);
+        // A record with no `sets` at all, as one written before the bags were
+        // kept apart is served.
+        assert_eq!(
+            carried(&json!({"fields": {"a": "1"}}), "a"),
+            Some(&json!("1"))
+        );
+    }
+
     /// **A handover is not a hold.** Each sentence names the espresso manual
     /// and gives it to someone, and each carries a word the lock used to take
     /// for a hold: `off` in "hand it off", `without` in "without delay".
