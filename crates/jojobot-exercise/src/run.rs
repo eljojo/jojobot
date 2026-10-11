@@ -576,6 +576,59 @@ impl Results {
         out
     }
 
+    /// **How many recall calls the room refused, and what each one asked.**
+    ///
+    /// A recall is the call a question about the store is asked through, so a
+    /// refusal of one is a question the surface did not answer as it was put.
+    /// **Both kinds count**: the transport's error mark, and the refusal the room
+    /// writes as an ordinary result with no mark on it. Each is listed with the
+    /// arguments it was made with, because the arguments say which question it
+    /// was, and with the sitting it was made in.
+    ///
+    /// ⛔️ **A count is not a score.** Nothing here says the run went well or badly;
+    /// a reader weighs the refusals against the questions asked.
+    ///
+    /// **Said when there is none**, and said differently when no recall was made at
+    /// all, since "none was refused" and "none was made" are different findings.
+    fn refused_recalls(&self) -> String {
+        use std::fmt::Write as _;
+        let mut made = 0usize;
+        let mut refused: Vec<(String, usize, crate::calls::Call)> = Vec::new();
+        for said in &self.transcript {
+            for (at, call) in crate::calls::calls_in(&said.raw).into_iter().enumerate() {
+                if self.serves(&call.verb).as_deref() != Some("recall") {
+                    continue;
+                }
+                made += 1;
+                if call.refused || call.blocked {
+                    refused.push((said.phase.clone(), at + 1, call));
+                }
+            }
+        }
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "\n── recall calls refused ────────────────────────────────────"
+        );
+        if made == 0 {
+            let _ = writeln!(out, "  no recall call was made, so none was refused");
+            return out;
+        }
+        let _ = writeln!(
+            out,
+            "  {} of {made} recall calls were refused",
+            refused.len()
+        );
+        for (phase, at, call) in &refused {
+            let _ = writeln!(
+                out,
+                "  ▸ {phase}, call {at}\n       asked: {}\n       → {}",
+                call.about, call.head
+            );
+        }
+        out
+    }
+
     /// **The room's own name for a verb the occupant called**, or nothing when
     /// the call went somewhere else.
     ///
@@ -691,6 +744,7 @@ impl Results {
             let _ = write!(out, "{}", Results::did(said));
         }
         let _ = write!(out, "{}", self.tally());
+        let _ = write!(out, "{}", self.refused_recalls());
         // **What the door offered, phase by phase.** Collected since this
         // harness existed and rendered nowhere, so the one thing a reader
         // wants from a long run — is jojobot handing over MORE as the story
@@ -1619,6 +1673,56 @@ mod tests {
         assert!(
             shown.contains("run.jsonl") && shown.contains("cut"),
             "…and both of them have to carry the notice: {shown}",
+        );
+    }
+
+    /// A stream with the three kinds of recall call a sitting makes: one the room
+    /// turned back with a body that says so, one the transport marked an error,
+    /// and one it answered.
+    fn recalls_of_three_kinds() -> String {
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"mcp__room__recall","input":{"where":"state = working"}},{"type":"tool_use","id":"b","name":"mcp__room__recall","input":{"where":"position < 5"}},{"type":"tool_use","id":"c","name":"mcp__room__recall","input":{"where":"line = alpha"}},{"type":"tool_use","id":"d","name":"mcp__room__capture","input":{"subject":"x"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"{\"attempted\":\"\",\"status\":\"blocked\",\"wrote\":false}"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b","content":"invalid query","is_error":true}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"c","content":"{\"count\":1,\"objects\":[]}"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"d","content":"{\"status\":\"blocked\"}"}]}}"#
+            .to_string()
+    }
+
+    /// **A run says how many recall calls the room refused, and which.** A
+    /// refusal the room writes and one the transport marks both count, and each is
+    /// listed with the arguments it was made with, so a reader can tell which
+    /// question it was asked for. A refused call of another verb is not a recall
+    /// refusal. **Paired with a run that made no recall call**, which says so,
+    /// because silence and "none was refused" must not read alike.
+    #[test]
+    fn a_run_counts_the_recall_calls_the_room_refused_and_names_what_each_asked() {
+        let mut made = ran(&["Phase 1 — the questions"]);
+        made.served = vec!["recall".into(), "capture".into()];
+        made.transcript[0].raw = recalls_of_three_kinds();
+        let said = made.rendered(None);
+        assert!(
+            said.contains("2 of 3 recall calls"),
+            "the count of refused recall calls is missing or wrong: {said}"
+        );
+        assert!(
+            said.contains("state = working") && said.contains("position < 5"),
+            "the refused calls are not named by what they asked: {said}"
+        );
+        let section = said
+            .split("recall calls refused")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no section on refused recall calls: {said}"));
+        assert!(
+            !section.contains("line = alpha"),
+            "an answered recall is listed as refused: {section}"
+        );
+
+        let mut none = ran(&["Phase 1 — the questions"]);
+        none.served = vec!["recall".into()];
+        let silent = none.rendered(None);
+        assert!(
+            silent.contains("no recall call was made"),
+            "a run with no recall call says nothing about them: {silent}"
         );
     }
 

@@ -82,6 +82,10 @@ pub struct Call {
     /// difference between the occupant failing and the surface refusing, which
     /// is the whole verdict on a sitting.
     pub refused: bool,
+    /// **Whether the room's own answer says it refused.** A refusal the room writes
+    /// is an ordinary result whose body carries `"status":"blocked"`, with no
+    /// error mark on it, so [`Call::refused`] never sees one.
+    pub blocked: bool,
     /// Enough of the answer to tell one from another, and no more.
     pub head: String,
 }
@@ -114,7 +118,7 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
         .collect();
     // **The answer arrives in a later event than the call**, so the results are
     // gathered first and each call then finds its own by id.
-    let mut answers: std::collections::HashMap<String, (bool, String)> =
+    let mut answers: std::collections::HashMap<String, (bool, bool, String)> =
         std::collections::HashMap::new();
     for block in events.iter().flat_map(blocks) {
         if block["type"] == "tool_result" {
@@ -124,7 +128,14 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
             // **`is_error` is absent on a call that worked.** Reading a missing
             // key as anything but "not an error" marks every good call refused.
             let refused = block["is_error"].as_bool().unwrap_or(false);
-            answers.insert(id.to_string(), (refused, flatten(&block["content"])));
+            answers.insert(
+                id.to_string(),
+                (
+                    refused,
+                    blocked_by_the_room(&block["content"]),
+                    flatten(&block["content"]),
+                ),
+            );
         }
     }
     events
@@ -133,7 +144,8 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
         .filter(|block| block["type"] == "tool_use")
         .map(|block| {
             let id = block["id"].as_str().unwrap_or_default();
-            let (refused, head) = answers.get(id).cloned().unwrap_or((
+            let (refused, blocked, head) = answers.get(id).cloned().unwrap_or((
+                false,
                 false,
                 // **A call whose answer never arrived is a real shape.** The
                 // run can be stopped mid-sitting, and a log that invented an
@@ -144,6 +156,7 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
                 verb: block["name"].as_str().unwrap_or("[unnamed]").to_string(),
                 about: flatten(&block["input"]),
                 refused,
+                blocked,
                 head,
             }
         })
@@ -179,6 +192,25 @@ pub fn spoken(printed: &str) -> String {
         Some(said) => said,
         None => format!("[no result event in this sitting's stream]\n{printed}"),
     }
+}
+
+/// **Whether the answer is the room's own refusal.** The room writes a refusal as
+/// an ordinary result whose body is JSON saying `"status":"blocked"`, so the body
+/// is parsed whole, before any value is cut to a head. A body that is not JSON is
+/// not a refusal the room wrote.
+fn blocked_by_the_room(content: &serde_json::Value) -> bool {
+    let text = match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => return false,
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .is_some_and(|body| body["status"] == "blocked")
 }
 
 /// The content blocks of one event, which is where calls and answers live.
@@ -599,6 +631,31 @@ mod tests {
             !made[1].refused,
             "an answered call is marked refused, which happens when a missing is_error is read \
              as anything but success: {:?}",
+            made[1],
+        );
+    }
+
+    /// **The room's own refusal is a blocked answer, and the stream does not mark
+    /// it an error.** A refused call comes back as an ordinary result whose body
+    /// says `"status":"blocked"`, with no `is_error`, so reading only the error
+    /// flag counts none of them. The body is the one a real run recorded. Paired
+    /// with an answered call, which is not blocked, so a reader that called every
+    /// result blocked would not pass.
+    #[test]
+    fn a_refusal_the_room_writes_reads_as_blocked_though_no_error_is_marked() {
+        let stream = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"id-1","name":"recall","input":{"where":"state = working"}},{"type":"tool_use","id":"id-2","name":"recall","input":{"where":"line = alpha"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"id-1","content":"{\"attempted\":\"bot:jojobot\",\"bots\":[\"bot:assistant\"],\"candidates\":[],\"how_to_proceed\":\"Nothing was written and no session was started.\",\"status\":\"blocked\",\"wrote\":false}"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"id-2","content":"{\"count\":2,\"objects\":[]}"}]}}"#;
+        let made = calls_in(stream);
+        assert_eq!(made.len(), 2, "both calls: {made:#?}");
+        assert!(
+            made[0].blocked && !made[0].refused,
+            "the room's refusal is blocked and carries no error mark: {:?}",
+            made[0],
+        );
+        assert!(
+            !made[1].blocked,
+            "an answered call is read as blocked: {:?}",
             made[1],
         );
     }
