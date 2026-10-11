@@ -63,6 +63,13 @@ pub const AGENCY_ROOM: &str = "rooms/agency.md";
 /// said once, or state the store owns. Not the default.
 pub const ASKING_ROOM: &str = "rooms/asking.md";
 
+/// **The querying room** — one cold sitting asked the eight questions a board
+/// is asked, in plain words, over a project of twelve pieces of work. Each
+/// answerable question is one recall expression on this build; the run prints
+/// how many recall calls the room refused and on which question. Not the
+/// default.
+pub const QUERYING_ROOM: &str = "rooms/querying.md";
+
 /// **The adoption experiment's wording arm (E1)** — the same room with each
 /// fact said in its key's own word.
 pub const ADOPTION_WORDING_ROOM: &str = "rooms/adoption-wording.md";
@@ -87,7 +94,7 @@ type Room = (&'static str, Option<InRust>, bool);
 ///
 /// **Exactly one entry carries `true`** — decision log 299 — and this table is
 /// the only place that name lives; nothing outside it repeats it.
-const ROOMS: [Room; 12] = [
+const ROOMS: [Room; 13] = [
     (BIKE_ROOM, None, false),
     (LOOP_ROOM, None, false),
     (YEAR_ROOM, None, false),
@@ -100,6 +107,7 @@ const ROOMS: [Room; 12] = [
     (TRICK_ROOM, None, false),
     (AGENCY_ROOM, None, false),
     (ASKING_ROOM, None, false),
+    (QUERYING_ROOM, None, false),
 ];
 
 /// **The room a run uses when none is named** — decision log 299.

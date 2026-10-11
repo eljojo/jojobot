@@ -142,6 +142,10 @@ name = "piano_lock"
 required-features = ["rooms"]
 
 [[test]]
+name = "querying_room"
+required-features = ["rooms"]
+
+[[test]]
 name = "reads_the_rooms"
 required-features = ["rooms"]
 

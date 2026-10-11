@@ -62,7 +62,8 @@
 //! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{
-    ASKING_ROOM, BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM,
+    ASKING_ROOM, BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, QUERYING_ROOM, VAULT_ROOM,
+    YEAR_ROOM,
 };
 use crate::{expectations, lock};
 
@@ -110,7 +111,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 187 entries, of five different shapes: 92 blanket and 95 discriminating.
+/// 197 entries, of five different shapes: 94 blanket and 103 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -1555,6 +1556,48 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 10 — December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one",
         file: "tests/asking_room.rs",
         function: "a_year_that_named_marjorine_afresh_fails_only_the_plus_one_carrier_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: QUERYING_ROOM,
+        lock: "Phase 1 — the board: the pieces in hand are not delta and tau alone, so either one was missed or a queued or an accepted piece was counted as busy",
+        file: "tests/querying_room.rs",
+        function: "an_answer_that_counted_a_queued_piece_as_busy_fails_only_the_busy_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: QUERYING_ROOM,
+        lock: "Phase 1 — the board: what could be handed out is not epsilon, rho and omicron alone, so either a piece that waits was offered or rho, which waits only on a carried piece, was left out",
+        file: "tests/querying_room.rs",
+        function: "an_answer_that_offered_a_waiting_piece_fails_only_the_hand_out_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: QUERYING_ROOM,
+        lock: "Phase 1 — the board: the pieces accepted and not yet carried are not iota, kappa and lambda alone, so one is missing or omega, which is carried already, was listed",
+        file: "tests/querying_room.rs",
+        function: "an_answer_that_listed_a_carried_piece_fails_only_the_accepted_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: QUERYING_ROOM,
+        lock: "Phase 1 — the board: beta's plate is not tau, theta and omicron alone, so one is missing, iota, which is accepted, was listed, or a piece of another line was",
+        file: "tests/querying_room.rs",
+        function: "an_answer_that_put_an_accepted_piece_on_the_plate_fails_only_the_plate_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: QUERYING_ROOM,
+        lock: "Phase 1 — the board: what is open and touches src/ui.rs is not delta, epsilon and lambda alone, so one is missing or xi, which is done, or omega, which is carried, was listed",
+        file: "tests/querying_room.rs",
+        function: "an_answer_that_listed_a_finished_piece_as_open_fails_only_the_file_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: QUERYING_ROOM,
+        lock: "Phase 1 — the board: the stages in use are not working, queued, accepted, carried and done alone, so one is missing or a stage the board lists and no piece is in was reported",
+        file: "tests/querying_room.rs",
+        function: "an_answer_that_reported_the_boards_list_fails_only_the_stages_lock",
         strength: Strength::Discriminating,
     },
 ];
