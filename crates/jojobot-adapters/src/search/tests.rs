@@ -418,6 +418,337 @@ async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
     );
 }
 
+/// **A pet, and a person whose `companion` field names it**, both added through
+/// the index. The holder is what a rename of the pet has to reach.
+async fn a_pet_and_the_person_who_keeps_it(store: &IndexedMemory) -> (EntityId, EntityId) {
+    let pet = EntityId("pet:contract-quokka-kept".into());
+    let holder = EntityId::person("person:contract-bellringer");
+    for (id, name) in [(&pet, "Kept Pet"), (&holder, "Bell Ringer")] {
+        store
+            .add_entity(NewEntity::new(id.clone(), name, "user-named"))
+            .await
+            .expect("adds")
+            .written()
+            .expect("lands");
+    }
+    store
+        .capture(contract::state(NewFact {
+            fields: [("companion".to_string(), pet.as_str().to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "keeps the quokka", date(2026, 7, 1))
+        }))
+        .await
+        .expect("captures")
+        .written()
+        .expect("lands");
+    (pet, holder)
+}
+
+fn holding_companion(who: &EntityId) -> SearchQuery {
+    SearchQuery {
+        holding: vec![jojobot_domain::memory::search::HeldField {
+            key: "companion".to_string(),
+            value: Some(who.as_str().to_string()),
+        }],
+        ..SearchQuery::default()
+    }
+}
+
+/// **A rename reaches the things that name the renamed one, and the search after
+/// it does not scan the store.** Paired: the new handle finds the holder and the
+/// old one does not.
+#[tokio::test]
+async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
+    let renamed = EntityId("pet:contract-wombat-renamed".into());
+    store
+        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None)
+        .await
+        .expect("the rename lands");
+
+    let scans = fake.full_scans();
+    let by_new = retrieval
+        .search(&holding_companion(&renamed))
+        .await
+        .expect("search answers");
+    let by_old = retrieval
+        .search(&holding_companion(&pet))
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&by_new, &holder),
+        "the holder is found by the new handle: {by_new:?}"
+    );
+    assert!(
+        !a_hit_names(&by_old, &holder),
+        "and not by the old one: {by_old:?}"
+    );
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the rename re-read its holders, so the search scanned nothing"
+    );
+}
+
+/// **A rename reaches the words that name the renamed one**, not only the
+/// fields that hold its handle. A claim that mentions the pet in its words and a
+/// page of prose that mentions it read as the new handle after the rename, and
+/// the search after it scans nothing. Paired: the new spelling finds the
+/// holders and the old one does not.
+#[tokio::test]
+async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
+    // **Through the layer that renders a mention as a handle**, as the server
+    // wires it: the index scans what a reader sees, and the bare fake renders
+    // no mention.
+    let fake = Arc::new(InMemoryMemory::booted());
+    let store = Arc::new(
+        IndexedMemory::new(Arc::new(jojobot_domain::memory::mention::Mentioning::new(
+            fake.clone(),
+        )))
+        .expect("index opens"),
+    );
+    store.rebuild().await.expect("the boot scan reads");
+    let retrieval = Retrieval::new(store.index(), vec![store.clone()]);
+    let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
+    let pager = EntityId::person("person:contract-lamplighter");
+    store
+        .add_entity(NewEntity::new(pager.clone(), "Lamp Lighter", "user-named"))
+        .await
+        .expect("adds")
+        .written()
+        .expect("lands");
+    store
+        .capture(NewFact::about(
+            holder.clone(),
+            "feeds @pet:contract-quokka-kept at dusk",
+            date(2026, 7, 1),
+        ))
+        .await
+        .expect("captures")
+        .written()
+        .expect("lands");
+    store
+        .set_prose(&pager, "walks @pet:contract-quokka-kept at dawn")
+        .await
+        .expect("prose lands");
+    // The positive the later negatives rest on: before the rename the old
+    // spelling finds the claim and the prose.
+    let before = retrieval
+        .search(&SearchQuery::text("quokka"))
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&before, &holder)
+            && before
+                .iter()
+                .any(|h| { matches!(h, Hit::Prose { entity: Some(e), .. } if e.id == pager) }),
+        "before the rename the old spelling finds the claim and the prose: {before:?}"
+    );
+    let renamed = EntityId("pet:contract-wombat-renamed".into());
+    store
+        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None)
+        .await
+        .expect("the rename lands");
+
+    let scans = fake.full_scans();
+    for (word, handle, gone) in [
+        ("wombat", "contract-wombat-renamed", false),
+        ("quokka", "contract-quokka-kept", true),
+    ] {
+        let hits = retrieval
+            .search(&SearchQuery::text(word))
+            .await
+            .expect("search answers");
+        // The claim whose words mention the pet, and the page that does.
+        let by_claim = hits.iter().any(|h| {
+            matches!(h, Hit::Fact { fact, .. }
+                if fact.subject == holder && fact.content.contains(handle))
+        });
+        let by_prose = hits
+            .iter()
+            .any(|h| matches!(h, Hit::Prose { entity: Some(e), .. } if e.id == pager));
+        assert_eq!(
+            (by_claim, by_prose),
+            (!gone, !gone),
+            "{word}: the claim and the prose that mention the pet read as its current handle: {hits:?}"
+        );
+    }
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the rename re-read what mentions the pet, so the search scanned nothing"
+    );
+}
+
+/// **An edit of a thing leaves the next search without a scan of the store.**
+#[tokio::test]
+async fn an_entity_edit_is_found_without_a_scan_of_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
+    store
+        .update_entity(
+            &pet,
+            EntityPatch {
+                name: Some("Marmalade Quokka".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("edits")
+        .written()
+        .expect("lands");
+
+    let scans = fake.full_scans();
+    let hits = retrieval
+        .search(&SearchQuery::text("Marmalade"))
+        .await
+        .expect("search answers");
+    assert!(a_hit_names(&hits, &pet), "the new name is found: {hits:?}");
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the edit re-read its document, so the search scanned nothing"
+    );
+}
+
+/// **An edit that carries a claim leaves the next search without a scan.**
+#[tokio::test]
+async fn an_entity_edit_with_a_claim_is_found_without_a_scan_of_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
+    store
+        .update_entity_with_claim(
+            &pet,
+            EntityPatch {
+                name: Some("Marmalade Quokka".into()),
+                ..Default::default()
+            },
+            NewFact::about(pet.clone(), "naps in the pantry", date(2026, 7, 2)),
+        )
+        .await
+        .expect("edits")
+        .written()
+        .expect("lands");
+
+    let scans = fake.full_scans();
+    let by_name = retrieval
+        .search(&SearchQuery::text("Marmalade"))
+        .await
+        .expect("search answers");
+    let by_claim = retrieval
+        .search(&SearchQuery::text("pantry"))
+        .await
+        .expect("search answers");
+    assert!(
+        a_hit_names(&by_name, &pet),
+        "the name is found: {by_name:?}"
+    );
+    assert!(
+        a_hit_names(&by_claim, &pet),
+        "the claim is found: {by_claim:?}"
+    );
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the edit re-read its document, so the search scanned nothing"
+    );
+}
+
+/// **A page of prose leaves the next search without a scan of the store.**
+#[tokio::test]
+async fn a_prose_write_is_found_without_a_scan_of_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
+    store
+        .set_prose(&pet, "sleeps under the marmalade tree")
+        .await
+        .expect("prose lands");
+
+    let scans = fake.full_scans();
+    let hits = retrieval
+        .search(&SearchQuery::text("marmalade"))
+        .await
+        .expect("search answers");
+    assert!(
+        hits.iter().any(|h| matches!(
+            h,
+            Hit::Prose { entity: Some(e), .. } if e.id == pet
+        )),
+        "the prose is found: {hits:?}"
+    );
+    assert_eq!(
+        fake.full_scans(),
+        scans,
+        "the write re-read its document, so the search scanned nothing"
+    );
+}
+
+/// **An archive and a restore each leave the next search without a scan, and
+/// each answers as a real scan would.** The oracle is a scan forced by a row
+/// staged past the writes.
+#[tokio::test]
+async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
+    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
+    async fn answers(retrieval: &Retrieval, pet: &EntityId, holder: &EntityId) -> (bool, bool) {
+        let hits = retrieval
+            .search(&holding_companion(pet))
+            .await
+            .expect("search answers");
+        (
+            a_hit_names(&hits, holder),
+            hits.iter()
+                .any(|h| a_hit_names(std::slice::from_ref(h), pet)),
+        )
+    }
+    for step in ["archive", "restore"] {
+        if step == "archive" {
+            store
+                .archive_entity(&pet, "no longer kept")
+                .await
+                .expect("archives");
+        } else {
+            store.restore_entity(&pet).await.expect("restores");
+        }
+        let scans = fake.full_scans();
+        let fast = answers(&retrieval, &pet, &holder).await;
+        assert_eq!(
+            fake.full_scans(),
+            scans,
+            "after the {step} the search scanned the store"
+        );
+        fake.past_the_guard(Entity {
+            id: EntityId::person(if step == "archive" {
+                "person:contract-lamplighter"
+            } else {
+                "person:contract-comma-carrier"
+            }),
+            kind: EntityKind::PERSON,
+            name: format!("Oracle {step}"),
+            aliases: Vec::new(),
+            source: "contract-fixture".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        });
+        let scanned = answers(&retrieval, &pet, &holder).await;
+        assert_eq!(
+            fake.full_scans(),
+            scans + 1,
+            "the oracle read is a real scan"
+        );
+        assert_eq!(
+            fast, scanned,
+            "after the {step} the unscanned answer differs from a scan's"
+        );
+    }
+}
+
 /// The index forwards which keys of a record the store holds off the thing.
 #[tokio::test]
 async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {

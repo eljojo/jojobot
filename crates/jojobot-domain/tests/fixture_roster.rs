@@ -730,6 +730,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-lamplighter",
     "pet:contract-quokka-kept",
     "pet:contract-wombat-spare",
+    "pet:contract-wombat-renamed",
     "org:contract-loose-record",
     "org:contract-orient-guild",
     "org:contract-pinnable-guild",

@@ -251,7 +251,8 @@ impl IndexedMemory {
     }
 
     /// **The documents whose stored text names `folded`** by a field value, an
-    /// edge, a reference or a parent — the places a fold rewrites. Read from the
+    /// edge, a reference, a parent or a mention in prose — the places a fold or a
+    /// rename rewrites. Read from the
     /// scan the index is current under, so it costs no statement, and read
     /// before the fold, because after it the text names the survivor.
     fn holders_of(&self, folded: &EntityId) -> Vec<EntityId> {
@@ -264,6 +265,12 @@ impl IndexedMemory {
             .filter_map(|doc| {
                 let entity = doc.entity.as_ref()?;
                 let holds = entity.parent.as_ref() == Some(folded)
+                    // **A mention in a page of prose** reads as the handle the
+                    // thing wears, so a page that names it holds it too. A page
+                    // naming a longer handle that merely begins with this one is
+                    // read again for nothing, which costs a statement and is
+                    // never wrong.
+                    || doc.prose.contains(folded.as_str())
                     || doc.fields.values().any(names)
                     || doc.facts.iter().any(|fact| {
                         fact.edge
@@ -318,12 +325,14 @@ impl Memory for IndexedMemory {
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let written = self
             .inner
             .update_entity_with_claim(handle, patch, claim)
             .await?;
         if let Guarded::Written((entity, _)) = &written {
-            self.refresh(&entity.id).await;
+            let reread = self.refresh(&entity.id).await;
+            self.caught_up(began, vec![reread]).await;
         }
         Ok(written)
     }
@@ -342,9 +351,11 @@ impl Memory for IndexedMemory {
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let written = self.inner.update_entity(handle, patch).await?;
         if let Guarded::Written(entity) = &written {
-            self.refresh(&entity.id).await;
+            let reread = self.refresh(&entity.id).await;
+            self.caught_up(began, vec![reread]).await;
         }
         Ok(written)
     }
@@ -353,6 +364,13 @@ impl Memory for IndexedMemory {
     /// store just wrote" step every other write here takes. The doc itself
     /// is found by badge underneath, so this is what makes the new spelling
     /// findable rather than what makes the record exist.
+    ///
+    /// **So is every document that names the renamed thing.** A field value, an
+    /// edge, a reference or a parent that named the old handle names the new one
+    /// now, and the document holding it is re-read here, because the index is
+    /// marked current after this write and the next read does not scan the store
+    /// for them. The holders are read before the rename, from the scan the index
+    /// is current under, as a fold's are.
     async fn rename_entity(
         &self,
         from: &EntityId,
@@ -362,29 +380,43 @@ impl Memory for IndexedMemory {
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
+        let holders = if began.is_some() {
+            self.holders_of(from)
+        } else {
+            Vec::new()
+        };
         let written = self
             .inner
             .rename_entity(from, to, parent, date, override_token)
             .await?;
         if let Guarded::Written(entity) = &written {
-            self.refresh(&entity.id).await;
+            let mut reread = vec![self.refresh(&entity.id).await];
+            for holder in holders.iter().filter(|holder| **holder != entity.id) {
+                reread.push(self.refresh(holder).await);
+            }
             // A run's owner reads as the handle the entity wears now.
             self.index.names_changed();
+            self.caught_up(began, reread).await;
         }
         Ok(written)
     }
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let entity = self.inner.archive_entity(id, reason).await?;
-        self.refresh(&entity.id).await;
+        let reread = self.refresh(&entity.id).await;
+        self.caught_up(began, vec![reread]).await;
         Ok(entity)
     }
 
     async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let restored = self.inner.restore_entity(id).await?;
-        self.refresh(&restored.0.id).await;
+        let reread = self.refresh(&restored.0.id).await;
+        self.caught_up(began, vec![reread]).await;
         Ok(restored)
     }
 
@@ -577,8 +609,10 @@ impl Memory for IndexedMemory {
     /// a bot that is pure prose would be the one part search could not see.
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
         let stored = self.inner.set_prose(entity, prose).await?;
-        self.refresh(entity).await;
+        let reread = self.refresh(entity).await;
+        self.caught_up(began, vec![reread]).await;
         Ok(stored)
     }
 
