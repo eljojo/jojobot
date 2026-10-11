@@ -107,6 +107,74 @@ async fn a_sentence_naming_something_that_is_not_there_is_refused() {
         .await;
 }
 
+/// **A document that shows sample code can be stored as written.** The sample
+/// holds a handle that names nothing, in an inline span and in a fenced block,
+/// and a handle inside code is text rather than a link (rule 450). The same
+/// holds for a journal beat and a posted message, which read handles the same
+/// way a claim does.
+///
+/// **Paired in the same story**: the same handle outside code is still
+/// refused, and a real handle beside the code still reads back as itself, so a
+/// build that stopped reading mentions altogether passes neither half.
+#[tokio::test]
+async fn sample_code_naming_nothing_is_kept_as_written_and_the_same_handle_outside_it_is_refused() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("person:milhouse", "Milhouse").await;
+
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:milhouse",
+            "content": "the sample wrote `@person:nelson` and stopped",
+            "details": "Sample:\n\n```\nlink(@person:nelson)\n```\n\nwritten by @person:milhouse.",
+            "provenance": "testimony",
+        }),
+    )
+    .await
+    .says("person:milhouse");
+
+    let read = s
+        .call(
+            "recall",
+            json!({"subject": "person:milhouse", "facts": true}),
+        )
+        .await;
+    read.says("`@person:nelson`")
+        .says("link(@person:nelson)")
+        .says("written by @person:milhouse.")
+        .never_says("no such handle");
+
+    s.journal("kept the sample `@person:nelson` as it was")
+        .await;
+    s.post(
+        "assistant",
+        "a sample",
+        "the sample reads ```@person:nelson``` and nothing else",
+    )
+    .await;
+    s.call("search", json!({"query": "sample", "include_mail": true}))
+        .await
+        .says("@person:nelson")
+        .never_says("no such handle");
+
+    // The same handle outside code is refused, naming it.
+    s.refused(
+        "capture",
+        json!({
+            "subject": "person:milhouse",
+            "content": "the sample wrote `@person:nelson`, then @person:nelson again",
+            "provenance": "testimony",
+        }),
+    )
+    .await
+    .says("person:nelson");
+
+    s.wrap("stored a code sample whose handle names nothing, and was still refused outside code")
+        .await;
+}
+
 /// **The payoff this file's own header used to say it could not show.** For
 /// months the operator filed Shelbyville under a typo — `place:shelbyvile` —
 /// and wrote about it from that name: a claim on the place itself, and a

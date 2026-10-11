@@ -248,6 +248,87 @@ pub async fn a_mention_inside_a_multi_line_details_is_a_link<
     );
 }
 
+/// **Text inside code is stored and served exactly as written** (rule 450): an
+/// inline span in the claim and a fenced block in the details each hold a
+/// handle that names nothing, and the write lands. **Paired with the same
+/// handle outside code in the same details, which is still refused with nothing
+/// written, and with a real mention beside the code, which is still a link**,
+/// or a build that stopped reading mentions at all passes the first half.
+pub async fn text_inside_code_is_stored_and_served_as_written<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+) {
+    let author = EntityId::person("person:contract-mention-author");
+    ensure(mentioning, &author).await;
+    let content = "the sample wrote `@person:contract-mention-nobody` and stopped";
+    let details = "Sample:\n\n```\nlink(@person:contract-mention-nobody)\n```\n\n\
+                   and the author is @person:contract-mention-author.";
+    let before = bare.recall(&author).await.expect("the store answers").len();
+    let written = capture(
+        mentioning,
+        NewFact {
+            details: Some(details.into()),
+            ..NewFact::about(author.clone(), content, date(2026, 10, 11))
+        },
+    )
+    .await;
+
+    let held = |facts: Vec<Fact>| {
+        facts
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there")
+    };
+    let served = held(mentioning.recall(&author).await.expect("the store answers"));
+    assert_eq!(served.content, content, "the span is served as written");
+    assert_eq!(
+        served.details.as_deref(),
+        Some(details),
+        "the fence is served as written, and the real mention reads as its handle",
+    );
+    let stored = held(bare.recall(&author).await.expect("the store answers"));
+    assert_eq!(stored.content, content, "the span is stored as written");
+    let stored_details = stored.details.expect("the details are stored");
+    assert!(
+        stored_details.contains("link(@person:contract-mention-nobody)"),
+        "the fence is stored as written: {stored_details}",
+    );
+    assert!(
+        stored_details.contains(mention::MARK)
+            && !stored_details.contains("and the author is @person:contract-mention-author"),
+        "the mention beside the code was stored as a link: {stored_details}",
+    );
+
+    let outside = mentioning
+        .capture(NewFact {
+            details: Some(
+                "```\n@person:contract-mention-nobody\n```\n\nbut @person:contract-mention-nobody \
+                 is not code"
+                    .into(),
+            ),
+            ..NewFact::about(
+                author.clone(),
+                "names nobody beside a fence",
+                date(2026, 10, 11),
+            )
+        })
+        .await
+        .expect("a refusal is an answer rather than an error");
+    assert!(
+        matches!(&outside, Guarded::Blocked { attempted, .. }
+            if attempted.as_str() == "person:contract-mention-nobody"),
+        "a handle outside code that names nothing is still refused: {outside:?}",
+    );
+    assert_eq!(
+        bare.recall(&author).await.expect("the store answers").len(),
+        before + 1,
+        "the refused write left a record behind",
+    );
+}
+
 /// 🚨 **A mention of a thing that moves renders as where it is now**, with
 /// nothing rewritten anywhere.
 ///
@@ -2378,6 +2459,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_mention_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
     a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
+    text_inside_code_is_stored_and_served_as_written(mentioning, bare).await;
     retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss(mentioning, bare).await;
     no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
     an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;

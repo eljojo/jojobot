@@ -85,7 +85,7 @@ pub struct KindsUnloaded;
 /// [`resolved`], which refuses rather than guesses.
 pub fn named(text: &str) -> Vec<EntityId> {
     let mut found = Vec::new();
-    for (at, _) in text.match_indices('@') {
+    for at in outside_code(text) {
         // **A stored mark needs no skip of its own.** What follows it is a
         // badge rather than a kind, so the read below turns it down for the
         // reason it turns down any other word.
@@ -110,7 +110,10 @@ pub fn resolved(text: &str, known: &[Entity]) -> Result<String, KindsUnloaded> {
     if any_unknowable(&[text]) {
         return Err(KindsUnloaded);
     }
-    Ok(rewrite(text, |at| {
+    Ok(rewrite(text, |at, in_code| {
+        if in_code {
+            return None;
+        }
         let Attempt::Mention(handle, end) = handle_at(text, at) else {
             return None;
         };
@@ -140,7 +143,7 @@ pub fn resolved(text: &str, known: &[Entity]) -> Result<String, KindsUnloaded> {
 /// reads as a sentence that is complete, and the reader has no way to know the
 /// pointer is gone.
 pub fn rendered(text: &str, known: &[Entity]) -> String {
-    rewrite(text, |at| {
+    rewrite(text, |at, in_code| {
         if text[at..].starts_with(MARK) {
             let badge = run_of(text, at + MARK.len(), is_badge_byte);
             if badge.is_empty() {
@@ -151,6 +154,9 @@ pub fn rendered(text: &str, known: &[Entity]) -> String {
                 Some(entity) => (format!("@{}", entity.id.as_str()), end),
                 None => (format!("{MARK}{badge} {GONE}"), end),
             });
+        }
+        if in_code {
+            return None;
         }
         let Attempt::Mention(handle, end) = handle_at(text, at) else {
             return None;
@@ -176,7 +182,7 @@ pub fn rendered(text: &str, known: &[Entity]) -> String {
 /// result never has to re-derive it.
 pub fn followable(text: &str) -> Vec<(std::ops::Range<usize>, EntityId)> {
     let mut found = Vec::new();
-    for (at, _) in text.match_indices('@') {
+    for at in outside_code(text) {
         // **A stored mark parses as no handle at all**, so it is already
         // excluded — `handle_at` needs `kind:` right after the `@`, and `#`
         // is never that.
@@ -204,18 +210,22 @@ fn wearing<'a>(known: &'a [Entity], badge: &str) -> Option<&'a Entity> {
         .find(|e| e.badge.as_deref().is_some_and(|worn| worn == badge))
 }
 
-/// Walk every `@` in the text and let `at` decide what replaces it.
+/// Walk every `@` in the text and let `at` decide what replaces it, told
+/// whether the `@` sits inside code.
 ///
 /// **One walk for both directions**, so the two can never disagree about where
-/// a mention starts or ends.
-fn rewrite(text: &str, at: impl Fn(usize) -> Option<(String, usize)>) -> String {
+/// a mention starts or ends. **It offers the `@` inside code too**, because the
+/// stored mark is jojobot's own and is read wherever it sits: a handle in a code
+/// span was resolved before code was literal, and the row holds the badge there.
+fn rewrite(text: &str, at: impl Fn(usize, bool) -> Option<(String, usize)>) -> String {
+    let code = code_ranges(text);
     let mut out = String::with_capacity(text.len());
     let mut cut = 0;
     for (start, _) in text.match_indices('@') {
         if start < cut {
             continue;
         }
-        let Some((replacement, end)) = at(start) else {
+        let Some((replacement, end)) = at(start, within(&code, start)) else {
             continue;
         };
         out.push_str(&text[cut..start]);
@@ -224,6 +234,157 @@ fn rewrite(text: &str, at: impl Fn(usize) -> Option<(String, usize)>) -> String 
     }
     out.push_str(&text[cut..]);
     out
+}
+
+/// **Every `@` that is not inside code**, in order.
+///
+/// Text inside an inline code span or a fenced block is literal (rule 450): a
+/// document that shows sample code holds handles that name nothing, and reading
+/// them as mentions would refuse the whole write. **Every walk over a mention
+/// starts here**, so what is stored, what is served and what a write guard
+/// screens cannot disagree about where code is. Replacements this module makes
+/// hold no backtick or tilde, so the code in stored text is where the code in
+/// written text was.
+fn outside_code(text: &str) -> Vec<usize> {
+    let code = code_ranges(text);
+    text.match_indices('@')
+        .map(|(at, _)| at)
+        .filter(|at| !within(&code, *at))
+        .collect()
+}
+
+/// Whether a position sits inside one of these ranges.
+fn within(code: &[std::ops::Range<usize>], at: usize) -> bool {
+    code.iter().any(|range| range.contains(&at))
+}
+
+/// **Where the code is**: fenced blocks first, then inline spans in what is
+/// left. Only two markdown shapes are read, and nothing else about markdown is.
+///
+/// * **A fenced block** opens on a line of three or more backticks or tildes
+///   (any indent; a backtick fence may not have a backtick after it) and closes
+///   on a line of the same character, at least as long, with nothing after it.
+///   **A fence that never closes is not a fence.** Treating the rest of the text
+///   as code would drop every link after a stray fence without a word, so it is
+///   read as the text it is and the lines after it are read again.
+/// * **An inline span** opens on a run of backticks and closes on the next run
+///   of the same length, within one paragraph. A run with no partner is literal.
+/// * **An indented block is not code.** It cannot be told from the continuation
+///   of a list item without reading the list, and skipping a real mention is the
+///   worse mistake.
+fn code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let lines: Vec<(usize, &str)> = {
+        let mut at = 0;
+        text.split_inclusive('\n')
+            .map(|line| {
+                let start = at;
+                at += line.len();
+                (start, line)
+            })
+            .collect()
+    };
+    let mut fenced: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some((mark, length)) = fence_opening(lines[i].1) else {
+            i += 1;
+            continue;
+        };
+        match (i + 1..lines.len()).find(|&j| fence_closes(lines[j].1, mark, length)) {
+            Some(j) => {
+                fenced.push(lines[i].0..lines[j].0 + lines[j].1.len());
+                i = j + 1;
+            }
+            None => i += 1,
+        }
+    }
+    let mut code = fenced.clone();
+    let mut from = 0;
+    for range in fenced
+        .iter()
+        .chain(std::iter::once(&(text.len()..text.len())))
+    {
+        code.extend(
+            inline_spans(&text[from..range.start])
+                .into_iter()
+                .map(|span| span.start + from..span.end + from),
+        );
+        from = range.end;
+    }
+    code
+}
+
+/// The fence character and length a line opens a fence with, if it does.
+fn fence_opening(line: &str) -> Option<(u8, usize)> {
+    let trimmed = line.trim_start_matches([' ', '\t']);
+    let mark = *trimmed.as_bytes().first()?;
+    if mark != b'`' && mark != b'~' {
+        return None;
+    }
+    let length = trimmed.bytes().take_while(|b| *b == mark).count();
+    let after = &trimmed[length..];
+    (length >= 3 && !(mark == b'`' && after.contains('`'))).then_some((mark, length))
+}
+
+/// Whether a line closes the fence of this character and length.
+fn fence_closes(line: &str, mark: u8, length: usize) -> bool {
+    let trimmed = line.trim_start_matches([' ', '\t']);
+    let run = trimmed.bytes().take_while(|b| *b == mark).count();
+    run >= length && trimmed[run..].trim().is_empty()
+}
+
+/// The inline code spans in a piece of text that holds no fenced block.
+fn inline_spans(text: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = text.as_bytes();
+    let run_at = |from: usize| bytes[from..].iter().take_while(|b| **b == b'`').count();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let length = run_at(i);
+        let limit = paragraph_end(text, i);
+        let mut j = i + length;
+        let mut closed = None;
+        while j < limit {
+            if bytes[j] == b'`' {
+                let found = run_at(j);
+                if found == length {
+                    closed = Some(j + found);
+                    break;
+                }
+                j += found;
+            } else {
+                j += 1;
+            }
+        }
+        match closed {
+            Some(end) => {
+                spans.push(i..end);
+                i = end;
+            }
+            None => i += length,
+        }
+    }
+    spans
+}
+
+/// Where the paragraph that holds `from` ends: the start of the next blank line,
+/// or the end of the text.
+fn paragraph_end(text: &str, from: usize) -> usize {
+    let mut at = from;
+    while let Some(newline) = text[at..].find('\n') {
+        let line_end = at + newline;
+        let rest = &text[line_end + 1..];
+        let next = rest.find('\n').map_or(rest.len(), |n| n);
+        if rest[..next].trim().is_empty() && line_end + 1 < text.len() {
+            return line_end;
+        }
+        at = line_end + 1;
+    }
+    text.len()
 }
 
 /// What trying to read a mention at `at` turned up.
@@ -308,8 +469,9 @@ fn refuse_forged(text: &[&str]) -> Result<(), super::MemoryError> {
 /// cannot resolve because it has loaded no kinds.
 fn any_unknowable(text: &[&str]) -> bool {
     text.iter().any(|part| {
-        part.match_indices('@')
-            .any(|(at, _)| matches!(handle_at(part, at), Attempt::Unknowable))
+        outside_code(part)
+            .into_iter()
+            .any(|at| matches!(handle_at(part, at), Attempt::Unknowable))
     })
 }
 
@@ -1413,5 +1575,163 @@ mod tests {
         assert_eq!(entity.id, plain);
         assert!(fact.content.contains("is text"), "the claim reads back");
         assert!(listed(&plain).await, "the thing was made");
+    }
+
+    /// The handles `named` finds, as strings, so a case reads as a list.
+    fn names_in(text: &str) -> Vec<String> {
+        named(text)
+            .into_iter()
+            .map(|handle| handle.as_str().to_string())
+            .collect()
+    }
+
+    /// **Text inside an inline code span is not a mention** (rule 450). A
+    /// document that shows sample code holds handles that name nothing, and
+    /// reading them as links would refuse the whole write. **Paired with the
+    /// same handle outside code**, or a build that finds nothing anywhere
+    /// passes the first half.
+    #[test]
+    fn a_handle_inside_an_inline_code_span_is_not_a_mention() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        assert!(names_in("write `@person:contract-zzz` to link").is_empty());
+        assert!(names_in("write ``@person:contract-zzz`` to link").is_empty());
+        assert_eq!(
+            names_in("write @person:contract-zzz to link"),
+            ["person:contract-zzz"],
+        );
+        assert_eq!(
+            names_in("`@person:milhouse` and @person:contract-zzz"),
+            ["person:contract-zzz"],
+            "only the handle outside the span is a mention",
+        );
+    }
+
+    /// **A fenced block is code, of either fence character and any length, and
+    /// it closes only on a fence at least as long as the one that opened it.**
+    #[test]
+    fn a_handle_inside_a_fenced_block_is_not_a_mention() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        for text in [
+            "before\n```\n@person:contract-zzz\n```\nafter",
+            "before\n~~~\n@person:contract-zzz\n~~~\nafter",
+            "before\n````rust\n@person:contract-zzz\n```\n@person:contract-zzz\n````\nafter",
+            "before\n~~~~~\n@person:contract-zzz\n~~~\n```\n~~~~~\nafter",
+            "before\n  ```\n  @person:contract-zzz\n  ```\nafter",
+        ] {
+            assert!(names_in(text).is_empty(), "{text:?}");
+        }
+        assert_eq!(
+            names_in("```\ncode\n```\nthen @person:contract-zzz"),
+            ["person:contract-zzz"],
+            "a mention after the fence closed is a mention",
+        );
+    }
+
+    /// **Code is left exactly as written in both directions, and a mention
+    /// beside it still is not.** Stored and served are the same bytes for the
+    /// code, and the real handle outside it is stored as a badge and served as
+    /// the handle.
+    #[test]
+    fn resolving_and_rendering_leave_code_alone_and_the_rest_a_link() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let known = [thing("person:milhouse", Some("k7h2mn"))];
+        let written = "`@person:milhouse` and @person:milhouse\n```\n@person:milhouse\n```\n";
+        let stored = resolved(written, &known).expect("kinds are loaded");
+        assert_eq!(
+            stored,
+            "`@person:milhouse` and @#k7h2mn\n```\n@person:milhouse\n```\n",
+        );
+        assert_eq!(rendered(&stored, &known), written);
+        // A handle that names nothing: marked outside code, untouched inside.
+        assert_eq!(
+            rendered("`@person:contract-zzz`", &known),
+            "`@person:contract-zzz`",
+        );
+        assert_eq!(
+            rendered("@person:contract-zzz", &known),
+            "@person:contract-zzz (no such handle)",
+        );
+    }
+
+    /// **A mention stored inside code before this rule still renders as its
+    /// handle.** A handle in a code span used to be resolved like any other, so
+    /// rows hold the badge there, and serving the badge is the failure this
+    /// module exists to prevent. The mark is jojobot's own and is read
+    /// wherever it sits; a handle a caller typed is what code leaves alone.
+    #[test]
+    fn a_mark_stored_inside_code_renders_as_its_handle() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let known = [thing("person:milhouse", Some("k7h2mn"))];
+        assert_eq!(
+            rendered("see `@#k7h2mn` and\n```\n@#k7h2mn\n```\n", &known),
+            "see `@person:milhouse` and\n```\n@person:milhouse\n```\n",
+        );
+    }
+
+    /// **The stored mark is a forgery in code as it is outside it**, because
+    /// the render above reads it wherever it sits.
+    #[test]
+    fn a_stored_mark_is_a_forgery_inside_code_too() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        assert!(forged_mark("`@#k7h2mn`"));
+        assert!(forged_mark("```\n@#k7h2mn\n```"));
+        assert!(forged_mark("@#k7h2mn"));
+        assert!(!forged_mark("`@person:milhouse` and no mark"));
+    }
+
+    /// **`followable` draws no link out of code.**
+    #[test]
+    fn followable_finds_nothing_inside_code() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        assert!(followable("`@person:milhouse`").is_empty());
+        assert!(followable("```\n@person:milhouse\n```").is_empty());
+        assert_eq!(followable("@person:milhouse").len(), 1);
+    }
+
+    /// **An unclosed fence or span is not code.** A stray fence that turned the
+    /// rest of the text into code would drop every link after it without a
+    /// word, so it is read as the words it is and a handle after it is still a
+    /// mention, which a write guard then answers loudly if it names nothing.
+    #[test]
+    fn an_unclosed_fence_or_span_is_not_code() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        assert_eq!(
+            names_in("```\n@person:contract-zzz"),
+            ["person:contract-zzz"]
+        );
+        assert_eq!(
+            names_in("a ` lone tick then @person:contract-zzz"),
+            ["person:contract-zzz"],
+        );
+        assert_eq!(
+            names_in("``double then `single` then @person:contract-zzz"),
+            ["person:contract-zzz"],
+            "a span closes on a run of the same length only",
+        );
+        // An unclosed fence does not hide a closed pair after it.
+        assert!(names_in("```\ntext\n~~~\n@person:contract-zzz\n~~~").is_empty());
+    }
+
+    /// **A span does not cross a blank line**, so a lone tick cannot pair with a
+    /// tick in the next paragraph and hide what lies between them.
+    #[test]
+    fn an_inline_span_does_not_cross_a_paragraph() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        assert_eq!(
+            names_in("a `tick\n\n@person:contract-zzz then another` tick"),
+            ["person:contract-zzz"],
+        );
+        assert!(names_in("a `tick\n@person:contract-zzz\nstill the span` ends").is_empty());
+    }
+
+    /// **An indented line is not code.** It cannot be told cheaply from the
+    /// continuation of a list item, and skipping it would hide a real mention.
+    #[test]
+    fn an_indented_line_is_not_code() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        assert_eq!(
+            names_in("a list:\n\n    @person:contract-zzz"),
+            ["person:contract-zzz"],
+        );
     }
 }
