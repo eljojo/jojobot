@@ -27,17 +27,20 @@ fn is_handle_byte(b: u8) -> bool {
 }
 
 /// Every `@kind:slug#fN` in `body`, in order of appearance.
+///
+/// **An address inside code is not one.** Text in an inline span or a fenced
+/// block is literal (rule 450), and the one definition of where code is belongs
+/// to the mention walk, so a body cannot be literal to a mention and a quote to
+/// this scan.
 pub fn quoted_addresses(body: &str) -> Vec<Quoted> {
     let bytes = body.as_bytes();
     let mut found = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'@' {
-            i += 1;
+    let mut resume = 0;
+    for start in crate::memory::mention::outside_code(body) {
+        if start < resume {
             continue;
         }
-        let start = i;
-        let mut j = i + 1;
+        let mut j = start + 1;
         while j < bytes.len() && is_handle_byte(bytes[j]) {
             j += 1;
         }
@@ -57,11 +60,9 @@ pub fn quoted_addresses(body: &str) -> Vec<Quoted> {
                     span: start..k,
                     address,
                 });
-                i = k;
-                continue;
+                resume = k;
             }
         }
-        i = j.max(i + 1);
     }
     found
 }
@@ -121,6 +122,29 @@ mod tests {
         ] {
             assert_eq!(addresses(body), Vec::<String>::new(), "{body}");
         }
+    }
+
+    /// **An address inside code is literal**, as a mention is: code is where a
+    /// writer shows an address rather than cites one. The same address outside
+    /// code in the same body is still found, in its own place.
+    #[test]
+    fn an_address_inside_code_is_not_quoted_and_one_outside_it_is() {
+        for body in [
+            "the form is `@person:alpha#f1`",
+            "```\n@person:alpha#f1\n```\n",
+            "~~~\n@person:alpha#f1\n~~~\n",
+        ] {
+            assert_eq!(addresses(body), Vec::<String>::new(), "{body}");
+        }
+        let body = "`@person:alpha#f1` is the form, and @person:alpha#f1 is the quote";
+        let found = quoted(body);
+        assert_eq!(found.len(), 1, "{body}");
+        assert_eq!(&body[found[0].span.clone()], "@person:alpha#f1");
+        assert_eq!(
+            Some(found[0].span.start),
+            body.rfind('@'),
+            "the one outside the span: {body}"
+        );
     }
 
     #[test]

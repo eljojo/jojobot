@@ -106,6 +106,49 @@ async fn a_quote_of_an_inference_is_refused_naming_the_address_and_the_same_post
     story.finish().await;
 }
 
+/// "I am writing down the form for the next agent." An address shown in code is
+/// literal here exactly as a mention is: it is neither checked nor expanded. The
+/// same address outside code in the same kind of post is a quote, so the pair
+/// holds in both directions.
+#[tokio::test]
+async fn an_address_shown_in_code_is_posted_as_written_and_the_same_address_outside_it_is_quoted() {
+    let (story, s, said) = with_an_operator().await;
+
+    // ── inside code: an address naming nothing lands, where outside it is refused
+    let held = story.mail_held_by("person:lisa").await;
+    s.refused(
+        "post_message",
+        json!({"to": "person:lisa", "body": "You said @topic:instance#f9999."}),
+    )
+    .await
+    .says("topic:instance#f9999");
+    post_to_the_operator(&s, "Write the form as `@topic:instance#f9999`.").await;
+    assert_ne!(
+        story.mail_held_by("person:lisa").await,
+        held,
+        "the post that shows the form landed"
+    );
+
+    // ── inside a fence: a real address stays as written and its words are not
+    // spliced in
+    let fenced =
+        post_to_the_operator(&s, &format!("The form:\n```\n@{said}\n```\nIs that clear?")).await;
+    story.retire_in_the_store(&fenced).await;
+    story
+        .page("person:lisa")
+        .await
+        .says(&format!("@{said}"))
+        .says("Is that clear?")
+        .never_says(WORDS);
+
+    // ── the pair: the same address outside code is quoted ────────────────────
+    let quoted = post_to_the_operator(&s, &format!("As you said, @{said}.")).await;
+    story.retire_in_the_store(&quoted).await;
+    story.page("person:lisa").await.says(WORDS);
+
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_source_corrected_after_the_post_leaves_the_message_as_it_was() {
     let (story, s, said) = with_an_operator().await;

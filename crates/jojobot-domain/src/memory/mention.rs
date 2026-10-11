@@ -245,7 +245,7 @@ fn rewrite(text: &str, at: impl Fn(usize, bool) -> Option<(String, usize)>) -> S
 /// screens cannot disagree about where code is. Replacements this module makes
 /// hold no backtick or tilde, so the code in stored text is where the code in
 /// written text was.
-fn outside_code(text: &str) -> Vec<usize> {
+pub(crate) fn outside_code(text: &str) -> Vec<usize> {
     let code = code_ranges(text);
     text.match_indices('@')
         .map(|(at, _)| at)
