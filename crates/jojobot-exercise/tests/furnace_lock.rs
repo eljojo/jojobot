@@ -69,7 +69,7 @@ async fn the_furnace_deadline_lock_holds_when_filed_on_the_furnace() {
                             be booked before 1 February, so the deadline is the last day of \
                             January reads as either 31 January or 1 February depending on how \
                             the boundary counts — filed here as the day the plan itself names.",
-                "sets": {"runs_out": "2027-02-01"},
+                "fields": {"runs_out": "2027-02-01"},
                 "provenance": "inference",
                 "standing": "open",
                 "recorded_at": "2026-05-10",
@@ -109,7 +109,7 @@ async fn the_furnace_deadline_lock_reds_when_filed_on_the_service_company() {
                             bookable day, filed on the plan's own company record.",
                 "object": "thing:the-furnace",
                 "shape": "about",
-                "sets": {"runs_out": "2027-02-01"},
+                "fields": {"runs_out": "2027-02-01"},
                 "provenance": "inference",
                 "standing": "open",
                 "recorded_at": "2026-05-10",
