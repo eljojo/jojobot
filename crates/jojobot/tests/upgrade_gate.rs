@@ -132,6 +132,55 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
         .execute(restoring.pool())
         .await
         .expect("the holder run's moment is moved to now");
+    // **The holder's entries are moved with its start, all by the same amount.**
+    // The sweep measures a run by its newest entry, and a recording whose holder
+    // wrote entries (the closing and the beats of a later build) stamps them at
+    // the hour it was recorded, so moving only the start left the run reading as
+    // gone quiet an hour after the recording and for ever after. The newest entry
+    // lands ten minutes ago and each of the others keeps its distance from it, so
+    // the chronology keeps its order and its gaps. A holder with no entry moves
+    // nothing here.
+    let entries: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT j.id, j.at, j.touched FROM journal_entry j
+         JOIN session s ON s.id = j.session WHERE s.sid = ?",
+    )
+    .bind(&holder_sid)
+    .fetch_all(restoring.pool())
+    .await
+    .expect("the holder run's entries read");
+    let moment = |text: &str| -> jiff::Timestamp {
+        text.parse()
+            .unwrap_or_else(|e| panic!("a recorded moment {text:?} does not parse: {e}"))
+    };
+    let newest = entries
+        .iter()
+        .flat_map(|(_, at, touched)| [Some(at.as_str()), touched.as_deref()])
+        .flatten()
+        .map(moment)
+        .max();
+    if let Some(newest) = newest {
+        let shift =
+            (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).duration_since(newest);
+        let moved = |text: &str| {
+            moment(text)
+                .checked_add(shift)
+                .expect("a moved moment is in range")
+                .to_string()
+        };
+        for (id, at, touched) in &entries {
+            sqlx::query(
+                "UPDATE journal_entry SET at = ?, touched = ?
+                 WHERE id = ? AND session = (SELECT id FROM session WHERE sid = ?)",
+            )
+            .bind(moved(at))
+            .bind(touched.as_deref().map(moved))
+            .bind(id)
+            .bind(&holder_sid)
+            .execute(restoring.pool())
+            .await
+            .expect("the holder run's entry moment is moved");
+        }
+    }
     // **Stated here so the fixture's age cannot hide.** The sweep measures a run
     // by its newest entry, or its start when it has none; the holder must read as
     // recent whatever day the gate runs on.
