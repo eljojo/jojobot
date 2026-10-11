@@ -412,6 +412,9 @@ impl Jojobot {
         sid: Option<&str>,
         structured: bool,
     ) {
+        // First, while the refusal is as the verb wrote it: it carries the mark
+        // that asks for the list of runs, and the mark is removed here.
+        self.add_in_flight(answered, sid).await;
         self.add_status_bar(answered, sid).await;
         // Before the answer is counted and before it moves: what is charged to
         // the session and what ships are the same text.

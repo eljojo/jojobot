@@ -418,7 +418,10 @@ async fn refusals(doc: &mut Doc) {
     }
     for (label, error, _) in crate::session::declined::tests::session_refusal_rows() {
         let reads = error.to_string();
-        let said = answered(crate::session::declined::session_declined(error, "a1b2"));
+        let said = answered(
+            crate::session::declined::session_declined(error, "a1b2")
+                .map(crate::orientation::in_flight::unmarked),
+        );
         doc.text(
             3,
             &format!("Session refusal `{label}`"),

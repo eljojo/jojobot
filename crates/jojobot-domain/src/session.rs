@@ -1598,48 +1598,81 @@ pub async fn sweep_and_find(
             Err(e) => unswept.push((stale.id.clone(), e)),
         }
     }
+    Ok(Board::of(existing, swept, unswept, now, today))
+}
 
-    // Newest first already, so the first live one is the newest.
-    let live: Vec<Session> = existing
+/// **The board as a boot would find it, with nothing written.** Every run a
+/// sweep would close is read as already closed, and none is closed. It is the
+/// same decision [`sweep_and_find`] makes, from the same function, so what a
+/// refusal lists as in flight is what the door would offer.
+pub async fn find_without_sweeping(
+    sessions: &dyn Sessions,
+    bot: &EntityId,
+    now: Timestamp,
+    today: Option<Date>,
+) -> Result<Board, SessionError> {
+    let existing = sessions.sessions_of(bot).await?;
+    let would_sweep = existing
         .iter()
-        .filter(|s| !s.state.is_terminal() && !s.is_stale(now, today))
-        .cloned()
+        .filter(|s| s.is_stale(now, today))
+        .map(|s| s.id.to_string())
         .collect();
-    // **The run somebody closed properly MOST RECENTLY**, read before the
-    // list is consumed. `existing` sorts newest-START-first, which is not
-    // the order a WRAP happened in: a run started long ago and wrapped just
-    // now still needs to win over one started more recently and wrapped
-    // earlier. `wrapped_at` is the wrap's own moment: the moment of the entry
-    // `wrap_session` closed the run with, which a later entry written by a run
-    // reopened for one last change does not move.
-    let handover = existing
-        .iter()
-        .filter(|s| s.state == SessionState::Wrapped)
-        .max_by_key(|s| s.wrapped_at())
-        .cloned();
-    // **Read AFTER the sweep, and through it.** The run this boot just marked
-    // `abandoned` is the archetypal "resume last session" — it is the one that
-    // stopped yesterday — so it has to be a candidate here, and the list read
-    // above still says `active` for it.
-    let windows_open = windows_open(&existing);
-    let offerable = existing
-        .into_iter()
-        .map(|s| match swept.contains(&s.id.to_string()) {
-            true => Session {
-                state: SessionState::Abandoned,
-                ..s
-            },
-            false => s,
-        })
-        .find(|s| s.is_offerable(now, today));
-    Ok(Board {
-        live,
-        offerable,
-        handover,
-        swept,
-        unswept,
-        windows_open,
-    })
+    Ok(Board::of(existing, would_sweep, Vec::new(), now, today))
+}
+
+impl Board {
+    /// **What is on a bot's board, given the runs it has and the ones that were
+    /// swept.** Pure: it reads nothing and writes nothing, so a boot that swept
+    /// and a read that did not decide on one definition.
+    pub fn of(
+        existing: Vec<Session>,
+        swept: Vec<String>,
+        unswept: Vec<(SessionId, SessionError)>,
+        now: Timestamp,
+        today: Option<Date>,
+    ) -> Board {
+        // Newest first already, so the first live one is the newest.
+        let live: Vec<Session> = existing
+            .iter()
+            .filter(|s| !s.state.is_terminal() && !s.is_stale(now, today))
+            .cloned()
+            .collect();
+        // **The run somebody closed properly MOST RECENTLY**, read before the
+        // list is consumed. `existing` sorts newest-START-first, which is not
+        // the order a WRAP happened in: a run started long ago and wrapped just
+        // now still needs to win over one started more recently and wrapped
+        // earlier. `wrapped_at` is the wrap's own moment: the moment of the entry
+        // `wrap_session` closed the run with, which a later entry written by a run
+        // reopened for one last change does not move.
+        let handover = existing
+            .iter()
+            .filter(|s| s.state == SessionState::Wrapped)
+            .max_by_key(|s| s.wrapped_at())
+            .cloned();
+        // **Read AFTER the sweep, and through it.** The run this boot just marked
+        // `abandoned` is the archetypal "resume last session" — it is the one that
+        // stopped yesterday — so it has to be a candidate here, and the list read
+        // above still says `active` for it.
+        let windows_open = windows_open(&existing);
+        let offerable = existing
+            .into_iter()
+            .map(|s| match swept.contains(&s.id.to_string()) {
+                true => Session {
+                    state: SessionState::Abandoned,
+                    ..s
+                },
+                false => s,
+            })
+            .find(|s| s.is_offerable(now, today));
+        Board {
+            live,
+            offerable,
+            handover,
+            swept,
+            unswept,
+            windows_open,
+        }
+    }
 }
 
 /// **The key a run's start day rides under** on the projected run. The walk
@@ -2324,6 +2357,60 @@ mod tests {
             earlier.swept.is_empty(),
             "nothing is stale before it happens"
         );
+    }
+
+    /// **The board read without a sweep decides what a sweeping boot decides,
+    /// and closes nothing.** Same three runs as the boot's case: reading the board
+    /// leaves the stale ones `active` in the store, while the live, offerable and
+    /// handover decisions equal the sweeping boot's. A refusal lists runs from
+    /// this read, so a refused call never closes a run.
+    #[tokio::test]
+    async fn the_board_read_without_a_sweep_decides_as_a_boot_does_and_closes_nothing() {
+        let store = InMemorySessions::new();
+        let gamma = EntityId("bot:gamma".into());
+        let at = contract::epoch();
+        let old = run(&store, 1, "the day before yesterday", 36).await;
+        let warm = run(&store, 2, "an hour ago", 1).await;
+        let _ancient = run(&store, 3, "a fortnight ago", 24 * 15).await;
+
+        let looked = find_without_sweeping(&store, &gamma, at, None)
+            .await
+            .expect("a board");
+        for id in [&old.id, &warm.id] {
+            let kept = store.read_session(id).await.expect("the run is there");
+            assert_ne!(
+                kept.state,
+                SessionState::Abandoned,
+                "reading the board closed run {id}"
+            );
+        }
+        let swept = sweep_and_find(&store, &gamma, at, None)
+            .await
+            .expect("a board");
+        let names = |runs: &[Session]| runs.iter().map(|s| s.id.to_string()).collect::<Vec<_>>();
+        assert_eq!(names(&looked.live), names(&swept.live));
+        // The expectation is the fixture's own, not the sweeping read's: the run a
+        // day and a half old is the one offered, as the abandoned run a sweep would
+        // make it, though nothing closed it.
+        assert_eq!(
+            looked
+                .offerable
+                .as_ref()
+                .map(|s| (s.id.to_string(), s.state)),
+            Some((old.id.to_string(), SessionState::Abandoned)),
+        );
+        assert_eq!(
+            looked
+                .offerable
+                .as_ref()
+                .map(|s| (s.id.to_string(), s.state)),
+            swept
+                .offerable
+                .as_ref()
+                .map(|s| (s.id.to_string(), s.state)),
+            "the stale run is offered as the abandoned one it would be"
+        );
+        assert_eq!(looked.windows_open, swept.windows_open);
     }
 
     /// A session the store refuses to close does not stop a boot: it is left

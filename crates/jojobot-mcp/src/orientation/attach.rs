@@ -280,45 +280,11 @@ impl Jojobot {
                 // Every live run, then the one stop worth bringing up. The
                 // abandoned one comes last because it is the weaker claim on
                 // the caller's attention, not because it is worse.
-                let offered: Vec<&Session> = live.iter().chain(offerable.iter()).collect();
-                let mut choices = Vec::with_capacity(offered.len());
-                for session in offered {
-                    let name = session
-                        .sid
-                        .as_ref()
-                        .map(|name| name.as_str().to_string())
-                        .unwrap_or_else(|| session.id.as_str().to_string());
-                    let mut choice = serde_json::json!({
-                        // **The run's public name, never a key.** A key is shown
-                        // once, to the run it opens.
-                        "run": name,
-                        // **What it was working on is the whole point of the
-                        // offer.** A bot may have several runs at once, and a
-                        // list of opaque handles is not a choice anybody can
-                        // make.
-                        "working_on": session.focus,
-                        // **Marked, never silently mixed in.** Not because a
-                        // stop is worse — it is not a failure — but because
-                        // "this one was never wrapped up" is what tells the
-                        // caller which of these is still warm.
-                        "state": session.state.as_token(),
-                        "started_at": session.started_at.to_string(),
-                        "last_beat": session.last_beat().to_string(),
-                        "entry_count": session.entries.len(),
-                    });
-                    if session.state == SessionState::Abandoned
-                        && let Some(obj) = choice.as_object_mut()
-                    {
-                        obj.insert(
-                            "note".into(),
-                            "this run stopped without being wrapped up — a disconnect, a closed \
-                         laptop, an agent that moved on. Resuming it is ordinary: it reopens \
-                         where it left off and its chronology continues."
-                                .into(),
-                        );
-                    }
-                    choices.push(choice);
-                }
+                let choices: Vec<serde_json::Value> = live
+                    .iter()
+                    .chain(offerable.iter())
+                    .map(super::in_flight::choice_json)
+                    .collect();
                 // **Bound as it has always been, to the newest run.** This
                 // round moves what the DOOR hands back; the write path still
                 // resolves an unaddressed write to the live session, and
@@ -395,7 +361,7 @@ impl Jojobot {
     /// **Present with nothing in it rather than absent.** Most sittings never
     /// wrap, so "nobody left you anything" is the ordinary answer — and a
     /// missing key would make that read the same as a build that cannot say.
-    fn handover(wrapped: Option<&Session>) -> serde_json::Value {
+    pub(crate) fn handover(wrapped: Option<&Session>) -> serde_json::Value {
         let Some(run) = wrapped else {
             return serde_json::json!({
                 "story": serde_json::Value::Null,
@@ -720,23 +686,20 @@ impl Jojobot {
         // **Quiet is the server's own reading.** The caller's `today` plays no
         // part: a run acting out another day would otherwise age a live run into
         // being takeable.
-        if !existing.state.is_terminal() {
-            // **A pick-up counts as a write**, so the second of two asks made
-            // together meets a run that was just taken.
-            let wrote = existing
-                .last_beat()
-                .max(held.taken_at.unwrap_or(jiff::Timestamp::MIN));
-            if self.clock().now().duration_since(wrote) < self.quiet_after {
-                let free_at = wrote + self.quiet_after;
-                return Err(handle_declined(
-                    "",
-                    format!(
-                        "No session was started. Run {name} wrote at {wrote}, so it is still \
-                         its own: only its key continues it. A run quiet for 45 minutes can be \
-                         picked up by its name, which for this one is from {free_at}."
-                    ),
-                ));
-            }
+        if let super::in_flight::Pickup::From { wrote, free_at } = super::in_flight::pickup_of(
+            &existing,
+            held.taken_at,
+            self.clock().now(),
+            self.quiet_after,
+        ) {
+            return Err(handle_declined(
+                "",
+                format!(
+                    "No session was started. Run {name} wrote at {wrote}, so it is still \
+                     its own: only its key continues it. A run quiet for 45 minutes can be \
+                     picked up by its name, which for this one is from {free_at}."
+                ),
+            ));
         }
         if let Some(session) = live.iter().find(|s| s.id == card) {
             return Ok((name, Some(session.clone())));

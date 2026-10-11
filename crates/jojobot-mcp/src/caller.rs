@@ -162,7 +162,12 @@ fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
              Boot again with start_here."
         ),
     };
-    handle_declined("", format!("{NOTHING_RAN}. {how}"))
+    // **Marked so `finish` lists what is in flight**: the bot is known, and the
+    // refusal says nothing a bare `start_here` with that bot would not.
+    crate::orientation::in_flight::mark_ended_key(
+        handle_declined("", format!("{NOTHING_RAN}. {how}")),
+        "retired",
+    )
 }
 
 impl Jojobot {

@@ -64,6 +64,9 @@ mod counting;
 mod creating_with_fields;
 #[path = "user_stories/curveball.rs"]
 mod curveball;
+/// A key that stopped opening its run says what is in flight.
+#[path = "user_stories/dead_handle.rs"]
+mod dead_handle;
 #[path = "user_stories/degraded.rs"]
 mod degraded;
 #[path = "user_stories/dsl.rs"]

@@ -44,7 +44,19 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
 /// called `wrapped` is the same one this refusal is about.
 pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
     let word = session_fix_by(&e);
-    session_declined_arms(e, sid).map(|answered| stamp(answered, word))
+    // **A closed run's refusal is marked**, so `finish` lists what is in flight
+    // beside it: the key still opens its run, and the run's bot is known.
+    let closed = match &e {
+        SessionError::Closed { state, .. } => Some(state.as_token()),
+        _ => None,
+    };
+    session_declined_arms(e, sid).map(|answered| {
+        let answered = stamp(answered, word);
+        match closed {
+            Some(state) => crate::orientation::in_flight::mark_ended_key(answered, state),
+            None => answered,
+        }
+    })
 }
 
 /// **The word every session refusal wears, in one exhaustive match.** No
