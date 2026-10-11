@@ -155,6 +155,42 @@ async fn a_message_for_the_operator_reaches_their_phone_with_its_subject_sender_
     assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0), "{id}");
 }
 
+/// **Every way into the operator's box wakes the push, not only the verb that
+/// posts.** A session that asks for a code writes it into their box from the
+/// door, and the code is good for ten minutes, so a push that waits for some
+/// other post to wake it has expired with nobody told. Nothing else is posted
+/// here: the only message in the box is the code's.
+#[tokio::test]
+async fn a_code_asked_for_at_the_door_reaches_the_phone_with_no_other_post() {
+    let ntfy = FakeNtfy::start().await;
+    let (story, s) = pushing_to(&ntfy, QUICK).await;
+    s.add("bot:bart", "Bart").await;
+
+    let (asked, session) = story
+        .call("start_here", json!({"bot": "bart", "ask_for_code": true}))
+        .await;
+    assert!(session.is_none(), "asking for a code starts no session");
+    asked.says("challenge");
+
+    eventually("the code's message was published", || {
+        !ntfy.published().is_empty()
+    })
+    .await;
+    let published = ntfy.published();
+    assert_eq!(published.len(), 1, "{published:?}");
+    assert!(
+        published[0].body["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("Code: ")),
+        "the push carries the code's message: {published:?}"
+    );
+    assert_eq!(
+        story.mail_held_by("person:lisa").await,
+        (1, 0, 0),
+        "the code is the one message in the box"
+    );
+}
+
 #[tokio::test]
 async fn the_server_down_and_then_up_delivers_the_message_once() {
     let ntfy = FakeNtfy::start().await;

@@ -91,7 +91,17 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
 
     let memory = state.memory.clone();
     let search = state.search.clone();
-    let mailboxes = state.mailboxes.clone();
+    // **Every path into a person's box wakes the push**, because the wake is
+    // made on the port every handler posts through. A path that posts to the
+    // operator and is not the `post_message` verb (a code asked for at the door)
+    // cannot leave its message unpushed.
+    let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = match &state.push {
+        Some(push) => Arc::new(jojobot_domain::push::Nudging::new(
+            state.mailboxes.clone(),
+            push.clone(),
+        )),
+        None => state.mailboxes.clone(),
+    };
     let sessions = state.sessions.clone();
     let teachings = state.teachings.clone();
     // **One registry per process, never per connection** — a session handle is
@@ -101,7 +111,6 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     // every handle it ever issued.
     let registry = state.registry.clone();
     let clock = state.clock;
-    let push = state.push.clone();
     let quiet_after = state.quiet_after;
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
@@ -117,8 +126,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 registry.clone(),
             )
             .on_clock(clock)
-            .quiet_after_unless_default(quiet_after)
-            .pushing(push.clone()))
+            .quiet_after_unless_default(quiet_after))
         },
         LocalSessionManager::default().into(),
         server_config,

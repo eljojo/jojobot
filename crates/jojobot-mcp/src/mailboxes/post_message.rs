@@ -443,13 +443,6 @@ impl Jojobot {
         };
         match posted {
             mailbox::Guarded::Written(message) => {
-                // **After the write, and nothing waits on it.** The store wrote
-                // the push beside the message; this only says to look.
-                if to_the_operator {
-                    if let Some(push) = &self.push {
-                        push.nudge();
-                    }
-                }
                 self.beat("post_message", message.mailbox.as_str(), Some(&args.sid))
                     .await;
                 let mut body = message_receipt_json(

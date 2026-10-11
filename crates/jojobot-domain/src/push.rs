@@ -23,12 +23,17 @@
 //!
 //! **This is user-agnostic software: no user PII, fixtures included.**
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use jiff::Timestamp;
 
-use crate::mailbox::{Mailboxes, Message, MessageId};
+use crate::mailbox::{
+    Delivered, Delivery, Guarded, MailboxError, MailboxName, Mailboxes, Message, MessageId,
+    NewMessage, Quarantined, TakenBy,
+};
+use crate::memory::EntityId;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -90,6 +95,113 @@ pub trait Outbox: Send + Sync {
 pub trait Nudge: Send + Sync {
     /// Something was written to the outbox; look at it.
     fn nudge(&self);
+}
+
+/// **Wakes the push after a post lands in a person's box, whichever caller
+/// posted.** Every writer reaches the box through the port this wraps, so the
+/// nudge is made once, where the writes go through, rather than beside each
+/// caller that happens to post to the operator. A path added later cannot miss
+/// it.
+///
+/// A post into a bot's box, a post the store blocked and a post that failed
+/// nudge nothing. When the box's owner cannot be read the push is nudged
+/// anyway: a wake with nothing to send costs a look at the outbox, and a missed
+/// wake leaves a code to expire unannounced.
+pub struct Nudging {
+    inner: Arc<dyn Mailboxes>,
+    push: Arc<dyn Nudge>,
+}
+
+impl Nudging {
+    /// Wrap `inner` so a written post into a person's box tells `push`.
+    pub fn new(inner: Arc<dyn Mailboxes>, push: Arc<dyn Nudge>) -> Self {
+        Nudging { inner, push }
+    }
+
+    /// Whether the box named is a person's.
+    async fn is_a_persons(&self, name: &MailboxName) -> bool {
+        match self.inner.list_mailboxes().await {
+            Ok(boxes) => boxes
+                .iter()
+                .any(|held| &held.name == name && held.is_private()),
+            Err(_) => true,
+        }
+    }
+}
+
+#[async_trait]
+impl Mailboxes for Nudging {
+    async fn create_mailbox(
+        &self,
+        name: &MailboxName,
+        owner: &EntityId,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<crate::mailbox::Mailbox>, MailboxError> {
+        self.inner.create_mailbox(name, owner, override_token).await
+    }
+
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<crate::mailbox::Mailbox>, MailboxError> {
+        self.inner.repoint_owner(from, to).await
+    }
+
+    async fn list_mailboxes(&self) -> Result<Vec<crate::mailbox::Mailbox>, MailboxError> {
+        self.inner.list_mailboxes().await
+    }
+
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        self.inner.scan_messages().await
+    }
+
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        self.inner.message_by_id(id).await
+    }
+
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        self.inner.sent_by(senders).await
+    }
+
+    async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
+        let to = message.mailbox.clone();
+        let posted = self.inner.post_message(message).await?;
+        if matches!(posted, Guarded::Written(_)) && self.is_a_persons(&to).await {
+            self.push.nudge();
+        }
+        Ok(posted)
+    }
+
+    async fn read_mailbox(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Guarded<Delivery>, MailboxError> {
+        self.inner.read_mailbox(name, taken_by).await
+    }
+
+    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+        self.inner.read_message(id).await
+    }
+
+    async fn mark_processed(
+        &self,
+        id: &MessageId,
+        notes: Option<&str>,
+    ) -> Result<Message, MailboxError> {
+        self.inner.mark_processed(id, notes).await
+    }
+
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: Timestamp,
+    ) -> Result<Quarantined, MailboxError> {
+        self.inner.quarantine(id, by, reason, at).await
+    }
 }
 
 /// **What is sent**, composed from a message and nothing else.
@@ -331,6 +443,63 @@ mod tests {
                 .expect("a box");
         }
         boxes
+    }
+
+    /// A nudge that counts, standing in for the task that drains the outbox.
+    #[derive(Default)]
+    struct Counted(std::sync::atomic::AtomicUsize);
+
+    impl Nudge for Counted {
+        fn nudge(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl Counted {
+        fn count(&self) -> usize {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// **A post wakes the push when it lands in a person's box, and only then.**
+    /// Each negative sits beside the positive it depends on: the post into the
+    /// person's box is counted first, so a decorator that never nudges and one
+    /// that always nudges are each told apart.
+    #[tokio::test]
+    async fn only_a_post_that_lands_in_a_persons_box_nudges_the_push() {
+        let nudges = Arc::new(Counted::default());
+        let boxes = Nudging::new(Arc::new(store().await), nudges.clone());
+        let new = |to: &str| NewMessage {
+            mailbox: MailboxName(to.into()),
+            body: "a body".into(),
+            subject: None,
+            sender: "gamma".into(),
+            sent_at: at(0),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        };
+
+        let landed = boxes
+            .post_message(new("person-ned-flanders"))
+            .await
+            .expect("the post is accepted");
+        assert!(matches!(landed, Guarded::Written(_)), "{landed:?}");
+        assert_eq!(nudges.count(), 1, "a post into a person's box nudges once");
+
+        let to_a_bot = boxes
+            .post_message(new("epsilon"))
+            .await
+            .expect("the post is accepted");
+        assert!(matches!(to_a_bot, Guarded::Written(_)), "{to_a_bot:?}");
+        assert_eq!(nudges.count(), 1, "a post into a bot's box nudges nothing");
+
+        let to_nobody = boxes.post_message(new("nobody-here")).await;
+        assert!(
+            !matches!(to_nobody, Ok(Guarded::Written(_))),
+            "{to_nobody:?}"
+        );
+        assert_eq!(nudges.count(), 1, "a post that did not land nudges nothing");
     }
 
     async fn post(
