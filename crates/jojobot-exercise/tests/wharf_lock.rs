@@ -62,7 +62,7 @@ async fn the_wharf_timing_lock_holds_when_filed_on_the_real_place() {
             "capture",
             json!({
                 "subject": "place:wonder-wharf",
-                "content": "Went in to work by the wharf road, the one through Wonder Wharf, on Friday the 6th while the \
+                "content": "Went in to work by the wharf road on Friday the 6th while the \
                             bridge is shut — 52 minutes, never again",
                 "fields": {"minutes": "52"},
                 "happened_at": "2026-02-06",
