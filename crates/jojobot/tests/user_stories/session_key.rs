@@ -201,6 +201,67 @@ async fn a_run_still_writing_cannot_be_taken_by_its_name_and_a_quiet_one_can() {
     story.finish().await;
 }
 
+/// **A caller who reads `list_runs` resumes a stopped run by the `run` it
+/// names, and a key sent as `resume` is turned away.** The list carries each
+/// run's public name and no key, and `resume` takes that name: the route every
+/// description of `resume` now says.
+#[tokio::test]
+async fn a_caller_resumes_a_stopped_run_by_the_name_list_runs_gave_it() {
+    let story = Story::begin_on_the_real_lease("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let stopped = story.as_bot("bot:gamma").await;
+    stopped
+        .call(
+            "journal",
+            json!({"entry": "took the work", "focus": "the dispatch"}),
+        )
+        .await;
+    let (name, key) = (stopped.run().to_string(), stopped.sid().to_string());
+    let two_days_on = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(48);
+    let later = story
+        .restarted_on_the_real_lease_pretending_it_is(
+            &two_days_on
+                .to_zoned(jiff::tz::TimeZone::UTC)
+                .date()
+                .to_string(),
+        )
+        .await;
+    let reader = later.as_bot("bot:gamma").await;
+    let listed = reader.call("list_runs", json!({})).await;
+    let runs = listed.json();
+    let run = runs["runs"]
+        .as_array()
+        .and_then(|all| all.iter().find(|r| r["run"] == name))
+        .unwrap_or_else(|| panic!("list_runs names the stopped run: {runs}"));
+    assert!(
+        run.get("sid").is_none(),
+        "a list carries a name, never a key: {run}"
+    );
+    listed.never_says(&key);
+
+    // The key is not the route: sent as `resume`, it is turned away.
+    later
+        .refused_at_the_door(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": key}),
+        )
+        .await;
+    // The name the list gave is: the run comes back with a key of its own.
+    let (taken, taker) = later
+        .call(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": name}),
+        )
+        .await;
+    let taker = taker.expect("a stopped run is handed to whoever names it, with a new key");
+    assert_eq!(taker.run(), name);
+    assert_ne!(taker.sid(), key);
+    taken.never_says(&key);
+    later.finish().await;
+    story.finish().await;
+}
+
 /// **A live key or an unspent wrap code written into text is refused; a string
 /// merely shaped like one is not.** The check reads values, so the same text
 /// lands once the secret is not live any more — which is what keeps the refusal

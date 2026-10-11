@@ -189,10 +189,10 @@ pub struct RecallArgs {
     /// closing entry carries it as `closing_focus`. A selection that reaches
     /// another identity's runs counts them as `withheld` and shows none of them; a
     /// filter that leaves out runs of YOUR OWN says how many as
-    /// `own_runs_excluded`. A run carries its `sid` as a field you can filter on,
-    /// and `near` places a run on the day it started. start_here resumes an
-    /// unwrapped run by its sid; only the `wrap_code` a wrap handed back reopens a
-    /// wrapped one. A call with no sid owns no run: boot with start_here and pass
+    /// `own_runs_excluded`. A run carries its name as the `sid` field, which you
+    /// can filter on and which is never its key, and `near` places a run on the day
+    /// it started. start_here resumes an unwrapped run by that name; only the
+    /// `wrap_code` a wrap handed back reopens a wrapped one. A call with no sid owns no run: boot with start_here and pass
     /// the sid it returns to read your own.
     #[serde(default)]
     pub(crate) kind: Option<String>,

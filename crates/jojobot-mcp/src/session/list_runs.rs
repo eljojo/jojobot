@@ -44,10 +44,9 @@ impl Jojobot {
                        It is a plain read: nothing here is begun, closed or swept. A bot with no \
                        runs at all comes back with an empty list rather than a blocked answer — \
                        that is not a fault, it is a bot that has never journalled. Each run \
-                       carries its own handle (`sid`, which start_here resumes while the run is \
-                       not wrapped; a wrapped run reopens only through its wrap_code — \
-                       `null` only for a run that predates stored handles, since a plain read mints \
-                       none), \
+                       carries its name (`run`, the name start_here takes to resume the run while \
+                       it is not wrapped; a wrapped run reopens only through its wrap_code — \
+                       never its key, which a list does not show), \
                        what it was working on last, its state (active · wrapped · abandoned), \
                        when it began, when it last had anything to show for itself, and how many \
                        beats its chronology holds — never the chronology itself, which grows \

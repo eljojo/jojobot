@@ -30,9 +30,10 @@ pub struct OrientArgs {
     #[serde(default)]
     pub(crate) brief: Option<bool>,
     /// Your answer to the resume-or-new choice a boot hands back when this bot
-    /// has a session worth picking up: the `sid` of the one you are resuming,
-    /// exactly as the offer spelled it, or `new` for a fresh session. Leave it
-    /// off on a first boot — there is nothing to answer yet.
+    /// has a session worth picking up: the name of the run you are resuming (its
+    /// `run`), exactly as the offer spelled it, or `new` for a fresh session. A
+    /// name is not a key: never send a `sid` here. Leave it off on a first boot —
+    /// there is nothing to answer yet.
     ///
     /// **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
     /// wrapped run's own sid back so that run can take one last change. The run
@@ -145,7 +146,8 @@ pub struct OrientArgs {
     /// writes a fresh code into the operator's own mailbox, where the phone and
     /// the web page show it, and answers with a reference to the challenge and
     /// never the code. The call starts no session. One challenge stands per bot:
-    /// a new request voids the old one, and a code is good for ten minutes.
+    /// while a code is waiting a new request is refused and names when it ends, a
+    /// code is good for ten minutes, and three wrong codes void it sooner.
     ///
     /// The operator types the code into this session. Boot again with `bot`,
     /// `challenge` and `code` to present it.
@@ -191,8 +193,8 @@ impl Jojobot {
                        FROM: that `sid` rides every verb after it, reads included, and \
                        passing `sid` here tells you whether it still addresses your session. \
                        A bot with a run to pick up gets a resume-or-new choice and no sid \
-                       until it answers with `resume`: a sid, `new`, or the wrap_code a wrap \
-                       handed back. CALLED THIS BEFORE? Pass brief: true to skip the essay; \
+                       until it answers with `resume`: the name of the run (its `run`), `new`, \
+                       or the wrap_code a wrap handed back. CALLED THIS BEFORE? Pass brief: true to skip the essay; \
                        calling without brief reads it in full. `claim` holds a named role for \
                        45 minutes so two sessions never work one role at once (taken, \
                        refused, conflict or unavailable; a claim is refused while its role \

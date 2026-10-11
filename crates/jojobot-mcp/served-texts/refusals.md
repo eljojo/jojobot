@@ -984,7 +984,7 @@ A wrapped session is the last word; an abandoned one can be picked back up by re
 answer: {
   "attempted": "a1b2",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Session 'a1b2' is abandoned — it stopped without being wrapped up, so it takes no write as it stands. That is not a failure and not the end of it: resume it. Call start_here with your bot name (with no bot it lists them), and either take it from the offer or pass resume with its sid — it reopens where it left off and its chronology continues.",
+  "how_to_proceed": "Nothing was written. Session 'a1b2' is abandoned — it stopped without being wrapped up, so it takes no write as it stands. That is not a failure and not the end of it: resume it. Call start_here with your bot name (with no bot it lists them), and either take it from the offer or pass resume with its name, 'a1b2' — it reopens where it left off and its chronology continues.",
   "status": "blocked",
   "wrote": false
 }

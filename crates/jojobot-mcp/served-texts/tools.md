@@ -1348,7 +1348,7 @@ See YOUR OWN bot's past runs — every one this identity has had, in whatever st
 WHOSE RUNS IS NOT AN ARGUMENT: the `sid` you pass says which bot is asking, exactly as it does for journal, and there is no way to name a different identity's runs — this reads what is yours and nothing else.
 It is a plain read: nothing here is begun, closed or swept.
 A bot with no runs at all comes back with an empty list rather than a blocked answer — that is not a fault, it is a bot that has never journalled.
-Each run carries its own handle (`sid`, which start_here resumes while the run is not wrapped; a wrapped run reopens only through its wrap_code — `null` only for a run that predates stored handles, since a plain read mints none), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
+Each run carries its name (`run`, the name start_here takes to resume the run while it is not wrapped; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
 Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, on every boot of this identity.
 Each run also carries `served`: the total characters this run has been answered, plus a token count that is an estimate derived from those characters, never a real tokenisation.
@@ -3053,10 +3053,10 @@ it did). The focus a run closed on is not in that prose: wrap_session's
 closing entry carries it as `closing_focus`. A selection that reaches
 another identity's runs counts them as `withheld` and shows none of them; a
 filter that leaves out runs of YOUR OWN says how many as
-`own_runs_excluded`. A run carries its `sid` as a field you can filter on,
-and `near` places a run on the day it started. start_here resumes an
-unwrapped run by its sid; only the `wrap_code` a wrap handed back reopens a
-wrapped one. A call with no sid owns no run: boot with start_here and pass
+`own_runs_excluded`. A run carries its name as the `sid` field, which you
+can filter on and which is never its key, and `near` places a run on the day
+it started. start_here resumes an unwrapped run by that name; only the
+`wrap_code` a wrap handed back reopens a wrapped one. A call with no sid owns no run: boot with start_here and pass
 the sid it returns to read your own.
 ```
 
@@ -4004,7 +4004,7 @@ With no bot it is a read-only orientation: what jojobot is, a live snapshot (ent
 NAME A BOT and the answer also carries that identity: its charter, its rules as dated claims each with its own provenance (testimony and observation are settled, inference is a hypothesis), and the counts of the mailbox it owns.
 THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing the bots that exist.
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
-A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: a sid, `new`, or the wrap_code a wrap handed back.
+A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads it in full.
 `claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease, and wrapping releases it.
 A boot writes only the sweep of abandoned runs, the repair of a missing box and, with a wrap_code, the wrap window it opens.
@@ -4117,7 +4117,8 @@ started by hand has no voucher, and this is how it gets one. jojobot
 writes a fresh code into the operator's own mailbox, where the phone and
 the web page show it, and answers with a reference to the challenge and
 never the code. The call starts no session. One challenge stands per bot:
-a new request voids the old one, and a code is good for ten minutes.
+while a code is waiting a new request is refused and names when it ends, a
+code is good for ten minutes, and three wrong codes void it sooner.
 
 The operator types the code into this session. Boot again with `bot`,
 `challenge` and `code` to present it.
@@ -4197,9 +4198,10 @@ and the third wrong code voids the challenge.
 
 ```text
 Your answer to the resume-or-new choice a boot hands back when this bot
-has a session worth picking up: the `sid` of the one you are resuming,
-exactly as the offer spelled it, or `new` for a fresh session. Leave it
-off on a first boot — there is nothing to answer yet.
+has a session worth picking up: the name of the run you are resuming (its
+`run`), exactly as the offer spelled it, or `new` for a fresh session. A
+name is not a key: never send a `sid` here. Leave it off on a first boot —
+there is nothing to answer yet.
 
 **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
 wrapped run's own sid back so that run can take one last change. The run
