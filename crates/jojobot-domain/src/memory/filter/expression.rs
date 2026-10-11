@@ -417,7 +417,11 @@ impl Reader {
             // A word that only starts like it, such as `todays`.
             _ => return Ok(Operand::Text(word.to_string())),
         };
-        let (count, unit) = rest[1..].split_at(rest[1..].len().saturating_sub(1));
+        // The unit is the LAST CHARACTER, so the split is taken on a character
+        // boundary: a byte split lands inside a wide character and panics.
+        let digits = &rest[1..];
+        let unit_at = digits.char_indices().next_back().map_or(0, |(at, _)| at);
+        let (count, unit) = digits.split_at(unit_at);
         let days = match (count.parse::<u32>(), unit) {
             (Ok(count), "d") => Some(i64::from(count)),
             (Ok(count), "w") => Some(i64::from(count) * 7),

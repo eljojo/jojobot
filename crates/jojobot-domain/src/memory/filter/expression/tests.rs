@@ -166,6 +166,31 @@ fn an_ordering_needs_a_date_or_a_number() {
     let _ = (Direction::Ascending, Test::Exists);
 }
 
+/// **A relative date that ends in a character wider than a byte is refused with
+/// the word and where it is, never a panic.** The unit is the last character of
+/// the word, so a split by byte lands inside it. Both the ordering and the
+/// equality path read the word, and the position counts characters: the key in
+/// the last case has a character that takes two bytes before the word starts.
+/// The ordinary forms still parse.
+#[test]
+fn a_relative_date_with_a_wide_character_is_refused_with_its_word_and_position() {
+    for (text, word, position) in [
+        ("due < today+\u{e9}", "today+\u{e9}", "position 7"),
+        ("due < today+3\u{e9}", "today+3\u{e9}", "position 7"),
+        ("title = today-\u{e9}", "today-\u{e9}", "position 9"),
+        ("t\u{ed}tulo = today-\u{e9}", "today-\u{e9}", "position 10"),
+    ] {
+        let words = refusal(text);
+        assert!(words.contains(word), "{text}: {words}");
+        assert!(words.contains(position), "{text}: {words}");
+        assert!(words.contains("relative"), "{text}: {words}");
+    }
+    assert_eq!(
+        tree("due <= today+3d"),
+        Filter::ordering("due", Op::LessOrEqual, ValueType::Date, "2026-10-12")
+    );
+}
+
 /// **The values are the words an equality, an any-of or a `contains` compares
 /// against, with the characters they sit at**, a quoted one without its quotes.
 /// A key and an ordering's operand are not values.
