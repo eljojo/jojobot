@@ -294,6 +294,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         // The claim moved on after the caller read it: read it again, then send the
         // edit against the revision now current.
         MemoryError::StaleRevision { .. } => Some(FixBy::Retry),
+        MemoryError::TextChangedWhileEditing { .. } => Some(FixBy::Retry),
         // The words do not occur once in the text: the call has to name them differently.
         MemoryError::TextEditMatches { .. } => Some(FixBy::Change),
         MemoryError::Store(_) => memory_store_failure_word(),
@@ -457,6 +458,16 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // are not rewritten in place, so "send it again" would loop; the sentence
         // names the two calls that do it and says the original stays readable, so
         // a caller can tell the operator so.
+        // **The caller named no revision, so the sentence does not talk about one.**
+        // It says the text changed under the edit and names the read.
+        MemoryError::TextChangedWhileEditing { ref address, .. } => Ok(blocked_body(
+            &EntityId(address.clone()),
+            &[],
+            WayForward::retry(format!(
+                "Nothing was written: {e}. Read the claim again with recall (history_record: \
+                 \"{address}\") to see what changed, then send the edit again."
+            )),
+        )),
         // **The count is a key**, so a caller branches on a number and does not read
         // a sentence for it. Two or more means the words name more than one place;
         // none means the text is not what the caller thinks it is.
@@ -1489,6 +1500,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::UnknownRight { .. }
         | MemoryError::RoleTaken { .. }
         | MemoryError::StaleRevision { .. }
+        | MemoryError::TextChangedWhileEditing { .. }
         | MemoryError::TextEditMatches { .. }
         | MemoryError::TestimonyRewritten { .. }
         | MemoryError::KeyInOtherBag { .. }
@@ -1965,6 +1977,15 @@ pub(crate) mod tests {
                     why: s("a rule"),
                 },
                 Some("change"),
+            ),
+            (
+                "TextChangedWhileEditing",
+                MemoryError::TextChangedWhileEditing {
+                    address: s("person:alpha#f1"),
+                    field: s("details"),
+                    current: 2,
+                },
+                Some("retry"),
             ),
             (
                 "TextEditMatches",

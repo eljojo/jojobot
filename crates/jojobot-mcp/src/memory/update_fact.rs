@@ -669,6 +669,25 @@ impl Jojobot {
                     behind,
                     ..
                 }) => (Guarded::Written(*fact), Some(behind)),
+                // **A find/replace whose caller sent no revision was refused on the
+                // revision this call read**, so the refusal says the text changed
+                // under the edit and does not talk about a revision the caller
+                // never named.
+                Err(MemoryError::StaleRevision {
+                    address, current, ..
+                }) if revision_read.is_some() && args.expected_revision.is_none() => {
+                    return memory_declined(
+                        "update_fact",
+                        MemoryError::TextChangedWhileEditing {
+                            address,
+                            field: text_edit
+                                .as_ref()
+                                .map_or("text", |edit| edit.field.as_str())
+                                .to_string(),
+                            current,
+                        },
+                    );
+                }
                 Err(e) => return memory_declined("update_fact", e),
             };
         match written {

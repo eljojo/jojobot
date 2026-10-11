@@ -5430,6 +5430,26 @@ pub enum MemoryError {
         /// Addresses that do exist, nearest first.
         nearest: Vec<String>,
     },
+    /// **The text a find/replace was applied to changed before the edit was
+    /// written.**
+    ///
+    /// The caller named no revision, so the one the edit was refused on is the
+    /// one the call itself read, and a message about "the revision this edit was
+    /// made against" would talk about something the caller never sent. Nothing
+    /// was written. The way forward is to read the claim again and send the edit
+    /// again.
+    #[error(
+        "the {field} of {address} changed while the edit was being applied; it is at revision \
+         {current} now"
+    )]
+    TextChangedWhileEditing {
+        /// The claim's address.
+        address: String,
+        /// The text the edit searched, `content` or `details`.
+        field: String,
+        /// The revision the claim is at now.
+        current: usize,
+    },
     /// **The words an edit looks for do not occur exactly once.**
     ///
     /// `found` is how many times they occur in the text the edit was applied

@@ -653,6 +653,14 @@ async fn a_find_is_refused_when_the_claim_is_written_between_the_read_and_the_wr
     );
     assert_eq!(refused["status"], "blocked", "{refused}");
     assert_eq!(refused["fix_by"], "retry", "{refused}");
+    // **The caller sent no revision, so the refusal does not talk about one.**
+    // It says the text changed while the edit was being applied, names the
+    // revision the claim is at now, and names the read.
+    let way = refused["how_to_proceed"].as_str().expect("a way forward");
+    assert!(!way.contains("made against"), "{way}");
+    assert!(!way.contains("expected_revision"), "{way}");
+    assert!(way.contains("revision 2"), "{way}");
+    assert!(way.contains("history_record"), "{way}");
     let claim = recalled_claim(&jojobot).await;
     assert_eq!(
         claim["details"], PARAGRAPHS,
@@ -668,6 +676,43 @@ async fn a_find_is_refused_when_the_claim_is_written_between_the_read_and_the_wr
         recalled_claim(&jojobot).await["details"],
         "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph"
     );
+}
+
+/// **The pair of the case above: a caller that DID send a revision keeps the
+/// wording that talks about it.** The claim is written right after the call
+/// reads it, and the revision the caller named is the one it is refused on.
+#[tokio::test]
+async fn a_find_that_named_a_revision_is_refused_in_the_words_about_that_revision() {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    claim_with_details(&jojobot).await;
+    let racing = Jojobot::new(
+        Arc::new(MovesAfterTheRead {
+            inner: memory,
+            armed: std::sync::atomic::AtomicBool::new(true),
+        }),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+
+    let refused = json_of(
+        &racing
+            .update_fact(Parameters(UpdateFactArgs {
+                expected_revision: Some(1),
+                ..find_args("details", "a typo", "a fix")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["fix_by"], "retry", "{refused}");
+    let way = refused["how_to_proceed"].as_str().expect("a way forward");
+    assert!(way.contains("made against revision 1"), "{way}");
+    assert!(way.contains("expected_revision: 2"), "{way}");
+    assert_eq!(recalled_claim(&jojobot).await["details"], PARAGRAPHS);
 }
 
 /// Update through the handler, expecting the guard to wave it through.

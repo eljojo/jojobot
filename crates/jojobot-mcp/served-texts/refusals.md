@@ -240,6 +240,20 @@ answer: {
 }
 ```
 
+### Memory refusal `TextChangedWhileEditing`
+
+```text
+reads: the details of person:alpha#f1 changed while the edit was being applied; it is at revision 2 now
+answer: {
+  "attempted": "person:alpha#f1",
+  "candidates": [],
+  "fix_by": "retry",
+  "how_to_proceed": "Nothing was written: the details of person:alpha#f1 changed while the edit was being applied; it is at revision 2 now. Read the claim again with recall (history_record: \"person:alpha#f1\") to see what changed, then send the edit again.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `TextEditMatches`
 
 ```text
