@@ -170,6 +170,30 @@ fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
     )
 }
 
+/// **The refusal for the old name of a keyless run that has ended**, in the words
+/// of how it ended and of the way back. It names the run by its public name and
+/// hands out no key.
+fn ended_keyless_run_declined(
+    run: &sid::Handle,
+    state: jojobot_domain::session::SessionState,
+) -> CallToolResult {
+    let name = run.name.as_str();
+    let how = match state {
+        jojobot_domain::session::SessionState::Wrapped => format!(
+            "Run {name} began before keys existed and has wrapped, so its old name opens \
+             nothing and no key is handed out. If you hold the wrap_code its wrap handed back, \
+             call start_here with your bot name and resume set to that code; otherwise boot \
+             again with start_here."
+        ),
+        _ => format!(
+            "Run {name} began before keys existed and stopped without wrapping, so its old name \
+             opens nothing and no key is handed out. To take it back, call start_here with your \
+             bot name and resume set to {name}; otherwise boot again with start_here."
+        ),
+    };
+    handle_declined("", format!("{NOTHING_RAN}. {how}"))
+}
+
 impl Jojobot {
     /// **Exchange the old name of a run that began before keys existed for a
     /// key, once.** A run live at the deploy holds no key, so its four-character
@@ -191,6 +215,38 @@ impl Jojobot {
         }
         let gate = self.registry.gate(held.bot.as_str());
         let _serialized = gate.lock().await;
+        // **A run that has ended is not exchanged.** The registry learned the run
+        // as keyless at the boot, and the sweep can end it after that, so the
+        // state is read from the board now. An exchange hands a key to whoever
+        // sends the name, and a run nobody holds has no one to hand it to.
+        //
+        // **A keyless name always has a card.** The only way the registry holds
+        // a keyless name is `rebuild_from`, which puts back a run off its card.
+        // A name minted at a boot holds a key from the moment it is minted, with
+        // no card until its first write, so a keyless name without a card cannot
+        // be reached outside a test that builds one. The `None` arm is for that.
+        //
+        // **An ended run keeps a NULL `key_hash` in the store** and is refused
+        // here by its state, not by the hash. No pass rewrites those rows: the
+        // hash is read only by `KeyState::from_stored` and by this exchange.
+        if let Some(card) = &held.card {
+            match self.sessions.read_session(card).await {
+                Ok(run) if run.state != jojobot_domain::session::SessionState::Active => {
+                    return Some(ended_keyless_run_declined(&held, run.state));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, session = %card, "a keyless run's state could not be read");
+                    return Some(handle_declined(
+                        "",
+                        "Nothing ran, and no key was handed out: the session store could not say \
+                         whether this run is still running. Nothing was changed. Send the same \
+                         call again, and if it persists a person has to look at the store."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
         let key = jojobot_domain::session::mint_key();
         let hash = jojobot_domain::session::hash_key(&key);
         let now = self.clock().now();

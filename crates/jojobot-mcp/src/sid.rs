@@ -76,6 +76,11 @@ pub enum KeyState {
 impl KeyState {
     /// The state a stored `key_hash` says: a hash, the word that voids one, or
     /// nothing at all.
+    ///
+    /// **Nothing at all is not "may be exchanged".** A run that ended before keys
+    /// existed keeps a NULL hash and reads here as keyless. What refuses its old
+    /// name is its state on the board, read by the exchange at the moment it is
+    /// asked (see `Jojobot::exchange_legacy_name`), not this value.
     pub fn from_stored(stored: Option<&str>) -> Self {
         match stored {
             None => KeyState::Legacy,

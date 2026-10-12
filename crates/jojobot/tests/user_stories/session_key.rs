@@ -6,7 +6,7 @@
 //! as it.
 
 use jojobot_domain::memory::{EntityId, Guarded, NewEntity, NewFact};
-use jojobot_domain::session::{NewSession, Sessions, Sid};
+use jojobot_domain::session::{NewSession, SessionState, Sessions, Sid};
 use serde_json::json;
 
 use super::dsl::Story;
@@ -491,6 +491,105 @@ async fn a_keyless_run_exchanges_its_old_name_once_and_a_second_bare_name_is_ref
 
     again.finish().await;
     deployed.finish().await;
+}
+
+/// **The older build's run, put on the board the way it left it**: a name and no
+/// hash. Returns the card's id.
+async fn keyless_run(story: &Story, name: &str) -> jojobot_domain::session::SessionId {
+    story
+        .sessions_store()
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid(name.into()),
+            id: None,
+            key_hash: None,
+            focus: "a run the older build began".into(),
+            started_at: jiff::Timestamp::now(),
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("the older build's run is on the board")
+        .id
+}
+
+/// **A run that ended is never exchanged by its old name.** The older build left
+/// runs that wrapped or were abandoned with no key, and an exchange hands a key
+/// to whoever sends the name: for a run that ended it would be a key to a run
+/// nobody holds. Each way a run ends is refused, and a running keyless run beside
+/// them still exchanges, so the refusal is about the run's state and not about
+/// the old name having stopped working.
+#[tokio::test]
+async fn a_keyless_run_that_has_ended_is_not_exchanged_by_its_old_name() {
+    for (ended, name) in [
+        (SessionState::Wrapped, "jm7z"),
+        (SessionState::Abandoned, "kq4n"),
+    ] {
+        let story = Story::begin("bot:otto").await;
+        let s = story.session().await;
+        s.add("bot:gamma", "Gamma").await;
+        let card = keyless_run(&story, name).await;
+        let running = keyless_run(&story, "rt5w").await;
+        story
+            .sessions_store()
+            .close(&card, ended)
+            .await
+            .expect("the older build's run ended");
+        let deployed = story.restarted().await;
+        let holder = deployed.as_bot("bot:gamma").await;
+
+        let refused = holder
+            .refused("journal", json!({"entry": "as the old run", "sid": name}))
+            .await;
+        refused.never_says("\"exchanged\":true");
+        assert!(
+            refused.json().get("sid").is_none(),
+            "{ended:?}: a key was handed out for a run that ended: {}",
+            refused.raw()
+        );
+
+        // The positive the refusal rests on: the run that is still running
+        // exchanges once, in the same store, in the same boot.
+        let exchanged = holder
+            .refused("journal", json!({"entry": "as the old run", "sid": "rt5w"}))
+            .await;
+        exchanged.says("\"exchanged\":true");
+        let _ = running;
+
+        deployed.finish().await;
+        story.finish().await;
+    }
+}
+
+/// **The sweep can end a keyless run after the boot read it.** The registry
+/// holds the run as keyless from the boot, so the exchange reads the run's state
+/// from the board at the moment of the exchange, and a run that has ended since
+/// is refused.
+#[tokio::test]
+async fn a_keyless_run_swept_after_the_boot_is_not_exchanged_by_its_old_name() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let card = keyless_run(&story, "jm7z").await;
+    let deployed = story.restarted().await;
+    let holder = deployed.as_bot("bot:gamma").await;
+    story
+        .sessions_store()
+        .close(&card, SessionState::Abandoned)
+        .await
+        .expect("the sweep ended the run");
+
+    let refused = holder
+        .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
+        .await;
+    refused.never_says("\"exchanged\":true");
+    assert!(
+        refused.json().get("sid").is_none(),
+        "a key was handed out for a run the sweep ended: {}",
+        refused.raw()
+    );
+    deployed.finish().await;
+    story.finish().await;
 }
 
 /// **A key is stored with the run, so a restart keeps what was decided before
