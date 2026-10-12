@@ -334,9 +334,9 @@ impl Jojobot {
                     "session": serde_json::Value::Null,
                     "choices": choices,
                     "how_to_proceed": "This identity has work already in flight. Call start_here \
-                                       again with resume: the name of the run you are picking up — \
-                                       read what it was working on above — or resume: \"new\" for \
-                                       a fresh session. Only a run that has been quiet for 45 \
+                                       again with resume: the name of the run you are picking up, \
+                                       or resume: \"new\" for a fresh session. Send brief: true \
+                                       on that call too. Only a run that has been quiet for 45 \
                                        minutes can be picked up by its name; a run still writing \
                                        is continued with its own key. Nothing was closed and \
                                        nothing was written; choosing new leaves the runs above \

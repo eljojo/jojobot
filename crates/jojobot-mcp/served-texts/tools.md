@@ -4212,7 +4212,8 @@ there is nothing to answer yet.
 wrapped run's own sid back so that run can take one last change. The run
 stays wrapped. No role is taken, nothing is swept and no lease renews.
 
-Answering the resume-or-new offer? That answer carries no charter, because
+Answering the resume-or-new offer? Send `brief: true` with it, since the
+essay does not change between calls. That answer carries no charter, because
 only a boot that shipped one hands the offer back, so you are holding it
 already; booting again with no `resume` reads it in full. A boot given a
 `wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes

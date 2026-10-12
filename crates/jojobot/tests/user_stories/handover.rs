@@ -146,3 +146,62 @@ async fn the_resume_offer_names_each_run_and_resuming_by_one_lands() {
     );
     story.finish().await;
 }
+
+/// "The offer is the second time I have read the essay. What do I send back?" The
+/// offer tells the caller to send `brief: true` on the call that answers it, and
+/// that answer then carries no essay and still carries its run. The answer
+/// without `brief` carries the essay, so the saving is real.
+#[tokio::test]
+async fn the_resume_offer_names_brief_and_the_answer_with_it_skips_the_essay() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    first
+        .call(
+            "journal",
+            json!({"entry": "inspected the east gorge", "focus": "the east gorge inspection"}),
+        )
+        .await;
+    let first_sid = first.run().to_string();
+
+    let (door, minted) = story.call("start_here", json!({"bot": "otto"})).await;
+    assert!(minted.is_none(), "an offer mints no handle");
+    let offer = door.json();
+    let how = offer["session"]["how_to_proceed"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the offer says how to proceed: {offer}"));
+    assert!(
+        how.contains("brief"),
+        "the offer names the argument that skips the essay: {how}"
+    );
+
+    // The positive: an answer that does not send `brief` carries the essay.
+    let (plain, _) = story
+        .call("start_here", json!({"bot": "otto", "resume": "new"}))
+        .await;
+    let plain = plain.json();
+    assert!(
+        plain["orientation"]
+            .as_str()
+            .is_some_and(|essay| !essay.is_empty()),
+        "without brief the answer carries the essay: {plain}"
+    );
+
+    // The advice taken: no essay, and the run is still handed back.
+    let (answered, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": first_sid}),
+        )
+        .await;
+    let answered = answered.json();
+    assert!(
+        answered["orientation"].is_null(),
+        "with brief the answer carries no essay: {answered}"
+    );
+    assert_eq!(answered["session"]["run"], first_sid, "{answered}");
+    assert!(
+        answered["session"]["sid"].is_string(),
+        "and the answer still carries the key to write with: {answered}"
+    );
+    story.finish().await;
+}
