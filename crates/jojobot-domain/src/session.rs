@@ -277,6 +277,17 @@ pub enum WrapWindow {
 /// refused in its own words rather than as a handle nobody holds.
 pub const WRAP_CODE_PREFIX: &str = "wc-";
 
+/// **A stored window keeps this prefix and then the hash of its code**, never the
+/// code. The code is handed back once; a read of the store must not produce one
+/// that reopens a run, as a read of the store produces no key.
+pub const WRAP_HASH_PREFIX: &str = "wh-";
+
+/// **What a window stores in place of the code it was handed out for**: the
+/// prefix and the same hash a key is stored by.
+pub fn hash_wrap_code(code: &str) -> String {
+    format!("{WRAP_HASH_PREFIX}{}", hash_key(code))
+}
+
 /// How many characters follow the prefix on a drawn wrap code.
 const WRAP_CODE_DRAWN: usize = 12;
 
@@ -299,6 +310,16 @@ impl WrapWindow {
         }
     }
 
+    /// **Whether this window answers to `code`.** A window stores the hash of
+    /// its code. One an older build stored holds the code itself, and answers to
+    /// it the same way until it is used and written back hashed. A hash is never
+    /// accepted as the code: only a value shaped like a code is compared plain.
+    pub fn answers_to(&self, code: &str) -> bool {
+        let stored = self.code();
+        stored == hash_wrap_code(code)
+            || (is_wrap_code(code) && stored.starts_with(WRAP_CODE_PREFIX) && stored == code)
+    }
+
     /// Whether the run takes writes.
     pub fn is_open(&self) -> bool {
         matches!(self, WrapWindow::Open(_))
@@ -316,7 +337,7 @@ impl WrapWindow {
     /// that does not parse is no window, never a guess at one.
     pub fn from_stored(stored: &str) -> Option<WrapWindow> {
         let (state, code) = stored.split_once(' ')?;
-        if !is_wrap_code(code) {
+        if !is_wrap_code(code) && !code.starts_with(WRAP_HASH_PREFIX) {
             return None;
         }
         match state {
@@ -2773,6 +2794,33 @@ mod tests {
             validate_session_id(&SessionId(whole.clone())).is_ok(),
             "every symbol must be a legal session id byte: {whole}"
         );
+    }
+
+    /// **A window answers to the code it was made for, whether it stores the
+    /// hash or, from an older build, the code itself.** A stored hash is not a
+    /// code: sent as one it opens nothing, and a window never answers to a code
+    /// of another window.
+    #[test]
+    fn a_window_answers_to_its_code_stored_hashed_or_plain_and_to_nothing_else() {
+        let code = mint_wrap_code();
+        let other = mint_wrap_code();
+        let hashed = WrapWindow::Offered(hash_wrap_code(&code));
+        let plain = WrapWindow::Offered(code.clone());
+        for window in [&hashed, &plain] {
+            assert!(window.answers_to(&code), "{window:?}");
+            assert!(!window.answers_to(&other), "{window:?}");
+        }
+        assert!(
+            !hashed.answers_to(&hash_wrap_code(&code)),
+            "a stored hash was accepted as the code"
+        );
+        // Both shapes survive being stored and read back.
+        for window in [&hashed, &plain] {
+            assert_eq!(
+                WrapWindow::from_stored(&window.to_stored()).as_ref(),
+                Some(window)
+            );
+        }
     }
 
     /// Shape is checked, and a near-miss is refused rather than repaired:

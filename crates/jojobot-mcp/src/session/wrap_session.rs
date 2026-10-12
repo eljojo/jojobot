@@ -276,7 +276,9 @@ impl Jojobot {
                 .sessions
                 .set_wrap_window(
                     &session,
-                    Some(jojobot_domain::session::WrapWindow::Offered(code.clone())),
+                    Some(jojobot_domain::session::WrapWindow::Offered(
+                        jojobot_domain::session::hash_wrap_code(&code),
+                    )),
                 )
                 .await
             {
@@ -675,6 +677,107 @@ mod tests {
         assert!(
             jojobot.caller(Some(&key)).is_err(),
             "the retry ended the key"
+        );
+    }
+
+    /// **The wrap code is stored as a hash, like the key.** The wrap hands the
+    /// code back once. What the card keeps is something the code cannot be read
+    /// from, so a read of the store does not produce a code that reopens a run.
+    /// The code still reopens the run, and a window an older build stored in
+    /// plain still answers to its code and is written back hashed when it is
+    /// used.
+    #[tokio::test]
+    async fn the_wrap_code_is_stored_as_a_hash_and_an_older_plain_window_is_migrated_when_used() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &key, "started").await;
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "done".into(),
+                    sid: key,
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        let code = wrapped["wrap_code"].as_str().expect("a code").to_string();
+        let card = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("the runs")[0]
+            .id
+            .clone();
+        let stored = store
+            .read_session(&card)
+            .await
+            .expect("read ok")
+            .wrap_window
+            .expect("the wrap offered a window");
+        assert!(
+            !stored.code().contains(&code) && !stored.to_stored().contains(&code),
+            "the card keeps the wrap code it handed back: {stored:?}"
+        );
+        // The positive the absence rests on: the code reopens the run, and the
+        // window it opened is not plain either.
+        let reopened = boot_answering(&jojobot, "gamma", &code).await;
+        assert!(reopened["session"]["sid"].is_string(), "{reopened}");
+        let opened = store
+            .read_session(&card)
+            .await
+            .expect("read ok")
+            .wrap_window
+            .expect("the window is open");
+        assert!(opened.is_open());
+        assert!(
+            !opened.to_stored().contains(&code),
+            "the open window keeps the code: {opened:?}"
+        );
+
+        // An older build stored the code as it handed it out.
+        let older = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(older.clone());
+        make_bot(&jojobot, "gamma").await;
+        let run = older
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("bcd345".into()),
+                focus: "the run that wrapped".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(5),
+                started_on: None,
+                id: None,
+                key_hash: Some(jojobot_domain::session::KEY_VOID.to_string()),
+            })
+            .await
+            .expect("begin ok");
+        older
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        let plain = jojobot_domain::session::mint_wrap_code();
+        older
+            .set_wrap_window(
+                &run.id,
+                Some(jojobot_domain::session::WrapWindow::Offered(plain.clone())),
+            )
+            .await
+            .expect("offered");
+        let reopened = boot_answering(&jojobot, "gamma", &plain).await;
+        assert!(
+            reopened["session"]["sid"].is_string(),
+            "a window stored plain by an older build no longer answers to its code: {reopened}"
+        );
+        let migrated = older
+            .read_session(&run.id)
+            .await
+            .expect("read ok")
+            .wrap_window
+            .expect("the window is open");
+        assert!(
+            !migrated.to_stored().contains(&plain),
+            "a plain window used by its code was written back plain: {migrated:?}"
         );
     }
 

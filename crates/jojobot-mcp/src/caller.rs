@@ -329,9 +329,9 @@ impl Jojobot {
             // fails here lets the call through rather than inventing a refusal.
             if let Ok(runs) = self.sessions.all_sessions().await {
                 'runs: for run in &runs {
-                    if let Some(jojobot_domain::session::WrapWindow::Offered(code)) =
+                    if let Some(window @ jojobot_domain::session::WrapWindow::Offered(_)) =
                         &run.wrap_window
-                        && tokens.iter().any(|t| t == code)
+                        && tokens.iter().any(|t| window.answers_to(t))
                     {
                         leaked = Some((
                             run.sid

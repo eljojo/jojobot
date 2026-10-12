@@ -511,10 +511,10 @@ impl Jojobot {
         // whose window is open is the spent one.
         let Some(wrapped) = runs.iter().find(|run| {
             run.state == SessionState::Wrapped
-                && matches!(
-                    &run.wrap_window,
-                    Some(jojobot_domain::session::WrapWindow::Offered(held)) if held == code
-                )
+                && run
+                    .wrap_window
+                    .as_ref()
+                    .is_some_and(|window| !window.is_open() && window.answers_to(code))
         }) else {
             return Err(spent(
                 "That code is spent or unknown: its run was wrapped a second time, or a newer \
@@ -549,7 +549,9 @@ impl Jojobot {
             .sessions
             .set_wrap_window(
                 &wrapped.id,
-                Some(jojobot_domain::session::WrapWindow::Open(code.to_string())),
+                Some(jojobot_domain::session::WrapWindow::Open(
+                    jojobot_domain::session::hash_wrap_code(code),
+                )),
             )
             .await
         {
