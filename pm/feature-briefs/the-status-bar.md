@@ -4,11 +4,13 @@
 
 **Every answer carries one small uniform block for what the caller should know and did not ask.** The pattern is to front knowledge to the agent and spend fewer calls doing it.
 
-## One entrant
+## Two entrants
 
 **Waiting mail, and only when there is some.** The block is silent at zero.
 
-**A second entrant earns its place on evidence, one at a time.** "Information when relevant" is an open slot, and a growing list of things to report is the tell that a principle got built as an enumeration.
+**A charter another identity rewrote during your session.** A session works to the charter its boot handed it, so a rewrite it did not make leaves it working to old text until something tells it. The entrant names who rewrote it, when, and the call that reads it, and it rides every answer until the session reads its charter or its bot's page. A rewrite by the bot itself is silent, and so is a change made before the session booted, because that boot already carried it.
+
+**Each entrant earned its place on evidence, and the next one has to as well.** The charter entrant came from a session that worked to a charter rewritten four times under it. "Information when relevant" is an open slot, and a growing list of things to report is the tell that a principle got built as an enumeration.
 
 ## Uniform across every verb
 
