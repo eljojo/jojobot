@@ -208,6 +208,9 @@ carries accepted
 carries carried
 carries done
 lacks   someday
+lacks   next
+lacks   now
+lacks   waiting
 say     the board: the stages in use are not working, queued, accepted, carried and done alone, so one is missing or a stage the board lists and no piece is in was reported
 ```
 

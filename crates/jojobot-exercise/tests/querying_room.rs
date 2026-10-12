@@ -141,6 +141,8 @@ const ACCEPTED_IN_ORDER: [&str; 3] = ["work:kappa", "work:iota", "work:lambda"];
 const BETAS_PLATE_IN_ORDER: [&str; 3] = ["work:tau", "work:theta", "work:omicron"];
 const TOUCHING_UI: [&str; 3] = ["work:delta", "work:epsilon", "work:lambda"];
 const STAGES: [&str; 5] = ["working", "queued", "accepted", "carried", "done"];
+/// The four of the board's nine stages that no piece is in.
+const UNUSED_STAGES: [&str; 4] = ["someday", "next", "now", "waiting"];
 
 fn sorted(mut handles: Vec<String>) -> Vec<String> {
     handles.sort();
@@ -226,10 +228,12 @@ async fn solvable_five_of_the_boards_nine_stages_are_in_use() {
     for stage in STAGES {
         assert!(text.contains(stage), "{stage} is in use: {answer}");
     }
-    assert!(
-        !text.contains("someday"),
-        "someday is on the board's list and no piece is in it: {answer}"
-    );
+    for unused in UNUSED_STAGES {
+        assert!(
+            !text.contains(unused),
+            "{unused} is on the board's list and no piece is in it: {answer}"
+        );
+    }
 }
 
 /// One answer, kept under the slot the operator named, on the project it is about.
@@ -459,4 +463,17 @@ async fn an_answer_that_reported_the_boards_list_fails_only_the_stages_lock() {
     ))
     .await;
     only_one_fails(&judge_all(&surface).await, "the stages in use");
+}
+
+/// **An unused stage was reported with the five in use.** The wrong answer leaves
+/// `someday` out, so the existing case cannot see it, and adds ONE of the board's
+/// other unused stages. Each of the three is its own answer: a lock missing the
+/// line for one of them lets that answer through.
+#[tokio::test]
+async fn an_answer_that_added_one_unused_stage_to_the_five_fails_only_the_stages_lock() {
+    for unused in ["next", "now", "waiting"] {
+        let wrong = format!("{unused}, {}", STAGES.join(", "));
+        let (_room, surface) = answers_written(&answers_but("7", &wrong)).await;
+        only_one_fails(&judge_all(&surface).await, "the stages in use");
+    }
 }
