@@ -149,6 +149,26 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 ValueType::Date,
             )],
         ),
+        // **The three days jojobot works out for a loop and writes on it**: when
+        // it next falls due, the day of its last check-in and the day its next
+        // cycle counts from. They are dates the software computes, so the
+        // software declares them, and a question that names no kind can order
+        // them (`due_on <= today+7d`) instead of being refused for want of a
+        // declaration. The fourth computed key, `outcome`, is a word out of
+        // ran, skipped and snoozed rather than a day, so it is not here.
+        //
+        // **Every key is optional**: a thing carries whichever of them its
+        // schedule has produced, and none is needed for the others to mean
+        // anything. The kinds that declare their own copies of two of these
+        // keep them; a type is the vocabulary for a question over all kinds.
+        DeclaredType::shipped(
+            "computed-dates",
+            vec![
+                Field::new(jojobot_domain::attention::DUE_ON, ValueType::Date),
+                Field::new(jojobot_domain::attention::LAST_CHECK_IN, ValueType::Date),
+                Field::new(jojobot_domain::attention::COUNTS_FROM, ValueType::Date),
+            ],
+        ),
         // **Six keys that describe the claim they ride on and never the thing
         // it is about** (rule 360: only the build's own vocabulary attaches
         // behaviour, and rule 106: declared on the key, not listed in the
@@ -356,7 +376,7 @@ mod tests {
             ensure_shipped_types(&memory)
                 .await
                 .expect("the store takes"),
-            5
+            6
         );
 
         // **`admits` holds a reference and names no kind**, so what a pass gets
@@ -436,6 +456,25 @@ mod tests {
             vec![(jojobot_domain::attention::DECIDE_BY, "date")],
         );
         assert_eq!(decide_by.origin, Origin::Shipped);
+
+        // **The three days jojobot works out for a loop and writes on it**, each a
+        // date and none required. The spellings are pinned as literals because
+        // they are stored in a fields bag and nothing outside this process
+        // declares them; `outcome`, the fourth computed key, is a word and not here.
+        let computed = stored(&memory, "computed-dates").await;
+        assert_eq!(
+            keys(&computed),
+            vec![
+                ("due_on", "date"),
+                ("last_check_in", "date"),
+                ("counts_from", "date"),
+            ],
+        );
+        assert!(
+            computed.fields.iter().all(|f| !f.required),
+            "a loop carries whichever of its days it has produced: {computed:?}",
+        );
+        assert_eq!(computed.origin, Origin::Shipped);
     }
 
     /// **The seed is unconditional, and what that buys is the key a later build

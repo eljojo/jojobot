@@ -475,9 +475,15 @@ async fn the_anonymous_boot_names_every_section_it_leaves_out_on_a_fresh_and_a_h
 /// **`MARGIN` is the room the answer keeps under the ceiling** for the next
 /// additions to the core and for the characters a serialized answer spends on
 /// escapes. A change that eats it fails here before a boot is cut.
+///
+/// **The margin is 450, the PM's call, overturnable.** Each shipped type adds
+/// its name to the vocabulary every boot carries, about 26 characters, and the
+/// sixth type (`computed-dates`) took the room under 500. 450 leaves room for
+/// one more shipped type of that size. The pressure underneath is that every
+/// shipped type costs every boot, which is a design question and not this pin's.
 #[tokio::test]
 async fn a_named_boot_of_a_heavy_identity_fits_core_and_floor_with_a_margin() {
-    const MARGIN: usize = 500;
+    const MARGIN: usize = 450;
     const CHARTER_CHARS: usize = 5_000;
     const STARRED_RULES: usize = 3;
     let story = Story::begin("bot:otto").await;

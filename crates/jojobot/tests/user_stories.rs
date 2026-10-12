@@ -51,6 +51,9 @@ mod citing;
 mod claim_room;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
+/// The days jojobot computes for a loop can be asked of every kind.
+#[path = "user_stories/computed_dates.rs"]
+mod computed_dates;
 #[path = "user_stories/contracts.rs"]
 mod contracts;
 #[path = "user_stories/coordinating.rs"]
