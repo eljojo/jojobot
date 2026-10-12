@@ -16,7 +16,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried
+.PHONY: help check dev report narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
