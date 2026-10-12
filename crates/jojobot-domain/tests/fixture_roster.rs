@@ -243,6 +243,7 @@ const ROSTER: &[&str] = &[
 /// [`ROSTER`], where the bar shows it, or nowhere.
 const ORDINARY: &[&str] = &[
     "bot:assistant",
+    "document:contract-move",
     "document:contract-notes",
     // The views: the ones the software ships, and the ones a story or a page
     // case declares to stand beside them. **A shipped record names itself by
@@ -1175,6 +1176,7 @@ const ORDINARY: &[&str] = &[
     "thing:contract-links-duplicate",
     "thing:contract-links-survivor",
     "thing:contract-forged-holder",
+    "person:contract-order-key",
     "person:contract-session-rewrite",
     "person:contract-testified-values",
     "thing:contract-bags",

@@ -1922,7 +1922,8 @@ pub fn validate_happened_span(
 ///
 /// **What only describes the record says nothing the operator said**, so a patch
 /// that sets or clears nothing but describing keys is not a rewrite, and neither
-/// is one that moves the due moment jojobot works out, or a move of the status, which is the route itself, or of the standing, whose
+/// is one that moves the due moment jojobot works out, or one that changes only
+/// the order key of a document's section, which is layout, or a move of the status, which is the route itself, or of the standing, whose
 /// settling asks for the operator's confirmation on its own.
 ///
 /// A rewrite of the words by the session that wrote the claim, which sends no
@@ -1950,10 +1951,11 @@ pub fn settle_rewrite(
     }
     // **Setting a key, changing one and taking one off are the same rewrite.** A
     // key set to the value the claim already holds, or taken off a claim that does
-    // not carry it, changes nothing. **Two kinds of key are not the operator's
-    // words**: one that only describes the record, and the due moment jojobot
-    // works out, which moves with the status and which a caller's own copy of is
-    // refused elsewhere.
+    // not carry it, changes nothing. **Three kinds of key are not the operator's
+    // words**: one that only describes the record, the due moment jojobot works
+    // out, which moves with the status and which a caller's own copy of is
+    // refused elsewhere, and the order key of a document's section, which the
+    // server mints and which says where the section sits, never what it says.
     let held = |key: &str| fact.fields.get(key).map(|value| value.trim());
     let rewrites_values = patch
         .fields
@@ -1962,6 +1964,7 @@ pub fn settle_rewrite(
         .chain(patch.clear_fields.iter().map(|key| (key.trim(), None)))
         .any(|(key, value)| {
             key != crate::attention::DUE_ON
+                && !(key == document::ORDER && address.home.kind() == Some(EntityKind::DOCUMENT))
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });

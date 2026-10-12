@@ -43,12 +43,14 @@ pub struct PutDocumentArgs {
     /// section of the call.
     #[serde(default)]
     pub(crate) provenance: Option<String>,
-    /// **Where the text was read**, for an `observation`: the system of record.
-    /// Stored on every section as `read_from`.
+    /// **The system the document was read from**, for an `observation`: stored on
+    /// every section as its `read_from`, the same field `capture` takes under that
+    /// name. It is not where an entity came from, which is `add_entity`'s `source`.
     #[serde(default)]
     pub(crate) source: Option<String>,
     /// **What was read there**, when it has a reference: an id, a path, a line.
-    /// Stored on every section as `read_ref`.
+    /// Stored on every section as its `read_ref`, the field `capture` takes under
+    /// that name.
     #[serde(default)]
     pub(crate) source_ref: Option<String>,
     /// The day the sections were made, `YYYY-MM-DD`. Defaults to the day your
@@ -76,8 +78,9 @@ impl Jojobot {
                        address, so an edited file put twice cannot double the text. Every \
                        section is checked before any is written; a write that stops midway \
                        answers with the addresses that landed and where the rest begins. \
-                       Answers with a receipt, not the text. A refusal is an answer with \
-                       status: blocked and nothing written."
+                       Answers with a receipt, not the text. A refusal before any section \
+                       lands is an answer with status: blocked and nothing written; one after \
+                       some landed also carries what landed and where the rest begins."
     )]
     pub(crate) async fn put_document(
         &self,

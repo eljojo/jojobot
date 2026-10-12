@@ -977,3 +977,120 @@ async fn a_section_moved_behind_a_cut_section_lands_after_its_chunks() {
         format!("{big}# Small\n\nsmall\n\n# Last\n\nend\n")
     );
 }
+
+/// **A `#` line inside the frontmatter block is a line of the block**, through the
+/// served surface: the block is one section and the heading after it is the
+/// next.
+#[tokio::test]
+async fn a_hash_line_inside_frontmatter_stays_in_the_first_section() {
+    let jojobot = handler();
+    let text = "---\ntitle: Notes\n# internal note\n---\n\n# Start\nbody\n";
+    let answered = put_ok(&jojobot, "document:alpha", text).await;
+    assert_eq!(answered["sections"], 2, "{answered}");
+    let held = records(&jojobot, "document:alpha").await;
+    assert_eq!(held[0]["content"], "---");
+    assert_eq!(held[1]["content"], "# Start");
+    assert_eq!(read_all(&jojobot, "document:alpha").await, text);
+}
+
+/// **Another session may move a section of the operator's words, and may not
+/// rewrite them.** The positive and the negative on one store: a move by a
+/// second session lands, an edit of the heading by the same session is refused, and
+/// so is a caller's own value for `order`.
+#[tokio::test]
+async fn another_session_may_move_a_testimony_section_but_not_rewrite_it() {
+    let jojobot = handler();
+    ensure(&jojobot, "document:alpha").await;
+    let wrote = json_of(
+        &put(
+            &jojobot,
+            PutDocumentArgs {
+                provenance: Some("testimony".into()),
+                ..put_args("document:alpha", "# One\n\nfirst\n\n# Two\n\nsecond\n").await
+            },
+        )
+        .await,
+    );
+    assert_ne!(wrote["status"], "blocked", "{wrote}");
+    let one = address_of(&jojobot, "document:alpha", "# One").await;
+    let two = address_of(&jojobot, "document:alpha", "# Two").await;
+    let other = as_bot(&jojobot, "gamma");
+
+    let moved = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                after: Some(two.clone()),
+                sid: Some(other.clone()),
+                ..update_args(&one)
+            }))
+            .await
+            .expect("update_fact answers"),
+    );
+    assert_ne!(moved["status"], "blocked", "the move lands: {moved}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# Two\n\nsecond\n# One\n\nfirst\n\n"
+    );
+
+    let edited = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            content: Some("# One, said otherwise".into()),
+            provenance: Some("inference".into()),
+            sid: Some(other.clone()),
+            ..update_args(&one)
+        }))
+        .await
+        .expect("update_fact answers");
+    assert_eq!(blocked(&edited)["fix_by"], "change");
+    let moved_and_edited = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            after: Some(one.clone()),
+            content: Some("# Two, said otherwise".into()),
+            provenance: Some("inference".into()),
+            sid: Some(other.clone()),
+            ..update_args(&two)
+        }))
+        .await
+        .expect("update_fact answers");
+    blocked(&moved_and_edited);
+    for (what, args) in [
+        (
+            "fields",
+            UpdateFactArgs {
+                fields: Some([("order".to_string(), "a".to_string())].into()),
+                ..update_args(&one)
+            },
+        ),
+        (
+            "sets",
+            UpdateFactArgs {
+                sets: Some([("order".to_string(), "a".to_string())].into()),
+                ..update_args(&one)
+            },
+        ),
+        (
+            "clear_fields",
+            UpdateFactArgs {
+                clear_fields: Some(vec!["order".to_string()]),
+                ..update_args(&one)
+            },
+        ),
+    ] {
+        let refused = jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                sid: Some(other.clone()),
+                ..args
+            }))
+            .await
+            .expect("update_fact answers");
+        assert!(
+            blocked(&refused).to_string().contains("after"),
+            "a caller's own order in {what} is refused with the way to move"
+        );
+    }
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# Two\n\nsecond\n# One\n\nfirst\n\n",
+        "nothing of the refused calls was written"
+    );
+}

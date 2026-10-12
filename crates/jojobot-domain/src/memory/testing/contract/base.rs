@@ -16219,6 +16219,126 @@ pub async fn an_entity_edited_with_a_claim_is_made_whole_or_not_at_all<M: Memory
     );
 }
 
+/// **A move of a document section is layout, not anybody's words.** The order
+/// key is minted by the server, so another session may change it on a testimony
+/// section (the positive), while the section's words and every other field stay
+/// under the rule (the negatives): the words, and the order together with any
+/// other field. The exemption is the document's alone: an `order` on a claim of
+/// any other kind is the writer's value like any other.
+pub async fn a_move_of_a_document_section_is_layout_and_its_words_stay_protected<M: Memory>(
+    store: &M,
+) {
+    use crate::memory::document;
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let section = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            session: Some("session-a".to_string()),
+            fields: fields(&[(document::LEVEL, "1"), (document::ORDER, "V")]),
+            ..NewFact::about(
+                EntityId("document:contract-move".into()),
+                "# Said by the operator",
+                date(2026, 10, 12),
+            )
+        },
+    )
+    .await;
+    let by_b = |patch: FactPatch| FactPatch {
+        session: Some("session-b".to_string()),
+        ..patch
+    };
+    let refused = |outcome: Result<Guarded<Fact>, MemoryError>, what: &str| {
+        assert!(
+            matches!(outcome, Err(MemoryError::TestimonyRewritten { .. })),
+            "{what} is refused with the route: {:?}",
+            outcome.map(|_| ()),
+        );
+    };
+
+    // The positive: another session moves the section.
+    store
+        .update_fact(
+            &section.address(),
+            by_b(FactPatch {
+                fields: fields(&[(document::ORDER, "W")]),
+                ..Default::default()
+            }),
+            &other_caller(),
+        )
+        .await
+        .expect("the move lands")
+        .written()
+        .expect("nothing blocks a move");
+    assert_eq!(
+        read_back(store, &section.subject, &section.id).await.fields[document::ORDER],
+        "W",
+        "the section moved"
+    );
+
+    // The negatives: its words, and a move that also changes another field.
+    refused(
+        store
+            .update_fact(
+                &section.address(),
+                by_b(FactPatch {
+                    content: Some("# Said by somebody else".into()),
+                    ..Default::default()
+                }),
+                &other_caller(),
+            )
+            .await,
+        "a rewrite of the words",
+    );
+    refused(
+        store
+            .update_fact(
+                &section.address(),
+                by_b(FactPatch {
+                    fields: fields(&[(document::ORDER, "X"), (document::LEVEL, "2")]),
+                    ..Default::default()
+                }),
+                &other_caller(),
+            )
+            .await,
+        "a move that also changes the level",
+    );
+
+    // The exemption is the document's alone.
+    let ordinary = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            session: Some("session-a".to_string()),
+            fields: fields(&[("order", "1")]),
+            ..NewFact::about(
+                EntityId::person("person:contract-order-key"),
+                "keeps an order",
+                date(2026, 10, 12),
+            )
+        },
+    )
+    .await;
+    refused(
+        store
+            .update_fact(
+                &ordinary.address(),
+                by_b(FactPatch {
+                    fields: fields(&[("order", "2")]),
+                    ..Default::default()
+                }),
+                &other_caller(),
+            )
+            .await,
+        "an order key on a claim that is no section",
+    );
+}
+
 /// **A markdown file split into sections, stored a section per claim, joins back
 /// to the file byte for byte.** A claim is one trimmed line and trimmed details,
 /// and the real store keeps its rows in a table, so what a fake keeping bytes
@@ -16285,6 +16405,7 @@ macro_rules! all_cases {
         $m!(a_backslash_in_content_round_trips($store));
         $m!(details_hold_paragraph_breaks_and_round_trip($store));
         $m!(a_document_split_into_sections_joins_back_to_the_bytes_put($store));
+        $m!(a_move_of_a_document_section_is_layout_and_its_words_stay_protected($store));
         $m!(both_provenances_survive($store));
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));

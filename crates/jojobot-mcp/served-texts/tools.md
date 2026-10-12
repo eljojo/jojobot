@@ -1965,7 +1965,7 @@ The document must already exist (add_entity, kind document).
 Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
 Every section is checked before any is written; a write that stops midway answers with the addresses that landed and where the rest begins.
 Answers with a receipt, not the text.
-A refusal is an answer with status: blocked and nothing written.
+A refusal before any section lands is an answer with status: blocked and nothing written; one after some landed also carries what landed and where the rest begins.
 ```
 
 #### `put_document` — structure
@@ -2092,15 +2092,17 @@ every call — it is what tells jojobot which bot is asking.
 #### `put_document` — argument `/inputSchema.source`
 
 ```text
-**Where the text was read**, for an `observation`: the system of record.
-Stored on every section as `read_from`.
+**The system the document was read from**, for an `observation`: stored on
+every section as its `read_from`, the same field `capture` takes under that
+name. It is not where an entity came from, which is `add_entity`'s `source`.
 ```
 
 #### `put_document` — argument `/inputSchema.source_ref`
 
 ```text
 **What was read there**, when it has a reference: an id, a path, a line.
-Stored on every section as `read_ref`.
+Stored on every section as its `read_ref`, the field `capture` takes under
+that name.
 ```
 
 ### Tool `read_document`
@@ -4983,7 +4985,10 @@ document (an ordinary claim has no place to move), when it is a chunk that
 carries on the section before it (move that section), or when the target is
 not a live section of the same document. A section can be moved and edited
 in one call. A move of a long section that stops partway is finished by
-sending the same call again.
+sending the same call again. **A move never touches the section's words**:
+it changes where the section sits, so it needs no say-so from the session
+that wrote them, and an edit of the words sent in the same call is still
+held to the rule for them.
 ```
 
 #### `update_fact` — argument `/inputSchema.clear_derived_from`

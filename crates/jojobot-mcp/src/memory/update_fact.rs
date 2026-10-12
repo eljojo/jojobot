@@ -271,7 +271,10 @@ pub struct UpdateFactArgs {
     /// carries on the section before it (move that section), or when the target is
     /// not a live section of the same document. A section can be moved and edited
     /// in one call. A move of a long section that stops partway is finished by
-    /// sending the same call again.
+    /// sending the same call again. **A move never touches the section's words**:
+    /// it changes where the section sits, so it needs no say-so from the session
+    /// that wrote them, and an edit of the words sent in the same call is still
+    /// held to the rule for them.
     #[serde(default)]
     pub(crate) after: Option<String>,
     /// **The revision you read**, when the edit is only right if nobody has
@@ -341,6 +344,30 @@ impl Jojobot {
         // written since, so the words are never applied to a text the claim has
         // moved past.
         let mut args = args;
+        // **A section's place is the server's to mint.** A move changes `order`
+        // without the say-so of the session that wrote the section, so a caller's
+        // own value for it, which could be anything, is refused: `after` is the
+        // way to move.
+        if address.home.kind() == Some(EntityKind::DOCUMENT) {
+            let order = jojobot_domain::memory::document::ORDER;
+            let names_it = args.fields.as_ref().is_some_and(|f| f.contains_key(order))
+                || args.sets.as_ref().is_some_and(|f| f.contains_key(order))
+                || args
+                    .clear_fields
+                    .as_ref()
+                    .is_some_and(|keys| keys.iter().any(|key| key == order));
+            if names_it {
+                return memory_declined(
+                    "update_fact",
+                    MemoryError::InvalidFact(
+                        "a section's `order` is minted by the server and a caller never sends \
+                         it. To move a section, send `after`, the address of the section it \
+                         should follow"
+                            .into(),
+                    ),
+                );
+            }
+        }
         // **A move is planned before anything is written**, so a refusal leaves the
         // document as it was. The section itself takes its new place in this edit;
         // the chunks that carry it on follow once it has landed.

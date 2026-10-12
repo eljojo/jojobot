@@ -16,6 +16,10 @@
 //! frontmatter block, the rest of a section that was too long for one record)
 //! is the same shape with level 0, so the join has no special case.
 //!
+//! **A leading frontmatter block is one opaque stretch**: a `---` first line to the
+//! next `---` or `...` line, in which no line is a heading or a fence. A block
+//! that never closes is read as ordinary text.
+//!
 //! **Only ATX headings split** (`#` to `######`, up to three spaces of indent,
 //! then a space or the end of the line). A `#` line inside a fenced block of
 //! code is code, and so is any line in it: a heading is never found there.
@@ -176,12 +180,46 @@ fn fence_of(line: &str) -> Option<(char, usize, &str)> {
     (run >= 3).then(|| (c, run, &rest[run..]))
 }
 
-/// The byte offsets where a heading line starts, outside any fenced block.
+/// **Where a leading frontmatter block ends**, as a byte offset after its closing
+/// line, or 0 when the text has none. The block opens with a line that is `---`
+/// as the very first line of the text and closes at the next line that is `---`
+/// or `...`. **A block that never closes is not frontmatter**: nothing says
+/// where it would stop, so the text is read as it stands.
+fn frontmatter_end(text: &str) -> usize {
+    let mut lines = text.split_inclusive('\n');
+    let bare = |raw: &str| {
+        let line = raw.strip_suffix('\n').unwrap_or(raw);
+        line.strip_suffix('\r').unwrap_or(line).to_string()
+    };
+    let Some(first) = lines.next() else {
+        return 0;
+    };
+    if bare(first) != "---" {
+        return 0;
+    }
+    let mut at = first.len();
+    for raw in lines {
+        at += raw.len();
+        let line = bare(raw);
+        if line == "---" || line == "..." {
+            return at;
+        }
+    }
+    0
+}
+
+/// The byte offsets where a heading line starts, outside any fenced block and
+/// outside a leading frontmatter block.
 fn heading_starts(text: &str) -> Vec<(usize, u8)> {
     let mut starts = Vec::new();
     let mut open: Option<(char, usize)> = None;
     let mut at = 0;
+    let frontmatter = frontmatter_end(text);
     for raw in text.split_inclusive('\n') {
+        if at < frontmatter {
+            at += raw.len();
+            continue;
+        }
         let line = raw.strip_suffix('\n').unwrap_or(raw);
         let line = line.strip_suffix('\r').unwrap_or(line);
         match (open, fence_of(line)) {
@@ -750,5 +788,52 @@ mod tests {
         let fields = record_fields(&full, "a");
         let (_, without) = from_record("# T", None, &fields).expect("a section");
         assert_eq!(join(&[without]), "# T\n");
+    }
+
+    /// **A `#` line inside a leading frontmatter block is a line of that block,
+    /// not a heading.** The block stays the first section, verbatim, and the
+    /// paired positive: a heading after the block still splits.
+    #[test]
+    fn a_hash_line_inside_frontmatter_is_not_a_heading() {
+        let text = "---\ntitle: Notes\n# internal note\n---\n\n# Start\nbody\n";
+        let sections = split(text).expect("splits");
+        let firsts: Vec<&str> = sections.iter().map(|s| s.first_line.as_str()).collect();
+        assert_eq!(firsts, ["---", "# Start"]);
+        assert_eq!(sections[0].level, 0);
+        assert_eq!(sections[0].body, "title: Notes\n# internal note\n---");
+        assert_eq!(sections[1].level, 1);
+        assert_eq!(join(&sections), text);
+    }
+
+    /// **The block ends at `---` or `...`, may use CRLF, and a fence marker inside
+    /// it opens nothing.**
+    #[test]
+    fn frontmatter_ends_at_a_dash_or_dot_line_and_hides_fence_marks() {
+        for text in [
+            "---\r\ntitle: a\r\n# note\r\n---\r\n# Start\r\nx\r\n",
+            "---\ntitle: a\n# note\n...\n# Start\nx\n",
+            "---\nnote: ```\n# note\n---\n# Start\nx\n",
+        ] {
+            let sections = split(text).expect("splits");
+            let firsts: Vec<&str> = sections.iter().map(|s| s.first_line.as_str()).collect();
+            assert_eq!(firsts, ["---", "# Start"], "{text:?}");
+            assert_eq!(join(&sections), text);
+        }
+    }
+
+    /// **A block that never closes is not frontmatter**, and neither is a `---`
+    /// that is not the first line: headings split as they always do.
+    #[test]
+    fn a_dash_line_that_does_not_open_and_close_a_block_at_the_top_is_text() {
+        for (text, firsts) in [
+            ("---\ntitle: a\n# real\nbody\n", vec!["---", "# real"]),
+            ("intro\n---\n# one\n---\n", vec!["intro", "# one"]),
+            ("\n---\n# one\n---\n", vec!["---", "# one"]),
+        ] {
+            let sections = split(text).expect("splits");
+            let got: Vec<&str> = sections.iter().map(|s| s.first_line.as_str()).collect();
+            assert_eq!(got, firsts, "{text:?}");
+            assert_eq!(join(&sections), text);
+        }
     }
 }
