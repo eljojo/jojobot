@@ -521,6 +521,8 @@ pub(crate) struct Refusing {
     pub(crate) inner: InMemorySessions,
     pub(crate) key_fails: std::sync::atomic::AtomicBool,
     pub(crate) reopen_fails: std::sync::atomic::AtomicBool,
+    /// Whether the write that takes a run's key away is refused too.
+    pub(crate) void_fails: std::sync::atomic::AtomicBool,
 }
 
 impl Refusing {
@@ -530,6 +532,7 @@ impl Refusing {
             inner: InMemorySessions::new(),
             key_fails: true.into(),
             reopen_fails: false.into(),
+            void_fails: false.into(),
         }
     }
 
@@ -539,6 +542,17 @@ impl Refusing {
             inner: InMemorySessions::new(),
             key_fails: false.into(),
             reopen_fails: true.into(),
+            void_fails: false.into(),
+        }
+    }
+
+    /// A store that refuses nothing until the case switches a refusal on.
+    pub(crate) fn refusing_nothing() -> Self {
+        Refusing {
+            inner: InMemorySessions::new(),
+            key_fails: false.into(),
+            reopen_fails: false.into(),
+            void_fails: false.into(),
         }
     }
 }
@@ -620,8 +634,12 @@ impl Sessions for Refusing {
         self.inner.set_charter_told(id, at).await
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        let refusing = self.key_fails.load(std::sync::atomic::Ordering::SeqCst);
-        if !refusing || hash == jojobot_domain::session::KEY_VOID {
+        let voiding = hash == jojobot_domain::session::KEY_VOID;
+        let refusing = match voiding {
+            true => self.void_fails.load(std::sync::atomic::Ordering::SeqCst),
+            false => self.key_fails.load(std::sync::atomic::Ordering::SeqCst),
+        };
+        if !refusing {
             return self.inner.set_key_hash(id, hash).await;
         }
         Err(SessionError::Store(
