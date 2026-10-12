@@ -1194,6 +1194,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-testified-values",
     "thing:contract-bags",
     "thing:contract-stays",
+    "thing:contract-reaches",
     "thing:contract-claimed-edit",
     "thing:contract-claimed-rival",
     "work:contract-claimed-nobody",

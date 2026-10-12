@@ -1287,6 +1287,15 @@ async fn own_fields_stay_and_computed_keys_reach_against_the_fake() {
         .await;
 }
 
+/// Own fields reaching their thing, against the fake built in the old mode.
+#[tokio::test]
+async fn own_fields_reach_their_thing_against_the_fake_in_the_old_mode() {
+    contract::own_fields_reach_their_thing_on_a_store_from_before_the_change(
+        &InMemoryMemory::booted().with_own_fields_reaching(),
+    )
+    .await;
+}
+
 /// 🚨 **The four class tokens, pinned as literals.** They are stored in a column
 /// and nothing outside this process declares them, so an assertion built from the
 /// constants would move with them and pin nothing.

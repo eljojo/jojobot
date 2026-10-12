@@ -7373,6 +7373,46 @@ async fn dolt_keeps_own_fields_off_the_thing_when_they_stay() {
     store.stop().await;
 }
 
+/// The old mode, over the real store: an own field reaches its thing, and the
+/// class it is kept under is the one a row from before the change has.
+#[tokio::test]
+async fn dolt_lets_own_fields_reach_their_thing_in_the_old_mode() {
+    let scratch = Scratch::new("own-fields-reach");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("own_fields_reach")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::own_fields_reach_their_thing_on_a_store_from_before_the_change(
+        &DoltMemory::open(pool.clone()).with_own_fields_reaching(),
+    )
+    .await;
+
+    let badge = badge_of(&pool, "thing:contract-reaches").await;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT `key`, write_class FROM field_write WHERE entity = ? ORDER BY `key`, ordinal",
+    )
+    .bind(&badge)
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    let classes = |key: &str| -> Vec<&str> {
+        rows.iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, class)| class.as_str())
+            .collect()
+    };
+    assert_eq!(classes("own_key"), ["own", "own"], "{rows:?}");
+    assert_eq!(classes("set_key"), ["sets"], "{rows:?}");
+
+    store.stop().await;
+}
+
 #[tokio::test]
 async fn dolt_keeps_the_bag_each_write_was_made_under() {
     let scratch = Scratch::new("write-class");

@@ -15899,6 +15899,79 @@ pub async fn own_fields_stay_while_settings_and_computed_keys_reach<M: Memory>(s
     );
 }
 
+/// **On a store from before own fields stayed, a key sent as an own field
+/// reaches its thing, and an edit of it goes on reaching.** The pair of
+/// [`own_fields_stay_while_settings_and_computed_keys_reach`]: not part of the
+/// contract list, which runs on a store as it is, and run on a store built in the
+/// old mode in the fake and in the real store, so both answer for the mode.
+pub async fn own_fields_reach_their_thing_on_a_store_from_before_the_change<M: Memory>(store: &M) {
+    let thing = EntityId("thing:contract-reaches".into());
+    add(
+        store,
+        NewEntity::new(thing.clone(), "Contract Reaches", "contract-fixture"),
+    )
+    .await;
+    let pairs = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let named = |keys: &[&str]| -> std::collections::BTreeSet<String> {
+        keys.iter().map(|k| k.to_string()).collect()
+    };
+    let claim = capture(
+        store,
+        NewFact {
+            fields: pairs(&[("own_key", "o"), ("set_key", "s"), ("computed_key", "c")]),
+            sets: named(&["set_key"]),
+            derived: named(&["computed_key"]),
+            session: Some("session-reaches".to_string()),
+            ..NewFact::about(thing.clone(), "three keys, three ways", date(2026, 9, 1))
+        },
+    )
+    .await;
+    let held = store.fields(&thing).await.expect("fields read");
+    assert_eq!(held["own_key"], "o", "an own field reaches its thing");
+    assert_eq!(held["set_key"], "s", "a setting reaches the thing");
+    assert_eq!(
+        held["computed_key"], "c",
+        "a key jojobot computed reaches the thing"
+    );
+
+    // **An edit of the own field goes on reaching**, so correcting a claim
+    // corrects the thing, and so does a new own field the edit adds.
+    store
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: pairs(&[("own_key", "o2"), ("late_key", "l")]),
+                session: Some("session-reaches".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("the patch lands")
+        .written()
+        .expect("nothing blocks it");
+    let held = store.fields(&thing).await.expect("fields read");
+    assert_eq!(held["own_key"], "o2", "the rewritten own field reached");
+    assert_eq!(
+        held["late_key"], "l",
+        "an own field first written by an edit reaches too"
+    );
+
+    assert!(
+        store
+            .keys_kept_off_the_thing(&claim.address())
+            .await
+            .expect("the record's classes read")
+            .is_empty(),
+        "no key of the record is held off the thing",
+    );
+}
+
 /// **A record sets keys on its thing from a bag of its own, and a key stays in
 /// the bag it was first written under, except that an own field may be moved to
 /// the setting bag in one call.**
