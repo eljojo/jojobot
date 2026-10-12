@@ -343,12 +343,16 @@ carries "answer_10"
 carries-any-case louise
 say     December: the plus-one is not named Louise, so the April placeholder and the June name were not put together
 
-# 10, the carrier. The placeholder from April and the name from June are ONE
-# thing when the person named Louise holds a record older than the June
-# sitting that named her. A rename or a merge leaves exactly that; a Louise
-# made new in June, with the placeholder left standing beside her, does not.
+# 10, the carrier. The placeholder from April and the name from June were
+# joined in either of two ways. The person named Louise holds a record older
+# than the June sitting that named her: a rename or a merge leaves exactly that.
+# Or she is linked to Butters, by an edge or by a field holding his handle, and
+# April's claim that he was bringing a partner is on record on Butters or on the
+# party: a Louise made new in June, who is the partner, needs no placeholder.
+# A Louise made new with neither, and the placeholder left standing beside her,
+# is two people.
 check   louise_is_the_april_plus_one_under_her_new_name
-say     December: nobody named Louise holds a record from before June, so the April plus-one and the June name are two people and not one
+say     December: nobody named Louise holds a record from before June or a link to Butters beside April's claim, so the April plus-one and the June name are two people and not one
 
 # 11. The km of each month, from rides said in six different sittings. The
 # numbers are three digits so that none is a date or another answer's number.
@@ -370,19 +374,30 @@ check   the_party_was_attended_by_those_who_came_and_nobody_else
 say     December: the guests recorded are not the eight who came, so the party's attendance is April's list rather than the day's
 
 # 14. The shop visits, each with the mechanic as a field holding a handle and
-# the work as a field of its own. A record that holds Kenny's handle under any
-# key is one that names him; prose that says his name is not. Kenny did two
-# visits and Token one.
-recall {"fields": [{"value": "person:kenny"}]}
+# the work as a field of its own. A visit is an occasion, so its mechanic and
+# its work are keys of the RECORD, and a key set on the bike overwrites visit by
+# visit; each lock reads with scope record, so a record holding the mechanic's
+# handle with the work beside it passes, whether it sits on the bike or on one
+# entity per visit. A record that holds Kenny's handle under any key is one that
+# names him; prose that says his name is not. Kenny did two visits and Token one.
+# Each lock also holds the day of its own sitting, which only that visit's record
+# carries, and a status companion so a visit taken back does not satisfy it.
+recall {"fields": [{"value": "person:kenny", "scope": "record"}], "facts": true}
 carries-any-case new chain
+carries "recorded_at":"2026-02-21"
+carries "status":"active"
 say     December: no record holds Kenny as the mechanic of the February visit with its work beside him, so the first visit was written down as a sentence rather than as keys
 
-recall {"fields": [{"value": "person:kenny"}]}
+recall {"fields": [{"value": "person:kenny", "scope": "record"}], "facts": true}
 carries-either tyre | tire
+carries "recorded_at":"2026-09-27"
+carries "status":"active"
 say     December: no record holds Kenny as the mechanic of the September visit with its work beside him, so the second visit was written down as a sentence rather than as keys
 
-recall {"fields": [{"value": "person:token"}]}
+recall {"fields": [{"value": "person:token", "scope": "record"}], "facts": true}
 carries person:token
+carries "recorded_at":"2026-05-31"
+carries "status":"active"
 carries-any-case wheel
 say     December: no record holds Token as the mechanic of the May visit with its work beside him, so the third visit was written down as a sentence rather than as keys
 
@@ -433,9 +448,11 @@ three is in the transcript: a visit filed twice reads the same.
 **Whether the monthly totals pair each month with its number.** Question 11's
 lock holds the six numbers and cannot hold which is January's.
 
-**Whether Louise was ever the placeholder, when the placeholder held no
-record.** Question 10's carrier reads a record older than June on the person
-named Louise. A placeholder made in April and given no claim at all, then
-renamed, leaves nothing to read, and the lock fails a year that did the right
-thing. April's sitting says the partner is coming, which is a claim to file, so
-the room does not expect that year.
+**Whether Louise was ever a placeholder.** Question 10's carrier accepts two
+years: one where the person named Louise holds a record older than June (the
+rename or merge shape), and one where she is linked to Butters and April's
+claim about the plus-one is on record on Butters or the party. A placeholder
+made in April with no claim at all, then renamed, leaves nothing to read and
+fails the first shape, and the second shape does not need it. What the carrier
+cannot tell apart is a Louise who is the plus-one and a Louise linked to Butters
+for another reason, because both leave an edge or a field holding his handle.

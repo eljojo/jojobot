@@ -268,6 +268,41 @@ async fn february(room: &Surface, sid: &str) {
                           "bike": "thing:gravel-bike", "shop": "org:costingtons"}}),
     )
     .await;
+    february_after_the_visit(room, sid).await;
+}
+
+/// February with the visit set on the bike, which each visit overwrites.
+async fn february_with_the_visit_on_the_bike(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike",
+               "content": "the gravel bike went into Costington's for a new chain and new brake pads",
+               "provenance": "testimony",
+               "sets": {"mechanic": "person:kenny", "work": "new chain and new brake pads",
+                          "shop": "org:costingtons"}}),
+    )
+    .await;
+    february_after_the_visit(room, sid).await;
+}
+
+/// February with the visit only said, as a sentence on the bike.
+async fn february_with_the_visit_only_said(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike",
+               "content": "the gravel bike went into Costington's, Kenny put a new chain and new brake pads on it",
+               "provenance": "testimony"}),
+    )
+    .await;
+    february_after_the_visit(room, sid).await;
+}
+
+/// What February does besides the shop visit.
+async fn february_after_the_visit(room: &Surface, sid: &str) {
     for _ in 0..3 {
         ride(room, sid, "gravel-bike", "41").await;
     }
@@ -379,6 +414,21 @@ async fn april(room: &Surface, sid: &str) {
         "is coming to the goodbye party with Butters",
     )
     .await;
+    april_after_the_guests(room, sid).await;
+}
+
+/// April, with Butters saying yes and no word of a plus-one: no placeholder is
+/// made and no claim says a partner is coming.
+async fn april_without_the_plus_one(room: &Surface, sid: &str) {
+    for who in ["stan", "kyle", "wendy", "token", "randy", "sharon"] {
+        attending(room, sid, who, "said yes to the goodbye party").await;
+    }
+    attending(room, sid, "butters", "said yes to the goodbye party").await;
+    april_after_the_guests(room, sid).await;
+}
+
+/// What April does besides the guests: a bike is bought in passing.
+async fn april_after_the_guests(room: &Surface, sid: &str) {
     did(
         room,
         sid,
@@ -429,6 +479,41 @@ async fn may(room: &Surface, sid: &str) {
                           "bike": "thing:road-bike", "shop": "org:costingtons"}}),
     )
     .await;
+    may_after_the_visit(room, sid).await;
+}
+
+/// May with the visit set on the bike.
+async fn may_with_the_visit_on_the_bike(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:road-bike",
+               "content": "the road bike went into Costington's and the wheel was trued",
+               "provenance": "testimony",
+               "sets": {"mechanic": "person:token", "work": "trued the wheel",
+                          "shop": "org:costingtons"}}),
+    )
+    .await;
+    may_after_the_visit(room, sid).await;
+}
+
+/// May with the visit only said, as a sentence on the bike.
+async fn may_with_the_visit_only_said(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:road-bike",
+               "content": "the road bike went into Costington's, Token trued the wheel",
+               "provenance": "testimony"}),
+    )
+    .await;
+    may_after_the_visit(room, sid).await;
+}
+
+/// What May does besides the shop visit.
+async fn may_after_the_visit(room: &Surface, sid: &str) {
     let kyle = address_of(room, "person:kyle", "said yes").await;
     did(
         room,
@@ -453,12 +538,23 @@ async fn may(room: &Surface, sid: &str) {
 
 /// June: the party happened, and a plus-one has a name.
 async fn june(room: &Surface, sid: &str) {
-    june_naming_the_partner(room, sid, true).await;
+    june_naming_the_partner(room, sid, true, LinkToButters::None).await;
+}
+
+/// How June links the partner's person to Butters, beyond naming her.
+#[derive(Clone, Copy)]
+enum LinkToButters {
+    /// No link.
+    None,
+    /// An edge on a claim of her own.
+    Edge,
+    /// A field on a claim of her own that holds his handle.
+    Field,
 }
 
 /// June, with the partner's name given either to the person April made
 /// (`renamed`) or to a person made new, leaving April's placeholder standing.
-async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
+async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool, link: LinkToButters) {
     did(
         room,
         sid,
@@ -498,6 +594,31 @@ async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
                 sid,
                 "louise",
                 "came to the goodbye party with Butters",
+            )
+            .await;
+        }
+    }
+    match link {
+        LinkToButters::None => {}
+        LinkToButters::Edge => {
+            did(
+                room,
+                sid,
+                "capture",
+                json!({"subject": "person:louise", "content": "is Butters's partner",
+                       "provenance": "testimony", "shape": "connection",
+                       "object": "person:butters"}),
+            )
+            .await;
+        }
+        LinkToButters::Field => {
+            did(
+                room,
+                sid,
+                "capture",
+                json!({"subject": "person:louise", "content": "is Butters's partner",
+                       "provenance": "testimony",
+                       "sets": {"partner_of": "person:butters"}}),
             )
             .await;
         }
@@ -585,6 +706,41 @@ async fn september(room: &Surface, sid: &str) {
                           "bike": "thing:gravel-bike", "shop": "org:costingtons"}}),
     )
     .await;
+    september_after_the_visit(room, sid).await;
+}
+
+/// September with the visit set on the bike.
+async fn september_with_the_visit_on_the_bike(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike",
+               "content": "the gravel bike went into Costington's again for new tyres",
+               "provenance": "testimony",
+               "sets": {"mechanic": "person:kenny", "work": "new tyres",
+                          "shop": "org:costingtons"}}),
+    )
+    .await;
+    september_after_the_visit(room, sid).await;
+}
+
+/// September with the visit only said, as a sentence on the bike.
+async fn september_with_the_visit_only_said(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike",
+               "content": "the gravel bike went into Costington's again, Kenny put new tyres on it",
+               "provenance": "testimony"}),
+    )
+    .await;
+    september_after_the_visit(room, sid).await;
+}
+
+/// What September does besides the shop visit.
+async fn september_after_the_visit(room: &Surface, sid: &str) {
     part_of_the_move(room, sid, "the-insurance", "done", "the insurance is done").await;
     check_in(room, sid, "call-randy", "2026-09-27", "called Randy").await;
     journalled(
@@ -807,6 +963,24 @@ enum Slip {
     TheBackupIsOnlySaid,
     /// June gives Butters's partner her name on a person made new.
     LouiseIsMadeNew,
+    /// June gives her name on a person made new, and links her to Butters by an
+    /// edge on her own claim.
+    LouiseIsMadeNewAndLinkedByAnEdge,
+    /// June gives her name on a person made new, and links her to Butters by a
+    /// field that holds his handle.
+    LouiseIsMadeNewAndLinkedByAField,
+    /// Each shop visit is a write on the bike, which the next visit overwrites,
+    /// and no entity is made for a visit.
+    TheVisitsAreSetOnTheBike,
+    /// April never says a partner is coming, and June gives a new Louise an
+    /// edge at Butters.
+    LouiseIsLinkedButAprilNeverSaidAPartner,
+    /// February's visit is a sentence on the bike and no key.
+    TheFebruaryVisitIsOnlySaid,
+    /// May's visit is a sentence on the bike and no key.
+    TheMayVisitIsOnlySaid,
+    /// September's visit is a sentence on the bike and no key.
+    TheSeptemberVisitIsOnlySaid,
 }
 
 /// **The nine sittings of the year with one slip in one of them**, every other
@@ -819,7 +993,37 @@ async fn work_the_year_slipping(room: &Surface, slip: Slip) {
                 october_backing_up(room, &sid, false).await
             }
             (Slip::LouiseIsMadeNew, "2026-06-14") => {
-                june_naming_the_partner(room, &sid, false).await
+                june_naming_the_partner(room, &sid, false, LinkToButters::None).await
+            }
+            (Slip::TheFebruaryVisitIsOnlySaid, "2026-02-21") => {
+                february_with_the_visit_only_said(room, &sid).await
+            }
+            (Slip::TheMayVisitIsOnlySaid, "2026-05-31") => {
+                may_with_the_visit_only_said(room, &sid).await
+            }
+            (Slip::TheSeptemberVisitIsOnlySaid, "2026-09-27") => {
+                september_with_the_visit_only_said(room, &sid).await
+            }
+            (Slip::LouiseIsLinkedButAprilNeverSaidAPartner, "2026-04-26") => {
+                april_without_the_plus_one(room, &sid).await
+            }
+            (Slip::LouiseIsLinkedButAprilNeverSaidAPartner, "2026-06-14") => {
+                june_naming_the_partner(room, &sid, false, LinkToButters::Edge).await
+            }
+            (Slip::TheVisitsAreSetOnTheBike, "2026-02-21") => {
+                february_with_the_visit_on_the_bike(room, &sid).await
+            }
+            (Slip::TheVisitsAreSetOnTheBike, "2026-05-31") => {
+                may_with_the_visit_on_the_bike(room, &sid).await
+            }
+            (Slip::TheVisitsAreSetOnTheBike, "2026-09-27") => {
+                september_with_the_visit_on_the_bike(room, &sid).await
+            }
+            (Slip::LouiseIsMadeNewAndLinkedByAnEdge, "2026-06-14") => {
+                june_naming_the_partner(room, &sid, false, LinkToButters::Edge).await
+            }
+            (Slip::LouiseIsMadeNewAndLinkedByAField, "2026-06-14") => {
+                june_naming_the_partner(room, &sid, false, LinkToButters::Field).await
             }
             _ => work(room, &sid).await,
         }
@@ -1499,6 +1703,15 @@ async fn a_year_that_read_lisas_session_as_the_operators_fails_only_the_knee_loc
 }
 
 /// A room worked as meant except for one slip, and the cold sitting's answers.
+/// The year as it is meant to be, with the cold sitting's December written.
+async fn worked_slipping_nothing() -> (Room, Surface) {
+    let (room, surface) = furnished().await;
+    work_the_year(&surface).await;
+    let sid = sitting(&surface, "2026-12-01").await;
+    december(&surface, &sid).await;
+    (room, surface)
+}
+
 async fn worked_slipping(slip: Slip) -> (Room, Surface) {
     let (room, surface) = furnished().await;
     work_the_year_slipping(&surface, slip).await;
@@ -1530,6 +1743,108 @@ async fn a_year_that_named_louise_afresh_fails_only_the_plus_one_carrier_lock() 
         &judge_all(&surface, &[]).await,
         "nobody named Louise holds a record from before June",
     );
+}
+
+/// **The April placeholder renamed to Louise holds the carrier.** The first of
+/// the two shapes the carrier accepts: she holds a record older than June.
+#[tokio::test]
+async fn the_renamed_plus_one_holds_the_plus_one_carrier_lock() {
+    let (_room, surface) = worked_slipping_nothing().await;
+    the_plus_one_carrier_holds(&judge_all(&surface, &[]).await);
+}
+
+/// **A Louise made new in June and linked to Butters by an edge is the partner,
+/// and the carrier holds.** The year joins April's plus-one to June's name
+/// without the rename: April's claim that Butters was bringing a partner is on
+/// Butters, and Louise's own claim draws an edge at him.
+#[tokio::test]
+async fn a_louise_made_new_and_linked_to_butters_by_an_edge_holds_the_plus_one_carrier_lock() {
+    let (_room, surface) = worked_slipping(Slip::LouiseIsMadeNewAndLinkedByAnEdge).await;
+    the_plus_one_carrier_holds(&judge_all(&surface, &[]).await);
+}
+
+/// **A Louise linked to Butters is not the partner when April never said a
+/// partner was coming.** Nothing joins her to April's plus-one, so the carrier
+/// fails and no other lock does.
+#[tokio::test]
+async fn a_linked_louise_without_an_april_claim_fails_only_the_plus_one_carrier_lock() {
+    let (_room, surface) = worked_slipping(Slip::LouiseIsLinkedButAprilNeverSaidAPartner).await;
+    only_one_fails(
+        &judge_all(&surface, &[]).await,
+        "nobody named Louise holds a record from before June",
+    );
+}
+
+/// **A field that holds Butters's handle links Louise to him as an edge does.**
+#[tokio::test]
+async fn a_louise_made_new_and_linked_to_butters_by_a_field_holds_the_plus_one_carrier_lock() {
+    let (_room, surface) = worked_slipping(Slip::LouiseIsMadeNewAndLinkedByAField).await;
+    the_plus_one_carrier_holds(&judge_all(&surface, &[]).await);
+}
+
+/// The carrier lock held, and the lock is the one that was asked.
+fn the_plus_one_carrier_holds(outcomes: &[Outcome]) {
+    let carrier: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|o| {
+            o.name
+                .contains("nobody named Louise holds a record from before June")
+        })
+        .collect();
+    assert_eq!(carrier.len(), 1, "the carrier lock is not in the room");
+    assert!(
+        carrier[0].held,
+        "a Louise linked to Butters did not hold the carrier: {}",
+        carrier[0].saying,
+    );
+}
+
+/// **Each shop visit set on the bike holds the three visit locks.** A visit is an
+/// occasion, so its mechanic and work are keys of the record, and the next visit
+/// overwrites the bike's folded value. The locks read each record, so all three
+/// visits are found.
+#[tokio::test]
+async fn visits_set_on_the_bike_hold_all_three_visit_locks() {
+    let (_room, surface) = worked_slipping(Slip::TheVisitsAreSetOnTheBike).await;
+    let outcomes = judge_all(&surface, &[]).await;
+    for piece in [
+        "of the February visit",
+        "of the September visit",
+        "of the May visit",
+    ] {
+        let found: Vec<&Outcome> = outcomes.iter().filter(|o| o.name.contains(piece)).collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "the lock saying {piece:?} is not in the room"
+        );
+        assert!(
+            found[0].held,
+            "the visit set on the bike failed the lock saying {piece:?}: {}",
+            found[0].saying,
+        );
+    }
+}
+
+/// **February's visit only said fails only the February visit lock.**
+#[tokio::test]
+async fn a_year_that_only_said_the_february_visit_fails_only_the_february_visit_lock() {
+    let (_room, surface) = worked_slipping(Slip::TheFebruaryVisitIsOnlySaid).await;
+    only_one_fails(&judge_all(&surface, &[]).await, "of the February visit");
+}
+
+/// **May's visit only said fails only the May visit lock.**
+#[tokio::test]
+async fn a_year_that_only_said_the_may_visit_fails_only_the_may_visit_lock() {
+    let (_room, surface) = worked_slipping(Slip::TheMayVisitIsOnlySaid).await;
+    only_one_fails(&judge_all(&surface, &[]).await, "of the May visit");
+}
+
+/// **September's visit only said fails only the September visit lock.**
+#[tokio::test]
+async fn a_year_that_only_said_the_september_visit_fails_only_the_september_visit_lock() {
+    let (_room, surface) = worked_slipping(Slip::TheSeptemberVisitIsOnlySaid).await;
+    only_one_fails(&judge_all(&surface, &[]).await, "of the September visit");
 }
 
 /// A sentence on a thing and nothing else: no field, no edge, no check-in.

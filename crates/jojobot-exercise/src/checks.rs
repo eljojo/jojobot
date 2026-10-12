@@ -3847,16 +3847,28 @@ async fn the_routines_behind_are_the_chain_and_randy_by_their_check_ins(
 
 /// **Louise is the person Butters's partner was in April.**
 ///
-/// The partner had no name in April and one in June. They are one person when
-/// the record of April sits on the person who now has the name: a rename keeps
-/// the claims on the new handle and a merge moves them onto the survivor, so
-/// **a person named Louise who holds a record older than the sitting that
-/// named her** is the evidence for either route. A Louise created in June
-/// holds nothing older, and a year with no such person holds nothing at all.
+/// The partner had no name in April and one in June. What the question
+/// measures is that April's plus-one and June's name were joined, and there are
+/// two ways a year joins them.
+///
+/// * **The same person under a new name.** A rename keeps the claims on the new
+///   handle and a merge moves them onto the survivor, so **a person named
+///   Louise who holds a record older than the sitting that named her** is the
+///   evidence for either route.
+/// * **A person made in June who is linked to Butters, beside April's claim.**
+///   Nothing teaches a session to mint a placeholder for a partner nobody
+///   named, and "only structure what the user wrote" argues against it. So a
+///   Louise made new is also the partner when she holds an edge or a field
+///   that holds Butters's handle, and April's claim about the plus-one is on
+///   record on Butters or on the party.
+///
+/// A Louise created in June with neither holds nothing that joins her to April,
+/// and a year with no such person holds nothing at all.
 async fn louise_is_the_april_plus_one_under_her_new_name(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     const NAMED_ON: &str = "2026-06-14";
+    const BUTTERS: &str = "person:butters";
     let people = read_json(
         &seen
             .room
@@ -3866,40 +3878,104 @@ async fn louise_is_the_april_plus_one_under_her_new_name(
             )
             .await,
     )?;
-    let named: Vec<&Value> = people["objects"]
+    let objects: Vec<&Value> = people["objects"]
         .as_array()
-        .map(|objects| {
-            objects
-                .iter()
-                .filter(|person| {
-                    ["id", "name"].iter().any(|key| {
-                        person[*key]
-                            .as_str()
-                            .is_some_and(|said| said.to_lowercase().contains("louise"))
-                    })
-                })
-                .collect()
-        })
+        .map(|objects| objects.iter().collect())
         .unwrap_or_default();
+    let named: Vec<&Value> = objects
+        .iter()
+        .copied()
+        .filter(|person| {
+            ["id", "name"].iter().any(|key| {
+                person[*key]
+                    .as_str()
+                    .is_some_and(|said| said.to_lowercase().contains("louise"))
+            })
+        })
+        .collect();
     if named.is_empty() {
         return Err("no person is named Louise".into());
     }
+    let facts_of = |person: &Value| person["facts"].as_array().cloned().unwrap_or_default();
+    // The same person under a new name: she holds a record older than June.
     let older = named.iter().any(|person| {
-        person["facts"].as_array().is_some_and(|facts| {
-            facts.iter().any(|fact| {
-                fact["recorded_at"]
+        facts_of(person).iter().any(|fact| {
+            fact["recorded_at"]
+                .as_str()
+                .is_some_and(|day| day < NAMED_ON)
+        })
+    });
+    if older {
+        return Ok(());
+    }
+    // A person made in June: linked to Butters, beside April's claim.
+    let linked = named
+        .iter()
+        .any(|person| facts_of(person).iter().any(|fact| links_to(fact, BUTTERS)));
+    let party = read_json(
+        &seen
+            .room
+            .call(
+                "recall",
+                json!({"subject": "event:goodbye-party", "facts": true}),
+            )
+            .await,
+    )
+    .unwrap_or_default();
+    let on_butters = objects
+        .iter()
+        .filter(|person| person["id"].as_str() == Some(BUTTERS))
+        .flat_map(|person| facts_of(person));
+    let on_the_party = party["objects"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(facts_of);
+    let april = on_butters.chain(on_the_party).any(|fact| {
+        fact["recorded_at"]
+            .as_str()
+            .is_some_and(|day| day < NAMED_ON)
+            && says_a_plus_one_is_coming(&fact)
+    });
+    match (linked, april) {
+        (true, true) => Ok(()),
+        (false, _) => Err(format!(
+            "Louise holds nothing recorded before {NAMED_ON} and nothing that links her to \
+             Butters, so the April plus-one is not her: {named:?}"
+        )),
+        (true, false) => Err(
+            "Louise is linked to Butters, but April's claim that he was bringing a partner is \
+             on neither Butters nor the party"
+                .into(),
+        ),
+    }
+}
+
+/// Whether a claim holds `handle` as an edge's object or as the value of any
+/// field, alone or in a comma list, in the claim's own fields or in what it set
+/// on its thing.
+fn links_to(fact: &Value, handle: &str) -> bool {
+    let edge = fact["edge"]["object"].as_str() == Some(handle);
+    let in_a_field = ["fields", "sets"].iter().any(|bag| {
+        fact[*bag].as_object().is_some_and(|fields| {
+            fields.values().any(|value| {
+                value
                     .as_str()
-                    .is_some_and(|day| day < NAMED_ON)
+                    .is_some_and(|text| text.split(',').any(|item| item.trim() == handle))
             })
         })
     });
-    match older {
-        true => Ok(()),
-        false => Err(format!(
-            "Louise holds nothing recorded before {NAMED_ON}, so the April plus-one is not \
-             her: {named:?}"
-        )),
-    }
+    edge || in_a_field
+}
+
+/// Whether a claim says a plus-one or a partner is coming.
+fn says_a_plus_one_is_coming(fact: &Value) -> bool {
+    ["content", "details"].iter().any(|key| {
+        fact[*key].as_str().is_some_and(|said| {
+            let said = said.to_lowercase();
+            said.contains("partner") || said.contains("plus-one") || said.contains("plus one")
+        })
+    })
 }
 
 #[cfg(test)]

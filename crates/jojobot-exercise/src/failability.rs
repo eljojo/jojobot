@@ -111,7 +111,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 198 entries, of five different shapes: 94 blanket and 104 discriminating.
+/// 198 entries, of five different shapes: 91 blanket and 107 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -1485,22 +1485,22 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         room: ASKING_ROOM,
         lock: "Phase 10 — December: no record holds Kenny as the mechanic of the February visit with its work beside him, so the first visit was written down as a sentence rather than as keys",
         file: "tests/asking_room.rs",
-        function: "an_asking_room_nobody_worked_in_fails_every_lock",
-        strength: Strength::Blanket,
+        function: "a_year_that_only_said_the_february_visit_fails_only_the_february_visit_lock",
+        strength: Strength::Discriminating,
     },
     NegativeControl {
         room: ASKING_ROOM,
         lock: "Phase 10 — December: no record holds Kenny as the mechanic of the September visit with its work beside him, so the second visit was written down as a sentence rather than as keys",
         file: "tests/asking_room.rs",
-        function: "an_asking_room_nobody_worked_in_fails_every_lock",
-        strength: Strength::Blanket,
+        function: "a_year_that_only_said_the_september_visit_fails_only_the_september_visit_lock",
+        strength: Strength::Discriminating,
     },
     NegativeControl {
         room: ASKING_ROOM,
         lock: "Phase 10 — December: no record holds Token as the mechanic of the May visit with its work beside him, so the third visit was written down as a sentence rather than as keys",
         file: "tests/asking_room.rs",
-        function: "an_asking_room_nobody_worked_in_fails_every_lock",
-        strength: Strength::Blanket,
+        function: "a_year_that_only_said_the_may_visit_fails_only_the_may_visit_lock",
+        strength: Strength::Discriminating,
     },
     NegativeControl {
         room: ASKING_ROOM,
@@ -1518,7 +1518,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: ASKING_ROOM,
-        lock: "Phase 10 — December: nobody named Louise holds a record from before June, so the April plus-one and the June name are two people and not one",
+        lock: "Phase 10 — December: nobody named Louise holds a record from before June or a link to Butters beside April's claim, so the April plus-one and the June name are two people and not one",
         file: "tests/asking_room.rs",
         function: "an_asking_room_nobody_worked_in_fails_every_lock",
         strength: Strength::Blanket,
@@ -1560,7 +1560,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: ASKING_ROOM,
-        lock: "Phase 10 — December: nobody named Louise holds a record from before June, so the April plus-one and the June name are two people and not one",
+        lock: "Phase 10 — December: nobody named Louise holds a record from before June or a link to Butters beside April's claim, so the April plus-one and the June name are two people and not one",
         file: "tests/asking_room.rs",
         function: "a_year_that_named_louise_afresh_fails_only_the_plus_one_carrier_lock",
         strength: Strength::Discriminating,
