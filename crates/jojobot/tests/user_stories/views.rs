@@ -510,3 +510,61 @@ fn booted_names_the_skill(booted: &serde_json::Value) {
         "…and it costs nothing: the index ships no bodies",
     );
 }
+
+/// **The fields a caller sends beside a view replace the view's own whole.**
+/// A view holds a question on a key, and a caller that sends a question of its
+/// own meant that one: the two are never joined. The view's own question
+/// answers when the caller sends none, which is the positive the replacement
+/// rests on — an answer that was empty either way would pass the second half.
+#[tokio::test]
+async fn a_callers_fields_beside_a_view_replace_the_views_own_whole() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("view:my-people", "My People").await;
+    s.event_with(
+        "view:my-people",
+        "the people I keep an eye on, the urgent ones",
+        json!({"selects": "person", "key": "priority", "value": "urgent"}),
+        &[],
+    )
+    .await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.add("person:ralph", "Ralph").await;
+    s.event_with(
+        "person:milhouse",
+        "Milhouse needs a call back",
+        json!({"priority": "urgent"}),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "person:ralph",
+        "Ralph can wait",
+        json!({"priority": "routine"}),
+        &[],
+    )
+    .await;
+
+    // The view's own question answers when the caller sends none.
+    let own = s.call("recall", json!({"view": "my-people"})).await;
+    own.says("person:milhouse");
+    assert!(!own.raw().contains("person:ralph"), "{}", own.raw());
+
+    // The caller's question replaces it: Ralph answers and Milhouse, whom only
+    // the view's question would have kept, does not. Joined, the two questions
+    // keep nobody.
+    let theirs = s
+        .call(
+            "recall",
+            json!({"view": "my-people",
+                   "fields": [{"key": "priority", "value": "routine"}]}),
+        )
+        .await;
+    theirs.says("person:ralph");
+    assert!(
+        !theirs.raw().contains("person:milhouse"),
+        "the view's own question did not run beside the caller's: {}",
+        theirs.raw()
+    );
+    story.finish().await;
+}
