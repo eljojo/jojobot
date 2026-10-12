@@ -1481,7 +1481,7 @@ pub fn resolve(
         ordered,
         withheld: ctx.withheld(&query.select),
         unplaced: ctx.unplaced(&query.select),
-        unlicensed: ctx.unlicensed(&query.select),
+        unlicensed: ctx.unlicensed_with_walk(&query.select),
         archived_excluded: ctx.archived_excluded(&query.select),
         merged_excluded: ctx.merged_excluded(&query.select),
         decisions_archived,
@@ -1501,6 +1501,7 @@ impl Ctx<'_> {
     /// declares is a real question** even while nothing holds it. A key filter
     /// that is not an expression is not asked: it has always answered empty.
     fn check_expression_keys(&self, query: &GraphQuery) -> Result<(), MemoryError> {
+        self.check_walk_keys(query)?;
         let select = &query.select;
         if select.subject.is_some() {
             return Ok(());
@@ -1575,6 +1576,39 @@ impl Ctx<'_> {
             }
         }
         self.check_order_key(query, &population)
+    }
+
+    /// **A walk's `keeping` expression is checked for its keys as a selection's
+    /// is.** What a walk reaches is not known before it runs, so the population is
+    /// every thing the world holds: a key held by none of them, and declared by no
+    /// type, could only answer empty. Asked of the folded fields, which is what a
+    /// walk's expression is asked of.
+    fn check_walk_keys(&self, query: &GraphQuery) -> Result<(), MemoryError> {
+        let Some(follow) = query.follow.as_ref() else {
+            return Ok(());
+        };
+        let held_keys: BTreeSet<&str> = self
+            .entities
+            .keys()
+            .filter_map(|id| self.held(id))
+            .flat_map(|fields| fields.keys().map(String::as_str))
+            .collect();
+        for field in follow.keeping.iter().filter(|f| f.tree.is_some()) {
+            for key in field.as_filter().keys() {
+                if held_keys.contains(key)
+                    || self.declarations.iter().any(|d| d.field(key).is_some())
+                {
+                    continue;
+                }
+                return Err(MemoryError::InvalidQuery(format!(
+                    "no thing this walk could reach holds a key named '{key}', and no type \
+                     declares one, so keeping by it could only drop everything. Check the \
+                     spelling: the keys held among them are: {}",
+                    held_keys.iter().copied().collect::<Vec<_>>().join(", ")
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// **An order on a key nothing holds is refused**, as a term on it is: every
@@ -1730,6 +1764,10 @@ struct Ctx<'a> {
     /// however many links pointed at them. Filled while the answer is built and
     /// read after, so the answer can count what it left out at a hop.
     hops_withheld: std::cell::RefCell<BTreeSet<EntityId>>,
+    /// **What a walk dropped because the dropped object's kind did not license a
+    /// comparison its `keeping` asked**, by kind: the objects counted (each once,
+    /// however many roots reach it) and the refusal that kind earns.
+    walk_unlicensed: std::cell::RefCell<BTreeMap<String, (BTreeSet<EntityId>, String)>>,
     /// Every entity, in handle order — what the near-miss screen reads.
     index: Vec<Entity>,
     /// Each entity's prose.
@@ -1879,6 +1917,7 @@ impl<'a> Ctx<'a> {
             entities,
             owners,
             hops_withheld: Default::default(),
+            walk_unlicensed: Default::default(),
             index,
             prose,
             fields,
@@ -2038,6 +2077,23 @@ impl<'a> Ctx<'a> {
             .filter(|e| !self.readable_by(&e.id, select))
             .count()
             + self.hops_withheld_beyond(select)
+    }
+
+    /// **The selection's licence drops and the walk's, one list by kind.** The walk
+    /// fills its set while the answer is built, so this is read after it.
+    fn unlicensed_with_walk(&self, select: &Selection) -> Vec<Unlicensed> {
+        let mut listed = self.unlicensed(select);
+        for (kind, (reached, because)) in self.walk_unlicensed.borrow().iter() {
+            match listed.iter_mut().find(|u| &u.kind == kind) {
+                Some(existing) => existing.count += reached.len(),
+                None => listed.push(Unlicensed {
+                    kind: kind.clone(),
+                    count: reached.len(),
+                    because: because.clone(),
+                }),
+            }
+        }
+        listed
     }
 
     /// Does this entity answer the selection's kind and parent, the two
@@ -2242,15 +2298,33 @@ impl<'a> Ctx<'a> {
                     // thing's folded fields, and one record of its — because a
                     // filter that meant the record here and the thing there
                     // would carry the defect this scope exists to remove.
-                    if !holds_all(self.held(&reached), follow.keeping.iter())
-                        || self.entities.get(&reached).is_some_and(|entity| {
-                            follow.keeping.iter().any(|field| {
-                                field
-                                    .as_filter()
-                                    .validate(self.declarations, Some(entity.kind.as_token()))
-                                    .is_err()
-                            })
+                    let matches = holds_all(self.held(&reached), follow.keeping.iter());
+                    // **An object whose kind does not license a comparison is
+                    // dropped, and counted**: only one that would have matched had
+                    // its kind licensed it, as a selection counts its own.
+                    let refused_licence = self.entities.get(&reached).and_then(|entity| {
+                        follow.keeping.iter().find_map(|field| {
+                            match field
+                                .as_filter()
+                                .validate(self.declarations, Some(entity.kind.as_token()))
+                            {
+                                Err(MemoryError::InvalidQuery(because)) => {
+                                    Some((entity.kind.as_token().to_string(), because))
+                                }
+                                _ => None,
+                            }
                         })
+                    });
+                    if let (true, Some((kind, because))) = (matches, &refused_licence) {
+                        self.walk_unlicensed
+                            .borrow_mut()
+                            .entry(kind.clone())
+                            .or_insert_with(|| (BTreeSet::new(), because.clone()))
+                            .0
+                            .insert(reached.clone());
+                    }
+                    if !matches
+                        || refused_licence.is_some()
                         || (follow.filters_records()
                             && self.reached_facts(&reached, Some(follow)).is_empty())
                     {

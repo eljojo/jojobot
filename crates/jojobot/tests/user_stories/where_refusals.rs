@@ -236,3 +236,67 @@ async fn an_order_on_a_key_nothing_holds_is_refused_not_tied() {
     );
     story.finish().await;
 }
+
+/// **A walk's `keeping` is checked for its keys as a selection's `where` is**, and
+/// what the walk drops for want of a licence is counted, with the declaration
+/// that would keep it.
+#[tokio::test]
+async fn a_walks_keeping_is_checked_and_its_unlicensed_drops_are_counted() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    a_board(&s).await;
+    // A place milhouse owns, whose kind no declaration licenses a date
+    // ordering on.
+    s.add("place:daredevil-gorge", "Daredevil Gorge").await;
+    s.event_with(
+        "place:daredevil-gorge",
+        "owned, due long ago",
+        json!({ "due": "2026-10-01", "owner": "person:milhouse" }),
+        &[],
+    )
+    .await;
+    let walk = |keeping: &str| {
+        json!({
+            "subject": "person:milhouse",
+            "follow": { "direction": "in", "keeping": keeping },
+        })
+    };
+
+    // A key nothing among the things the walk reaches holds is refused, naming the
+    // keys held; spelt as held, the same walk answers.
+    s.refused("recall", walk("statuz != done"))
+        .await
+        .says("statuz")
+        .says("status");
+    let fixed = s.call("recall", walk("status != done")).await;
+    fixed.says("thing:gamma");
+
+    // An object the walk drops for want of a licence is counted, with what to
+    // declare; declaring it keeps the object.
+    let ordered = s.call("recall", walk("due < 2026-10-15")).await;
+    ordered.says("thing:gamma");
+    ordered.never_says("\"id\":\"place:daredevil-gorge\"");
+    let counted = ordered.json()["left_out_unlicensed"].clone();
+    assert_eq!(counted[0]["kind"], "place", "{}", ordered.raw());
+    assert_eq!(counted[0]["count"], 1, "{}", ordered.raw());
+    assert!(
+        counted[0]["because"]
+            .as_str()
+            .is_some_and(|because| because.contains("declare_type")),
+        "{}",
+        ordered.raw()
+    );
+    s.call(
+        "declare_type",
+        json!({"name": "place", "fields": [{"key": "due", "holds": "date"}]}),
+    )
+    .await;
+    let kept = s.call("recall", walk("due < 2026-10-15")).await;
+    kept.says("place:daredevil-gorge");
+    assert!(
+        kept.json().get("left_out_unlicensed").is_none(),
+        "nothing is left out once the kind licenses it: {}",
+        kept.raw()
+    );
+    story.finish().await;
+}
