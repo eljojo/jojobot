@@ -450,7 +450,8 @@ date to quiet finished work.
 
 Ask the board a question over those keys with `where`, in a recall. The ready
 view lists work that is unblocked and not finished, so work already under way
-is in it. Narrow it to the work not started:
+is in it. Narrow it to the work not started, which is your board's not-started
+status (`next` on the shipped words):
 
     recall  view: "ready"  where: "status = next"
 

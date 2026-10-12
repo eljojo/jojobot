@@ -7987,4 +7987,5 @@ fn the_view_argument_says_a_views_answer_can_be_narrowed_with_where() {
         "the ready view is still named: {doc}"
     );
     assert!(doc.contains("status = next"), "{doc}");
+    assert!(doc.contains("not-started"), "{doc}");
 }

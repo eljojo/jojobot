@@ -881,6 +881,10 @@ async fn the_projects_skill_answers_a_board_question_with_where() {
         "the skill shows a board question as a where expression: {body}"
     );
     assert!(
+        body.contains("not-started"),
+        "and names the move, so a board with stages of its own adapts the example: {body}"
+    );
+    assert!(
         body.contains("work:sigma"),
         "and the section it sits in is the one about where work stands: {body}"
     );

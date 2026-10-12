@@ -138,6 +138,9 @@ async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() 
     // The narrowing the line shows is one that works, and it keeps the answer's
     // own line.
     assert!(note.contains("status = next"), "{note}");
+    // It names the move and gives the word as an example, so a board with
+    // stages of its own adapts it rather than copying it.
+    assert!(note.contains("not-started"), "{note}");
     let narrowed = s
         .call("recall", json!({"view": "ready", "where": "status = next"}))
         .await;

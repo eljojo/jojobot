@@ -606,9 +606,10 @@ pub struct RecallArgs {
     /// The blocked work is counted as left out, and the answer names the call that
     /// says why: send the view with `subject` set to one piece of work and it comes
     /// back with `ready: false` and `blocked_by`. A view's answer can be narrowed
-    /// with `where`: `view: "ready"` with `where: "status = next"` lists the ready
-    /// work not yet started. A view carries its own `shows_keys`, and a `keys`
-    /// you send wins over it.
+    /// with `where`: `view: "ready"` with `where` set to your board's not-started
+    /// status, for example `where: "status = next"`, lists the ready work not yet
+    /// started. A view carries its own `shows_keys`, and a `keys` you send wins
+    /// over it.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -2851,8 +2852,8 @@ impl Jojobot {
             // else: what ready means, and the argument that narrows it.
             "ready_note": asks_ready.then_some(
                 "ready means unblocked and not finished, so work already under way is in this \
-                 list; where narrows it, for example where: \"status = next\" keeps the work \
-                 not yet started"
+                 list; where narrows it to your board's not-started status, for example \
+                 where: \"status = next\""
             ),
             "ready_left_out": ready_left_out.filter(|left| *left > 0).map(|left| serde_json::json!({
                 "count": left,
