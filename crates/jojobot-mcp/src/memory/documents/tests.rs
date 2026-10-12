@@ -166,7 +166,7 @@ async fn a_section_is_stored_under_the_keys_level_order_edges_and_continues() {
 /// The negative half of the round trip: nothing else moved.
 #[tokio::test]
 async fn editing_one_section_leaves_every_other_sections_bytes() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     put_ok(&jojobot, "document:alpha", NOTES).await;
     let held = records(&jojobot, "document:alpha").await;
     let beta = held
@@ -481,13 +481,13 @@ async fn after_a_cut_section_lands_behind_its_last_chunk() {
 /// longer the section's.
 #[tokio::test]
 async fn an_anchor_matching_zero_or_two_places_or_a_stale_revision_is_refused() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     put_ok(&jojobot, "document:alpha", "# One\n\nsame same\n").await;
     let address = records(&jojobot, "document:alpha").await[0]["address"]
         .as_str()
         .expect("address")
         .to_string();
-    for find in ["absent", "same"] {
+    for (find, found) in [("absent", "0 times"), ("same", "2 times")] {
         let refused = jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 find: Some(find.into()),
@@ -497,7 +497,9 @@ async fn an_anchor_matching_zero_or_two_places_or_a_stale_revision_is_refused() 
             }))
             .await
             .expect("update_fact answers");
-        blocked(&refused);
+        // Refused for the count, not for a store that cannot apply the edit.
+        let said = blocked(&refused).to_string();
+        assert!(said.contains(found), "{said}");
     }
     let stale = jojobot
         .update_fact(Parameters(UpdateFactArgs {
@@ -777,7 +779,7 @@ async fn a_section_moves_behind_another_and_no_other_record_is_written() {
 /// **A section can be moved and edited in one call.**
 #[tokio::test]
 async fn a_section_can_be_moved_and_edited_in_one_call() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     put_ok(
         &jojobot,
         "document:alpha",
