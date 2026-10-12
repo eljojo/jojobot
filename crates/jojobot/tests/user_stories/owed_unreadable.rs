@@ -111,7 +111,7 @@ async fn a_later_write_leaves_the_day_a_schedule_became_unreadable() {
         .await;
 
     let later = story.session_on("2026-09-20", Some("new")).await;
-    later.add("thing:moss", "The Moss").await;
+    later.add("thing:omega", "The Omega").await;
     later
         .event_with(
             "thing:fern",
@@ -122,7 +122,7 @@ async fn a_later_write_leaves_the_day_a_schedule_became_unreadable() {
         .await;
     later
         .event_with(
-            "thing:moss",
+            "thing:omega",
             "also not written down properly",
             serde_json::from_str(BROKEN_SCHEDULE).expect("fields"),
             &[],
@@ -132,7 +132,7 @@ async fn a_later_write_leaves_the_day_a_schedule_became_unreadable() {
     let owed = what_is_owed(&later).await;
     let body = owed.json();
     assert_eq!(
-        the_object(&body, "thing:moss")["fields"]["due_on"],
+        the_object(&body, "thing:omega")["fields"]["due_on"],
         "2026-09-20",
         "a schedule that broke today is stamped today: {body}"
     );
