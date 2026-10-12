@@ -121,6 +121,50 @@ async fn a_bot_that_writes_a_voucher_is_refused_and_nothing_is_stored() {
     story.finish().await;
 }
 
+/// "A voucher is refused. How does a session get one?"
+///
+/// **The refusal names the door that issues one, and the door answers.** A bot
+/// that writes a voucher, by any verb, is told that `start_here` with
+/// `ask_for_code` is the way, and that call, made, answers with a reference to a
+/// challenge and never the code.
+#[tokio::test]
+async fn a_refused_voucher_write_names_the_door_that_issues_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    an_instance_with_an_operator(&s).await;
+    let marge = story.as_bot("bot:marge").await;
+
+    for refused in [
+        marge
+            .refused(
+                "add_entity",
+                json!({
+                    "kind": "voucher", "handle": "voucher:boot-as-patty",
+                    "name": "Boot as Patty", "source": "user-named",
+                }),
+            )
+            .await,
+        marge
+            .refused(
+                "capture",
+                json!({
+                    "subject": "voucher:boot-as-patty", "content": "a grant to boot as patty",
+                    "provenance": "inference",
+                }),
+            )
+            .await,
+    ] {
+        refused.says("start_here").says("ask_for_code");
+    }
+
+    // The door the refusal names, called: a reference to a challenge comes back.
+    let (asked, none) = story
+        .call("start_here", json!({"bot": "patty", "ask_for_code": true}))
+        .await;
+    assert!(none.is_none(), "asking for a code starts no session");
+    asked.says("\"challenge\"");
+}
+
 /// "A voucher exists. Can a bot edit it, rename it or take it back?"
 ///
 /// **Once the engine has issued a voucher, no caller changes it by any verb.**

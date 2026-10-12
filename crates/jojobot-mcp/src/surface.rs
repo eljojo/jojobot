@@ -4435,3 +4435,60 @@ fn no_shipped_prose_states_the_lease_the_offer_or_the_code_window_by_hand() {
         by_hand.join("\n"),
     );
 }
+
+/// **The door that issues a voucher is named where a voucher is refused and
+/// where one is described.** A caller that cannot write one reads, in the
+/// argument that says so, that `start_here` with `ask_for_code` is how a
+/// session gets one. Paired with the call it names: the story
+/// `a_refused_voucher_write_names_the_door_that_issues_one` makes that call
+/// and reads the answer.
+#[test]
+fn add_entity_names_the_door_that_issues_a_voucher() {
+    let kind = argument_description("add_entity", "kind");
+    assert!(
+        kind.contains("start_here") && kind.contains("ask_for_code"),
+        "add_entity's kind argument does not name start_here's ask_for_code: {kind}"
+    );
+}
+
+/// **A wrap ends a voucher, and so does picking a run up by `resume`.** The
+/// behaviour is the wrap's `vouchers_voided` and the resume's refusal when a
+/// voucher cannot be voided; the description says both so a session that holds
+/// one knows what ends it.
+#[test]
+fn wrap_session_says_a_wrap_and_a_resume_each_end_a_voucher() {
+    let described = tool_description("wrap_session");
+    let from_the_voucher = described
+        .split_once("voucher")
+        .unwrap_or_else(|| panic!("wrap_session does not mention a voucher: {described}"))
+        .1;
+    // The sentence that names the voucher, not the rest of the description:
+    // `resume` is named elsewhere in it, for a resume note.
+    let sentence = from_the_voucher
+        .split_once(". ")
+        .map_or(from_the_voucher, |(sentence, _)| sentence);
+    assert!(
+        sentence.contains("resume") && sentence.contains("ask_for_code"),
+        "the sentence on vouchers does not say a resume ends one too, or how to get one \
+         again: {sentence}"
+    );
+}
+
+/// **`ask_for_code` says where the code shows without naming a phone or a web
+/// page.** The code is written into the operator's own mailbox, and the operator
+/// reads their mail wherever they read it; a named device is a claim about one
+/// deployment.
+#[test]
+fn ask_for_code_does_not_name_where_the_operator_reads_their_mail() {
+    let described = argument_description("start_here", "ask_for_code");
+    assert!(
+        described.contains("mailbox"),
+        "ask_for_code does not say the code goes to the operator's mailbox: {described}"
+    );
+    for named in ["phone", "web page"] {
+        assert!(
+            !described.contains(named),
+            "ask_for_code names {named:?}, a place that is one deployment's: {described}"
+        );
+    }
+}

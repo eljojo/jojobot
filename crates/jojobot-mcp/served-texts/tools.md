@@ -198,7 +198,9 @@ claimed, and only a claim writes its `holder` and `claimed_at`.
 
 **A `voucher` is a grant to do one gated act, and a `challenge` is a code
 waiting to be presented on a boot. Both are issued, never created here**:
-a call that names one is refused with nothing written.
+a call that names one is refused with nothing written. A session gets a
+voucher by booting with the operator's code: `start_here` with `bot` and
+`ask_for_code` asks for one.
 ```
 
 #### `add_entity` — argument `/inputSchema.name`
@@ -4356,8 +4358,8 @@ Each argument's own description holds the rest.
 ```text
 **Ask for a code to boot as the bot `bot` names.** A session the operator
 started by hand has no voucher, and this is how it gets one. jojobot
-writes a fresh code into the operator's own mailbox, where the phone and
-the web page show it, and answers with a reference to the challenge and
+writes a fresh code into the operator's own mailbox, which is where the
+operator reads their mail, and answers with a reference to the challenge and
 never the code. The call starts no session. One challenge stands per bot:
 while a code is waiting a new request is refused and names when it ends, a
 code is good for 10 minutes, and three wrong codes void it sooner.
@@ -5354,6 +5356,7 @@ Write the story for somebody with none of your context: what this run was for, w
 The next boot of this identity is handed it as the handover, so it is not private.
 A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
 Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
+A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
 THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run's own sid back for one last change while the run stays wrapped; the window ends when you wrap a second time or a newer run of the bot starts.
 A second wrap's answer carries no `wrap_code`.

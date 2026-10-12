@@ -458,6 +458,11 @@ async fn a_keyless_run_exchanges_its_old_name_once_and_a_second_bare_name_is_ref
         .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
         .await;
     exchanged.says("\"exchanged\":true");
+    // The refusal says what happened without telling the run's history: a
+    // call used a run's name as a credential.
+    exchanged
+        .says("used a run's name as a credential")
+        .never_says("began before keys existed");
     let key = exchanged.json()["sid"]
         .as_str()
         .expect("the exchange hands back a key")

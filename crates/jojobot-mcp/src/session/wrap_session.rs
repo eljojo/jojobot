@@ -44,7 +44,10 @@ impl Jojobot {
                        Wrapping is also how you ROTATE a long run (wrap, then boot \
                        again for a fresh sid) and how work moves to another agent NOW: \
                        the wrap frees your role at once and the next agent boots fresh \
-                       and reads your story. A resume note in `journal` is for a run \
+                       and reads your story. A wrap ends every voucher your run holds, and \
+                       so does picking a run up by name with start_here's resume; a \
+                       session that needs one again asks for a code with start_here's \
+                       ask_for_code. A resume note in `journal` is for a run \
                        that goes quiet; it is picked up by name once the lease has \
                        passed, and a key never travels. THE FIRST WRAP ALSO HANDS BACK \
                        A `wrap_code`: start_here with it as the resume answer hands \

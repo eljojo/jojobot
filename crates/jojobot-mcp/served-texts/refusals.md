@@ -503,7 +503,7 @@ reads: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written
 answer: {
   "attempted": "voucher:boot-as-patty",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written. A voucher is a grant the engine issues to a session down the org chart; no record a caller writes is a grant. 'voucher:boot-as-patty' stays as it is, and nothing here creates, edits or takes one back.",
+  "how_to_proceed": "Nothing was written: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written. A voucher is a grant the engine issues to a session down the org chart; no record a caller writes is a grant. 'voucher:boot-as-patty' stays as it is, and nothing here creates, edits or takes one back. A session that needs one asks for a code with start_here's ask_for_code and boots with the code the operator types in.",
   "status": "blocked",
   "wrote": false
 }

@@ -1326,7 +1326,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             let how_to_proceed = WayForward::from(format!(
                 "Nothing was written: {e}. A voucher is a grant the engine issues to a session \
                  down the org chart; no record a caller writes is a grant. '{subject}' stays as \
-                 it is, and nothing here creates, edits or takes one back."
+                 it is, and nothing here creates, edits or takes one back. A session that needs \
+                 one asks for a code with start_here's ask_for_code and boots with the code the \
+                 operator types in."
             ));
             let mut body = serde_json::json!({
                 "status": "blocked",

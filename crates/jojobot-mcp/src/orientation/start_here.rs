@@ -144,8 +144,8 @@ pub struct OrientArgs {
     pub(crate) claim: Option<String>,
     /// **Ask for a code to boot as the bot `bot` names.** A session the operator
     /// started by hand has no voucher, and this is how it gets one. jojobot
-    /// writes a fresh code into the operator's own mailbox, where the phone and
-    /// the web page show it, and answers with a reference to the challenge and
+    /// writes a fresh code into the operator's own mailbox, which is where the
+    /// operator reads their mail, and answers with a reference to the challenge and
     /// never the code. The call starts no session. One challenge stands per bot:
     /// while a code is waiting a new request is refused and names when it ends, a
     /// code is good for {{code}}, and three wrong codes void it sooner.

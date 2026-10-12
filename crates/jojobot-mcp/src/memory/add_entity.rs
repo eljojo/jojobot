@@ -63,7 +63,9 @@ pub struct AddEntityArgs {
     ///
     /// **A `voucher` is a grant to do one gated act, and a `challenge` is a code
     /// waiting to be presented on a boot. Both are issued, never created here**:
-    /// a call that names one is refused with nothing written.
+    /// a call that names one is refused with nothing written. A session gets a
+    /// voucher by booting with the operator's code: `start_here` with `bot` and
+    /// `ask_for_code` asks for one.
     pub(crate) kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is the name this entity is

@@ -211,8 +211,8 @@ impl Jojobot {
             ));
         }
         let how: WayForward = format!(
-            "{NOTHING_RAN}. This run began before keys existed, so its name was its only \
-             credential. jojobot has exchanged it once, and the key is `sid` in this answer: send \
+            "{NOTHING_RAN}. This call used a run's name as a credential. jojobot has \
+             exchanged it once, and the key is `sid` in this answer: send \
              that on every call, starting with this one again. Run {} keeps its name, which \
              opens nothing from now on.",
             taken.name
