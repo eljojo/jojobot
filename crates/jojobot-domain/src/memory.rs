@@ -4081,11 +4081,11 @@ pub fn guard_fit(
             });
         }
     }
-    // **A shipped status word cannot be given another meaning.** The instance
-    // maps its own words with `status_word/<word>`; a mapping whose word is one
-    // of the shipped five would let `done` mean something else on one instance,
-    // and "what is finished" would stop being one question. Checked when the
-    // mapping is set. Held on any topic carrying one, for the reason the list
+    // **A shipped status word cannot be given another meaning, and a word is
+    // mapped only to a shipped one.** The instance maps its own words with
+    // `status_word/<word>`; a mapping whose word is one of the shipped five
+    // would let `done` mean something else on one instance, and "what is
+    // finished" would stop being one question. Checked when the mapping is set. Held on any topic carrying one, for the reason the list
     // above is.
     if kind == EntityKind::TOPIC.as_token() {
         for (key, value) in after {
@@ -4098,6 +4098,17 @@ pub fn guard_fit(
             if kinds::WORK_STATUSES.contains(&word.trim()) {
                 return Err(MemoryError::RemapsShippedWord {
                     word: word.trim().to_string(),
+                    value: value.clone(),
+                });
+            }
+            // **A mapping to a word the software does not ship maps nothing**
+            // ([`kinds::meaning_of`] reads it as no meaning), so it is refused
+            // when it is set and the five are named.
+            if !kinds::WORK_STATUSES.contains(&value.trim()) {
+                return Err(MemoryError::BreaksType {
+                    name: kind.to_string(),
+                    key: key.clone(),
+                    wanted: format!("one of {}", kinds::WORK_STATUSES.join(", ")),
                     value: value.clone(),
                 });
             }

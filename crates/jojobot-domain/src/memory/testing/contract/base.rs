@@ -2948,6 +2948,30 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
         before,
         "the refused mappings left the instance as it was",
     );
+    // **A mapping to a word the software does not ship maps nothing**, so it is
+    // refused when it is set, naming the five.
+    let refused = store
+        .capture(word_on(&instance, "pondering", "elsewhere"))
+        .await
+        .expect_err("a mapping to an unshipped word cannot land");
+    let MemoryError::BreaksType {
+        key, wanted, value, ..
+    } = &refused
+    else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
+    assert_eq!(
+        (key.as_str(), value.as_str()),
+        ("status_word/pondering", "elsewhere")
+    );
+    for shipped in crate::memory::kinds::WORK_STATUSES {
+        assert!(wanted.contains(shipped), "{shipped} is named in: {wanted}");
+    }
+    assert_eq!(
+        store.fields(&instance).await.expect("reads"),
+        before,
+        "the refused mapping left the instance as it was",
+    );
     capture(store, word_on(&instance, "closed", "done")).await;
     assert_eq!(
         store.fields(&instance).await.expect("reads")["status_word/closed"],
