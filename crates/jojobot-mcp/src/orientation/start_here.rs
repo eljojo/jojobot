@@ -14,7 +14,7 @@ pub struct OrientArgs {
     /// snapshot, and no sid.
     ///
     /// Booting sweeps that bot's sessions that have gone a day without a beat to
-    /// `abandoned`; an abandoned run is offered back at a later boot for 7 days. It
+    /// `abandoned`; an abandoned run is offered back at a later boot for {{offer}}. It
     /// does REPAIR one thing: a bot whose box is missing gets it opened here,
     /// because a box is part of what a bot is and its absence is damage rather than
     /// a setup step, and the answer says so plainly. A boot that starts a new run
@@ -137,7 +137,7 @@ pub struct OrientArgs {
     ///
     /// **Every write you make while holding it renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the
-    /// rest all count — and the lease is 45 minutes. **Wrapping releases
+    /// rest all count — and the lease is {{lease}}. **Wrapping releases
     /// whatever you held**, so a fresh session may claim the same role at
     /// once.
     #[serde(default)]
@@ -148,7 +148,7 @@ pub struct OrientArgs {
     /// the web page show it, and answers with a reference to the challenge and
     /// never the code. The call starts no session. One challenge stands per bot:
     /// while a code is waiting a new request is refused and names when it ends, a
-    /// code is good for ten minutes, and three wrong codes void it sooner.
+    /// code is good for {{code}}, and three wrong codes void it sooner.
     ///
     /// The operator types the code into this session. Boot again with `bot`,
     /// `challenge` and `code` to present it.
@@ -197,7 +197,7 @@ impl Jojobot {
                        until it answers with `resume`: the name of the run (its `run`), `new`, \
                        or the wrap_code a wrap handed back. CALLED THIS BEFORE? Pass brief: true to skip the essay; \
                        calling without brief reads it in full. `claim` holds a named role for \
-                       45 minutes so two sessions never work one role at once (taken, \
+                       {{lease}} so two sessions never work one role at once (taken, \
                        refused, conflict or unavailable; a claim is refused while its role \
                        object is archived, and archive_entity restores it); every write, and \
                        every read of your own box, renews the lease, and wrapping releases \
@@ -1408,13 +1408,13 @@ mod tests {
     /// `began` in the past reads as if that much time had already gone by,
     /// deterministically and in milliseconds of real test time.
     ///
-    /// The gap between the claim and the write (400s) is past the OLD
-    /// `LEASE_FRESHNESS` (300s) on its own — if renewal only happened on
-    /// `journal`, this write would find nothing to renew and the claim would
-    /// still read as claimed at t0. The final check (3000s after t0) is
-    /// stale against t0 alone but fresh against a renewal at t0+400s under
-    /// the new 45-minute threshold, so the two cases read oppositely on the
-    /// second claimant.
+    /// The gap between the claim and the write (400s) is past the old
+    /// five-minute lease on its own — if renewal only happened on `journal`,
+    /// this write would find nothing to renew and the claim would still read as
+    /// claimed at t0. The final check (3000s after t0) is stale against t0
+    /// alone but fresh against a renewal at t0+400s under the lease that holds
+    /// now (`LEASE_FRESHNESS`), so the two cases read oppositely on the second
+    /// claimant.
     #[tokio::test]
     async fn a_write_other_than_journal_renews_a_role_claim_past_the_old_five_minute_window() {
         let memory = Arc::new(InMemoryMemory::booted());
@@ -1677,7 +1677,7 @@ mod tests {
     async fn a_section_by_exact_heading_returns_exactly_that_unit() {
         let jojobot = handler();
         let (_, sections) = crate::orientation::essay::remainder_units(
-            crate::orientation::essay::ORIENTATION_REMAINDER,
+            crate::orientation::essay::ORIENTATION_REMAINDER.as_str(),
         );
         let bots = sections
             .iter()
@@ -1726,7 +1726,7 @@ mod tests {
     async fn section_opening_returns_the_un_headed_preamble() {
         let jojobot = handler();
         let (preamble, _) = crate::orientation::essay::remainder_units(
-            crate::orientation::essay::ORIENTATION_REMAINDER,
+            crate::orientation::essay::ORIENTATION_REMAINDER.as_str(),
         );
 
         let fetched = json_of(
@@ -1762,7 +1762,7 @@ mod tests {
     async fn an_unknown_section_is_refused_and_lists_every_valid_name() {
         let jojobot = handler();
         let (_, sections) = crate::orientation::essay::remainder_units(
-            crate::orientation::essay::ORIENTATION_REMAINDER,
+            crate::orientation::essay::ORIENTATION_REMAINDER.as_str(),
         );
 
         let refused = blocked(

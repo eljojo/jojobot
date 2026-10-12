@@ -45,7 +45,7 @@ impl Jojobot {
                        jojobot which bot is writing. A `sid` whose session is closed comes back \
                        status: blocked: a closed session takes no more entries, whichever end it \
                        reached. The two ends part company on what comes NEXT — a run that stopped \
-                       without being wrapped up is offered back at your next boot for 7 days, and resuming \
+                       without being wrapped up is offered back at your next boot for {{offer}}, and resuming \
                        it continues this same record, while a wrapped one is the last word — its \
                        story is told and nothing appends to it except through the wrap_code its \
                        wrap handed back, so carrying on means a fresh session. IT ANSWERS \

@@ -83,7 +83,7 @@ pub(crate) static ORIENTATION_CORE: std::sync::LazyLock<String> =
 /// candidate for one, only a rule. An anonymous boot gets it joined with the
 /// core, as the one candidate ranked against the boot's declared ceiling —
 /// see `essay_for_boot` in `jojobot-mcp`'s `orient` module.
-pub(crate) const ORIENTATION_REMAINDER: &str = r#"
+const REMAINDER_TEMPLATE: &str = r#"
 **jojobot hands back the small answer and keeps the large one reachable.** A write returns a receipt rather than the thing you wrote; a message body is not echoed to its author; a delivery leaves out what it handed you once; prose is off by default on a read, because a page is bigger than a claim. The reason is always the same: context is the scarce thing in this conversation, and an answer that ships everything spends it on what you already have. **Eliding is never silent** — whenever less comes back, the answer says what was left out and which call returns it.
 
 **MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back as an id under `leftovers` (`new_only: false` returns the bodies), so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A bot's box belongs to exactly one bot**, is named for it, and comes into being with it: a box states its owner, so whose it is is a fact you can read rather than an arrangement you have to be told. That is why no verb opens one. The one exception is the operator, a person: their box opens at the first `post_message` to their handle, and no bot reads it back. **Yours is yours by construction**: booting as your identity is what tells you which box you drain. **Messages are searchable, on request**: `search` with `include_mail: true` finds them beside the memory hits, in every state, `processed` archives included (the operator's box alone is never searched). It is opt-in because a hit carries somebody's box, sender and a snippet, and `search` is the verb you reach for first; a finding filed for another session is reachable by anyone who asks the right question. `read_message` takes that one message without making the rest of the box yours — **from your own box**, because taking delivery of somebody else's mail moves it out of `new` and it never looks fresh to them again. A `processed` hit is the exception and is readable from any bot's box: that one is history, and reading it moves nothing.
@@ -126,7 +126,7 @@ A session has two halves that answer different questions. Its **focus** is what 
 
 jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 
-**Claim a role** — the seat one session holds, kind `role` — by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh: `taken`, `refused`, `unavailable` or `conflict` (a collision with another write; retry the same call). Every write renews it, the lease is 45 minutes, and wrapping releases it.
+**Claim a role** — the seat one session holds, kind `role` — by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh: `taken`, `refused`, `unavailable` or `conflict` (a collision with another write; retry the same call). Every write renews it, the lease is {{lease}}, and wrapping releases it.
 
 ### The two endings, and they are not interchangeable
 
@@ -145,13 +145,22 @@ The resume note is **the one sanctioned exception to journal leanness**. Everywh
 This door's snapshot names up to twenty identities on the server, each with its mail beside it: that is a fact about the board and **not an invitation**. Only your own comes back with counts — somebody else's queue is not yours to weigh. If you need something from a colleague, ask them — and know that `post_message` is not a pure write: it also takes delivery of YOUR box. Whatever was waiting rides back with the receipt under your_mail, out of `new` and yours to finish, exactly as `read_mailbox` would have handed it over, because posting is the moment a reply is most likely to be waiting. Posting into your own box delivers nothing. A post lists only mail no read had handed you; mail you were already working is counted under `your_mail.leftovers`.
 "#;
 
+/// **The rest of the essay as it is served**: the template with the windows it
+/// states written from their constants (see [`crate::windows`]).
+pub(crate) static ORIENTATION_REMAINDER: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| crate::windows::fill(REMAINDER_TEMPLATE));
+
 /// **The whole essay, core and remainder joined** — test-only. Production
 /// never wants this: the floor always serves the core, and the remainder is
 /// ranked against what is left, so the two are never concatenated outside a
 /// test that means to check the text a session reads when nothing cut it.
 #[cfg(test)]
 pub(crate) fn orientation() -> String {
-    format!("{}{ORIENTATION_REMAINDER}", ORIENTATION_CORE.as_str())
+    format!(
+        "{}{}",
+        ORIENTATION_CORE.as_str(),
+        ORIENTATION_REMAINDER.as_str()
+    )
 }
 
 /// One `##`-section of a markdown text: its heading line itself (e.g.
@@ -207,7 +216,7 @@ pub(crate) fn remainder_units(text: &str) -> (&str, Vec<MarkdownSection<'_>>) {
 /// constant's own definition and this function — however many callers
 /// this function itself gains.
 pub(crate) fn remainder() -> (&'static str, Vec<MarkdownSection<'static>>) {
-    remainder_units(ORIENTATION_REMAINDER)
+    remainder_units(ORIENTATION_REMAINDER.as_str())
 }
 
 #[cfg(test)]
@@ -315,7 +324,7 @@ mod tests {
     fn the_essay_uses_the_word_sets_only_for_the_argument() {
         for (what, text) in [
             ("the core", super::ORIENTATION_CORE.as_str()),
-            ("the remainder", super::ORIENTATION_REMAINDER),
+            ("the remainder", super::ORIENTATION_REMAINDER.as_str()),
         ] {
             let mut outside = String::new();
             for (n, piece) in text.split('`').enumerate() {
@@ -550,7 +559,7 @@ mod tests {
     /// as units of their own.
     #[test]
     fn remainder_units_reads_the_real_remainder_as_four_top_level_units() {
-        let (_, units) = super::remainder_units(super::ORIENTATION_REMAINDER);
+        let (_, units) = super::remainder_units(super::ORIENTATION_REMAINDER.as_str());
         let headings: Vec<&str> = units.iter().map(|s| s.heading).collect();
         assert_eq!(
             headings,

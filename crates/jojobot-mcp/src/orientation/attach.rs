@@ -696,8 +696,9 @@ impl Jojobot {
                 "",
                 format!(
                     "No session was started. Run {name} wrote at {wrote}, so it is still \
-                     its own: only its key continues it. A run quiet for 45 minutes can be \
-                     picked up by its name, which for this one is from {free_at}."
+                     its own: only its key continues it. A run quiet for {} can be \
+                     picked up by its name, which for this one is from {free_at}.",
+                    crate::windows::lease(),
                 ),
             ));
         }

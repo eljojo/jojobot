@@ -40,7 +40,7 @@ impl Jojobot {
                        handover, so it is not private. A session that stops without \
                        wrapping is not lost: the next boot sweeps it to `abandoned` \
                        after a day, its chronology stays readable and it is offered \
-                       back to resume for 7 days, but its story was never told. \
+                       back to resume for {{offer}}, but its story was never told. \
                        Wrapping is also how you ROTATE a long run (wrap, then boot \
                        again for a fresh sid) and how work moves to another agent NOW: \
                        the wrap frees your role at once and the next agent boots fresh \

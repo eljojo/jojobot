@@ -4307,3 +4307,131 @@ fn the_archive_or_retract_rule_is_worded_the_same_everywhere() {
     );
     assert_eq!(status_argument, retract, "update_fact's status argument");
 }
+
+/// Every string a client reads as a description in a served schema, at any
+/// depth.
+fn descriptions_in(value: &serde_json::Value, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, inner) in map {
+                match (key.as_str(), inner) {
+                    ("description", serde_json::Value::String(text)) => found.push(text.clone()),
+                    _ => descriptions_in(inner, found),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            items.iter().for_each(|item| descriptions_in(item, found))
+        }
+        _ => {}
+    }
+}
+
+/// Everything the surface says about itself: each tool's description and every
+/// description in its schema.
+fn every_served_description() -> Vec<(String, String)> {
+    let mut all = Vec::new();
+    for tool in Jojobot::tool_router().list_all() {
+        let name = tool.name.to_string();
+        if let Some(text) = tool.description.as_deref() {
+            all.push((name.clone(), text.to_string()));
+        }
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let mut inside = Vec::new();
+        descriptions_in(&schema, &mut inside);
+        all.extend(inside.into_iter().map(|text| (name.clone(), text)));
+    }
+    all
+}
+
+/// **No token reaches a reader.** A description, an argument's description or
+/// the essay that still carries `{{lease}}`, `{{offer}}` or `{{code}}` says a
+/// number was never put in.
+#[test]
+fn no_served_text_carries_an_unfilled_window_token() {
+    for (verb, text) in every_served_description() {
+        assert!(
+            !crate::windows::unfilled(&text),
+            "{verb} serves a window token nobody filled: {text}"
+        );
+    }
+    let essay = crate::orientation::essay::orientation();
+    assert!(
+        !crate::windows::unfilled(&essay),
+        "the orientation essay serves a window token nobody filled"
+    );
+}
+
+/// **Each window is stated where a caller decides on it, and the number is the
+/// constant's.** The lease where a role is claimed, the offer where a stopped
+/// run is described, the code's window where a code is asked for.
+#[test]
+fn the_windows_are_stated_where_a_caller_acts_on_them() {
+    use crate::windows::{code, lease, offer};
+    let essay = crate::orientation::essay::orientation();
+    for (what, text, number) in [
+        ("start_here", tool_description("start_here"), lease()),
+        (
+            "start_here's bot",
+            argument_description("start_here", "bot"),
+            offer(),
+        ),
+        (
+            "start_here's claim",
+            argument_description("start_here", "claim"),
+            lease(),
+        ),
+        (
+            "start_here's ask_for_code",
+            argument_description("start_here", "ask_for_code"),
+            code(),
+        ),
+        ("journal", tool_description("journal"), offer()),
+        ("wrap_session", tool_description("wrap_session"), offer()),
+        ("the orientation essay", essay.clone(), lease()),
+    ] {
+        assert!(
+            text.contains(&number),
+            "{what} does not state {number:?}: {text}"
+        );
+    }
+}
+
+/// **No shipped prose in this crate states one of the three windows by hand.**
+/// A sentence with the number typed in says the old number the day its constant
+/// moves; prose carries a token and [`crate::windows::fill`] puts the number in.
+/// A plain comment is not served and is left alone; a doc comment on an argument
+/// is, so it counts.
+#[test]
+fn no_shipped_prose_states_the_lease_the_offer_or_the_code_window_by_hand() {
+    let spelled = [
+        "45 minutes",
+        "45-minute",
+        "forty-five minutes",
+        "7 days",
+        "seven days",
+        "10 minutes",
+        "ten minutes",
+    ];
+    let mut by_hand = Vec::new();
+    for (file, text) in shipped_files() {
+        if file.ends_with("windows.rs") {
+            continue;
+        }
+        for (at, line) in text.lines().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") && !code.starts_with("///") {
+                continue;
+            }
+            let lowered = line.to_lowercase();
+            if spelled.iter().any(|window| lowered.contains(window)) {
+                by_hand.push(format!("{file}:{}: {}", at + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        by_hand.is_empty(),
+        "prose states a window by hand; use {{{{lease}}}}, {{{{offer}}}} or {{{{code}}}}:\n{}",
+        by_hand.join("\n"),
+    );
+}

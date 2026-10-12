@@ -57,6 +57,7 @@ pub mod session;
 pub mod sid;
 mod status_bar;
 mod teaching;
+mod windows;
 pub(crate) use status_bar::OwnBox;
 
 pub(crate) use answer::*;
@@ -196,13 +197,46 @@ impl Jojobot {
     /// it and its context being named here — the same deliberate friction
     /// `the_tool_surface_is_exactly_this_list` puts in front of a new tool.
     pub fn tool_router() -> ToolRouter<Self> {
-        Self::publishing_what_falls_due(
+        Self::stating_the_windows(Self::publishing_what_falls_due(
             Self::core_router()
                 + mailboxes::router()
                 + memory::router()
                 + orientation::router()
                 + session::router(),
-        )
+        ))
+    }
+
+    /// **Every description on the surface, with the windows it states written
+    /// from their constants.** A description carries `{{lease}}`, `{{offer}}` or
+    /// `{{code}}` where a number goes (see [`windows`]); this puts the number in,
+    /// in the tool's own description and in every argument's, at any depth.
+    fn stating_the_windows(mut router: ToolRouter<Self>) -> ToolRouter<Self> {
+        fn fill_descriptions(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, inner) in map.iter_mut() {
+                        match (key.as_str(), &mut *inner) {
+                            ("description", serde_json::Value::String(text)) => {
+                                *text = windows::fill(text);
+                            }
+                            _ => fill_descriptions(inner),
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => items.iter_mut().for_each(fill_descriptions),
+                _ => {}
+            }
+        }
+        for route in router.map.values_mut() {
+            if let Some(text) = route.attr.description.as_mut() {
+                *text = windows::fill(text).into();
+            }
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            for inner in schema.values_mut() {
+                fill_descriptions(inner);
+            }
+        }
+        router
     }
 
     /// **The two write verbs' `sets` description, ended with the keys that make

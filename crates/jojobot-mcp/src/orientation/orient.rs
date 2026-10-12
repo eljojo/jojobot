@@ -3497,7 +3497,7 @@ mod essay_for_boot_budget {
     }
 
     fn remainder_shape() -> (&'static str, Vec<&'static str>, Vec<usize>) {
-        let (preamble, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
+        let (preamble, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER.as_str());
         let headings: Vec<&'static str> = sections.iter().map(|s| s.heading).collect();
         let lens: Vec<usize> = sections.iter().map(|s| cost(s.body)).collect();
         (preamble, headings, lens)
@@ -3507,7 +3507,7 @@ mod essay_for_boot_budget {
     /// — the case this whole mechanism must never regress.
     #[test]
     fn a_budget_covering_the_whole_remainder_ships_it_whole() {
-        let whole_remainder_len = cost(essay::ORIENTATION_REMAINDER);
+        let whole_remainder_len = cost(essay::ORIENTATION_REMAINDER.as_str());
         let served = essay_for_boot(false, &serde_json::Value::Null, whole_remainder_len);
         assert_eq!(
             served.text.as_deref(),
@@ -3532,7 +3532,7 @@ mod essay_for_boot_budget {
             "{text:?}"
         );
         assert!(text.contains(preamble), "{text:?}");
-        let (_, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
+        let (_, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER.as_str());
         for heading in &headings[..2] {
             let body = sections
                 .iter()

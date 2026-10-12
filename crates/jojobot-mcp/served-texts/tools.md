@@ -4360,7 +4360,7 @@ writes a fresh code into the operator's own mailbox, where the phone and
 the web page show it, and answers with a reference to the challenge and
 never the code. The call starts no session. One challenge stands per bot:
 while a code is waiting a new request is refused and names when it ends, a
-code is good for ten minutes, and three wrong codes void it sooner.
+code is good for 10 minutes, and three wrong codes void it sooner.
 
 The operator types the code into this session. Boot again with `bot`,
 `challenge` and `code` to present it.
