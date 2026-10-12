@@ -2788,33 +2788,32 @@ pub async fn a_work_items_status_lands_whatever_word_it_holds<M: Memory>(store: 
 
     // ① A project's list that drops a shipped status is refused, and the refusal
     // names the five. Nothing is stored.
-    for (holder, kind) in [(&board, "project")] {
-        let refused = store
-            .capture(columns_on(holder, "someday, next, now, done"))
-            .await
-            .expect_err("a list without 'waiting' is not a superset of the shipped five");
-        let MemoryError::BreaksType {
-            name, key, wanted, ..
-        } = &refused
-        else {
-            panic!("expected BreaksType, got {refused:?}");
-        };
-        assert_eq!((name.as_str(), key.as_str()), (kind, "columns"));
-        for shipped in crate::memory::kinds::WORK_STATUSES {
-            assert!(
-                wanted.contains(shipped),
-                "the refusal names '{shipped}': {wanted}"
-            );
-        }
+    let (holder, kind) = (&board, "project");
+    let refused = store
+        .capture(columns_on(holder, "someday, next, now, done"))
+        .await
+        .expect_err("a list without 'waiting' is not a superset of the shipped five");
+    let MemoryError::BreaksType {
+        name, key, wanted, ..
+    } = &refused
+    else {
+        panic!("expected BreaksType, got {refused:?}");
+    };
+    assert_eq!((name.as_str(), key.as_str()), (kind, "columns"));
+    for shipped in crate::memory::kinds::WORK_STATUSES {
         assert!(
-            !store
-                .fields(holder)
-                .await
-                .expect("the store answers")
-                .contains_key("columns"),
-            "the refused list left nothing behind",
+            wanted.contains(shipped),
+            "the refusal names '{shipped}': {wanted}"
         );
     }
+    assert!(
+        !store
+            .fields(holder)
+            .await
+            .expect("the store answers")
+            .contains_key("columns"),
+        "the refused list left nothing behind",
+    );
 
     // ①b The instance's list adds words beside the shipped five: a list of
     // only its own words lands and reads back as written.

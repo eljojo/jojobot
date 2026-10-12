@@ -2560,23 +2560,6 @@ pub fn survivor_of(
     at
 }
 
-/// **The id a fold stores its manager under**, with the mention mark taken off.
-/// A store keeps the permanent id of the entity a field names, bare under a key
-/// declared a reference and behind [`mention::MARK`] under any other, and the
-/// lookup that turns it into a handle is asked about the id alone. `None` when
-/// the fold names no manager.
-pub fn stored_manager(fold: &BTreeMap<String, String>) -> Option<EntityId> {
-    fold.get(REPORTS_TO).map(|stored| {
-        let stored = stored.trim();
-        EntityId(
-            stored
-                .strip_prefix(mention::MARK)
-                .unwrap_or(stored)
-                .to_string(),
-        )
-    })
-}
-
 /// **The keys a fold is served with the handle they name**: the manager a bot
 /// reports to, and who the operator is. Each holds the permanent id of an entity,
 /// and a licence is judged on handles, so two folds are only comparable once both
@@ -2584,21 +2567,27 @@ pub fn stored_manager(fold: &BTreeMap<String, String>) -> Option<EntityId> {
 /// because the stored fold names an id and the patch names the handle.
 pub const SERVED_KEYS: [&str; 2] = [REPORTS_TO, OPERATOR];
 
+/// **The id a stored field value names**, with the mention mark taken off. A
+/// store keeps the permanent id of the entity a field names, bare under a key
+/// declared a reference and behind [`mention::MARK`] under any other, and the
+/// lookup that turns it into a handle is asked about the id alone.
+fn stored_id(stored: &str) -> EntityId {
+    let stored = stored.trim();
+    EntityId(
+        stored
+            .strip_prefix(mention::MARK)
+            .unwrap_or(stored)
+            .to_string(),
+    )
+}
+
 /// **The id a served key stores**, with the mention mark taken off, for each of
 /// [`SERVED_KEYS`] a fold holds.
 pub fn stored_served_ids(fold: &BTreeMap<String, String>) -> Vec<EntityId> {
     SERVED_KEYS
         .iter()
         .filter_map(|key| fold.get(*key))
-        .map(|stored| {
-            let stored = stored.trim();
-            EntityId(
-                stored
-                    .strip_prefix(mention::MARK)
-                    .unwrap_or(stored)
-                    .to_string(),
-            )
-        })
+        .map(|stored| stored_id(stored))
         .collect()
 }
 
@@ -2617,14 +2606,7 @@ pub fn with_manager_served(
     let mut served = fold.clone();
     for key in SERVED_KEYS {
         if let Some(stored) = fold.get(key) {
-            let stored = stored.trim();
-            let id = EntityId(
-                stored
-                    .strip_prefix(mention::MARK)
-                    .unwrap_or(stored)
-                    .to_string(),
-            );
-            served.insert(key.to_string(), handle_of(&id).to_string());
+            served.insert(key.to_string(), handle_of(&stored_id(stored)).to_string());
         }
     }
     served

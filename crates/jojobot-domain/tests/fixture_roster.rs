@@ -86,7 +86,6 @@ const ROSTER: &[&str] = &[
     "document:skinner",
     "bot:bart",
     "bot:lisa",
-    "bot:lisa",
     "bot:marge",
     "bot:moe",
     "bot:nelson",
