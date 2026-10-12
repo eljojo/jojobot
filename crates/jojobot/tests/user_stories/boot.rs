@@ -320,7 +320,7 @@ fn slug(i: usize) -> String {
 /// what takes room from the essay's remainder.
 /// How many bots the heavy instance has: enough that the anonymous boot, which
 /// names every one, has to leave part of the essay out.
-const HEAVY_BOTS: usize = 80;
+const HEAVY_BOTS: usize = 150;
 
 async fn make_the_instance_heavy(story: &Story) -> super::dsl::Session {
     let s = story.session().await;
@@ -484,7 +484,7 @@ async fn the_anonymous_boot_names_every_section_it_leaves_out_on_a_fresh_and_a_h
 #[tokio::test]
 async fn a_named_boot_of_a_heavy_identity_fits_core_and_floor_with_a_margin() {
     const MARGIN: usize = 450;
-    const CHARTER_CHARS: usize = 5_000;
+    const CHARTER_CHARS: usize = 6_000;
     const STARRED_RULES: usize = 3;
     let story = Story::begin("bot:otto").await;
     let s = make_the_instance_heavy(&story).await;
@@ -531,5 +531,156 @@ async fn a_named_boot_of_a_heavy_identity_fits_core_and_floor_with_a_margin() {
          {MARGIN}",
         budget.saturating_sub(whole),
     );
+    story.finish().await;
+}
+
+/// How many bots a boot lists by name before it counts the rest.
+const BOTS_LISTED: usize = 20;
+
+/// **The roster of a large instance, built the way the heavy pins build it**,
+/// with the caller's own bot sorting after every other handle: a cap that kept
+/// the first handles in order would drop the caller, and this is the case that
+/// shows it. Returns every bot handle on the instance, in handle order.
+async fn a_roster_of(story: &Story, count: usize, caller: &str) -> Vec<String> {
+    let s = story.session().await;
+    let mut roster: Vec<String> = (0..count).map(|i| format!("bot:{}", slug(i))).collect();
+    for (i, handle) in roster.iter().enumerate() {
+        s.add(handle, &slug(i + 10_000)).await;
+    }
+    roster.push("bot:assistant".to_string());
+    roster.push(caller.to_string());
+    roster.sort();
+    roster.dedup();
+    roster
+}
+
+/// **A boot lists at most twenty bots and counts the rest.** The caller's own
+/// bot is always listed; the others come in handle order. What is left out is
+/// counted, and the answer names the two calls that list every bot. Paired with
+/// a small roster below, which lists every bot and carries no count of what it
+/// left out.
+#[tokio::test]
+async fn a_boot_of_a_large_roster_lists_twenty_bots_with_the_caller_and_counts_the_rest() {
+    let story = Story::begin("bot:upsilon").await;
+    let roster = a_roster_of(&story, 150, "bot:upsilon").await;
+    let (booted, _) = story.call("start_here", json!({"bot": "upsilon"})).await;
+    let booted = booted.json();
+    let entities = &booted["snapshot"]["entities"];
+    assert_eq!(
+        entities["by_kind"]["bot"],
+        roster.len(),
+        "the roster this case built is not the instance's: {entities}"
+    );
+
+    let listed: Vec<&str> = entities["bots"]
+        .as_array()
+        .expect("a list of bots")
+        .iter()
+        .map(|bot| bot["handle"].as_str().expect("a handle"))
+        .collect();
+    let mut expected: Vec<&str> = roster
+        .iter()
+        .map(String::as_str)
+        .filter(|handle| *handle != "bot:upsilon")
+        .take(BOTS_LISTED - 1)
+        .collect();
+    expected.push("bot:upsilon");
+    assert_eq!(listed, expected, "{entities}");
+    let own: Vec<&serde_json::Value> = entities["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|bot| bot["yours"] == true)
+        .collect();
+    assert_eq!(own.len(), 1, "{entities}");
+    assert_eq!(own[0]["handle"], "bot:upsilon");
+
+    let left_out = &entities["bots_left_out"];
+    assert_eq!(left_out["count"], roster.len() - BOTS_LISTED, "{entities}");
+    let how = left_out["how_to_list"].as_str().unwrap_or_default();
+    assert!(how.contains("list_entities"), "{left_out}");
+    assert!(how.contains("colleagues"), "{left_out}");
+    story.finish().await;
+}
+
+/// The other half of the pair: a roster under the cap lists every bot, and says
+/// nothing about leaving any out, so the note means something when it appears.
+#[tokio::test]
+async fn a_boot_of_a_small_roster_lists_every_bot_and_counts_none_left_out() {
+    let story = Story::begin("bot:upsilon").await;
+    let roster = a_roster_of(&story, 5, "bot:upsilon").await;
+    assert!(roster.len() < BOTS_LISTED);
+    for booted in [
+        story.call("start_here", json!({"bot": "upsilon"})).await.0,
+        story.call("start_here", json!({})).await.0,
+    ] {
+        let entities = &booted.json()["snapshot"]["entities"];
+        let listed: Vec<&str> = entities["bots"]
+            .as_array()
+            .expect("a list of bots")
+            .iter()
+            .map(|bot| bot["handle"].as_str().expect("a handle"))
+            .collect();
+        assert_eq!(listed, roster, "{entities}");
+        assert!(entities.get("bots_left_out").is_none(), "{entities}");
+    }
+    story.finish().await;
+}
+
+/// **The refusal for a bot that does not exist lists the roster the same way**:
+/// twenty handles in order, the count of the rest and the calls that list them.
+/// The caller named no bot that exists, so no handle is kept for it.
+#[tokio::test]
+async fn the_refusal_for_an_unknown_bot_lists_twenty_bots_and_counts_the_rest() {
+    let story = Story::begin("bot:upsilon").await;
+    let roster = a_roster_of(&story, 150, "bot:upsilon").await;
+    let refusal = story
+        .refused_at_the_door("start_here", json!({"bot": "nobody-by-this-name"}))
+        .await
+        .json();
+    let listed: Vec<&str> = refusal["bots"]
+        .as_array()
+        .expect("a list of bots")
+        .iter()
+        .map(|bot| bot.as_str().expect("a handle"))
+        .collect();
+    let expected: Vec<&str> = roster
+        .iter()
+        .map(String::as_str)
+        .take(BOTS_LISTED)
+        .collect();
+    assert_eq!(listed, expected, "{refusal}");
+    let left_out = &refusal["bots_left_out"];
+    assert_eq!(left_out["count"], roster.len() - BOTS_LISTED, "{refusal}");
+    let how = left_out["how_to_list"].as_str().unwrap_or_default();
+    assert!(how.contains("list_entities"), "{left_out}");
+    assert!(how.contains("colleagues"), "{left_out}");
+    // The prose names the same twenty and no more: a handle past the cap is in
+    // neither list.
+    let past_the_cap = &roster[BOTS_LISTED];
+    assert!(
+        !refusal["how_to_proceed"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(past_the_cap.as_str()),
+        "{refusal}"
+    );
+
+    // Paired: a small roster is named whole and carries no count.
+    let small = Story::begin("bot:upsilon").await;
+    let few = a_roster_of(&small, 5, "bot:upsilon").await;
+    let refusal = small
+        .refused_at_the_door("start_here", json!({"bot": "nobody-by-this-name"}))
+        .await
+        .json();
+    let listed: Vec<&str> = refusal["bots"]
+        .as_array()
+        .expect("a list of bots")
+        .iter()
+        .map(|bot| bot.as_str().expect("a handle"))
+        .collect();
+    assert_eq!(listed, few, "{refusal}");
+    assert!(refusal.get("bots_left_out").is_none(), "{refusal}");
+    small.finish().await;
     story.finish().await;
 }

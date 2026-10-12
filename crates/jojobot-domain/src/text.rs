@@ -449,6 +449,13 @@ pub const CARRIED_RULES: usize = 5;
 /// this many lines, never sixty lines.
 pub const UNSEATED_LISTED: usize = 20;
 
+/// **How many bots a boot names, one handle each** — a hard cap in things, the
+/// same kind as [`UNSEATED_LISTED`] (rule 306). The roster is the one part of a
+/// named boot's floor that grows with the number of bots, so it is bounded by a
+/// count and not by a ranking: past it the rest are counted and the calls that
+/// list them all are named. The caller's own bot always has a place in it.
+pub const BOTS_LISTED: usize = 20;
+
 /// **How many purpose groups a boot counts the left-out rules under** — a hard
 /// cap in things, beside [`UNSEATED_LISTED`] and for the same reason. A rule's
 /// `purpose` is whatever its writer typed, so grouping by it uncapped lets a

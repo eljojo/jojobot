@@ -4242,7 +4242,7 @@ attributed, never journalled.
 
 ```text
 New here? Call this first — it is the ONE door, whether or not you have an identity.
-With no bot it is a read-only orientation: what jojobot is, a live snapshot (entities by kind, EVERY BOT NAMED so you can see which identities you could boot as) and the skills index (a name and what each is FOR, never the procedures: call again with skill: its name to get one).
+With no bot it is a read-only orientation: what jojobot is, a live snapshot (entities by kind, UP TO TWENTY BOTS NAMED so you can see which identities you could boot as, the rest counted) and the skills index (a name and what each is FOR, never the procedures: call again with skill: its name to get one).
 NAME A BOT and the answer also carries that identity: its charter, its rules as dated claims each with its own provenance (testimony and observation are settled, inference is a hypothesis), and the counts of the mailbox it owns.
 THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing the bots that exist.
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.

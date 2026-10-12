@@ -824,6 +824,20 @@ impl Jojobot {
             }),
         };
         let mut entities = entities;
+        // **The roster is capped before mail is hung on it**, so the same
+        // bounded list serves a boot whose mailbox world is unreachable.
+        if let Some(object) = entities.as_object_mut()
+            && let Some(serde_json::Value::Array(bots)) = object.get("bots")
+        {
+            let handles: Vec<&str> = bots.iter().filter_map(|b| b.as_str()).collect();
+            let (kept, left_out) =
+                super::identity::capped_roster(handles, bot.map(|booted| booted.as_str()));
+            let kept: Vec<serde_json::Value> = kept.into_iter().map(Into::into).collect();
+            object.insert("bots".into(), kept.into());
+            if let Some(left_out) = super::identity::bots_left_out(left_out) {
+                object.insert("bots_left_out".into(), left_out);
+            }
+        }
         if let (Ok(boxes), Some(object)) = (&listed, entities.as_object_mut()) {
             let mine = self.ownership_of(boxes, bot);
             let by_owner = |handle: &str| {

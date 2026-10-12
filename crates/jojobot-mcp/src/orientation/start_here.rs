@@ -181,8 +181,8 @@ impl Jojobot {
     #[tool(
         description = "New here? Call this first — it is the ONE door, whether or not you \
                        have an identity. With no bot it is a read-only orientation: what \
-                       jojobot is, a live snapshot (entities by kind, EVERY BOT NAMED so you \
-                       can see which identities you could boot as) and the skills index (a \
+                       jojobot is, a live snapshot (entities by kind, UP TO TWENTY BOTS NAMED \
+                       so you can see which identities you could boot as, the rest counted) and the skills index (a \
                        name and what each is FOR, never the procedures: call again with \
                        skill: its name to get one). NAME A BOT and the answer also carries \
                        that identity: its charter, its rules as dated claims each with its \
@@ -1137,7 +1137,8 @@ mod tests {
                 .iter()
                 .map(|b| b.as_str().expect("a handle"))
                 .collect();
-            assert_eq!(roster, ["bot:gamma", "bot:delta"], "who exists: {body}");
+            // Handle order, the order the boot's own roster is listed in.
+            assert_eq!(roster, ["bot:delta", "bot:gamma"], "who exists: {body}");
             let how = body["how_to_proceed"].as_str().expect("advice");
             assert!(
                 how.contains("bot:gamma"),

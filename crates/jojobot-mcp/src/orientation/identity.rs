@@ -32,11 +32,15 @@ pub(crate) fn booting_unknown(
     // the prefix independently of it. Every other place on this surface that
     // asks "is this a bot" already reads the column; this was the one that did
     // not.
-    let roster: Vec<&str> = index
+    let all: Vec<&str> = index
         .iter()
         .filter(|e| e.kind == EntityKind::BOT)
         .map(|e| e.id.as_str())
         .collect();
+    // **The same cap the boot's snapshot applies**, so the roster has one shape
+    // wherever it appears. The caller named no bot that exists, so no handle is
+    // kept for it.
+    let (roster, left_out) = capped_roster(all, None);
     let how_to_proceed: WayForward = if roster.is_empty() {
         format!(
             "Nothing was written and no session was started. '{attempted}' is not a bot jojobot \
@@ -47,9 +51,13 @@ pub(crate) fn booting_unknown(
     } else {
         format!(
             "Nothing was written and no session was started. '{attempted}' is not a bot jojobot \
-             knows. The identities that exist are: {}. Boot as one of these and create \
+             knows. The identities that exist are: {}{}. Boot as one of these and create \
              '{attempted}' from inside that session — this door mints nothing.",
             roster.join(", "),
+            match left_out {
+                0 => String::new(),
+                more => format!(" — and {more} more, which bots_left_out says how to list"),
+            },
         )
     }
     .into();
@@ -64,8 +72,52 @@ pub(crate) fn booting_unknown(
         "bots": roster,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
     });
+    if let Some(left_out) = bots_left_out(left_out) {
+        body["bots_left_out"] = left_out;
+    }
     how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **The bots a roster names, and how many it leaves out.** At most
+/// [`text::BOTS_LISTED`], in handle order. When `own` is a bot on the roster it
+/// always has a place, even where its handle sorts past the cap: the rest then
+/// give up their last place for it. A roster at or under the cap comes back
+/// whole.
+pub(crate) fn capped_roster<'a>(
+    mut handles: Vec<&'a str>,
+    own: Option<&str>,
+) -> (Vec<&'a str>, usize) {
+    handles.sort_unstable();
+    let total = handles.len();
+    if total <= text::BOTS_LISTED {
+        return (handles, 0);
+    }
+    let kept_own = own.and_then(|own| handles.iter().position(|h| *h == own));
+    let listed: Vec<&str> = match kept_own {
+        Some(at) if at >= text::BOTS_LISTED => {
+            let own = handles[at];
+            let mut first: Vec<&str> = handles[..text::BOTS_LISTED - 1].to_vec();
+            first.push(own);
+            first
+        }
+        _ => handles[..text::BOTS_LISTED].to_vec(),
+    };
+    let left_out = total - listed.len();
+    (listed, left_out)
+}
+
+/// **What a capped roster owes its reader**: the count of bots it left out and
+/// the two calls that list every one. `None` when nothing was left out, so a
+/// roster that is whole carries no note.
+pub(crate) fn bots_left_out(count: usize) -> Option<serde_json::Value> {
+    (count > 0).then(|| {
+        serde_json::json!({
+            "count": count,
+            "how_to_list": "list_entities with kind bot lists every bot, or recall with \
+                            view colleagues lists them with what each is for",
+        })
+    })
 }
 
 /// **The rules a boot carries: the marked ones, newest first, up to the
