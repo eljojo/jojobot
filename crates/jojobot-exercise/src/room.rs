@@ -51,6 +51,10 @@ pub struct Room {
     /// already have scrolled past, or arrived interleaved with every other
     /// room running beside it.
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// **The thread filling [`Room::log`]**, kept so that a server that has
+    /// exited can be waited for to the end of its output before the log is
+    /// quoted. Taken, never cloned: it is joined once.
+    reader: Option<std::thread::JoinHandle<()>>,
     dir: PathBuf,
     endpoint: String,
     /// **The two ports this room's server was given, kept claimed for as long
@@ -419,19 +423,20 @@ impl Room {
 
         let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        if let Some(stdout) = server.stdout.take() {
+        let reader = server.stdout.take().map(|stdout| {
             watch_the_log(
                 stdout,
                 endpoint.clone(),
                 std::sync::Arc::clone(&serving),
                 std::sync::Arc::clone(&log),
-            );
-        }
+            )
+        });
 
         let mut room = Room {
             server,
             serving,
             log,
+            reader,
             dir: dir.into_path(),
             endpoint,
             _claims: claims,
@@ -484,6 +489,12 @@ impl Room {
             // going to answer, and waiting out the timeout to say so buries the
             // reason in two minutes of silence.
             if let Some(status) = self.server.try_wait().context("checking the server")? {
+                // The log reader is a thread of its own and may not have read
+                // the pipe yet. Its end of file is the end of what the server
+                // printed, so the words are quoted only after it.
+                if let Some(reader) = self.reader.take() {
+                    let _ = tokio::task::spawn_blocking(move || reader.join()).await;
+                }
                 anyhow::bail!(
                     "the server for {address} exited before it served ({status}){}",
                     self.log_tail(),
@@ -1058,7 +1069,7 @@ fn watch_the_log(
     endpoint: String,
     serving: std::sync::Arc<std::sync::atomic::AtomicBool>,
     lines: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-) {
+) -> std::thread::JoinHandle<()> {
     let serving_line = serving_line(&endpoint);
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -1069,7 +1080,7 @@ fn watch_the_log(
             eprintln!("{line}");
             lines.lock().expect("room log mutex poisoned").push(line);
         }
-    });
+    })
 }
 
 /// **Before the first room and only then**: what an older run abandoned is
@@ -1533,6 +1544,49 @@ mod tests {
         );
     }
 
+    /// 🚨 **A server that exited and printed is reported with its words,
+    /// whenever the log reader gets to them.**
+    ///
+    /// The server's exit and the reader's last line are two events on two
+    /// threads, and under load the exit is seen first. **The stand-in is a
+    /// reader that is deliberately slow**: the child has already exited, and its
+    /// words reach the log only after the room has looked. A room that quotes the
+    /// log at the moment it sees the exit says the server printed nothing, which
+    /// is false.
+    #[tokio::test]
+    async fn a_server_that_exited_is_quoted_after_its_log_reader_finishes() {
+        let mut exited = std::process::Command::new("true");
+        let server = crate::spawn_gate::guarded(|| exited.spawn()).expect("a child to exit");
+        let mut server = server;
+        server.wait().expect("the child exits");
+
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let slow = std::sync::Arc::clone(&log);
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            slow.lock().expect("log").push("the slow words".to_string());
+        });
+        let mut room = super::Room {
+            server,
+            serving: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            log,
+            reader: Some(reader),
+            dir: super::scratch().expect("a room directory").into_path(),
+            endpoint: "http://127.0.0.1:9/mcp".to_string(),
+            _claims: Vec::new(),
+        };
+
+        let message = match room.wait_until_answering().await {
+            Ok(()) => panic!("a server that exited must not read as a room"),
+            Err(e) => format!("{e:#}"),
+        };
+
+        assert!(
+            message.contains("the slow words"),
+            "the words the server printed are missing from the error: {message}",
+        );
+    }
+
     /// 🚨 **A room is ready when ITS OWN server answers, never when the port
     /// answers.**
     ///
@@ -1573,6 +1627,7 @@ mod tests {
             // Never set, because this room's server never says it is serving.
             serving: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            reader: None,
             dir: super::scratch().expect("a room directory").into_path(),
             endpoint: format!("http://127.0.0.1:{port}/mcp"),
             _claims: Vec::new(),
