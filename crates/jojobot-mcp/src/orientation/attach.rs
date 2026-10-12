@@ -3732,6 +3732,62 @@ mod tests {
         );
     }
 
+    /// **A window that cannot be opened takes the key it just issued away.** The
+    /// key is written before the window opens, so a store that then refuses the
+    /// window must not leave a live key on a run whose code was refused: the
+    /// refusal says nothing was reopened. The code is still good, and the same
+    /// call goes through once the store answers.
+    #[tokio::test]
+    async fn a_wrap_code_whose_window_cannot_be_opened_leaves_no_live_key_and_goes_through_on_retry()
+     {
+        let store = Arc::new(crate::session::testing::Refusing::refusing_nothing());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (wrapped, code) = wrapped_with_a_code(&store.inner, 5, "bcd345").await;
+        store
+            .open_fails
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let refused = boot_answering(&jojobot, "gamma", &code).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null() && refused.get("sid").is_none(),
+            "a refused code handed out a key: {refused}"
+        );
+        assert_eq!(
+            jojobot
+                .registry
+                .lookup_name("bcd345")
+                .expect("the registry holds the run")
+                .key,
+            sid::KeyState::Void,
+            "the key issued for the window that did not open is still live"
+        );
+        let stored = store
+            .inner
+            .read_session(&wrapped.id)
+            .await
+            .expect("read ok");
+        assert_eq!(
+            stored.key_hash.as_deref(),
+            Some(jojobot_domain::session::KEY_VOID)
+        );
+        assert!(
+            !stored.wrap_window.as_ref().is_some_and(|w| w.is_open()),
+            "the window opened although the store refused"
+        );
+
+        store
+            .open_fails
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let taken = boot_answering(&jojobot, "gamma", &code).await;
+        let key = taken["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code goes through on retry: {taken}"))
+            .to_string();
+        assert_eq!(run_name(&jojobot, &key), "bcd345");
+    }
+
     /// **A key is issued only for a run the registry holds.** A name nothing
     /// holds has no entry to set a key on and no card to write it to, so a key
     /// for it would open nothing.

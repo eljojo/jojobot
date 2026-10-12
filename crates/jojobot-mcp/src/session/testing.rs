@@ -523,6 +523,8 @@ pub(crate) struct Refusing {
     pub(crate) reopen_fails: std::sync::atomic::AtomicBool,
     /// Whether the write that takes a run's key away is refused too.
     pub(crate) void_fails: std::sync::atomic::AtomicBool,
+    /// Whether opening a wrap window is refused.
+    pub(crate) open_fails: std::sync::atomic::AtomicBool,
 }
 
 impl Refusing {
@@ -533,6 +535,7 @@ impl Refusing {
             key_fails: true.into(),
             reopen_fails: false.into(),
             void_fails: false.into(),
+            open_fails: false.into(),
         }
     }
 
@@ -543,6 +546,7 @@ impl Refusing {
             key_fails: false.into(),
             reopen_fails: true.into(),
             void_fails: false.into(),
+            open_fails: false.into(),
         }
     }
 
@@ -553,6 +557,7 @@ impl Refusing {
             key_fails: false.into(),
             reopen_fails: false.into(),
             void_fails: false.into(),
+            open_fails: false.into(),
         }
     }
 }
@@ -609,6 +614,13 @@ impl Sessions for Refusing {
         id: &SessionId,
         window: Option<WrapWindow>,
     ) -> Result<Session, SessionError> {
+        if matches!(window, Some(WrapWindow::Open(_)))
+            && self.open_fails.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(SessionError::Store(
+                "the window cell on the page could not be written".into(),
+            ));
+        }
         self.inner.set_wrap_window(id, window).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
