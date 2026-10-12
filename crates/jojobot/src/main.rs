@@ -2,6 +2,7 @@
 //! it. All wiring lives in the library so the integration tests exercise the
 //! same router this binary does.
 
+use std::future::IntoFuture;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -11,6 +12,11 @@ use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use jojobot::auth::Validator;
 use jojobot::config::{Config, origin_of};
 use jojobot::{AppState, build_app};
+
+/// **How long what the cut left open is given to end**, after the drain window.
+/// The process ends either way; this only lets a connection that closes at once
+/// do so cleanly.
+const CUT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -181,21 +187,49 @@ async fn main() -> anyhow::Result<()> {
     // answering says only that somebody is there.
     tracing::info!("serving http://{}/mcp", config.bind);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let signal = tokio::select! {
-                _ = interrupt.recv() => "SIGINT",
-                _ = terminate.recv() => "SIGTERM",
-            };
-            tracing::info!(
-                signal,
-                "shutting down: the listener closes, the sessions end, and the connections \
-                 still open are let finish"
+    // **A stop drains before it cuts.** The signal closes the listener, so no new
+    // call is taken, and the calls already running get up to
+    // [`jojobot::SHUTDOWN_DRAIN`] to finish. Only then is the token cancelled,
+    // which ends every session still open: a stream a client holds open never
+    // finishes by itself, and without the window it would hold the stop up until
+    // the service manager killed the process. Cancelling at the signal instead
+    // cut the call in flight and returned it empty.
+    let (stopping, begun) = tokio::sync::oneshot::channel::<()>();
+    let serving = axum::serve(listener, app).with_graceful_shutdown(async move {
+        let signal = tokio::select! {
+            _ = interrupt.recv() => "SIGINT",
+            _ = terminate.recv() => "SIGTERM",
+        };
+        tracing::info!(
+            signal,
+            drain_seconds = jojobot::SHUTDOWN_DRAIN.as_secs(),
+            "shutting down: no new calls are taken, and the calls in flight get the drain \
+             window to finish"
+        );
+        let _ = stopping.send(());
+    });
+    let serving = serving.into_future();
+    tokio::pin!(serving);
+    let window_ends = async {
+        // A sender dropped without a signal means serving ended on its own.
+        if begun.await.is_err() {
+            std::future::pending::<()>().await;
+        }
+        tokio::time::sleep(jojobot::SHUTDOWN_DRAIN).await;
+    };
+    tokio::select! {
+        served = &mut serving => served.context("server error")?,
+        () = window_ends => {
+            tracing::warn!(
+                "the drain window ended with calls still open: cutting them"
             );
             ct.cancel();
-        })
-        .await
-        .context("server error")?;
+            // The cut ends the sessions; whatever else is open is given a short
+            // grace and then left to the process ending.
+            let _ = tokio::time::timeout(CUT_GRACE, &mut serving).await;
+        }
+    }
+    ct.cancel();
     tracing::info!("shut down: no call in flight, the store stops with this process");
 
     Ok(())

@@ -24,6 +24,15 @@ use jojobot_mcp::Jojobot;
 
 use crate::auth::Validator;
 
+/// **How long the calls in flight get to finish once the server is told to
+/// stop.** The server takes no new call from the signal on. A call is a read or a
+/// write against the store and finishes in well under a second, so ten seconds
+/// is room for the slowest one with plenty to spare. A stream a client holds open
+/// never finishes by itself, and this is the longest it can hold the stop up.
+/// It is kept far under the service manager's default stop timeout of ninety
+/// seconds, so the manager never has to kill the process.
+pub const SHUTDOWN_DRAIN: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Shared state for the metadata endpoint and the auth middleware.
 #[derive(Clone)]
 pub struct AppState {
