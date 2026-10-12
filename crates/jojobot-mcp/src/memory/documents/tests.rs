@@ -4,6 +4,7 @@
 use super::*;
 use crate::harness::*;
 use crate::memory::testing::*;
+use jojobot_domain::memory::search::Hit;
 use jojobot_domain::text::ANSWER_CEILING;
 use std::sync::Arc;
 
@@ -1093,4 +1094,144 @@ async fn another_session_may_move_a_testimony_section_but_not_rewrite_it() {
         "# Two\n\nsecond\n# One\n\nfirst\n\n",
         "nothing of the refused calls was written"
     );
+}
+
+/// A fact hit on a record of a thing, as the index ranks it.
+async fn hit_on(jojobot: &Jojobot, thing: &str, first_line: &str) -> Hit {
+    let id = EntityId(thing.into());
+    let fact = jojobot
+        .memory
+        .recall(&id)
+        .await
+        .expect("the thing is there")
+        .into_iter()
+        .find(|fact| fact.content == first_line)
+        .unwrap_or_else(|| panic!("no record {first_line} on {thing}"));
+    let entity = jojobot
+        .memory
+        .list_entities(None)
+        .await
+        .expect("entities")
+        .into_iter()
+        .find(|entity| entity.id == id)
+        .expect("the entity");
+    let home = jojobot_domain::memory::search::EntityRef::resolved(&entity);
+    Hit::Fact {
+        fact: Box::new(fact),
+        subject: home.clone(),
+        home,
+        source: None,
+        superseded_by: None,
+    }
+}
+
+fn search_for_documents() -> SearchArgs {
+    SearchArgs {
+        query: Some("shop".into()),
+        sid: Some(TEST_SID.into()),
+        ..search_args()
+    }
+}
+
+/// **Hits on sections of one document are grouped under the best of them**, and
+/// each section hit says which document it is part of. An ordinary claim and the
+/// rest of the ranking keep their places.
+#[tokio::test]
+async fn hits_on_sections_of_one_document_are_grouped_and_say_which_document() {
+    let spy = Arc::new(SpySearch::default());
+    let jojobot = handler_with(spy.clone());
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# Alpha one\n\nshop\n\n# Alpha two\n\nshop\n",
+    )
+    .await;
+    put_ok(
+        &jojobot,
+        "document:beta",
+        "# Beta one\n\nshop\n\n# Beta two\n\nshop\n",
+    )
+    .await;
+    capture_ok(&jojobot, capture_args("person:homer", "runs the shop")).await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("one_liner".to_string(), "Notes for the shop".to_string())].into()),
+            ..capture_args("document:alpha", "set the one liner")
+        },
+    )
+    .await;
+    spy.answer_with(vec![
+        hit_on(&jojobot, "document:alpha", "# Alpha one").await,
+        hit_on(&jojobot, "person:homer", "runs the shop").await,
+        hit_on(&jojobot, "document:beta", "# Beta one").await,
+        hit_on(&jojobot, "document:alpha", "set the one liner").await,
+        hit_on(&jojobot, "document:alpha", "# Alpha two").await,
+        hit_on(&jojobot, "document:beta", "# Beta two").await,
+    ]);
+    let body = json_of(
+        &jojobot
+            .search(Parameters(search_for_documents()))
+            .await
+            .expect("search answers"),
+    );
+    let results = body["results"].as_array().expect("results");
+    let order: Vec<&str> = results
+        .iter()
+        .map(|hit| hit["content"].as_str().expect("a fact hit"))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "# Alpha one",
+            "# Alpha two",
+            "runs the shop",
+            "# Beta one",
+            "# Beta two",
+            "set the one liner"
+        ]
+    );
+    assert_eq!(results[0]["document"]["handle"], "document:alpha");
+    assert_eq!(results[0]["document"]["name"], "alpha");
+    assert_eq!(results[0]["document"]["one_liner"], "Notes for the shop");
+    assert_eq!(results[1]["document"]["handle"], "document:alpha");
+    assert_eq!(results[3]["document"]["handle"], "document:beta");
+    assert!(results[3]["document"].get("one_liner").is_none());
+    assert!(
+        results[2].get("document").is_none(),
+        "an ordinary claim is no part of a document: {}",
+        results[2]
+    );
+    assert!(
+        results[5].get("document").is_none(),
+        "an ordinary claim about a document is no part of its text: {}",
+        results[5]
+    );
+}
+
+/// **An `order` field on a claim of any other kind makes no section.** A person
+/// who keeps an order of their own is not a document, and the hit is served as
+/// the ordinary claim it is.
+#[tokio::test]
+async fn an_order_field_on_a_claim_that_is_no_document_makes_no_section() {
+    let spy = Arc::new(SpySearch::default());
+    let jojobot = handler_with(spy.clone());
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some([("order".to_string(), "1".to_string())].into()),
+            ..capture_args("person:homer", "keeps an order of donuts")
+        },
+    )
+    .await;
+    spy.answer_with(vec![
+        hit_on(&jojobot, "person:homer", "keeps an order of donuts").await,
+    ]);
+    let body = json_of(
+        &jojobot
+            .search(Parameters(search_for_documents()))
+            .await
+            .expect("search answers"),
+    );
+    assert!(body["results"][0].get("document").is_none(), "{body}");
 }

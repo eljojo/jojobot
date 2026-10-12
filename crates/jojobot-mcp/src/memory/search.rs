@@ -754,6 +754,12 @@ impl Jojobot {
         let page = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
         let ranked_len = ranked.len();
         let hits: Vec<Hit> = ranked.into_iter().skip(offset).take(page).collect();
+        // **Hits on sections of one document sit together**, under the best-ranked
+        // of them, and each says which document it is part of. Within the page
+        // only: grouping the whole ranking would move a hit across a page edge
+        // and the pages would no longer tile.
+        let hits = group_by_document(hits);
+        let documents = self.documents_of(&hits).await;
         // **The day this answer is read against**, in the zone of the run that
         // asked: whether a claim has passed the day it stays good is a question
         // about a day, and two runs in two zones answer it differently for one
@@ -953,7 +959,12 @@ impl Jojobot {
         let rendered: Vec<(serde_json::Value, usize)> = hits
             .iter()
             .map(|hit| {
-                let json = hit_json(hit, as_of);
+                let mut json = hit_json(hit, as_of);
+                if let Some(document) =
+                    section_document(hit).and_then(|home| documents.get(home.id.as_str()))
+                {
+                    json["document"] = document.clone();
+                }
                 let size = crate::answer::served_len(&json) + 1;
                 (json, size)
             })
@@ -985,6 +996,84 @@ impl Jojobot {
             self.registry.note_shown(caller.sid.as_str(), &body);
         }
         json_result(&body)
+    }
+}
+
+/// **The document a hit is a section of**, when it is one: a claim on a document
+/// that carries the order key of a section. An ordinary claim about a document is
+/// not part of its text.
+fn section_document(hit: &Hit) -> Option<&EntityRef> {
+    match hit {
+        Hit::Fact { fact, home, .. }
+            if home.kind == Some(EntityKind::DOCUMENT)
+                && fact
+                    .fields
+                    .contains_key(jojobot_domain::memory::document::ORDER) =>
+        {
+            Some(home)
+        }
+        _ => None,
+    }
+}
+
+/// **The hits with the sections of one document brought together**, each group
+/// where its best-ranked hit stood and its other sections behind that one in
+/// their own rank order. Every other hit keeps its place.
+fn group_by_document(hits: Vec<Hit>) -> Vec<Hit> {
+    let keys: Vec<Option<String>> = hits
+        .iter()
+        .map(|hit| section_document(hit).map(|home| home.id.as_str().to_string()))
+        .collect();
+    let mut slots: Vec<Option<Hit>> = hits.into_iter().map(Some).collect();
+    let mut grouped = Vec::with_capacity(slots.len());
+    for at in 0..slots.len() {
+        let Some(hit) = slots[at].take() else {
+            continue;
+        };
+        grouped.push(hit);
+        if let Some(key) = &keys[at] {
+            for later in at + 1..slots.len() {
+                if keys[later].as_ref() == Some(key)
+                    && let Some(hit) = slots[later].take()
+                {
+                    grouped.push(hit);
+                }
+            }
+        }
+    }
+    grouped
+}
+
+impl Jojobot {
+    /// **What a section hit says of its document**: the handle, the name and the
+    /// one-liner, once per document however many of its sections matched. A
+    /// document whose fields cannot be read is named without a one-liner, and the
+    /// hit is served.
+    async fn documents_of(
+        &self,
+        hits: &[Hit],
+    ) -> std::collections::BTreeMap<String, serde_json::Value> {
+        let mut found = std::collections::BTreeMap::new();
+        for home in hits.iter().filter_map(section_document) {
+            if found.contains_key(home.id.as_str()) {
+                continue;
+            }
+            let one_liner = self
+                .memory
+                .fields(&home.id)
+                .await
+                .ok()
+                .and_then(|fields| fields.get("one_liner").cloned());
+            let mut block = serde_json::json!({
+                "handle": home.id.as_str(),
+                "name": home.name,
+            });
+            if let Some(one_liner) = one_liner {
+                block["one_liner"] = one_liner.into();
+            }
+            found.insert(home.id.as_str().to_string(), block);
+        }
+        found
     }
 }
 

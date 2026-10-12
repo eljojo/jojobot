@@ -68,6 +68,12 @@ impl SpySearch {
         }
     }
 
+    /// The hits this port answers with from now on, for a case whose hits are
+    /// records the case itself has just written.
+    pub(crate) fn answer_with(&self, hits: Vec<Hit>) {
+        *self.hits.lock().unwrap() = hits;
+    }
+
     pub(crate) fn query(&self) -> SearchQuery {
         self.seen
             .lock()

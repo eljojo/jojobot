@@ -161,3 +161,39 @@ async fn a_part_is_moved_behind_another_with_one_call() {
         .await
         .says("after");
 }
+
+/// **A search for a word in a manual lands on the part that holds it, and says
+/// which manual that is.** Two parts of one manual match: they arrive together,
+/// each naming the document.
+#[tokio::test]
+async fn a_search_lands_on_a_part_and_names_the_manual() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let found = session
+        .call("search", json!({"query": "fryer"}))
+        .await
+        .json();
+    let results = found["results"].as_array().expect("results");
+    let parts: Vec<&serde_json::Value> = results
+        .iter()
+        .filter(|hit| hit["document"]["handle"] == "document:homer")
+        .collect();
+    assert!(!parts.is_empty(), "a part of the manual was found: {found}");
+    assert!(
+        parts
+            .iter()
+            .all(|hit| hit["document"]["name"] == "Fryer manual"),
+        "{found}"
+    );
+    assert!(
+        parts.iter().any(|hit| hit["content"] == "## Opening"),
+        "the part that mentions the fryer is the opening: {found}"
+    );
+}
