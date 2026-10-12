@@ -493,6 +493,7 @@ mod tests {
             sender: "gamma".into(),
             sent_at: at(0),
             in_reply_to: None,
+            supersedes: None,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
         };
