@@ -223,6 +223,7 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
         find: None,
         replace: None,
         field: None,
+        after: None,
         expected_revision: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
@@ -1277,14 +1278,17 @@ impl Memory for ConflictingMemory {
     }
 }
 
-/// **A store that stops taking claims partway through a run of writes**: the
+/// **A store that stops taking writes partway through a run of them**: the
 /// captures before `fails_from` land and every one from it on fails with a store
-/// error, while every read answers.
+/// error, and so do the edits from `edits_fail_from`, while every read answers.
 pub(crate) struct FailsOnCapture {
     pub(crate) inner: Arc<InMemoryMemory>,
     /// The capture, counting from 1, from which every capture fails.
     pub(crate) fails_from: usize,
     pub(crate) seen: std::sync::atomic::AtomicUsize,
+    /// The edit, counting from 1, from which every edit fails.
+    pub(crate) edits_fail_from: usize,
+    pub(crate) edits_seen: std::sync::atomic::AtomicUsize,
 }
 
 #[async_trait]
@@ -1390,6 +1394,13 @@ impl Memory for FailsOnCapture {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        let nth = self
+            .edits_seen
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if nth >= self.edits_fail_from {
+            return Err(MemoryError::Store("the store stopped taking edits".into()));
+        }
         self.inner.update_fact(address, patch, caller).await
     }
     async fn retract(

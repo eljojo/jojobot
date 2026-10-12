@@ -112,3 +112,52 @@ async fn a_second_put_must_say_where_it_goes() {
         "# Fryer manual\n\nRead this before the first shift.\n\n## Opening\n\nSwitch the fryer on at six.\n\n## Cleaning\n\nOnce a week.\n\n## Closing\n\nDrain the oil and wipe the lid.\n",
     );
 }
+
+/// **A part moves to where it belongs, and the rest of the manual does not
+/// move.** One call names the section it should follow; the page reads in the
+/// new order and the sections that stayed are the ones put.
+#[tokio::test]
+async fn a_part_is_moved_behind_another_with_one_call() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let facts = session.recall("document:homer").await.json();
+    let address_of = |n: usize| {
+        facts["objects"][0]["facts"][n]["address"]
+            .as_str()
+            .expect("a section has an address")
+            .to_string()
+    };
+    let (opening, closing) = (address_of(1), address_of(2));
+
+    session
+        .call(
+            "update_fact",
+            json!({"address": closing, "after": address_of(0)}),
+        )
+        .await;
+    let read = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        read["markdown"],
+        "# Fryer manual\n\nRead this before the first shift.\n\n## Closing\n\nDrain the oil and wipe the lid.\n## Opening\n\nSwitch the fryer on at six.\n\n",
+    );
+
+    // An ordinary claim has no place to move, and the refusal says what
+    // `after` is for.
+    let remark = session
+        .fact("document:homer", "reviewed by a colleague")
+        .await;
+    session
+        .refused("update_fact", json!({"address": remark, "after": opening}))
+        .await
+        .says("after");
+}

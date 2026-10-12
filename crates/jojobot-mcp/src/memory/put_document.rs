@@ -3,7 +3,7 @@
 //! One verb, one file: its arguments, the description a caller reads,
 //! and an entrypoint that chains the systems below it.
 
-use super::documents::live_sections;
+use super::documents::{live_sections, run_of};
 use super::*;
 use jojobot_domain::memory::document::{self, Section};
 use jojobot_domain::memory::order;
@@ -157,10 +157,7 @@ impl Jojobot {
                 };
                 // The new text goes after the section and after every chunk that
                 // carries it on, never between the two halves of one section.
-                let mut end = at;
-                while live.get(end + 1).is_some_and(|h| h.section.continues) {
-                    end += 1;
-                }
+                let end = *run_of(&live, at).last().expect("a run holds its section");
                 (
                     Some(live[end].order.clone()),
                     live.get(end + 1).map(|h| h.order.clone()),
@@ -191,6 +188,12 @@ impl Jojobot {
             new.details = (!section.body.is_empty()).then(|| section.body.clone());
             new.provenance = provenance;
             new.fields = document::record_fields(section, order);
+            // The link to the heading's record is that record's id, which is not
+            // known until it is written; the widest id stands in for it here.
+            if section.continues {
+                new.fields
+                    .insert(document::CONTINUES.to_string(), "f99999".to_string());
+            }
             new.fields.extend(read_fields.clone());
             new.session = Some(caller.sid.as_str().to_string());
             new
@@ -251,9 +254,23 @@ impl Jojobot {
         let mut landed: Vec<FactAddress> = Vec::new();
         let mut landed_bytes = 0;
         let mut fold_behind = None;
-        for (new, chunk) in facts.into_iter().zip(&chunks) {
+        // The record that holds the heading of the section being written: the link
+        // every chunk that carries it on points at.
+        let mut heading_record: Option<String> = None;
+        for (mut new, chunk) in facts.into_iter().zip(&chunks) {
+            if chunk.continues {
+                new.fields.insert(
+                    document::CONTINUES.to_string(),
+                    heading_record
+                        .clone()
+                        .expect("a chunk that carries a section on comes after its heading"),
+                );
+            }
             let refused = match self.memory.capture(new).await {
                 Ok(Guarded::Written(fact)) => {
+                    if !chunk.continues {
+                        heading_record = Some(fact.id.0.clone());
+                    }
                     landed.push(fact.address());
                     landed_bytes += document::join(std::slice::from_ref(chunk)).len();
                     continue;
@@ -263,6 +280,9 @@ impl Jojobot {
                     behind,
                     ..
                 }) => {
+                    if !chunk.continues {
+                        heading_record = Some(fact.id.0.clone());
+                    }
                     landed.push(fact.address());
                     landed_bytes += document::join(std::slice::from_ref(chunk)).len();
                     fold_behind = Some(behind);
@@ -338,29 +358,9 @@ fn stopped_midway(
         "rest_begins_at_byte": landed_bytes,
         "to_finish": to_finish,
     });
-    match refused {
-        Ok(refused) => {
-            let mut body = refused
-                .content
-                .first()
-                .and_then(|block| block.as_text())
-                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok())
-                .unwrap_or_else(|| serde_json::json!({}));
-            body.as_object_mut()
-                .expect("a refusal body is an object")
-                .extend(carried.as_object().cloned().unwrap_or_default());
-            json_result(&body)
-        }
-        Err(error) => {
-            let mut data = error.data.unwrap_or_else(|| serde_json::json!({}));
-            if let (Some(data), Some(carried)) = (data.as_object_mut(), carried.as_object()) {
-                data.extend(carried.clone());
-            }
-            Err(McpError::new(
-                error.code,
-                format!("the store stopped partway: {to_finish}"),
-                Some(data),
-            ))
-        }
-    }
+    super::documents::stopped_with(
+        refused,
+        carried,
+        format!("the store stopped partway: {to_finish}"),
+    )
 }

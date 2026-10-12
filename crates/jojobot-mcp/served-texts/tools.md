@@ -4729,6 +4729,13 @@ Each argument's own description holds its rules.
       "address": {
         "type": "string"
       },
+      "after": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "clear_derived_from": {
         "default": null,
         "type": [
@@ -4963,6 +4970,20 @@ The fact's global address, `kind:slug#local-id` — exactly as `recall`
 returned it. **A claim cannot change subject:** to move one filed on the
 wrong thing, capture it on the right one, re-sending its dates, `fields`, `sets` and
 edge, with `derived_from` naming this claim, then archive this one.
+```
+
+#### `update_fact` — argument `/inputSchema.after`
+
+```text
+**Move a section: the address of the section it should follow**, `kind:slug#local-id`
+of a live section of the same document. The section goes right behind it,
+with every chunk that carries it on, and no other section is written.
+Refused, with nothing written, when this record is not a live section of a
+document (an ordinary claim has no place to move), when it is a chunk that
+carries on the section before it (move that section), or when the target is
+not a live section of the same document. A section can be moved and edited
+in one call. A move of a long section that stops partway is finished by
+sending the same call again.
 ```
 
 #### `update_fact` — argument `/inputSchema.clear_derived_from`

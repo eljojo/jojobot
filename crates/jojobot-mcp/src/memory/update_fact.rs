@@ -263,6 +263,17 @@ pub struct UpdateFactArgs {
     /// was put in, and the bytes before and after.
     #[serde(default)]
     pub(crate) field: Option<String>,
+    /// **Move a section: the address of the section it should follow**, `kind:slug#local-id`
+    /// of a live section of the same document. The section goes right behind it,
+    /// with every chunk that carries it on, and no other section is written.
+    /// Refused, with nothing written, when this record is not a live section of a
+    /// document (an ordinary claim has no place to move), when it is a chunk that
+    /// carries on the section before it (move that section), or when the target is
+    /// not a live section of the same document. A section can be moved and edited
+    /// in one call. A move of a long section that stops partway is finished by
+    /// sending the same call again.
+    #[serde(default)]
+    pub(crate) after: Option<String>,
     /// **The revision you read**, when the edit is only right if nobody has
     /// touched the claim since: the `revision_count` `recall` served for it. A
     /// claim `recall` serves without one has been written once, so it is
@@ -330,6 +341,16 @@ impl Jojobot {
         // written since, so the words are never applied to a text the claim has
         // moved past.
         let mut args = args;
+        // **A move is planned before anything is written**, so a refusal leaves the
+        // document as it was. The section itself takes its new place in this edit;
+        // the chunks that carry it on follow once it has landed.
+        let move_plan = match args.after.as_deref() {
+            Some(after) => match self.plan_move(&address, after).await {
+                Ok(plan) => Some(plan),
+                Err(refused) => return memory_declined("update_fact", refused),
+            },
+            None => None,
+        };
         let text_edit = match text_edit_of(&args) {
             Ok(edit) => edit,
             Err(refused) => return memory_declined("update_fact", refused),
@@ -380,6 +401,12 @@ impl Jojobot {
         // reason `capture`'s own copy is: this is about what the CALLER
         // sent, never what jojobot added on its own.
         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
+        if let Some(plan) = &move_plan {
+            fields.insert(
+                jojobot_domain::memory::document::ORDER.to_string(),
+                plan.head_order.clone(),
+            );
+        }
         // **The thing a ceiling binds cannot write that ceiling — checked on
         // the fold, atomically with the write, inside `self.memory.update_fact`
         // below.** A raw check here on `fields` alone would miss a clear, a
@@ -710,6 +737,45 @@ impl Jojobot {
             };
         match written {
             Guarded::Written(fact) => {
+                // **The chunks of a moved section follow it.** One write each, and a
+                // store that stops partway says which moved: the same call again
+                // plans from what is stored and finishes the move.
+                if let Some(plan) = &move_plan {
+                    let mut moved = vec![fact.address().to_string()];
+                    for (chunk, order) in &plan.rest {
+                        let patch = FactPatch {
+                            fields: [(
+                                jojobot_domain::memory::document::ORDER.to_string(),
+                                order.clone(),
+                            )]
+                            .into(),
+                            session: Some(caller.sid.as_str().to_string()),
+                            ..Default::default()
+                        };
+                        match self.memory.update_fact(chunk, patch, &caller.bot).await {
+                            Ok(_) => moved.push(chunk.to_string()),
+                            Err(MemoryError::FoldBehind { .. }) => moved.push(chunk.to_string()),
+                            Err(e) => {
+                                let still = plan.rest.len() + 1 - moved.len();
+                                let to_finish = format!(
+                                    "{} of {} parts of the section moved and stay. Send the \
+                                     same call again to finish the move",
+                                    moved.len(),
+                                    plan.rest.len() + 1
+                                );
+                                return super::documents::stopped_with(
+                                    memory_declined("update_fact", e),
+                                    serde_json::json!({
+                                        "moved": moved,
+                                        "not_moved": still,
+                                        "to_finish": to_finish,
+                                    }),
+                                    format!("the store stopped partway: {to_finish}"),
+                                );
+                            }
+                        }
+                    }
+                }
                 if clears_due_on {
                     self.clear_stored_due_moment(&fact.subject, &caller.bot)
                         .await;

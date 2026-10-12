@@ -75,11 +75,13 @@ impl Jojobot {
             Err(e) => return memory_declined("read_document", e),
         };
         let live = live_sections(&facts);
+        // Every record that is a section and is not live: archived on its own, or
+        // the chunk of a section whose heading was.
         let archived = facts
             .iter()
-            .filter(|fact| fact.status != FactStatus::Active)
             .filter(|fact| fact.fields.contains_key(document::ORDER))
-            .count();
+            .count()
+            - live.len();
         let offset = args.offset.unwrap_or(0).min(live.len());
 
         let mut body = serde_json::json!({

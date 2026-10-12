@@ -296,7 +296,9 @@ pub const LEVEL: &str = "level";
 pub const ORDER: &str = "order";
 /// The field that holds the whitespace trimmed off a section's parts.
 pub const EDGES: &str = "edges";
-/// The field that is `true` on a chunk carrying on the section before it.
+/// The field on a chunk that carries on a section: the local id of the record that
+/// holds the section's heading. A section is found again by this link rather than
+/// by what sits next to it, so a move that stopped partway can be finished.
 pub const CONTINUES: &str = "continues";
 
 /// **The own fields of the record that holds a section.** `edges` is always
@@ -307,6 +309,8 @@ pub fn record_fields(section: &Section, order: &str) -> std::collections::BTreeM
     fields.insert(ORDER.to_string(), order.to_string());
     fields.insert(EDGES.to_string(), section.edges.encode());
     if section.continues {
+        // The record that holds the heading does not exist yet when the fields are
+        // made, so the writer replaces this with that record's id.
         fields.insert(CONTINUES.to_string(), "true".to_string());
     }
     fields
@@ -350,7 +354,9 @@ pub fn from_record(
                 .unwrap_or(0),
             body,
             edges,
-            continues: fields.get(CONTINUES).is_some_and(|value| value == "true"),
+            continues: fields
+                .get(CONTINUES)
+                .is_some_and(|value| !value.is_empty() && value != "false"),
         },
     ))
 }

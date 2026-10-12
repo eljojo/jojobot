@@ -372,6 +372,8 @@ async fn a_store_that_stops_midway_names_what_landed_and_where_the_rest_begins()
             inner: inner.clone(),
             fails_from: 3,
             seen: Default::default(),
+            edits_fail_from: usize::MAX,
+            edits_seen: Default::default(),
         }),
         Arc::new(SpySearch::default()),
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
@@ -572,10 +574,16 @@ async fn a_section_too_long_for_a_record_is_cut_at_blank_lines_and_reads_back_wh
     let held = records(&jojobot, "document:alpha").await;
     assert!(held.len() >= 2);
     assert!(held[0]["fields"].get("continues").is_none());
+    let heading_id = held[0]["address"]
+        .as_str()
+        .and_then(|address| address.rsplit('#').next())
+        .expect("an id")
+        .to_string();
     assert!(
         held[1..]
             .iter()
-            .all(|fact| fact["fields"]["continues"] == "true")
+            .all(|fact| fact["fields"]["continues"] == heading_id),
+        "a chunk is linked to the record that holds the heading: {held:?}"
     );
     assert!(held[1..].iter().all(|fact| fact["fields"]["level"] == "0"));
     assert_eq!(read_all(&jojobot, "document:alpha").await, text);
@@ -712,4 +720,260 @@ async fn a_thing_that_is_not_a_document_is_refused_and_an_offset_past_the_end_is
     assert_eq!(past["markdown"], "");
     assert!(past.get("next_offset").is_none(), "{past}");
     assert_eq!(past["sections"], 1);
+}
+
+async fn address_of(jojobot: &Jojobot, document: &str, first_line: &str) -> String {
+    records(jojobot, document)
+        .await
+        .iter()
+        .find(|fact| fact["content"] == first_line)
+        .unwrap_or_else(|| panic!("no section headed {first_line}"))["address"]
+        .as_str()
+        .expect("an address")
+        .to_string()
+}
+
+async fn move_section(jojobot: &Jojobot, address: &str, after: &str) -> CallToolResult {
+    jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            after: Some(after.into()),
+            ..update_args(address)
+        }))
+        .await
+        .expect("update_fact answers")
+}
+
+/// **A section moves behind another, and nothing else is written.** The negative
+/// half: the sections that did not move keep their revision, so no other record
+/// was touched, and the bytes of every section are the ones put.
+#[tokio::test]
+async fn a_section_moves_behind_another_and_no_other_record_is_written() {
+    let jojobot = handler();
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# One\n\nfirst\n\n# Two\n\nsecond\n\n# Three\n\nthird\n",
+    )
+    .await;
+    let one = address_of(&jojobot, "document:alpha", "# One").await;
+    let three = address_of(&jojobot, "document:alpha", "# Three").await;
+    let moved = move_section(&jojobot, &one, &three).await;
+    assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# Two\n\nsecond\n\n# Three\n\nthird\n# One\n\nfirst\n\n"
+    );
+    for held in records(&jojobot, "document:alpha").await {
+        let moved = held["content"] == "# One";
+        assert_eq!(
+            held.get("revision_count").is_some(),
+            moved,
+            "only the moved section was written twice: {held}"
+        );
+    }
+}
+
+/// **A section can be moved and edited in one call.**
+#[tokio::test]
+async fn a_section_can_be_moved_and_edited_in_one_call() {
+    let jojobot = handler();
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# One\n\nfirst\n\n# Two\n\nsecond\n\n",
+    )
+    .await;
+    let one = address_of(&jojobot, "document:alpha", "# One").await;
+    let two = address_of(&jojobot, "document:alpha", "# Two").await;
+    let answered = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            after: Some(two),
+            find: Some("first".into()),
+            replace: Some("changed".into()),
+            field: Some("details".into()),
+            ..update_args(&one)
+        }))
+        .await
+        .expect("update_fact answers");
+    assert_ne!(json_of(&answered)["status"], "blocked", "{answered:?}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# Two\n\nsecond\n\n# One\n\nchanged\n\n"
+    );
+}
+
+/// **A cut section moves with the chunks that carry it on.**
+#[tokio::test]
+async fn a_cut_section_moves_with_its_chunks() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    let text = format!("{big}# Small\n\nsmall\n\n# Last\n\nend\n");
+    put_ok(&jojobot, "document:alpha", &text).await;
+    assert!(records(&jojobot, "document:alpha").await.len() >= 4);
+    let big_head = address_of(&jojobot, "document:alpha", "# Big").await;
+    let last = address_of(&jojobot, "document:alpha", "# Last").await;
+    let moved = move_section(&jojobot, &big_head, &last).await;
+    assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        format!("# Small\n\nsmall\n\n# Last\n\nend\n{big}")
+    );
+}
+
+/// **A move that cannot be made is refused and writes nothing**: an ordinary
+/// claim has no place to move, a chunk is moved with its section, a section
+/// cannot follow itself, and the target must be a section of this document.
+#[tokio::test]
+async fn a_move_that_cannot_be_made_is_refused_with_the_document_as_it_was() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    let text = format!("{big}# Last\n\nend\n");
+    put_ok(&jojobot, "document:alpha", &text).await;
+    put_ok(&jojobot, "document:beta", "# Other\n\nbody\n").await;
+    let remark = capture_ok(
+        &jojobot,
+        capture_args("document:alpha", "reviewed by a colleague"),
+    )
+    .await["address"]
+        .as_str()
+        .expect("address")
+        .to_string();
+    let big_head = address_of(&jojobot, "document:alpha", "# Big").await;
+    let last = address_of(&jojobot, "document:alpha", "# Last").await;
+    let other = address_of(&jojobot, "document:beta", "# Other").await;
+    let chunk = records(&jojobot, "document:alpha").await[1]["address"]
+        .as_str()
+        .expect("address")
+        .to_string();
+    for (what, address, after) in [
+        ("an ordinary claim", &remark, &last),
+        ("a chunk on its own", &chunk, &last),
+        ("a section behind itself", &big_head, &big_head),
+        ("a section behind its own chunk", &big_head, &chunk),
+        ("a target in another document", &last, &other),
+        ("a target that is no section", &last, &remark),
+    ] {
+        let refused = move_section(&jojobot, address, after).await;
+        let body = blocked(&refused);
+        assert!(
+            body.to_string().contains("after"),
+            "{what} was refused without saying what `after` is for: {body}"
+        );
+    }
+    assert_eq!(read_all(&jojobot, "document:alpha").await, text);
+}
+
+/// **A move that stops partway says what moved, and the same call finishes it.**
+#[tokio::test]
+async fn a_move_that_stops_partway_is_finished_by_sending_it_again() {
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    let text = format!("{big}# Last\n\nend\n");
+    let inner = Arc::new(InMemoryMemory::seeded());
+    let healthy = handler_over(inner.clone());
+    put_ok(&healthy, "document:alpha", &text).await;
+    let big_head = address_of(&healthy, "document:alpha", "# Big").await;
+    let last = address_of(&healthy, "document:alpha", "# Last").await;
+
+    let failing = Jojobot::new(
+        Arc::new(FailsOnCapture {
+            inner: inner.clone(),
+            fails_from: usize::MAX,
+            seen: Default::default(),
+            edits_fail_from: 2,
+            edits_seen: Default::default(),
+        }),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let stopped = failing
+        .update_fact(Parameters(UpdateFactArgs {
+            after: Some(last.clone()),
+            ..update_args(&big_head)
+        }))
+        .await
+        .expect_err("a store that stopped is an error");
+    let data = stopped.data.clone().expect("the error carries data");
+    assert_eq!(data["moved"].as_array().map(Vec::len), Some(1), "{data}");
+    assert!(data["not_moved"].as_u64().is_some_and(|n| n >= 1), "{data}");
+    assert!(
+        stopped.message.contains("same call again"),
+        "{}",
+        stopped.message
+    );
+
+    let finished = move_section(&healthy, &big_head, &last).await;
+    assert_ne!(json_of(&finished)["status"], "blocked", "{finished:?}");
+    assert_eq!(
+        read_all(&healthy, "document:alpha").await,
+        format!("# Last\n\nend\n{big}")
+    );
+}
+
+/// **Archiving a cut section's heading takes the whole section out**, chunks
+/// included, and the read counts every record it left out.
+#[tokio::test]
+async fn archiving_a_cut_sections_heading_takes_its_chunks_with_it() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    put_ok(&jojobot, "document:alpha", &format!("{big}# Last\n\nend\n")).await;
+    let all = records(&jojobot, "document:alpha").await.len();
+    let head = address_of(&jojobot, "document:alpha", "# Big").await;
+    let archived = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            status: Some("archived".into()),
+            details: Some("dropped".into()),
+            ..update_args(&head)
+        }))
+        .await
+        .expect("update_fact answers");
+    assert_ne!(json_of(&archived)["status"], "blocked", "{archived:?}");
+    let part = read_part(&jojobot, "document:alpha", None).await;
+    assert_eq!(part["markdown"], "# Last\n\nend\n");
+    assert_eq!(part["archived_sections_left_out"], all - 1);
+}
+
+/// **A section moved behind a cut section lands behind its last chunk**, never
+/// between the pieces.
+#[tokio::test]
+async fn a_section_moved_behind_a_cut_section_lands_after_its_chunks() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    let text = format!("# Small\n\nsmall\n\n{big}# Last\n\nend\n");
+    put_ok(&jojobot, "document:alpha", &text).await;
+    let small = address_of(&jojobot, "document:alpha", "# Small").await;
+    let big_head = address_of(&jojobot, "document:alpha", "# Big").await;
+    let moved = move_section(&jojobot, &small, &big_head).await;
+    assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        format!("{big}# Small\n\nsmall\n\n# Last\n\nend\n")
+    );
 }
