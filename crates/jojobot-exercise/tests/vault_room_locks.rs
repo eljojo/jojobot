@@ -309,17 +309,37 @@ async fn the_status_locks_hold_when_the_operators_words_are_bound_by_a_status_wo
     assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
 }
 
-/// **A mapping to a word outside the shipped five binds nothing.** The server
-/// ignores such a mapping, so the lock does too.
+/// **A mapping to a word outside the shipped five is refused when it is
+/// written, so it binds nothing.** The refusal names the key, the word sent and
+/// the five. With nothing bound, the year's statuses still land and the three
+/// status locks redden. The mapping to a shipped word that sits beside it in the
+/// same write is not what is refused: the case above holds that it binds.
 #[tokio::test]
 async fn the_status_locks_redden_when_the_mapping_names_no_shipped_word() {
     let (_room, surface, sid) = furnished().await;
-    write_instance(
+    let refused = as_the_occupant(
         &surface,
         &sid,
-        json!({"status_word/considering": "pondering", "status_word/doing": "busy"}),
+        "capture",
+        json!({
+            "subject": "topic:instance",
+            "content": "how this instance words its statuses",
+            "provenance": "testimony",
+            "sets": {"status_word/considering": "pondering", "status_word/doing": "busy"},
+        }),
     )
     .await;
+    assert!(
+        refused.contains("\"status\":\"blocked\""),
+        "a mapping to an unshipped word is refused at write: {refused}"
+    );
+    assert!(refused.contains("status_word/"), "{refused}");
+    for shipped in ["someday", "next", "now", "waiting", "done"] {
+        assert!(
+            refused.contains(shipped),
+            "the refusal names {shipped}: {refused}"
+        );
+    }
     the_year_of_the_statuses(&surface, &sid, "considering", "doing").await;
     assert_eq!(the_three_status_locks(&surface).await, [false; 3]);
 }
