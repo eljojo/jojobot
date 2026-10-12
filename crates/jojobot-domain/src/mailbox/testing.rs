@@ -2648,8 +2648,8 @@ pub mod contract {
     /// **A replaced message nobody has read is not delivered, and the box says
     /// so.** The sender posts A and then B replacing A. The reader's delivery
     /// hands over B, names A apart with the id that replaced it, and leaves A in
-    /// `new`. The counts account for both: A is inside `new`, and `superseded`
-    /// says how many of the `new` were replaced.
+    /// `new`. The counts agree with the delivery: A is not counted as waiting,
+    /// `superseded` counts it apart, and the total still adds up to both.
     ///
     /// The control is the same two posts without `supersedes`: both are
     /// delivered and nothing is named apart. Without it the case holds on a
@@ -2673,10 +2673,10 @@ pub mod contract {
         let before = counts(store, "inbox").await.expect("inbox exists");
         assert_eq!(
             (before.new, before.read, before.processed, before.superseded),
-            (2, 0, 0, 1),
-            "both are in new and one of them is counted as replaced: {before:?}"
+            (1, 0, 0, 1),
+            "one is waiting and one is counted as replaced: {before:?}"
         );
-        assert_eq!(before.total(), 2, "the replaced one is not counted twice");
+        assert_eq!(before.total(), 2, "the replaced one is counted, once");
 
         let delivery = read(store, "inbox").await;
         let handed: Vec<&MessageId> = delivery.messages.iter().map(|d| &d.message.id).collect();
@@ -2693,9 +2693,11 @@ pub mod contract {
         let after = counts(store, "inbox").await.expect("inbox exists");
         assert_eq!(
             (after.new, after.read, after.superseded),
-            (1, 1, 1),
-            "the withheld message is still in new, and the delivered one moved: {after:?}"
+            (0, 1, 1),
+            "nothing is waiting, the delivered one moved, and the withheld one is counted \
+             as replaced: {after:?}"
         );
+        assert_eq!(after.total(), 2, "{after:?}");
         let withheld = store
             .message_by_id(&a.id)
             .await

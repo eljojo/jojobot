@@ -21,6 +21,16 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
     let setup = story.session().await;
     setup.add("bot:gamma", "Gamma").await;
     setup.add("bot:delta", "Delta").await;
+    setup.add("bot:epsilon", "Epsilon").await;
+    setup.add("person:lisa", "Lisa").await;
+    setup
+        .event_with(
+            "topic:instance",
+            "who the operator is",
+            json!({"operator": "person:lisa"}),
+            &[],
+        )
+        .await;
     setup.wrap("stood the readers up").await;
 
     let s = story.as_bot("bot:otto").await;
@@ -43,16 +53,35 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
     right.says(&format!("\"supersedes\":\"{wrong}\""));
     let right_id = right.field("id");
 
-    // A poll weighs the box without taking anything, and says how many of the
-    // new messages were replaced.
+    // A poll weighs the box without taking anything. The replaced message is
+    // not counted as waiting, because a delivery would not hand it over, and it
+    // is counted apart so nothing in the box goes uncounted. The bar's own
+    // figure agrees with the poll.
     let g = story.as_bot("bot:gamma").await;
     let polled = g.call("read_mailbox", json!({"counts_only": true})).await;
-    assert_eq!(polled.json()["counts"]["new"], 2, "{}", polled.json());
+    assert_eq!(polled.json()["counts"]["new"], 1, "{}", polled.json());
     assert_eq!(
         polled.json()["counts"]["superseded"],
         1,
         "{}",
         polled.json()
+    );
+    assert_eq!(
+        polled.json()["status_bar"]["mail_waiting"],
+        1,
+        "{}",
+        polled.json()
+    );
+
+    // The boot's snapshot of the caller's own box agrees with the poll.
+    let booted = g
+        .call("start_here", json!({"bot": "gamma", "brief": true}))
+        .await;
+    assert_eq!(
+        booted.json()["identity"]["owned_mailbox"]["counts"]["new"],
+        1,
+        "{}",
+        booted.json()
     );
 
     // The delivery hands over the correction and names the original apart.
@@ -82,6 +111,27 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
     s.call("list_sent", json!({}))
         .await
         .says(&format!("\"superseded_by\":\"{right_id}\""));
+
+    // ── what a sender is told was waiting for them, agreeing with the poll ──
+    //
+    // Epsilon holds one message to hand over and one replaced, and says 1 in a
+    // message of its own; the reader of that message sees the same figure.
+    let first = s.post("epsilon", "Where", "The fair is on friday.").await;
+    s.call(
+        "post_message",
+        json!({"to": "epsilon", "body": "The fair is on sunday.", "supersedes": &first}),
+    )
+    .await;
+    let e = story.as_bot("bot:epsilon").await;
+    e.call("post_message", json!({"to": "otto", "body": "Got it."}))
+        .await;
+    let heard = s.drain().await;
+    assert_eq!(
+        heard.json()["messages"][0]["sender_mail_waiting_at_send"],
+        1,
+        "{}",
+        heard.json()
+    );
 
     // ── the opposite: two messages, no link, both delivered ─────────────────
     s.post("delta", "First", "No link on this one.").await;
@@ -141,6 +191,21 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
     )
     .await
     .says("gamma");
+
+    // An id that names nothing.
+    s.refused(
+        "post_message",
+        json!({"to": "gamma", "body": "no", "supersedes": "no-such-message"}),
+    )
+    .await
+    .says("no-such-message");
+    // The operator's box: a person reads it and no bot reads it back.
+    s.refused(
+        "post_message",
+        json!({"to": "person:lisa", "body": "no", "supersedes": &wrong}),
+    )
+    .await
+    .says("operator");
 
     // ── a sent message is not retracted ─────────────────────────────────────
     s.refused("retract", json!({"address": &wrong}))

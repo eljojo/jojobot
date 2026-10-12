@@ -439,10 +439,11 @@ pub struct StateCounts {
     pub read: usize,
     /// Acted on — terminal.
     pub processed: usize,
-    /// **How many of the `new` messages have been replaced** by a later one
-    /// from the same sender. They are inside `new`, not beside it, so
-    /// [`StateCounts::total`] does not add them twice. A delivery withholds
-    /// them and lists them apart.
+    /// **How many unread messages have been replaced** by a later one from the
+    /// same sender. They are beside `new`, not inside it: `new` is what a
+    /// delivery would hand over, so every count of mail waiting agrees with
+    /// what a reader is given. [`StateCounts::total`] adds them, so nothing in
+    /// the box goes uncounted. A delivery lists them apart.
     pub superseded: usize,
 }
 
@@ -456,15 +457,16 @@ impl StateCounts {
         }
     }
 
-    /// Count one `new` message that a later one replaced. Call this beside
-    /// [`StateCounts::add`], never instead of it.
+    /// Move one `new` message that a later one replaced out of `new` and into
+    /// `superseded`. Call this after [`StateCounts::add`] counted it as `new`.
     pub fn add_superseded(&mut self) {
+        self.new = self.new.saturating_sub(1);
         self.superseded += 1;
     }
 
-    /// Every message in the box, whatever its state.
+    /// Every message in the box, whatever its state, replaced or not.
     pub fn total(&self) -> usize {
-        self.new + self.read + self.processed
+        self.new + self.superseded + self.read + self.processed
     }
 }
 

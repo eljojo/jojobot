@@ -2065,11 +2065,14 @@ mod tests {
         );
 
         let polled = counts(&jojobot, "delta").await;
-        assert_eq!(polled["counts"]["new"], 2, "{polled}");
+        assert_eq!(
+            polled["counts"]["new"], 1,
+            "one is waiting, as a delivery would hand over: {polled}"
+        );
         assert_eq!(polled["counts"]["total"], 2, "{polled}");
         assert_eq!(
             polled["counts"]["superseded"], 1,
-            "one of the two new messages was replaced: {polled}"
+            "the other was replaced and is counted apart: {polled}"
         );
 
         let delivery = reading(&jojobot, "delta").await;
@@ -2099,8 +2102,8 @@ mod tests {
 
         let after = counts(&jojobot, "delta").await;
         assert_eq!(
-            after["counts"]["new"], 1,
-            "the withheld one stays new: {after}"
+            after["counts"]["new"], 0,
+            "nothing is waiting once the replacement is delivered: {after}"
         );
         assert_eq!(after["counts"]["read"], 1, "{after}");
         assert_eq!(after["counts"]["superseded"], 1, "{after}");
