@@ -71,6 +71,17 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **A page of no runs is refused**, as `search` and `list_sent` refuse
+        // it. It cut every run and named the offset it was given as the one
+        // that reads the rest, so following that pointer repeated the same call.
+        if args.limit == Some(0) {
+            return Ok(crate::caller::handle_declined(
+                "",
+                "limit must be at least 1: it is the size of a page. Leave it off for the \
+                 twenty newest, or send a larger limit."
+                    .to_string(),
+            ));
+        }
         // **The one read on this port that never begins, closes or sweeps.**
         // `summaries_of` is what this verb actually needs: which runs, in
         // what state, and two numbers about their beats — never the
@@ -404,6 +415,51 @@ mod tests {
         );
         assert_eq!(body["count"], 1, "only gamma's one run: {body}");
         assert_eq!(body["runs"][0]["working_on"], "my own work");
+    }
+
+    /// **A page of no runs is refused**, as `search` and `list_sent` refuse it.
+    /// It cut every run and named the offset it was given as the one that reads
+    /// the rest, so following that pointer repeated the same call. A page of one
+    /// run beside it still reads, so the refusal is about the size and not about
+    /// the verb.
+    #[tokio::test]
+    async fn a_limit_of_no_runs_is_refused_and_a_limit_of_one_reads_one() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        for n in 0..3u32 {
+            run(&store, "gamma", n, &format!("run number {n}")).await;
+        }
+        let sid = as_bot(&jojobot, "gamma");
+
+        let refused = json_of(
+            &jojobot
+                .list_runs(Parameters(ListRunsArgs {
+                    limit: Some(0),
+                    offset: None,
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("list_runs answers"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused.get("runs").is_none() && refused.get("not_shown").is_none(),
+            "a refused page carries no runs and no pointer to follow: {refused}"
+        );
+
+        let one = json_of(
+            &jojobot
+                .list_runs(Parameters(ListRunsArgs {
+                    limit: Some(1),
+                    offset: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("list_runs ok"),
+        );
+        assert_eq!(one["count"], 1, "{one}");
+        assert_eq!(one["not_shown"]["offset"], 1, "{one}");
     }
 
     /// A limit cuts the list and names what it left out, exactly as
