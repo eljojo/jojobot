@@ -79,6 +79,9 @@ pub struct ForwardedLinkReport {
     pub repointed: usize,
     /// The pass had finished at an earlier boot, so this one read nothing.
     pub settled: bool,
+    /// One line for each forwarding row the pass could not place. While any
+    /// remains, the pass is not marked finished.
+    pub skipped: Vec<String>,
 }
 
 /// **The name the repointing of links off forwarding rows is marked under.**
@@ -521,44 +524,96 @@ impl DoltMemory {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(store)?;
-        let by_handle: std::collections::HashMap<&str, (&str, Option<&str>)> = rows
+        let former: Vec<(String, String)> =
+            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        // **Keyed by the badge, which no rename moves.** A fold stores the
+        // survivor's handle as it stood, and a rename rewrites the survivor's own
+        // row and no other, so that handle may name nothing today.
+        let by_badge: std::collections::HashMap<&str, (&str, Option<&str>)> = rows
             .iter()
             .map(|(id, badge, into)| {
                 (
-                    id.as_str(),
-                    (badge.as_deref().unwrap_or(id.as_str()), into.as_deref()),
+                    badge.as_deref().unwrap_or(id.as_str()),
+                    (id.as_str(), into.as_deref()),
                 )
             })
             .collect();
-        for (handle, (from, into)) in &by_handle {
+        // **The badges a stored handle has ever named**: the row wearing it now
+        // and every row that wore it before. One badge places the forward; none
+        // or several do not, and the pass does not guess between them.
+        let placed = |name: &str| -> Result<&str, String> {
+            let mut named: std::collections::BTreeSet<&str> = rows
+                .iter()
+                .filter(|(id, _, _)| id == name)
+                .map(|(id, badge, _)| badge.as_deref().unwrap_or(id.as_str()))
+                .collect();
+            named.extend(
+                former
+                    .iter()
+                    .filter(|(handle, _)| handle == name)
+                    .map(|(_, badge)| badge.as_str()),
+            );
+            let mut named = named.into_iter();
+            match (named.next(), named.next()) {
+                (Some(only), None) => Ok(only),
+                (None, _) => Err("no thing has ever worn that handle".to_string()),
+                _ => Err("more than one thing has worn that handle".to_string()),
+            }
+        };
+        for (badge, (handle, into)) in &by_badge {
+            if into.is_none() {
+                continue;
+            }
             let mut at = *into;
             let mut end = None;
             let mut looped = true;
+            let mut unplaced = None;
             // A chain is as long as the rows at most; a longer walk is a loop.
-            for _ in 0..=by_handle.len() {
+            for _ in 0..=by_badge.len() {
                 let Some(name) = at else {
                     looped = false;
                     break;
                 };
-                let Some((key, onward)) = by_handle.get(name) else {
+                let next = match placed(name) {
+                    Ok(next) => next,
+                    Err(why) => {
+                        unplaced = Some(format!("{handle} forwards to {name}: {why}"));
+                        looped = false;
+                        break;
+                    }
+                };
+                let Some((_, onward)) = by_badge.get(next) else {
                     looped = false;
                     break;
                 };
-                end = Some(*key);
+                end = Some(next);
                 at = *onward;
             }
+            if let Some(line) = unplaced {
+                tracing::warn!(handle, "store: {line}; its links are left");
+                report.skipped.push(line);
+                continue;
+            }
             let Some(to) = end else { continue };
-            if looped || to == *from {
+            if looped || to == *badge {
                 tracing::warn!(
                     handle,
                     "store: a forwarding row loops back on itself; its links are left"
                 );
+                report.skipped.push(format!("{handle} forwards in a loop"));
                 continue;
             }
-            report.repointed += Self::repoint_field_links(&mut tx, &declared, from, to).await?;
+            report.repointed += Self::repoint_field_links(&mut tx, &declared, badge, to).await?;
         }
         tx.commit().await.map_err(store)?;
-        super::finish_pass(&self.pool, FORWARDED_LINKS_PASS).await;
+        // **Finished only when every forward was placed**: a forward the pass
+        // skipped may become placeable, and a finished pass is never read again.
+        if report.skipped.is_empty() {
+            super::finish_pass(&self.pool, FORWARDED_LINKS_PASS).await;
+        }
         Ok(report)
     }
 
