@@ -7989,3 +7989,73 @@ fn the_view_argument_says_a_views_answer_can_be_narrowed_with_where() {
     assert!(doc.contains("status = next"), "{doc}");
     assert!(doc.contains("not-started"), "{doc}");
 }
+
+/// **A stored view whose `where` passes a cap is refused on use, and the refusal
+/// is about the view.** The caps are on what a view may be given, so a `where`
+/// past one is a row from before the cap or an edit made outside jojobot. The
+/// caller's call is not what is wrong, so the answer names the view, the cap it
+/// passed, and that rewriting the view's `where` is the fix. The positive: a
+/// caller's own `where` runs past the broken one, and a view without a `where`
+/// is not asked about it.
+#[tokio::test]
+async fn a_stored_where_past_a_cap_is_refused_naming_the_view_and_the_fix() {
+    use jojobot_domain::memory::filter::expression::{MAX_DEPTH, MAX_LENGTH};
+    let memory = Arc::new(InMemoryMemory::seeded());
+    let jojobot = handler_over(memory.clone());
+    declared_view(&jojobot, "urgent-things", &[("selects", "thing")]).await;
+    declared_view(&jojobot, "plain-things", &[("selects", "thing")]).await;
+    let long = format!("status = {}", "x".repeat(MAX_LENGTH + 1000));
+    let deep = format!(
+        "{}status = now{}",
+        "(".repeat(MAX_DEPTH + 1),
+        ")".repeat(MAX_DEPTH + 1)
+    );
+    for (what, line, cap) in [("long", long, MAX_LENGTH), ("deep", deep, MAX_DEPTH)] {
+        memory.fields_past_the_guard(
+            &EntityId("view:urgent-things".into()),
+            &[("where", line.as_str())],
+        );
+        let refused = jojobot
+            .recall(Parameters(by_view("urgent-things")))
+            .await
+            .expect("recall answers");
+        let said = blocked(&refused)["how_to_proceed"]
+            .as_str()
+            .expect("a refusal says what to do")
+            .to_string();
+        assert!(
+            said.contains("view:urgent-things"),
+            "{what}: names the view: {said}"
+        );
+        assert!(
+            said.contains(&cap.to_string()),
+            "{what}: names the cap: {said}"
+        );
+        assert!(
+            said.to_lowercase().contains("rewrite the view") && said.contains("where"),
+            "{what}: says rewriting the view's where is the fix: {said}"
+        );
+        assert!(
+            !said.contains("Send the same recall call again"),
+            "{what}: the caller's call is not what is wrong: {said}"
+        );
+    }
+    // The positive: the caller's own where is the one that runs.
+    let own = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                expression: Some("status = now".into()),
+                ..by_view("urgent-things")
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    assert_ne!(own["status"], "blocked", "{own}");
+    let plain = json_of(
+        &jojobot
+            .recall(Parameters(by_view("plain-things")))
+            .await
+            .expect("recall answers"),
+    );
+    assert_ne!(plain["status"], "blocked", "{plain}");
+}

@@ -1085,6 +1085,28 @@ impl Jojobot {
         } else {
             Vec::new()
         };
+        // **The view's own `where` has to read, unless the caller brought one.** A
+        // `where` past a cap, or one that does not parse, was stored before the cap
+        // or by an edit outside jojobot. The caller's call is not what is wrong, so
+        // the answer is about the view: its name, what its line broke, and that
+        // rewriting the line is the fix. Not asked when the caller's own `where`
+        // wins, because the view's is not the one that runs.
+        if args.expression.is_none()
+            && let Some(line) = asked.expression.as_deref()
+            && let Err(why) = filter::expression::value_words(line)
+        {
+            return Err(Box::new(blocked_body(
+                &handle,
+                &[],
+                format!(
+                    "Nothing was read: the view '{}' cannot be run, because its stored `where` \
+                     does not read: {why}. Rewrite the view's `where` (capture on the view with \
+                     `sets`, or update_fact on the record that holds it), or ask with a `where` of \
+                     your own, which runs in its place.",
+                    handle.as_str()
+                ),
+            )));
+        }
         // **The view's ordering reads as one line**, and a view whose ordering
         // does not read is a view that cannot be run: said here, with its name.
         let view_order = match asked.ordering() {
