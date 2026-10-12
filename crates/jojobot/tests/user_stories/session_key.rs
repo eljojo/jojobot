@@ -561,6 +561,51 @@ async fn a_keyless_run_that_has_ended_is_not_exchanged_by_its_old_name() {
     }
 }
 
+/// **The refusal for the old name of an abandoned keyless run points at a way
+/// back that works.** It says to resume the run by its name. Followed, the resume
+/// hands back a key, and the key opens the run. Without this the pointer could
+/// dead-end at a refusal that says only the key continues the run.
+#[tokio::test]
+async fn the_refusal_for_an_abandoned_keyless_run_points_at_a_resume_that_works() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let card = keyless_run(&story, "jm7z").await;
+    story
+        .sessions_store()
+        .close(&card, SessionState::Abandoned)
+        .await
+        .expect("the sweep ended the run");
+    let deployed = story.restarted().await;
+    let holder = deployed.as_bot("bot:gamma").await;
+
+    let refused = holder
+        .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
+        .await;
+    refused.never_says("\"exchanged\":true");
+
+    // Follow the pointer.
+    let (resumed, _) = deployed
+        .call("start_here", json!({"bot": "gamma", "resume": "jm7z"}))
+        .await;
+    let key = resumed.json()["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "the resume the refusal points at hands back a key: {}",
+                resumed.raw()
+            )
+        })
+        .to_string();
+    assert_ne!(key, "jm7z");
+    holder
+        .call("journal", json!({"entry": "back on the run", "sid": key}))
+        .await;
+
+    deployed.finish().await;
+    story.finish().await;
+}
+
 /// **The sweep can end a keyless run after the boot read it.** The registry
 /// holds the run as keyless from the boot, so the exchange reads the run's state
 /// from the board at the moment of the exchange, and a run that has ended since

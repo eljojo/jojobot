@@ -715,12 +715,22 @@ impl Jojobot {
             self.clock().now(),
             self.quiet_after,
         ) {
+            // **A run that began before keys existed holds no key**, so "only its
+            // key continues it" sends its holder nowhere. The way forward for
+            // the holder is the exchange of the old name for a key.
+            let way = match held.key {
+                sid::KeyState::Legacy => "it began before keys existed and holds none, so its \
+                     holder continues it by sending its name as `sid` on any call, which \
+                     exchanges the name for a key once"
+                    .to_string(),
+                _ => "only its key continues it".to_string(),
+            };
             return Err(handle_declined(
                 "",
                 format!(
                     "No session was started. Run {name} wrote at {wrote}, so it is still \
-                     its own: only its key continues it. A run quiet for {} can be \
-                     picked up by its name, which for this one is from {free_at}.",
+                     its own: {way}. A run quiet for {} can be picked up by its \
+                     name, which for this one is from {free_at}.",
                     crate::windows::lease(),
                 ),
             ));
@@ -4153,5 +4163,50 @@ mod tests {
         );
         // The positive the refusal rests on: the first key still opens the run.
         assert_eq!(run_name(&jojobot, &key), "bcd345");
+    }
+    /// **A holder of a run that began before keys existed is told the exchange
+    /// is the way forward.** It holds no key, so "only its key continues it" is
+    /// no answer to the one who asks. The refusal for a run still inside its
+    /// lease names the exchange for a keyless run, and not for a run that holds
+    /// a key, whose refusal stays as it was.
+    #[tokio::test]
+    async fn a_resume_refused_for_a_keyless_run_names_the_exchange_and_one_for_a_keyed_run_does_not()
+     {
+        let store = Arc::new(InMemorySessions::new());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        let jojobot = jojobot.quiet_after(jiff::SignedDuration::from_mins(45));
+        name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("bcd345".into()),
+                focus: "a run the older build began".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("the older build's run is on the board");
+        let board = store.all_sessions().await.expect("the board");
+        jojobot.registry.rebuild_from(&board);
+
+        let keyless = boot_answering(&jojobot, "gamma", "bcd345").await;
+        assert_eq!(keyless["status"], "blocked", "{keyless}");
+        let how = keyless["how_to_proceed"].as_str().unwrap_or_default();
+        assert!(how.contains("exchange"), "{keyless}");
+
+        // The pair: a run that holds a key is refused in the same way and is
+        // not pointed at an exchange it cannot make.
+        make_bot(&jojobot, "delta").await;
+        let key = booted(&jojobot, "delta").await;
+        journal_entry(&jojobot, &key, "started").await;
+        let name = run_name(&jojobot, &key);
+        let keyed = boot_answering(&jojobot, "delta", &name).await;
+        assert_eq!(keyed["status"], "blocked", "{keyed}");
+        let how = keyed["how_to_proceed"].as_str().unwrap_or_default();
+        assert!(!how.contains("exchange"), "{keyed}");
     }
 }
