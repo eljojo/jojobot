@@ -425,10 +425,16 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         }
         self.inner.update_entity(handle, patch).await
     }
-    /// **The build's own half is not a rename's to move.** Same shape as
-    /// [`update_entity`](Self::update_entity): a supplied record answers
-    /// with itself, an exact-handle match, before the write ever reaches the
-    /// store underneath.
+    /// **The build's own half is not a rename's to move.** Refused before the
+    /// write ever reaches the store underneath, with
+    /// [`MemoryError::SuppliedHandle`] — the answer `archive_entity` and
+    /// `merge` give for the same fact.
+    ///
+    /// ⚠️ **Not a `Guarded::Blocked`.** That shape is a rename's answer about
+    /// its destination or its parent, and the verb words every blocked answer
+    /// that is neither a self-parent nor the destination as "the parent this
+    /// call named, which jojobot does not know": a record that exists and was
+    /// never a parent read as one that does not.
     async fn rename_entity(
         &self,
         from: &EntityId,
@@ -437,16 +443,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         date: Date,
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        if let Some((supplied, _)) = self.provisions.record_for(from) {
-            return Ok(Guarded::Blocked {
-                attempted: from.clone(),
-                candidates: vec![guard::EntityMatch {
-                    handle: supplied.id.clone(),
-                    kind: supplied.kind,
-                    name: supplied.name.clone(),
-                    source: supplied.source.clone(),
-                    reason: guard::MatchReason::ExactHandle,
-                }],
+        if self.provisions.record_for(from).is_some() {
+            return Err(MemoryError::SuppliedHandle {
+                attempted: from.to_string(),
             });
         }
         self.inner

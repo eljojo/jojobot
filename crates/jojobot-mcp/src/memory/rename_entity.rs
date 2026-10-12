@@ -1095,6 +1095,58 @@ mod tests {
         assert_eq!(body["wrote"], false);
     }
 
+    /// **A build-supplied record's rename, through the shipped stack, is
+    /// refused as the build's own record** — the refusal `archive_entity` and
+    /// `merge` give — and never as a parent that is unknown.
+    ///
+    /// The shipped stack matters: `Provisioned` answers a supplied handle
+    /// before the store underneath is asked, and the sentence it used to
+    /// borrow was the one for a parent the call named. Told apart by the
+    /// refusal's structure: that sentence rides a candidate that is the
+    /// handle itself, while the build's-own-record refusal names no
+    /// candidate.
+    #[tokio::test]
+    async fn a_supplied_records_rename_through_the_shipped_stack_is_the_supplied_refusal() {
+        let jojobot = handler_shipped();
+        let sid = writing_as(&jojobot);
+
+        let result = jojobot
+            .rename_entity(Parameters(args(
+                "view:loops",
+                "view:contract-supplied-rename-target",
+                &sid,
+            )))
+            .await
+            .expect("a supplied record's rename is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "view:loops", "{body}");
+        assert_eq!(
+            body["candidates"],
+            serde_json::json!([]),
+            "no candidate: the handle is the build's own record, not a near miss or a parent: {body}",
+        );
+    }
+
+    /// **The paired positive: a stored view still renames.** The supplied
+    /// refusal is for the build's own record, not for the kind.
+    #[tokio::test]
+    async fn a_stored_view_still_renames_through_the_shipped_stack() {
+        let jojobot = handler_shipped();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("view", "my-bikes", "My Bikes")))
+            .await
+            .expect("add ok");
+
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("view:my-bikes", "view:my-pets", &sid)))
+                .await
+                .expect("rename ok"),
+        );
+        assert_eq!(renamed["id"], "view:my-pets", "{renamed}");
+    }
+
     /// A `handle` naming nothing jojobot ever held is a client error naming
     /// near misses, exactly as the other verbs answer one — never a create.
     #[tokio::test]
