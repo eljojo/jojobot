@@ -1077,14 +1077,10 @@ impl Jojobot {
         // already answered.
         let facts = self.memory.recall(&handle).await.unwrap_or_default();
         let asked = graph::asked_by_view(&held, &facts);
-        // **The caller's own `fields` wins whole, never merged item by
-        // item.** A caller that named a filter meant that filter; the
-        // view's own is a starting point, not something to add to.
-        let view_filters = if args.fields.is_none() {
-            asked.filters.clone()
-        } else {
-            Vec::new()
-        };
+        // **The view's own filters, handed on whole.** Whether they apply is
+        // decided once, where the query is built: the caller's own `fields`
+        // replace them there.
+        let view_filters = asked.filters.clone();
         // **The view's own `where` has to read, unless the caller brought one.** A
         // `where` past a cap, or one that does not parse, was stored before the cap
         // or by an edit outside jojobot. The caller's call is not what is wrong, so
@@ -2173,6 +2169,10 @@ impl Jojobot {
                 answers_type,
                 candidates: None,
                 fields: {
+                    // **The caller's own `fields` win whole, never merged item
+                    // by item.** A caller that named a filter meant that
+                    // filter; the view's own is a starting point, not
+                    // something to add to. This is the one place that decides.
                     let mut asked = match &args.fields {
                         Some(named) => key_filters(named)?,
                         None => view_filters,
