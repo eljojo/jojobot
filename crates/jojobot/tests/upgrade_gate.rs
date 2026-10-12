@@ -8,7 +8,7 @@
 //! two different binaries, not two runs of one.
 //!
 //! This loads a store dumped from a binary built at an older ref —
-//! `crates/jojobot/tests/fixtures/upgrade/doltdump.sql`, refreshed by
+//! `crates/jojobot/tests/fixtures/upgrade_deploy*/doltdump.sql`, recorded by
 //! `make refresh-upgrade-fixture`, never by hand — into a fresh disposable
 //! store, boots the CURRENT binary on it, and asserts both that startup
 //! succeeds and that every record the recording wrote reads back correctly
@@ -24,10 +24,9 @@ use serde_json::json;
 
 mod support;
 
-const FIXTURE_DIR: &str = "tests/fixtures/upgrade";
-/// The fixture recorded from the build deploy 3 shipped, kept beside the first:
-/// a store that build filled is what a deployed instance holds when it takes
-/// this one.
+/// The fixture recorded from the build deploy 3 shipped: a store that build
+/// filled is what a deployed instance holds when it takes this one. The gate
+/// keeps the fixtures of the last two deployed builds.
 const DEPLOY_3_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy3";
 /// The fixture recorded from the build deploy 4 shipped, the build the operator
 /// runs now. It holds rows no older build writes: role objects in their own
@@ -62,7 +61,7 @@ struct Restored {
 }
 
 async fn restore_the_fixture(label: &str) -> Restored {
-    restore_a_fixture(FIXTURE_DIR, label).await
+    restore_a_fixture(DEPLOY_3_FIXTURE_DIR, label).await
 }
 
 /// **A fixture directory, restored into a store of this case's own.**
@@ -222,11 +221,6 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
         held_before,
         handles,
     }
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
-    boots_on_a_store_filled_by(FIXTURE_DIR, "boots").await;
 }
 
 /// **The outbox migration arrives on a store a deployed build filled, and a
@@ -709,8 +703,8 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
 #[tokio::test]
 async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it() {
     for (fixture_dir, label) in [
-        (FIXTURE_DIR, "own-class"),
         (DEPLOY_3_FIXTURE_DIR, "own-class-deploy3"),
+        (DEPLOY_4_FIXTURE_DIR, "own-class-deploy4"),
     ] {
         let Restored {
             scratch,
@@ -1607,7 +1601,7 @@ fn is_left_as_text_under(line: &str, key: &str) -> bool {
 /// field value is `'<key>',<ordinal>,'<value>'` in the dump, and a plain handle
 /// is a value that starts with a kind, where a stored id starts with the mark.
 fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
-    let dir = [FIXTURE_DIR, DEPLOY_3_FIXTURE_DIR, DEPLOY_4_FIXTURE_DIR]
+    let dir = [DEPLOY_3_FIXTURE_DIR, DEPLOY_4_FIXTURE_DIR]
         .into_iter()
         .find(|dir| {
             std::fs::read_to_string(format!("{dir}/ref.txt"))
@@ -2136,9 +2130,8 @@ async fn assert_every_thing_holds_what_it_held(
 #[tokio::test]
 async fn every_recorded_held_value_joins_to_an_entity() {
     for (fixture_dir, label) in [
-        (FIXTURE_DIR, "joins-first"),
-        (DEPLOY_3_FIXTURE_DIR, "joins-second"),
-        (DEPLOY_4_FIXTURE_DIR, "joins-third"),
+        (DEPLOY_3_FIXTURE_DIR, "joins-first"),
+        (DEPLOY_4_FIXTURE_DIR, "joins-second"),
     ] {
         let restored = restore_a_fixture(fixture_dir, label).await;
         assert!(
@@ -2162,15 +2155,15 @@ async fn a_held_value_the_oracle_cannot_join_fails_the_gate() {
     ));
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
-    let git_ref = std::fs::read_to_string(format!("{FIXTURE_DIR}/ref.txt"))
+    let git_ref = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/ref.txt"))
         .expect("the fixture's ref")
         .trim()
         .to_string();
     let store = Dolt::start(&state_dir.join("db"), free_port())
         .await
         .expect("a fresh store comes up to receive the fixture");
-    let dump =
-        std::fs::read_to_string(format!("{FIXTURE_DIR}/doltdump.sql")).expect("the fixture's dump");
+    let dump = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/doltdump.sql"))
+        .expect("the fixture's dump");
     for statement in split_sql_statements(&dump) {
         sqlx::raw_sql(&statement)
             .execute(store.pool())
@@ -2514,7 +2507,7 @@ async fn assert_every_recorded_record_reads_back(
 
     // **A reference-typed value, a claim worked out from another, and a
     // merge** — the three shapes an upgrade of the storage has to carry and
-    // the first recording never held.
+    // an older recording never held.
     let read = surface
         .call(
             "recall",
@@ -2844,7 +2837,7 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
     }
 }
 
-/// **The shapes the first fixture was missing, each read back as the older
+/// **The shapes an older fixture was missing, each read back as the older
 /// build wrote it.** A claim read out of a system of record, a handle under a
 /// key nothing declares between two bots, the instance's own zone, and a piece
 /// of work at `done`.
@@ -3022,96 +3015,91 @@ async fn assert_the_voucher_kind_arrives_and_no_voucher_exists(surface: &Surface
 /// the served verb. Both writes own ordinal 1 of the key, so the fold lands only
 /// if the merge renumbers them, and with no stamp on either the survivor's write
 /// is placed last: it is the one the survivor holds, and the duplicate's comes
-/// first in the key's history. Each recording is checked to hold a `field_write`
+/// first in the key's history. The recording is checked to hold a `field_write`
 /// table that has no stamp column, so the case cannot pass over stamped rows.
 #[tokio::test]
 async fn a_pair_written_before_the_stamp_merges_after_the_upgrade() {
-    for (dir, label) in [
-        (FIXTURE_DIR, "merge-first"),
-        (DEPLOY_3_FIXTURE_DIR, "merge-deploy3"),
-    ] {
-        let Restored {
-            scratch,
-            state_dir,
-            store_port,
-            git_ref,
-            ..
-        } = restore_a_fixture(dir, label).await;
-        let recorded = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
-            .unwrap_or_else(|e| panic!("reading the recording in {dir}: {e}"));
-        let field_write_table = recorded
-            .split("CREATE TABLE `field_write`")
-            .nth(1)
-            .and_then(|rest| rest.split(");").next())
-            .unwrap_or_else(|| panic!("the recording at {git_ref} holds no field_write table"));
-        assert!(
-            !field_write_table.contains("written_at"),
-            "the recording at {git_ref} already stamps its field writes, so it proves nothing \
-             about rows that cannot be stamped: {field_write_table}"
-        );
-        let booted = boot_current(&state_dir, store_port, &git_ref).await;
-        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-            .await
-            .expect("connecting to the current binary");
-        let fail =
-            |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
+    let (dir, label) = (DEPLOY_3_FIXTURE_DIR, "merge-deploy3");
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(dir, label).await;
+    let recorded = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
+        .unwrap_or_else(|e| panic!("reading the recording in {dir}: {e}"));
+    let field_write_table = recorded
+        .split("CREATE TABLE `field_write`")
+        .nth(1)
+        .and_then(|rest| rest.split(");").next())
+        .unwrap_or_else(|| panic!("the recording at {git_ref} holds no field_write table"));
+    assert!(
+        !field_write_table.contains("written_at"),
+        "the recording at {git_ref} already stamps its field writes, so it proves nothing \
+         about rows that cannot be stamped: {field_write_table}"
+    );
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
 
-        let boot = surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await;
-        let boot: serde_json::Value =
-            serde_json::from_str(&boot).unwrap_or_else(|_| fail("booting to merge", &boot));
-        let sid = boot["session"]["sid"]
-            .as_str()
-            .unwrap_or_else(|| fail("booting to merge", &boot.to_string()))
-            .to_string();
+    let boot = surface
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let boot: serde_json::Value =
+        serde_json::from_str(&boot).unwrap_or_else(|_| fail("booting to merge", &boot));
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to merge", &boot.to_string()))
+        .to_string();
 
-        let merged = surface
-            .call(
-                "merge_entities",
-                json!({"duplicate": "thing:blue-kite", "survivor": "thing:red-kite",
-                       "reason": "recorded as one kite", "sid": sid}),
-            )
-            .await;
-        let merged_answer: serde_json::Value = serde_json::from_str(&merged)
-            .unwrap_or_else(|_| fail("the merge answered something that is not json", &merged));
-        if merged_answer["merged"] != "thing:blue-kite"
-            || merged_answer["now_resolves_to"] != "thing:red-kite"
-        {
-            fail("the merge of the pair did not land", &merged);
-        }
-
-        let read = surface
-            .call(
-                "recall",
-                json!({"subject": "thing:red-kite", "history": "status"}),
-            )
-            .await;
-        let answered: serde_json::Value =
-            serde_json::from_str(&read).unwrap_or_else(|_| fail("reading the survivor", &read));
-        if answered["objects"][0]["fields"]["status"] != "now" {
-            fail("the survivor does not hold its own write of status", &read);
-        }
-        let each: Vec<&str> = answered["objects"][0]["history"]["writes"]
-            .as_array()
-            .unwrap_or_else(|| fail("the writes behind status", &read))
-            .iter()
-            .map(|write| write["value"].as_str().unwrap_or(""))
-            .collect();
-        if each != ["done", "now"] {
-            fail(
-                "the duplicate's write is not placed before the survivor's",
-                &read,
-            );
-        }
-
-        surface.finish().await;
-        booted.stop().await;
-        drop(scratch);
+    let merged = surface
+        .call(
+            "merge_entities",
+            json!({"duplicate": "thing:blue-kite", "survivor": "thing:red-kite",
+                   "reason": "recorded as one kite", "sid": sid}),
+        )
+        .await;
+    let merged_answer: serde_json::Value = serde_json::from_str(&merged)
+        .unwrap_or_else(|_| fail("the merge answered something that is not json", &merged));
+    if merged_answer["merged"] != "thing:blue-kite"
+        || merged_answer["now_resolves_to"] != "thing:red-kite"
+    {
+        fail("the merge of the pair did not land", &merged);
     }
+
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:red-kite", "history": "status"}),
+        )
+        .await;
+    let answered: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("reading the survivor", &read));
+    if answered["objects"][0]["fields"]["status"] != "now" {
+        fail("the survivor does not hold its own write of status", &read);
+    }
+    let each: Vec<&str> = answered["objects"][0]["history"]["writes"]
+        .as_array()
+        .unwrap_or_else(|| fail("the writes behind status", &read))
+        .iter()
+        .map(|write| write["value"].as_str().unwrap_or(""))
+        .collect();
+    if each != ["done", "now"] {
+        fail(
+            "the duplicate's write is not placed before the survivor's",
+            &read,
+        );
+    }
+
+    surface.finish().await;
+    booted.stop().await;
+    drop(scratch);
 }
 
 /// **After the upgrade, `field_link` holds the links the writes imply, and
@@ -3135,28 +3123,14 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         git_ref,
         held_before: _,
         handles: _,
-    } = restore_the_fixture("links").await;
+    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
-    let mut expected = links_the_served_fields_imply(&surface, &git_ref).await;
+    let expected = links_the_served_fields_imply(&surface, &git_ref).await;
     surface.finish().await;
     booted.stop().await;
-    // **The handle two things have worn is served as a field and links nothing.**
-    // The boot could not say which of the two it meant, so it left the value as
-    // text. The served fields imply the link, the table must not hold it, and
-    // taking it out of the expected set makes the comparison below fail if it does.
-    let ambiguous = (
-        "thing:upgrade-fixture-thing".to_string(),
-        "upgrade_fixture_points_at".to_string(),
-        "thing:upgrade-fixture-namesake".to_string(),
-    );
-    assert!(
-        expected.remove(&ambiguous),
-        "the recording's ambiguous handle is not served as a field: {expected:?}"
-    );
-
     let reading = Dolt::start(&state_dir.join("db"), free_port())
         .await
         .expect("the stopped store comes up to be read");
@@ -3195,7 +3169,7 @@ async fn old_keys_an_unfinished_pass_left_are_taken_off_by_the_next_boot() {
         git_ref,
         ..
     } = restore_the_fixture("moved-role-keys").await;
-    let role_holder = std::fs::read_to_string(format!("{FIXTURE_DIR}/role_holder.txt"))
+    let role_holder = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/role_holder.txt"))
         .expect("the recorded holder")
         .trim()
         .to_string();
@@ -3925,7 +3899,7 @@ async fn an_old_message_carrying_the_address_shape_reads_back_as_written() {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
-    let role_holder = std::fs::read_to_string(format!("{FIXTURE_DIR}/role_holder.txt"))
+    let role_holder = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/role_holder.txt"))
         .expect("the recorded role holder")
         .trim()
         .to_string();
@@ -4113,11 +4087,6 @@ async fn a_settled_store_is_not_read_again(fixture_dir: &str, label: &str) {
 }
 
 #[tokio::test]
-async fn a_second_boot_does_not_read_the_field_passes_again() {
-    a_settled_store_is_not_read_again(FIXTURE_DIR, "settled").await;
-}
-
-#[tokio::test]
 async fn a_second_boot_does_not_read_the_field_passes_again_on_the_deploy_3_store() {
     a_settled_store_is_not_read_again(DEPLOY_3_FIXTURE_DIR, "settled-deploy3").await;
 }
@@ -4200,11 +4169,6 @@ async fn a_lost_link_table_is_rebuilt(fixture_dir: &str, label: &str) {
         "the rebuilt table holds the links the writes imply"
     );
     drop(scratch);
-}
-
-#[tokio::test]
-async fn a_lost_link_table_is_rebuilt_at_the_next_boot() {
-    a_lost_link_table_is_rebuilt(FIXTURE_DIR, "rebuilt").await;
 }
 
 #[tokio::test]

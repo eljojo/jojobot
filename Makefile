@@ -309,17 +309,17 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 # named ref in a DETACHED worktree — this checkout's own HEAD never moves and
 # no branch is created — boots it on a fresh disposable store, seeds a
 # representative set of records through its served surface, and dumps the
-# store to crates/jojobot/tests/fixtures/upgrade/, with the ref recorded
-# beside it. The upgrade gate itself (make check) reads that committed
+# store to a fixture directory under crates/jojobot/tests/fixtures/, with the ref
+# recorded beside it. The upgrade gate itself (make check) reads that committed
 # fixture; this target is what a deploy runs to refresh it, never a test.
 #
-#     make refresh-upgrade-fixture [REF=<ref>] [DIR=<fixture directory>]
+#     make refresh-upgrade-fixture [REF=<ref>] DIR=<fixture directory>
 #
-# DIR is relative to crates/jojobot and defaults to the gate's first fixture. The
-# gate's second one, for the build the operator's third deploy shipped (its
-# commit is in that fixture's ref.txt), is recorded with
-# DIR=tests/fixtures/upgrade_deploy3, and its third, for the build the fourth
-# deploy shipped, with DIR=tests/fixtures/upgrade_deploy4. The recording needs a
+# DIR is relative to crates/jojobot and has no default; the target refuses
+# without it. The gate keeps the fixtures of the last two deployed builds, for
+# the build the operator's third deploy shipped (its commit is in that fixture's
+# ref.txt) in DIR=tests/fixtures/upgrade_deploy3, and for the build the fourth
+# deploy shipped in DIR=tests/fixtures/upgrade_deploy4. The recording needs a
 # build that takes `sets` and writes a closing entry on a wrap.
 REF ?= origin/main
 DIR ?=

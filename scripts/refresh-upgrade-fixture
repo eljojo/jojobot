@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Records the fixture crates/jojobot/tests/fixtures/upgrade/ carries, from a
-# binary built at a named ref — never from this checkout's own working tree.
+# Records a fixture the upgrade gate reads, from a binary built at a named ref —
+# never from this checkout's own working tree.
 #
-#     scripts/refresh-upgrade-fixture [REF [DIR]]
+#     scripts/refresh-upgrade-fixture REF DIR
 #
-# REF defaults to origin/main. DIR is the fixture directory to record into,
-# relative to crates/jojobot, and defaults to the gate's first fixture; the gate
-# keeps a second one (tests/fixtures/upgrade_deploy3) for the build the
-# operator's third deploy shipped, and a third (tests/fixtures/upgrade_deploy4)
-# for the build the fourth shipped. The commit of each is in that directory's
-# ref.txt. The recording needs a build that takes `sets` and writes a closing
-# entry on a wrap, which no build before the fourth deploy's does.
+# REF is the ref to build (`make` passes origin/main by default). DIR is the fixture directory to record into,
+# relative to crates/jojobot, and has no default: the gate keeps one fixture
+# for each of the last two deployed builds (tests/fixtures/upgrade_deploy3 and
+# tests/fixtures/upgrade_deploy4), and a new deploy adds a directory of its own.
+# The commit of each is in that directory's ref.txt. The recording needs a build
+# that takes `sets` and writes a closing entry on a wrap, which no build before
+# the fourth deploy's does.
 # The ref is built in a DETACHED worktree, so
 # this script never moves this checkout's HEAD and never creates a branch.
 # The worktree is removed on exit, success or failure alike.
@@ -18,6 +18,10 @@ set -euo pipefail
 
 REF="${1:-origin/main}"
 FIXTURE_DIR="${2:-}"
+if [ -z "$FIXTURE_DIR" ]; then
+    echo "REFRESH REFUSED: no fixture directory named. Pass DIR, e.g. DIR=tests/fixtures/upgrade_deploy4" >&2
+    exit 2
+fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESOLVED="$(git -C "$REPO_ROOT" rev-parse --short "$REF")"
 WORKTREE_DIR="$(mktemp -d)"

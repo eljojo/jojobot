@@ -16,11 +16,6 @@ use jojobot_adapters::testing::free_port;
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
-/// Where the fixture the gate reads is kept, unless the run names another with
-/// `UPGRADE_FIXTURE_DIR`: the gate keeps one fixture per build it proves an
-/// upgrade from.
-const FIXTURE_DIR: &str = "tests/fixtures/upgrade";
-
 /// A directory of this run's own, removed only on request — the caller
 /// needs to read the store back out of it after the binary stops.
 struct Scratch(std::path::PathBuf);
@@ -141,10 +136,15 @@ async fn record_the_upgrade_fixture() {
         String::from_utf8_lossy(&dump.stderr)
     );
 
+    // **No default directory.** The gate keeps one fixture per build it proves an
+    // upgrade from, and each deploy adds a directory of its own. A default would
+    // either record over a fixture the gate still reads or create a directory
+    // the gate does not read.
     let named_dir = std::env::var("UPGRADE_FIXTURE_DIR")
         .ok()
-        .filter(|dir| !dir.is_empty());
-    let fixture_dir = std::path::Path::new(named_dir.as_deref().unwrap_or(FIXTURE_DIR));
+        .filter(|dir| !dir.is_empty())
+        .expect("UPGRADE_FIXTURE_DIR names the fixture directory to record into");
+    let fixture_dir = std::path::Path::new(&named_dir);
     std::fs::create_dir_all(fixture_dir).expect("the fixture directory exists");
     std::fs::copy(
         database_dir.join("doltdump.sql"),
