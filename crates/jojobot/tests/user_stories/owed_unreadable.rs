@@ -90,3 +90,56 @@ async fn a_thing_whose_schedule_cannot_be_read_is_owed_first_with_its_reason() {
     );
     story.finish().await;
 }
+
+/// **The day a schedule became unreadable is kept, so the thing's lateness
+/// keeps counting.** A later write on another day, to a thing whose schedule is
+/// still broken, leaves the stored day where it was. Beside it a thing whose
+/// schedule broke on that later day, so the read is shown to carry a day it
+/// stamped itself.
+#[tokio::test]
+async fn a_later_write_leaves_the_day_a_schedule_became_unreadable() {
+    let story = Story::begin("bot:gamma").await;
+    let first = story.session_on("2026-09-01", None).await;
+    first.add("thing:fern", "The Fern").await;
+    first
+        .event_with(
+            "thing:fern",
+            "watered on a schedule nobody wrote down properly",
+            serde_json::from_str(BROKEN_SCHEDULE).expect("fields"),
+            &[],
+        )
+        .await;
+
+    let later = story.session_on("2026-09-20", Some("new")).await;
+    later.add("thing:moss", "The Moss").await;
+    later
+        .event_with(
+            "thing:fern",
+            "still not written down properly",
+            json!({"cadence_days": "frequently"}),
+            &[],
+        )
+        .await;
+    later
+        .event_with(
+            "thing:moss",
+            "also not written down properly",
+            serde_json::from_str(BROKEN_SCHEDULE).expect("fields"),
+            &[],
+        )
+        .await;
+
+    let owed = what_is_owed(&later).await;
+    let body = owed.json();
+    assert_eq!(
+        the_object(&body, "thing:moss")["fields"]["due_on"],
+        "2026-09-20",
+        "a schedule that broke today is stamped today: {body}"
+    );
+    assert_eq!(
+        the_object(&body, "thing:fern")["fields"]["due_on"],
+        "2026-09-01",
+        "a schedule that broke earlier keeps the day it broke: {body}"
+    );
+    story.finish().await;
+}

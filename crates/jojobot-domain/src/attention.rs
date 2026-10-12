@@ -978,6 +978,17 @@ pub fn moved_due_moment_as(
         };
     }
     match moved_due_moment(carriers, existing, projected, today) {
+        // **The day an unreadable schedule became so is stamped once.** A thing
+        // that was unreadable before this write and still is already holds that
+        // day, and restamping it with today would reset the days it has been
+        // overdue at every later write.
+        DueMove::Set(_)
+            if existing.is_some()
+                && matches!(owed(carriers, held), Due::Unreadable)
+                && matches!(owed(carriers, projected), Due::Unreadable) =>
+        {
+            DueMove::Unchanged
+        }
         // **A stored moment is cleared here only when a carrier used to answer
         // for it.** `held` is the thing as it stood before the write. With no
         // carrier answering then, the date is a leftover of a write the old code
@@ -2132,6 +2143,61 @@ mod tests {
             ],
             "unreadable did not sort ahead of every dated one, or the dates did not sort oldest \
              first: {ranked:?}",
+        );
+    }
+
+    /// **The day a schedule became unreadable is stamped once.** A later write
+    /// on a thing that is still unreadable leaves the stamp where it is, so the
+    /// days overdue it measures keep counting. The pair: a thing that was
+    /// readable and becomes unreadable is stamped with the day of that write,
+    /// whatever date it held before.
+    #[test]
+    fn the_stamp_for_an_unreadable_schedule_is_written_once() {
+        let asked: [&dyn Carrier; 1] = [&Rhythms];
+        let none = BTreeMap::new();
+        let half: BTreeMap<String, String> = [(CADENCE_DAYS.to_string(), "7".to_string())]
+            .into_iter()
+            .collect();
+        let moved = |existing: Option<Date>, held: &BTreeMap<String, String>, today: Date| {
+            moved_due_moment_as("rhythm", &asked, existing, held, &half, &none, today)
+        };
+
+        // The write that leaves it unreadable stamps its day.
+        assert_eq!(
+            moved(None, &BTreeMap::new(), date(2026, 9, 1)),
+            DueMove::Set(date(2026, 9, 1)),
+        );
+        // A readable schedule's own date is replaced by that day too.
+        assert_eq!(
+            moved(
+                Some(date(2026, 8, 8)),
+                &weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate),
+                date(2026, 9, 1),
+            ),
+            DueMove::Set(date(2026, 9, 1)),
+        );
+        // One that was already unreadable and was never stamped gets its stamp.
+        assert_eq!(
+            moved(None, &half, date(2026, 9, 20)),
+            DueMove::Set(date(2026, 9, 20)),
+        );
+        // Becoming readable replaces the stamp with the real day.
+        assert_eq!(
+            moved_due_moment_as(
+                "rhythm",
+                &asked,
+                Some(date(2026, 9, 1)),
+                &half,
+                &weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate),
+                &none,
+                date(2026, 9, 20),
+            ),
+            DueMove::Set(date(2026, 8, 8)),
+        );
+        // A later write, on a later day, finds the stamp and leaves it.
+        assert_eq!(
+            moved(Some(date(2026, 9, 1)), &half, date(2026, 9, 20)),
+            DueMove::Unchanged,
         );
     }
 
