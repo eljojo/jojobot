@@ -255,7 +255,10 @@ impl Held {
                 );
             }
         }
-        if let (KeyState::Held(_), Some((at, RetiredBy::Resumed))) = (&handle.key, &retire) {
+        // **Marked whatever key the run held**, including none: a run that
+        // began before keys existed replaces nothing when it is picked up, and
+        // it must still read as just taken to the next asker.
+        if let Some((at, RetiredBy::Resumed)) = &retire {
             handle.taken_at = Some(*at);
         }
         if let KeyState::Held(new) = &key {

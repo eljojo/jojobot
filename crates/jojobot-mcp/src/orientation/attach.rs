@@ -4106,4 +4106,50 @@ mod tests {
         assert_eq!(run_name(&jojobot, &keys[0]), name);
         assert!(jojobot.caller(Some(&key)).is_err());
     }
+    /// **A second pick-up of a run that began before keys existed is refused
+    /// inside the lease.** The first pick-up replaces nothing, because the run
+    /// held no key, and it was the replaced key that marked the run as taken.
+    /// The mark is made whatever the run held, so the second asker meets a run
+    /// that was just taken and is handed no key.
+    #[tokio::test]
+    async fn a_second_pick_up_of_a_keyless_run_inside_the_lease_is_handed_no_key() {
+        let store = Arc::new(InMemorySessions::new());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        let jojobot = jojobot.quiet_after(jiff::SignedDuration::from_mins(45));
+        name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("bcd345".into()),
+                focus: "a run the older build began".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(5),
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("the older build's run is on the board");
+        let board = store.all_sessions().await.expect("the board");
+        jojobot.registry.rebuild_from(&board);
+
+        let first = boot_answering(&jojobot, "gamma", "bcd345").await;
+        let key = first["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the first pick-up is handed a key: {first}"))
+            .to_string();
+        let second = boot_answering(&jojobot, "gamma", "bcd345").await;
+        assert_eq!(second["status"], "blocked", "{second}");
+        assert!(
+            second["session"]["sid"].is_null() && second.get("sid").is_none(),
+            "a second pick-up inside the lease was handed a key: {second}"
+        );
+        assert!(
+            second.to_string().contains("bcd345"),
+            "the refusal names the run: {second}"
+        );
+        // The positive the refusal rests on: the first key still opens the run.
+        assert_eq!(run_name(&jojobot, &key), "bcd345");
+    }
 }
