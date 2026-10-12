@@ -230,3 +230,58 @@ pub fn fit_under_ceiling(body: &mut serde_json::Value) {
     }
     body["objects"] = objects.into();
 }
+
+/// **The words a blocker and its reason are written in**, as an answer carries
+/// them. The skills teach these by name, so the case below holds the list to
+/// what an answer really says, and the skills' case holds the teaching to the
+/// list.
+#[cfg(test)]
+pub(crate) const BLOCKER_WORDS: &[&str] = &[
+    "dependency",
+    "waiting_on",
+    "finished",
+    "archived",
+    "unfinished",
+    "dangling",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Every shape a blocker takes, rendered, uses the listed words and no
+    /// others.** A shape added without a word in the list, or a word left in the
+    /// list that no shape writes, fails here before a skill teaches it.
+    #[test]
+    fn the_listed_blocker_words_are_the_ones_an_answer_carries() {
+        let every_shape = [
+            Blocker::Finished,
+            Blocker::Archived,
+            Blocker::WaitingOn("person:milhouse".into()),
+            Blocker::Dependency {
+                handle: "work:sigma".into(),
+                why: Why::Unfinished,
+            },
+            Blocker::Dependency {
+                handle: "work:sigma".into(),
+                why: Why::Archived,
+            },
+            Blocker::Dependency {
+                handle: "work:sigma".into(),
+                why: Why::Dangling,
+            },
+        ];
+        let mut written = std::collections::BTreeSet::new();
+        for blocker in &every_shape {
+            let rendered = blocker_json(blocker);
+            for key in ["blocker", "why"] {
+                if let Some(word) = rendered[key].as_str() {
+                    written.insert(word.to_string());
+                }
+            }
+        }
+        let listed: std::collections::BTreeSet<String> =
+            BLOCKER_WORDS.iter().map(|word| word.to_string()).collect();
+        assert_eq!(written, listed);
+    }
+}

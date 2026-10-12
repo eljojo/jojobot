@@ -73,6 +73,8 @@ A graph gets asked all of the following. A query that stops short of any of it s
 
 **A view is data, declared by somebody.** The few that ship arrive as ordinary records, the same shape a caller declares. A bot consulting who its neighbours are is a query over the graph rather than a new capability.
 
+**The ready view answers *what can be started*.** A piece of work is ready when it is not finished, every thing it `depends_on` is finished, and nothing is held under `waiting_on`. Work already under way is ready, so a caller who wants only what has not started narrows the view with `where` to its board's not-started status. The answer counts the work it left out and names the call that says why: the view with `subject` set to one piece of work comes back with `ready: false` and `blocked_by`. A blocker is a dependency that is unfinished, archived or names nothing, the thing the work waits on, or the work itself being finished or archived. **Archived work is never ready, however it is named**: an archived thing is not finished, and nobody starts it.
+
 ## What it is not
 
 **Not an inference engine.** jojobot performs no reasoning of its own. It filters, walks and ranks. The mind that reads the result is the only mind in the system.

@@ -232,6 +232,7 @@ A **view** is a question somebody already worked out, asked for by name. Ask
 
     recall  view: "colleagues"     the identities here, what each is for, and whom each reports to
     recall  view: "loops"          the recurring things, and what each last recorded
+    recall  view: "ready"          the work that can be started now, and how many it left out
 
 The colleagues view says whom each bot reports to and nothing inward. Who
 reports to a bot is a second call, a walk along `reports_to` the other way:
@@ -454,6 +455,15 @@ is in it. Narrow it to the work not started, which is your board's not-started
 status (`next` on the shipped words):
 
     recall  view: "ready"  where: "status = next"
+
+Ask why one piece of work is not on that list by naming it:
+
+    recall  view: "ready"  subject: "work:first-mix"
+
+The answer says `ready: false` and `blocked_by`, a list of what stops it. A
+blocker is a `dependency` that is `unfinished`, `archived` or `dangling` (its
+handle names nothing), a `waiting_on` handle, or the work itself being
+`finished` or `archived`. Archived work is never ready, however it is named.
 
 Or ask what waits on one person:
 
