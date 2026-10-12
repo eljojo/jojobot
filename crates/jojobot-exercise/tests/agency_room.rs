@@ -35,10 +35,22 @@ struct Lab {
     names: Vec<String>,
 }
 
+/// **The day the room's server runs on**, carried to the child as its own clock.
+///
+/// Every stamp the server writes from its clock (the day a record was taken in,
+/// the `as_of` of every answer) is this day, whatever the real date is. A needle
+/// is checked as text in an answer, so a stamp equal to a needle's date made
+/// that needle match a second place on exactly that real day: the launch day,
+/// 2026-10-12, did on 2026-10-12. The day is after the last sitting
+/// (2026-12-10) and is no date this room's needles or sittings use. **Never move
+/// the launch day to dodge the clock**: that moves the bomb.
+const SERVER_DAY: &str = "2026-12-11";
+
 async fn lab() -> Lab {
-    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (room, surface) =
+        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
+            .await
+            .expect("a room");
     expectations::seed_for(AGENCY_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)
@@ -1460,6 +1472,28 @@ async fn december_answered_in_the_reply_alone_reds_every_slot() {
             saying(&outcomes),
         );
     }
+}
+
+/// **The room's server stamps the day the room gave it and never the wall
+/// clock.** `as_of` is the day of the newest write behind a thing, and it is
+/// the server's own day. The needle check reads answers as text, so a stamp
+/// that equalled the launch day made the launch needle match a second place on
+/// that one real day. This case fails on every day if the server runs on the
+/// real clock, which is why it holds the room to its own day instead of waiting
+/// for the wall clock to agree with the launch day.
+#[tokio::test]
+async fn the_rooms_server_stamps_the_day_the_room_gave_it() {
+    let lab = played(3, None).await;
+    let answer = lab
+        .surface
+        .call("recall", json!({"subject": "project:atlas"}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&answer).unwrap_or_else(|e| panic!("a recall answers JSON: {e}"));
+    assert_eq!(
+        parsed["objects"][0]["as_of"], SERVER_DAY,
+        "the server stamped a day the room did not give it: {answer}"
+    );
 }
 
 /// 🚨 **No lock here rests on a needle that matches somewhere else.**
