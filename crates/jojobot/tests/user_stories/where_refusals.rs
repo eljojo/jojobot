@@ -373,3 +373,79 @@ async fn a_view_and_a_caller_combine_without_silence() {
     s.call("add_entity", declare("status = next")).await;
     story.finish().await;
 }
+
+/// A handle slug that sorts nowhere near the order the story asks for, so the
+/// order under test cannot be the handles' own.
+fn scattered_slug(i: usize) -> String {
+    let mut state = (i as u64)
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    (0..10)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (b'a' + ((state >> 33) % 26) as u8) as char
+        })
+        .collect()
+}
+
+/// **An order is held across the cut of an answer.** More things than one window
+/// holds are ordered by a declared number, the answer names the offset that reads
+/// on, and the pages read one after the other are the whole order: no thing
+/// twice, none lost, and none out of place at the seam.
+#[tokio::test]
+async fn an_order_holds_across_the_pages_of_an_answer() {
+    const THINGS: usize = 45;
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    s.call(
+        "declare_type",
+        json!({"name": "thing", "fields": [{"key": "rank", "holds": "number"}]}),
+    )
+    .await;
+    // Rank runs 1..=THINGS in a scrambled creation order, and every thing carries
+    // enough that one answer cannot hold them all.
+    let padding = "x".repeat(1_100);
+    let mut by_rank: Vec<(usize, String)> = Vec::new();
+    for i in 0..THINGS {
+        let handle = format!("thing:{}", scattered_slug(i));
+        let rank = (i * 17) % THINGS + 1;
+        s.add(&handle, &scattered_slug(i + 1_000)).await;
+        s.call(
+            "capture",
+            json!({"subject": handle, "content": "ranked", "provenance": "testimony",
+                   "sets": {"rank": rank.to_string(), "padding": padding}}),
+        )
+        .await;
+        by_rank.push((rank, handle));
+    }
+    by_rank.sort();
+    let expected: Vec<String> = by_rank.into_iter().map(|(_, handle)| handle).collect();
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut pages = 0;
+    let mut offset = 0u64;
+    loop {
+        let page = s
+            .call(
+                "recall",
+                json!({"kind": "thing", "order": {"key": "rank", "direction": "ascending"},
+                       "offset": offset}),
+            )
+            .await;
+        pages += 1;
+        seen.extend(handles_of(&page));
+        match page.json()["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+        assert!(pages < 20, "the pages never end: {}", page.raw());
+    }
+    assert!(
+        pages >= 2,
+        "one window must not hold them all: {pages} page"
+    );
+    assert_eq!(seen, expected, "the order held across {pages} pages");
+    story.finish().await;
+}
