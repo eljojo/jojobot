@@ -530,13 +530,15 @@ pub async fn boot_store_pushing(
     // **Links a fold of an older build left on the forwarding row, repointed at
     // the thing it ended in.** Runs after the pass above, which makes the link
     // table agree with the writes it reads. Marked finished once it has
-    // committed, so it is made once and never repeated.
+    // committed and skipped no forward, so it is made once; a forward it could
+    // not place keeps it open and is warned about at every boot.
     match linking.migrate_forwarded_links().await {
         Ok(report) if report.settled => {
             tracing::info!("store: links on forwarding rows: already done");
         }
         Ok(report) => tracing::info!(
             repointed = report.repointed,
+            skipped = report.skipped.len(),
             "store: repointed the field links that named a folded thing onto the thing it \
              ended in"
         ),
