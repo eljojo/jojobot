@@ -134,7 +134,7 @@ impl Jojobot {
                 self.fresh_block(run)
             }
             Some(answer) => {
-                let (handle, session) = self
+                let (handle, session, stopped) = self
                     .resumable(bot, answer, &live, offerable.as_ref())
                     .await?;
                 // **The resume hands the run a new key**, written to its card
@@ -183,6 +183,14 @@ impl Jojobot {
                 }
                 let key = self.rekey(&handle, sid::RetiredBy::Resumed).await?;
                 self.registry.forget_shown(handle.as_str());
+                // **The reopen is the last step that can refuse**, so every
+                // refusal before it leaves a stopped run stopped.
+                let session = match session {
+                    Some(stopped_run) if stopped => {
+                        Some(self.reopen_for_resume(&handle, &stopped_run.id).await?)
+                    }
+                    other => other,
+                };
                 // **A resume that names a zone moves the run into it**, card
                 // included, because a run outlives a device hop and the zone it
                 // began in is not always the zone it is being worked in. A
@@ -606,7 +614,7 @@ impl Jojobot {
         answer: &str,
         live: &[Session],
         offerable: Option<&Session>,
-    ) -> Result<(sid::Sid, Option<Session>), CallToolResult> {
+    ) -> Result<(sid::Sid, Option<Session>, bool), CallToolResult> {
         // **A card on this bot's own board is a run the registry may not have
         // met**: it was begun by another writer, or since the last rebuild. Its
         // name is public, so it is taken in by the name it goes by.
@@ -716,47 +724,76 @@ impl Jojobot {
             ));
         }
         if let Some(session) = live.iter().find(|s| s.id == card) {
-            return Ok((name, Some(session.clone())));
+            return Ok((name, Some(session.clone()), false));
         }
         // **Not among the live runs, so it stopped — and stopping is not the
         // end.** Reopening is what makes "resume last session" always work, and
         // it is bounded by nothing but the state the run reached: the offer's
         // age window governs what jojobot VOLUNTEERS, never what a name
         // someone kept can still reach.
-        match self.sessions.reopen(&card).await {
-            Ok(session) => Ok((name, Some(session))),
-            // The one end that is the last word: a run which told its story
-            // is over, and its chronology stands as the record of what
-            // happened.
+        //
+        // **The one end that is the last word is refused here, before anything
+        // is changed**: a run which told its story is over, and its chronology
+        // stands as the record of what happened. The reopen itself comes last,
+        // after the vouchers are void and the key is new, so a refusal before it
+        // leaves the run as it was.
+        if existing.state == SessionState::Wrapped {
+            return Err(handle_declined(
+                "",
+                format!(
+                    "No session was started. Run {name} is wrapped — its story has been told, \
+                     so this end is the last word, except through the wrap_code its wrap handed \
+                     back: pass that code as resume for one last change. Its chronology stands as \
+                     the record of what happened. {again}"
+                ),
+            ));
+        }
+        Ok((name, Some(existing), true))
+    }
+
+    /// **Reopen the stopped run a resume is taking back**, as the last step of
+    /// the resume. By now the run's vouchers are void and its key is new, so a
+    /// refusal here says what landed: the run is still stopped, and the same
+    /// resume goes through once the store answers.
+    async fn reopen_for_resume(
+        &self,
+        name: &sid::Sid,
+        card: &SessionId,
+    ) -> Result<Session, CallToolResult> {
+        let again = "Call start_here with your bot name and no resume to see what there is.";
+        match self.sessions.reopen(card).await {
+            Ok(session) => Ok(session),
+            // The run was read as stopped a moment ago; a state that closed in
+            // between is the last word.
             Err(SessionError::Closed { state, .. }) => Err(handle_declined(
                 "",
                 format!(
                     "No session was started. Run {name} is {state} — its story has been told, \
-                 so this end is the last word, except through the wrap_code its wrap handed \
-                 back: pass that code as resume for one last change. Its chronology stands as \
-                 the record of what happened. {again}"
+                     so this end is the last word, except through the wrap_code its wrap handed \
+                     back: pass that code as resume for one last change. {again}"
                 ),
             )),
             Err(SessionError::UnknownSession { .. }) => Err(handle_declined(
                 "",
                 format!(
                     "No session was started. Run {name} is held by this jojobot, but the \
-                 session it names is not on the board any more. Nothing was changed. {again}"
+                     session it names is not on the board any more. Its vouchers were voided \
+                     and its key was replaced. {again}"
                 ),
             )),
-            // **Degrades the way the rest of a boot degrades**: nothing was
-            // changed, the caller is told plainly, and the underlying fault
-            // goes to the log where an operator reads it — rather than a 500
-            // that says nothing about what happened to the session.
+            // **Degrades the way the rest of a boot degrades**: the caller is
+            // told plainly what landed, and the underlying fault goes to the
+            // log where an operator reads it.
             Err(e) => {
                 tracing::warn!(error = %e, session = %card, "a session could not be reopened");
                 Err(handle_declined(
                     "",
-                    "No session was started, and nothing was changed. That run stopped, and \
-                     jojobot could not reopen it: the session store refused. This is not \
-                     something your call can fix by being different — try again, and if it \
-                     persists a person has to look at the store."
-                        .to_string(),
+                    format!(
+                        "No session was started. Run {name} could not be reopened: the session \
+                         store refused. Its vouchers were voided and its key was replaced, and \
+                         the run is still stopped. Send the same call again, and if it persists \
+                         a person has to look at the store."
+                    ),
                 ))
             }
         }
@@ -3671,10 +3708,10 @@ mod tests {
     /// store answers.
     #[tokio::test]
     async fn a_wrap_code_whose_key_cannot_be_issued_is_not_spent() {
-        let store = Arc::new(crate::session::testing::RefusingKey(InMemorySessions::new()));
+        let store = Arc::new(crate::session::testing::Refusing::refusing_keys());
         let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
         make_bot(&jojobot, "gamma").await;
-        let (wrapped, code) = wrapped_with_a_code(&store.0, 5, "bcd345").await;
+        let (wrapped, code) = wrapped_with_a_code(&store.inner, 5, "bcd345").await;
 
         let refused = boot_answering(&jojobot, "gamma", &code).await;
         assert_eq!(refused["status"], "blocked", "{refused}");
@@ -3683,7 +3720,7 @@ mod tests {
             "a refused code handed out a key: {refused}"
         );
         let window = store
-            .0
+            .inner
             .read_session(&wrapped.id)
             .await
             .expect("read ok")
@@ -3714,6 +3751,170 @@ mod tests {
         assert!(
             refused.is_err(),
             "a key was issued for a name nothing holds"
+        );
+    }
+
+    /// **A resume refused before the key moves leaves a stopped run stopped.**
+    /// The run was abandoned; what it was taught cannot be forgotten, so the
+    /// resume is refused and says the run is as it was. The run must be as it
+    /// was: still abandoned, and still opened by its old key.
+    #[tokio::test]
+    async fn a_resume_refused_before_the_key_moves_leaves_a_stopped_run_stopped() {
+        use jojobot_domain::teaching::{TeachingError, Teachings};
+
+        struct CannotForget(jojobot_domain::teaching::testing::InMemoryTeachings);
+        #[async_trait::async_trait]
+        impl Teachings for CannotForget {
+            async fn first_contact(
+                &self,
+                sid: &Sid,
+                domain: &str,
+                at: jiff::Timestamp,
+            ) -> Result<bool, TeachingError> {
+                self.0.first_contact(sid, domain, at).await
+            }
+
+            async fn forget(&self, _sid: &Sid) -> Result<(), TeachingError> {
+                Err(TeachingError::Store("the store is down".into()))
+            }
+        }
+
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::seeded()),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            store.clone(),
+            Arc::new(CannotForget(
+                jojobot_domain::teaching::testing::InMemoryTeachings::new(),
+            )),
+            seeded_registry(),
+        );
+        name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        let key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &key, "started").await;
+        let name = run_name(&jojobot, &key);
+        let card = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("the runs")[0]
+            .id
+            .clone();
+        store
+            .close(&card, SessionState::Abandoned)
+            .await
+            .expect("the sweep ended the run");
+
+        let refused = boot_answering(&jojobot, "gamma", &name).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null() && refused.get("sid").is_none(),
+            "a refused resume handed out a key: {refused}"
+        );
+        assert_eq!(
+            store.read_session(&card).await.expect("read ok").state,
+            SessionState::Abandoned,
+            "a refusal that says the run is as it was reopened it"
+        );
+        assert!(
+            jojobot.caller(Some(&key)).is_ok(),
+            "the old key stopped opening a run the refusal left alone"
+        );
+    }
+
+    /// **A reopen that the store refuses comes after the key moved, and the
+    /// same resume goes through once the store answers.** The refusal hands out
+    /// no key and leaves the run stopped; the next resume reopens it.
+    #[tokio::test]
+    async fn a_resume_whose_reopen_is_refused_leaves_the_run_stopped_and_goes_through_on_retry() {
+        let store = Arc::new(crate::session::testing::Refusing::refusing_reopens());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        let key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &key, "started").await;
+        let name = run_name(&jojobot, &key);
+        let card = store
+            .inner
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("the runs")[0]
+            .id
+            .clone();
+        store
+            .inner
+            .close(&card, SessionState::Abandoned)
+            .await
+            .expect("the sweep ended the run");
+
+        let refused = boot_answering(&jojobot, "gamma", &name).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null() && refused.get("sid").is_none(),
+            "a refused resume handed out a key: {refused}"
+        );
+        assert_eq!(
+            store
+                .inner
+                .read_session(&card)
+                .await
+                .expect("read ok")
+                .state,
+            SessionState::Abandoned,
+            "the run was reopened although the store refused"
+        );
+
+        store
+            .reopen_fails
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let taken = boot_answering(&jojobot, "gamma", &name).await;
+        let new_key = taken["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the resume goes through: {taken}"))
+            .to_string();
+        assert_eq!(run_name(&jojobot, &new_key), name);
+        assert_eq!(
+            store
+                .inner
+                .read_session(&card)
+                .await
+                .expect("read ok")
+                .state,
+            SessionState::Active
+        );
+    }
+
+    /// **A wrapped run is refused before anything about it changes.** Its story
+    /// is told and the end is the last word, so the resume says so up front: the
+    /// vouchers it holds, what it was taught and its key state are as they were.
+    #[tokio::test]
+    async fn a_wrapped_run_resumed_by_its_name_is_refused_with_its_key_state_as_it_was() {
+        let store = Arc::new(InMemorySessions::new());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (wrapped, _code) = wrapped_with_a_code(&store, 5, "bcd345").await;
+        store
+            .set_key_hash(&wrapped.id, jojobot_domain::session::KEY_VOID)
+            .await
+            .expect("the wrap took the key away");
+        let board = store.all_sessions().await.expect("the board");
+        jojobot.registry.rebuild_from(&board);
+
+        let refused = boot_answering(&jojobot, "gamma", "bcd345").await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null() && refused.get("sid").is_none(),
+            "a refused resume handed out a key: {refused}"
+        );
+        assert_eq!(
+            jojobot
+                .registry
+                .lookup_name("bcd345")
+                .expect("the registry holds the run")
+                .key,
+            sid::KeyState::Void,
+            "a refused resume replaced the key of a wrapped run"
         );
     }
 

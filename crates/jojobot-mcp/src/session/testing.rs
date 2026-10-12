@@ -512,31 +512,56 @@ impl Sessions for RefusingWindowClear {
     }
 }
 
-/// **A session store that cannot write a run's key** while everything else
-/// works — the failure that leaves a run on its old key state. Writing the word
-/// that voids a key still lands, because taking a key away is what a failed
+/// **A session store that refuses one kind of write while everything else
+/// works**, each refusal switched on and off by the case: a run's key, or the
+/// reopening of a stopped run. Writing the word that voids a key still lands
+/// while the key refusal is on, because taking a key away is what a failed
 /// issue falls back to.
-pub(crate) struct RefusingKey(pub(crate) InMemorySessions);
+pub(crate) struct Refusing {
+    pub(crate) inner: InMemorySessions,
+    pub(crate) key_fails: std::sync::atomic::AtomicBool,
+    pub(crate) reopen_fails: std::sync::atomic::AtomicBool,
+}
+
+impl Refusing {
+    /// A store that refuses every key write from the start.
+    pub(crate) fn refusing_keys() -> Self {
+        Refusing {
+            inner: InMemorySessions::new(),
+            key_fails: true.into(),
+            reopen_fails: false.into(),
+        }
+    }
+
+    /// A store that refuses to reopen a stopped run from the start.
+    pub(crate) fn refusing_reopens() -> Self {
+        Refusing {
+            inner: InMemorySessions::new(),
+            key_fails: false.into(),
+            reopen_fails: true.into(),
+        }
+    }
+}
 
 #[async_trait]
-impl Sessions for RefusingKey {
+impl Sessions for Refusing {
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
-        self.0.sessions_of(bot).await
+        self.inner.sessions_of(bot).await
     }
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
-        self.0.all_sessions().await
+        self.inner.all_sessions().await
     }
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
-        self.0.read_session(id).await
+        self.inner.read_session(id).await
     }
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
-        self.0.begin(new).await
+        self.inner.begin(new).await
     }
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
-        self.0.append(id, entry).await
+        self.inner.append(id, entry).await
     }
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
-        self.0.amend_last(id, text).await
+        self.inner.amend_last(id, text).await
     }
     async fn amend_beat(
         &self,
@@ -545,24 +570,24 @@ impl Sessions for RefusingKey {
         text: &str,
         touched: jiff::Timestamp,
     ) -> Result<JournalEntry, SessionError> {
-        self.0.amend_beat(id, entry, text, touched).await
+        self.inner.amend_beat(id, entry, text, touched).await
     }
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
-        self.0.set_focus(id, focus).await
+        self.inner.set_focus(id, focus).await
     }
     async fn set_timezone(
         &self,
         id: &SessionId,
         timezone: Option<&str>,
     ) -> Result<Session, SessionError> {
-        self.0.set_timezone(id, timezone).await
+        self.inner.set_timezone(id, timezone).await
     }
     async fn set_stated_day(
         &self,
         id: &SessionId,
         day: Option<jiff::civil::Date>,
     ) -> Result<Session, SessionError> {
-        self.0.set_stated_day(id, day).await
+        self.inner.set_stated_day(id, day).await
     }
 
     async fn set_wrap_window(
@@ -570,16 +595,21 @@ impl Sessions for RefusingKey {
         id: &SessionId,
         window: Option<WrapWindow>,
     ) -> Result<Session, SessionError> {
-        self.0.set_wrap_window(id, window).await
+        self.inner.set_wrap_window(id, window).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
-        self.0.close(id, to).await
+        self.inner.close(id, to).await
     }
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.0.add_served(id, chars).await
+        self.inner.add_served(id, chars).await
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
-        self.0.reopen(id).await
+        if self.reopen_fails.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SessionError::Store(
+                "the state cell on the page could not be written".into(),
+            ));
+        }
+        self.inner.reopen(id).await
     }
 
     async fn set_charter_told(
@@ -587,11 +617,12 @@ impl Sessions for RefusingKey {
         id: &SessionId,
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
-        self.0.set_charter_told(id, at).await
+        self.inner.set_charter_told(id, at).await
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        if hash == jojobot_domain::session::KEY_VOID {
-            return self.0.set_key_hash(id, hash).await;
+        let refusing = self.key_fails.load(std::sync::atomic::Ordering::SeqCst);
+        if !refusing || hash == jojobot_domain::session::KEY_VOID {
+            return self.inner.set_key_hash(id, hash).await;
         }
         Err(SessionError::Store(
             "the key cell on the page could not be written".into(),
@@ -603,14 +634,14 @@ impl Sessions for RefusingKey {
         bot: &EntityId,
         change: CharterChange,
     ) -> Result<(), SessionError> {
-        self.0.note_charter_change(bot, change).await
+        self.inner.note_charter_change(bot, change).await
     }
 
     async fn charter_change_of(
         &self,
         bot: &EntityId,
     ) -> Result<Option<CharterChange>, SessionError> {
-        self.0.charter_change_of(bot).await
+        self.inner.charter_change_of(bot).await
     }
 }
 
