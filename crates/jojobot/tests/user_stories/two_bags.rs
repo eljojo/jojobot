@@ -92,11 +92,28 @@ async fn a_setting_and_a_label_read_apart_and_a_label_moves_in_one_call() {
         "{read}"
     );
 
-    // **The same split on a search hit.**
+    // **The same split on a search hit, in one read.** The claim that set its price
+    // arrives with `sets`, and the claim that only labelled itself arrives with its
+    // label under `fields` and no `sets`: the negative is read beside the positive
+    // it depends on, in the answer to one search.
     let found = run
-        .call("search", json!({"query": "Thursday special"}))
-        .await;
-    found.says("\"sets\":{\"special_price\":\"12\"}");
+        .call("search", json!({"subject": "place:leftorium"}))
+        .await
+        .json();
+    let hit = |address: &str| -> &serde_json::Value {
+        found["results"]
+            .as_array()
+            .and_then(|hits| hits.iter().find(|hit| hit["address"] == address))
+            .unwrap_or_else(|| panic!("{address} is not among the hits: {found}"))
+    };
+    assert_eq!(hit(&priced)["sets"]["special_price"], "12", "{found}");
+    assert!(hit(&priced)["fields"]["special_price"].is_null(), "{found}");
+    assert_eq!(
+        hit(&labelled_address)["fields"]["overheard"],
+        "tuesday",
+        "{found}"
+    );
+    assert!(hit(&labelled_address).get("sets").is_none(), "{found}");
 
     // **One call moves the label to the settings**, and the receipt says so.
     let moved = run

@@ -822,6 +822,19 @@ async fn an_own_key_named_in_sets_moves_to_the_thing_in_one_call() {
             .expect("an answer"),
     );
     assert!(plain.get("moved_to_sets").is_none(), "{plain}");
+    // **The negative is read beside the positive it depends on**: the write landed,
+    // and the thing holds the setting it set. A refused call also reports no move,
+    // so the absence above says nothing until this is true.
+    assert_ne!(plain["status"], "blocked", "the write landed: {plain}");
+    let settled = recalled(&jojobot).await;
+    assert_eq!(
+        settled["objects"][0]["fields"]["weather"], "clear",
+        "the thing holds the new setting: {settled}"
+    );
+    assert_eq!(
+        settled["objects"][0]["fields"]["mood"], "delighted",
+        "and the one that moved before: {settled}"
+    );
 }
 
 /// Update through the handler, expecting the guard to wave it through.
