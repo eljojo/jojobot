@@ -8998,6 +8998,87 @@ pub async fn a_claim_on_a_supplied_record_reads_back<M: Memory>(store: &M) {
     );
 }
 
+/// 🚨 **A claim written about a record the build supplies is in that record's
+/// search document, and the record is ONE document.**
+///
+/// The store keeps the claim under the handle and holds no entity row to make a
+/// document of, so the layer that supplies the record has to carry the claim
+/// into the document it builds. **A document with no facts never puts the
+/// claim's words in the index**, and a caller who wrote the claim searches for
+/// it and is told nothing is there.
+///
+/// **Asked of `scan_entity` (the path a write refreshes by) and of `scan` (the
+/// path a boot builds the index by)**, because each builds the document by its
+/// own route. **And paired with a stored thing**, or the case holds on a build
+/// that put every claim in every document.
+///
+/// ⚠️ **Takes the layer that resolves supplied records**, not the bare store:
+/// the bare store makes no document for a record it holds no row for.
+pub async fn a_claim_on_a_supplied_record_is_in_its_one_document<M: Memory>(served: &M) {
+    let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+    let person = EntityId("person:kyle".into());
+    add(
+        served,
+        NewEntity::new(person.clone(), "Kyle", "contract-fixture"),
+    )
+    .await;
+    let about_shipped = capture(
+        served,
+        state(NewFact::about(
+            shipped.clone(),
+            "read at dawn, a zarbleflux habit",
+            date(2026, 6, 2),
+        )),
+    )
+    .await;
+    let about_person = capture(
+        served,
+        state(NewFact::about(
+            person.clone(),
+            "keeps a quuxwort jar",
+            date(2026, 6, 2),
+        )),
+    )
+    .await;
+
+    let whole = served.scan().await.expect("the scan reads");
+    for (handle, claim, other) in [
+        (&shipped, &about_shipped, &about_person),
+        (&person, &about_person, &about_shipped),
+    ] {
+        let by_scan: Vec<_> = whole
+            .iter()
+            .filter(|d| d.entity.as_ref().is_some_and(|e| &e.id == handle))
+            .collect();
+        assert_eq!(
+            by_scan.len(),
+            1,
+            "{handle} is not exactly one document in the scan: {:?}",
+            by_scan.iter().map(|d| &d.doc_id).collect::<Vec<_>>(),
+        );
+        let by_entity = served
+            .scan_entity(handle)
+            .await
+            .expect("the one-document read answers")
+            .unwrap_or_else(|| panic!("{handle} has no document by scan_entity"));
+        assert_eq!(
+            by_entity.doc_id, by_scan[0].doc_id,
+            "the two routes name {handle}'s document differently",
+        );
+        for (route, doc) in [("scan", by_scan[0]), ("scan_entity", &by_entity)] {
+            assert!(
+                doc.facts.iter().any(|f| f.address() == claim.address()),
+                "{handle}'s document by {route} does not carry its own claim: {:?}",
+                doc.facts,
+            );
+            assert!(
+                !doc.facts.iter().any(|f| f.address() == other.address()),
+                "{handle}'s document by {route} carries a claim about something else",
+            );
+        }
+    }
+}
+
 /// 🚨 **Every entity read either answers for a record the build supplies,
 /// or says here why it must not.**
 ///

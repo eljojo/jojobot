@@ -2527,6 +2527,45 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     store.stop().await;
 }
 
+/// **A claim written about a supplied record is in its one document**, over
+/// the real store, exactly as over the fake.
+#[tokio::test]
+async fn dolt_carries_a_claim_on_a_supplied_record_into_its_one_document() {
+    let scratch = Scratch::new("supplied-document");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "supplied-document")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let supplied = Provisions::new(vec![Provision::record(
+        jojobot_domain::memory::Entity {
+            id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    )]);
+    let served = Provisioned::new(
+        DoltMemory::open(pool.clone()).knowing(supplied.clone()),
+        supplied,
+    );
+    memory::a_claim_on_a_supplied_record_is_in_its_one_document(&served).await;
+
+    store.stop().await;
+}
+
 /// **A whole-record provision colliding with a real stored row is refused,
 /// over the real store** — the class the original defect actually shipped
 /// as: a crate-narrow suite runs only the fake, and this is the case the

@@ -88,8 +88,11 @@ impl<M> Provisioned<M> {
 
 impl<M: Memory + Send + Sync> Provisioned<M> {
     /// A record the build supplies, as the document a reader would have got had
-    /// the store held it. **No facts**: a supplied record is a thing the
-    /// software ships, and a claim about it is somebody's to make.
+    /// the store held it. **Its facts are the claims the store holds about
+    /// it**: the build ships no claim, but a caller may write one on a supplied
+    /// record, and the store keeps it under the handle with no entity row to
+    /// make a document of its own. Without them the index never holds the
+    /// claim's words, and a search for them finds nothing.
     ///
     /// **Its fields are what a read of the record folds to**: the fields the
     /// build ships, under whatever keys the store holds for the handle. The
@@ -112,7 +115,7 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
                 .unwrap_or_default()
                 .to_string(),
             entity: Some(held.clone()),
-            facts: Vec::new(),
+            facts: self.inner.recall(entity).await?,
             fields: self.fields(entity).await?,
             owner: None,
         }))
@@ -1433,6 +1436,71 @@ mod tests {
             ),
             "a handle nobody has stopped being a miss",
         );
+    }
+
+    /// **A claim written about a supplied record is in its one document**,
+    /// over the fake, with the stored half asked beside it.
+    #[tokio::test]
+    async fn a_claim_on_a_supplied_record_is_in_its_one_document_over_the_fake() {
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
+        jojobot_domain::memory::testing::contract::a_claim_on_a_supplied_record_is_in_its_one_document(&over)
+            .await;
+    }
+
+    /// **A stored row for a handle the build later ships stays the one
+    /// document**, claims and all: the supplied record neither shadows it nor
+    /// joins it as a second.
+    #[tokio::test]
+    async fn a_stored_row_under_a_supplied_handle_stays_one_document_with_its_claims() {
+        let shipped = EntityId("view:loops".into());
+        let store = InMemoryMemory::booted();
+        store
+            .add_entity(NewEntity::new(
+                shipped.clone(),
+                "Stored Loops",
+                "user-named",
+            ))
+            .await
+            .expect("the operator wrote it first")
+            .written()
+            .expect("nothing shipped it yet");
+        let claim = store
+            .capture(jojobot_domain::memory::testing::contract::state(
+                NewFact::about(
+                    shipped.clone(),
+                    "a stored zarbleflux habit",
+                    jiff::civil::date(2026, 6, 2),
+                ),
+            ))
+            .await
+            .expect("the claim lands")
+            .written()
+            .expect("nothing blocks it");
+        let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+
+        let whole = over.scan().await.expect("the scan reads");
+        let mine: Vec<_> = whole
+            .iter()
+            .filter(|d| d.entity.as_ref().is_some_and(|e| e.id == shipped))
+            .collect();
+        assert_eq!(
+            mine.len(),
+            1,
+            "one document, not a stored one and a supplied one"
+        );
+        assert_eq!(mine[0].title, "Stored Loops", "the stored row wins");
+        assert!(
+            mine[0].facts.iter().any(|f| f.address() == claim.address()),
+            "the stored document keeps its claim: {:?}",
+            mine[0].facts,
+        );
+        let one = over
+            .scan_entity(&shipped)
+            .await
+            .expect("the one-document read answers")
+            .expect("the document exists");
+        assert_eq!(one.title, "Stored Loops", "scan_entity agrees");
     }
 
     /// **A build that stops shipping a record loses it, and what the operator

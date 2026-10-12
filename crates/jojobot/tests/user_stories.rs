@@ -104,6 +104,8 @@ mod picked_up_by_name;
 #[path = "user_stories/session_key.rs"]
 mod session_key;
 /// A key set on a record the software ships is found by that key.
+#[path = "user_stories/supplied_search.rs"]
+mod supplied_search;
 #[path = "user_stories/supplied_sets.rs"]
 mod supplied_sets;
 
