@@ -100,6 +100,9 @@ mod keeping_up;
 mod picked_up_by_name;
 #[path = "user_stories/session_key.rs"]
 mod session_key;
+/// A key set on a record the software ships is found by that key.
+#[path = "user_stories/supplied_sets.rs"]
+mod supplied_sets;
 
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]

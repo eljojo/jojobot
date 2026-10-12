@@ -58,26 +58,6 @@ impl<M> Provisioned<M> {
         Provisioned { inner, provisions }
     }
 
-    /// A record the build supplies, as the document a reader would have got had
-    /// the store held it. **No facts**: a supplied record is a thing the
-    /// software ships, and a claim about it is somebody's to make.
-    fn supplied_scan(&self, entity: &EntityId) -> Option<search::DocScan> {
-        let (held, fields) = self.provisions.record_for(entity)?;
-        Some(search::DocScan {
-            doc_id: held.id.to_string(),
-            title: held.name.clone(),
-            prose: self
-                .provisions
-                .prose_for(entity)
-                .unwrap_or_default()
-                .to_string(),
-            entity: Some(held.clone()),
-            facts: Vec::new(),
-            fields: fields.clone(),
-            owner: None,
-        })
-    }
-
     /// Resolve a scanned document's prose, if the build supplies any for it.
     fn resolve(&self, doc: &mut search::DocScan) {
         let Some(entity) = doc.entity.as_ref() else {
@@ -106,6 +86,39 @@ impl<M> Provisioned<M> {
     }
 }
 
+impl<M: Memory + Send + Sync> Provisioned<M> {
+    /// A record the build supplies, as the document a reader would have got had
+    /// the store held it. **No facts**: a supplied record is a thing the
+    /// software ships, and a claim about it is somebody's to make.
+    ///
+    /// **Its fields are what a read of the record folds to**: the fields the
+    /// build ships, under whatever keys the store holds for the handle. The
+    /// index is built from this document, so a key written onto a supplied
+    /// record has to be in it, or the key finds the stored records that carry it
+    /// and never this one.
+    async fn supplied_scan(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Option<search::DocScan>, MemoryError> {
+        let Some((held, _)) = self.provisions.record_for(entity) else {
+            return Ok(None);
+        };
+        Ok(Some(search::DocScan {
+            doc_id: held.id.to_string(),
+            title: held.name.clone(),
+            prose: self
+                .provisions
+                .prose_for(entity)
+                .unwrap_or_default()
+                .to_string(),
+            entity: Some(held.clone()),
+            facts: Vec::new(),
+            fields: self.fields(entity).await?,
+            owner: None,
+        }))
+    }
+}
+
 #[async_trait]
 impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     // ── the two reads prose leaves the store by ─────────────────────────────
@@ -126,7 +139,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             let stored = scanned
                 .iter()
                 .any(|d| d.entity.as_ref().is_some_and(|e| e.id == entity.id));
-            if !stored && let Some(doc) = self.supplied_scan(&entity.id) {
+            if !stored && let Some(doc) = self.supplied_scan(&entity.id).await? {
                 scanned.push(doc);
             }
         }
@@ -150,7 +163,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                 Ok(Some(doc))
             }
             // The store holds no row, so a supplied record is the whole answer.
-            None => Ok(self.supplied_scan(entity)),
+            None => self.supplied_scan(entity).await,
         }
     }
 
@@ -1276,6 +1289,76 @@ mod tests {
                 .map(|e| e.name),
             Some("The loops view".to_string()),
             "…and the supplied record still scans beside it",
+        );
+    }
+
+    /// **A key set on a record is in that record's scanned document, whether the
+    /// record is stored or the build supplies it.** The index is built from this
+    /// scan, and a question that asks by a key and no kind is answered from the
+    /// index. A supplied record must therefore scan as ONE document that holds
+    /// both the fields the build ships and the keys written onto it.
+    #[tokio::test]
+    async fn a_key_set_on_a_supplied_record_scans_beside_the_fields_the_build_ships() {
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
+        let stored_id = EntityId("thing:contract-scan-stored".into());
+        over.add_entity(NewEntity::new(
+            stored_id.clone(),
+            "Scan Stored",
+            "user-named",
+        ))
+        .await
+        .expect("add_entity should succeed")
+        .written()
+        .expect("nothing collides with it");
+        let supplied_id = EntityId("view:loops".into());
+
+        for subject in [&stored_id, &supplied_id] {
+            let mut fact = NewFact::about(
+                subject.clone(),
+                "a measurement",
+                jiff::civil::date(2026, 10, 12),
+            );
+            fact.fields
+                .insert("answer_99".to_string(), "found me".to_string());
+            fact.sets.insert("answer_99".to_string());
+            over.capture(fact)
+                .await
+                .expect("the capture lands")
+                .written()
+                .expect("nothing blocks it");
+        }
+
+        let scanned = over.scan().await.expect("the scan reads");
+        for subject in [&stored_id, &supplied_id] {
+            let docs: Vec<&search::DocScan> = scanned
+                .iter()
+                .filter(|doc| {
+                    doc.entity.as_ref().map(|e| &e.id) == Some(subject)
+                        || doc.doc_id == subject.to_string()
+                })
+                .collect();
+            assert_eq!(docs.len(), 1, "{subject} scans as one document: {docs:?}");
+            assert_eq!(
+                docs[0].entity.as_ref().map(|e| &e.id),
+                Some(subject),
+                "{subject}'s document names its entity"
+            );
+            assert_eq!(
+                docs[0].fields.get("answer_99").map(String::as_str),
+                Some("found me"),
+                "{subject}'s document holds the key written onto it: {:?}",
+                docs[0].fields
+            );
+        }
+        assert_eq!(
+            scanned
+                .iter()
+                .find(|doc| doc.entity.as_ref().map(|e| &e.id) == Some(&supplied_id))
+                .and_then(|doc| doc.fields.get("selects"))
+                .map(String::as_str),
+            Some("rhythm"),
+            "…and the supplied record keeps the fields the build ships"
         );
     }
 
