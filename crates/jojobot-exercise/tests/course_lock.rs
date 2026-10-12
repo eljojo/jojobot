@@ -8,7 +8,7 @@
 //! is the right mechanism: contrast `trip_lock.rs`, where that same
 //! mechanism is the WRONG one. The mistake here is purely which entity: the
 //! sitting filed it on `event:kitchen-safety-course-oct-2026`, an event it
-//! created fresh, rather than `org:quahog-community-college` — the subject
+//! created fresh and linked to nothing, rather than `org:quahog-community-college` — the subject
 //! a different sitting, three months earlier, had already established as
 //! where this course's facts belong.
 //!
@@ -96,9 +96,95 @@ async fn the_course_span_lock_holds_when_filed_on_the_college() {
     );
 }
 
+/// **The span on an event that links to the college holds the lock too**, by an
+/// edge the event's own claim draws at the college. A later read reaches it by
+/// walking inbound from the college.
+#[tokio::test]
+async fn the_course_span_lock_holds_when_filed_on_an_event_with_an_edge_to_the_college() {
+    let (_room, surface, sid) = furnished().await;
+    add_the_event(&surface, &sid).await;
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "event:kitchen-safety-course-oct-2026",
+                "content": "Started the October intake — Tuesday evenings from the 6th \
+                            through to 10 November",
+                "shape": "about",
+                "object": "org:quahog-community-college",
+                "happened_at": "2026-10-06",
+                "happened_through": "2026-11-10",
+                "provenance": "testimony",
+                "recorded_at": "2026-10-11",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the span is captured on an event with an edge to the college");
+    assert_held(&surface).await;
+}
+
+/// **A field that holds the college's handle links the event to it as an edge
+/// does.**
+#[tokio::test]
+async fn the_course_span_lock_holds_when_filed_on_an_event_holding_the_colleges_handle() {
+    let (_room, surface, sid) = furnished().await;
+    add_the_event(&surface, &sid).await;
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "event:kitchen-safety-course-oct-2026",
+                "content": "Started the October intake — Tuesday evenings from the 6th \
+                            through to 10 November",
+                "sets": {"host": "org:quahog-community-college"},
+                "happened_at": "2026-10-06",
+                "happened_through": "2026-11-10",
+                "provenance": "testimony",
+                "recorded_at": "2026-10-11",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the span is captured on an event holding the college's handle");
+    assert_held(&surface).await;
+}
+
+/// The invented event the sitting added.
+async fn add_the_event(surface: &Surface, sid: &str) {
+    surface
+        .must(
+            "add_entity",
+            json!({
+                "handle": "kitchen-safety-course-oct-2026",
+                "kind": "event",
+                "name": "Kitchen Safety Course, October 2026 Intake",
+                "source": "user-named",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the event is added");
+}
+
+/// The lock holds against the room as it stands.
+async fn assert_held(surface: &Surface) {
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_course_span_lock().check(&seen).await;
+    assert!(
+        outcome.held,
+        "the span is on an event that links to the college, and the lock failed: {}",
+        outcome.saying,
+    );
+}
+
 /// **The exact real regression: the same span, filed on an event the
-/// sitting invented instead of the college three months' worth of facts
-/// already point to.**
+/// sitting invented and linked to nothing, instead of the college three
+/// months' worth of facts already point to.**
 #[tokio::test]
 async fn the_course_span_lock_reds_when_filed_on_an_invented_event() {
     let (_room, surface, sid) = furnished().await;

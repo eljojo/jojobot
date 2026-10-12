@@ -111,7 +111,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 197 entries, of five different shapes: 94 blanket and 103 discriminating.
+/// 198 entries, of five different shapes: 94 blanket and 104 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -217,6 +217,13 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                date",
         file: "tests/furnace_lock.rs",
         function: "the_furnace_deadline_lock_reds_when_filed_on_the_service_company",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 12 — December: the furnace's free service lapses inside the horizon and got no note, so the one window nobody would call a deadline is the one that is missed",
+        file: "tests/vault_room.rs",
+        function: "december_leaving_the_furnace_without_a_note_reds_only_the_furnace_note_lock",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -1791,10 +1798,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 12 — December: the boots' guarantee closes inside the horizon and got no note, so a window that was mentioned once in March converts to a closed one in silence",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 12 — December: the furnace's free service lapses inside the horizon and got no note, so the one window nobody would call a deadline is the one that is missed",
     },
     Pending {
         room: VAULT_ROOM,

@@ -662,12 +662,29 @@ async fn april(room: &Surface, sid: &str) {
 
 /// May: the furnace, and a man in the hall.
 async fn may(room: &Surface, sid: &str) {
+    may_with(room, sid, json!({"runs_out": "2027-02-01"})).await;
+}
+
+/// May again, with the furnace's deadline worked out as the last bookable day.
+/// The operator's own definition of `runs_out` is the last day a thing can
+/// still be done, so "before 1 February" reads as 31 January.
+async fn may_on_the_last_bookable_day(room: &Surface, sid: &str) {
+    may_with(room, sid, json!({"runs_out": "2027-01-31"})).await;
+}
+
+/// May again, with the furnace's deadline under a key no shipped type holds.
+async fn may_under_another_key(room: &Surface, sid: &str) {
+    may_with(room, sid, json!({"lapses_on": "2027-02-01"})).await;
+}
+
+/// May, with the furnace's deadline written as `sets`.
+async fn may_with(room: &Surface, sid: &str, furnace_sets: serde_json::Value) {
     did(
         room,
         sid,
         "capture",
         json!({"subject": "thing:the-furnace", "content": "Mr. Plow serviced it on the 6th — one free service a year, but it has to be used before 1 February or it lapses",
-               "provenance": "testimony", "sets": {"runs_out": "2027-02-01"}}),
+               "provenance": "testimony", "sets": furnace_sets}),
     )
     .await;
     did(
@@ -891,6 +908,54 @@ async fn october(room: &Surface, sid: &str) {
     .await;
 }
 
+/// October again, with the course filed on an event that links to the college.
+/// The operator gave a start and a finish; what a later read needs is a span
+/// with both ends that it can reach from the college.
+async fn october_with_the_course_on_a_linked_event(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "place:wonder-wharf", "content": "Louise reckons it's quicker now — unsettling this, it might really be one bad morning rather than a rule",
+               "provenance": "testimony", "standing": "open"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:backup-drive", "content": "retiring the server — Teddy is taking it at the end of the month, so noting again this only goes with it",
+               "provenance": "testimony"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:call-gayle", "content": "spoke to Gayle Tuesday the 29th",
+               "provenance": "testimony", "check_in": "ran", "recorded_at": "2026-09-29"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "event", "handle": "kitchen-safety-course-oct-2026",
+               "name": "Kitchen Safety Course, October 2026 Intake", "source": "user-named"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:kitchen-safety-course-oct-2026",
+               "content": "started the October intake anyway, Tuesday evenings — too late for the stall but I want the certificate regardless",
+               "provenance": "testimony", "shape": "about", "object": "org:quahog-community-college",
+               "happened_at": "2026-10-06", "happened_through": "2026-11-10"}),
+    )
+    .await;
+}
+
 /// November: four days before the trip.
 async fn november(room: &Surface, sid: &str) {
     did(
@@ -944,6 +1009,19 @@ async fn december(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:the-furnace", "content": "the free service also lapses inside the horizon",
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
+/// December without the note on the furnace: the boots get theirs and the
+/// furnace's free service, which also lapses inside the horizon, gets none.
+async fn december_without_the_furnace_note(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:boots", "content": "the guarantee closes inside the horizon — need to look at these before the end of March",
                "provenance": "testimony"}),
     )
     .await;
@@ -1070,20 +1148,79 @@ type PhaseFn = for<'a> fn(
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>;
 
 async fn worked_the_vault(room: &Surface, vault: &Playbook) -> Vec<Boundary> {
+    worked_the_vault_on(
+        room,
+        vault,
+        May::PlanDay,
+        October::OnTheCollege,
+        December::Whole,
+    )
+    .await
+}
+
+/// How May files the furnace's deadline.
+#[derive(Clone, Copy)]
+enum May {
+    /// The day the plan itself names.
+    PlanDay,
+    /// The last day the operator can still book it.
+    LastBookableDay,
+    /// Under a key no shipped type holds.
+    AnotherKey,
+}
+
+/// Where October files the course span.
+#[derive(Clone, Copy)]
+enum October {
+    /// On the college's own records.
+    OnTheCollege,
+    /// On an event whose claim links to the college.
+    OnALinkedEvent,
+}
+
+/// What December writes.
+#[derive(Clone, Copy)]
+enum December {
+    /// A note on each of the two windows that close inside the horizon.
+    Whole,
+    /// A note on the boots and none on the furnace.
+    NoFurnaceNote,
+}
+
+async fn worked_the_vault_on(
+    room: &Surface,
+    vault: &Playbook,
+    may_files: May,
+    october_files: October,
+    december_writes: December,
+) -> Vec<Boundary> {
     let named = boundary_names(vault);
+    let may_phase: PhaseFn = match may_files {
+        May::PlanDay => |r, s| Box::pin(may(r, s)),
+        May::LastBookableDay => |r, s| Box::pin(may_on_the_last_bookable_day(r, s)),
+        May::AnotherKey => |r, s| Box::pin(may_under_another_key(r, s)),
+    };
+    let october_phase: PhaseFn = match october_files {
+        October::OnTheCollege => |r, s| Box::pin(october(r, s)),
+        October::OnALinkedEvent => |r, s| Box::pin(october_with_the_course_on_a_linked_event(r, s)),
+    };
+    let december_phase: PhaseFn = match december_writes {
+        December::Whole => |r, s| Box::pin(december(r, s)),
+        December::NoFurnaceNote => |r, s| Box::pin(december_without_the_furnace_note(r, s)),
+    };
     let phases: [(&str, PhaseFn); 13] = [
         ("2026-01-12", |r, s| Box::pin(january(r, s))),
         ("2026-02-08", |r, s| Box::pin(february(r, s))),
         ("2026-03-15", |r, s| Box::pin(march(r, s))),
         ("2026-04-19", |r, s| Box::pin(april(r, s))),
-        ("2026-05-10", |r, s| Box::pin(may(r, s))),
+        ("2026-05-10", may_phase),
         ("2026-06-14", |r, s| Box::pin(june(r, s))),
         ("2026-07-19", |r, s| Box::pin(july(r, s))),
         ("2026-08-16", |r, s| Box::pin(august(r, s))),
         ("2026-09-13", |r, s| Box::pin(september(r, s))),
-        ("2026-10-11", |r, s| Box::pin(october(r, s))),
+        ("2026-10-11", october_phase),
         ("2026-11-08", |r, s| Box::pin(november(r, s))),
-        ("2026-12-06", |r, s| Box::pin(december(r, s))),
+        ("2026-12-06", december_phase),
         ("2026-12-13", |r, s| Box::pin(later_december(r, s))),
     ];
     let locks = expectations::for_playbook(expectations::VAULT_ROOM).expect("the vault asserts");
@@ -1137,6 +1274,123 @@ async fn every_lock_holds_once_the_vault_is_worked() {
         assert!(
             outcome.held,
             "a vault worked the way it is meant to be failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **The furnace's free service is a window with two right days.** `runs_out`
+/// is the last day the operator can still do something about the thing, so
+/// "before 1 February" is 31 January, and the plan itself names 1 February.
+/// A year that worked it out as the last bookable day holds every lock, as the
+/// year that kept the plan's day does.
+#[tokio::test]
+async fn every_lock_holds_when_the_furnace_deadline_is_the_last_bookable_day() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault_on(
+        &surface,
+        &room_document(),
+        May::LastBookableDay,
+        October::OnTheCollege,
+        December::Whole,
+    )
+    .await;
+    let outcomes = judge_all(&surface, &boundaries).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "a vault that worked the furnace out as 31 January failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **December's note on the furnace is one lock, and only that lock.** The year
+/// is worked as it is meant to be, except that December gives the boots their
+/// note and the furnace none. The lock that asks for the furnace's note fails
+/// and no other lock does.
+#[tokio::test]
+async fn december_leaving_the_furnace_without_a_note_reds_only_the_furnace_note_lock() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault_on(
+        &surface,
+        &room_document(),
+        May::PlanDay,
+        October::OnTheCollege,
+        December::NoFurnaceNote,
+    )
+    .await;
+    let outcomes = judge_all(&surface, &boundaries).await;
+    let failed: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| !o.held)
+        .map(|o| o.name.as_str())
+        .collect();
+    assert_eq!(
+        failed.len(),
+        1,
+        "a furnace without a December note failed more than its own lock: {}",
+        saying(&outcomes),
+    );
+    assert!(
+        failed[0].contains("the furnace's free service lapses inside the horizon and got no note"),
+        "the lock that failed is not the furnace note lock: {}",
+        saying(&outcomes),
+    );
+}
+
+/// **The course span has two right homes.** The operator gave a start and a
+/// finish together; a later read needs a span with both ends that it can reach
+/// from the college. A year that filed the span on an event whose claim links to
+/// the college holds every lock, as the year that filed it on the college does.
+#[tokio::test]
+async fn every_lock_holds_when_the_course_span_is_filed_on_a_linked_event() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault_on(
+        &surface,
+        &room_document(),
+        May::PlanDay,
+        October::OnALinkedEvent,
+        December::Whole,
+    )
+    .await;
+    let outcomes = judge_all(&surface, &boundaries).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "a vault that filed the course span on a linked event failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **A deadline filed under a key no shipped type holds is read by every lock
+/// that asks for the day, and the room says which.** The furnace's day is under
+/// `lapses_on`, so the May lock, December's note lock and the comparison lock
+/// all fail. They fail together because each reads the same key, so this is not
+/// a control for any one of them.
+#[tokio::test]
+async fn a_furnace_deadline_under_another_key_reds_the_locks_that_read_the_day() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault_on(
+        &surface,
+        &room_document(),
+        May::AnotherKey,
+        October::OnTheCollege,
+        December::Whole,
+    )
+    .await;
+    let outcomes = judge_all(&surface, &boundaries).await;
+    for fragment in [
+        "the one window nobody would think to call a deadline",
+        "the furnace's free service lapses inside the horizon and got no note",
+        "cannot be compared as a date",
+    ] {
+        assert!(
+            outcomes
+                .iter()
+                .any(|o| !o.held && o.name.contains(fragment)),
+            "a furnace deadline under another key did not fail the lock naming {fragment:?}: {}",
             saying(&outcomes),
         );
     }

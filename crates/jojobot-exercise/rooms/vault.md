@@ -450,8 +450,13 @@ say     April: the piano's own check-in history does not carry the twelfth, so i
 # because it is not a purchase: a free service that lapses. Filed under the
 # same key as a guarantee and a return period, which is what lets one question
 # reach all three.
+#
+# **Two days are right.** `runs_out` is the last day the operator can still do
+# something about the thing, so "before 1 February" is 2027-01-31, and the plan
+# itself names 2027-02-01. Either one is a day worked out from what was said,
+# and the lock holds for both. The overdue read below lacks both.
 recall {"subject": "thing:the-furnace"}
-carries "runs_out":"2027-02-01"
+carries-either "runs_out":"2027-01-31" | "runs_out":"2027-02-01"
 say     May: the furnace does not carry the day its free service lapses, so the one window nobody would think to call a deadline is not on record as a date
 
 # 🚨 **An allergy, recorded because of a furnace.** Nothing about it mentions
@@ -719,9 +724,12 @@ say     October: no loop carries the twenty-ninth as a check-in, so the last cal
 # a start and a finish together — Tuesday evenings from the 6th to 10
 # November — which is `happened_at` and `happened_through` on one claim
 # rather than a start typed into prose and an end that never lands anywhere
-# a later read can compare against. Filed on the college, the same subject
-# June already used for what the course takes and when an intake begins.
-recall {"subject": "org:quahog-community-college", "facts": true}
+# a later read can compare against. **The span has two right homes**: the
+# college, the same subject June already used for what the course takes and
+# when an intake begins, or any record of a thing that links to the college by
+# an edge or by a field holding its handle. What the lock measures is a span a
+# later read can reach FROM the college, so the read walks inbound from it.
+recall {"subject": "org:quahog-community-college", "facts": true, "follow": {"direction": "in"}}
 carries "happened_at":"2026-10-06"
 carries "happened_through":"2026-11-10"
 say     October: the course the operator actually started is not on record as a span with both ends, so a stretch of many Tuesdays reads as a single day or as prose a later question cannot compare a date against
@@ -806,7 +814,7 @@ say     November: the keys do not carry today's answer pointing at Teddy, so a s
 
 ⚠️ **The arithmetic, so a reader can check the room is solvable.** Windows on
 record and the day each runs out: the desk's return period 2026-03-08 (long
-closed); the furnace's free service 2027-02-01; the boots' guarantee
+closed); the furnace's free service 2027-01-31 or 2027-02-01 (either reading is right); the boots' guarantee
 2027-03-08; the laptop's cover 2028-01-10; the phone's cover 2028-07-10. The
 operator's horizon is the end of March 2027. **Exactly two windows are open
 today and close inside it** — the furnace and the boots — and the desk's is
@@ -831,7 +839,7 @@ carries "recorded_at":"2026-12-06"
 say     December: the boots' guarantee closes inside the horizon and got no note, so a window that was mentioned once in March converts to a closed one in silence
 
 recall {"subject": "thing:the-furnace", "facts": true}
-carries "runs_out":"2027-02-01"
+carries-either "runs_out":"2027-01-31" | "runs_out":"2027-02-01"
 carries "recorded_at":"2026-12-06"
 say     December: the furnace's free service lapses inside the horizon and got no note, so the one window nobody would call a deadline is the one that is missed
 
@@ -870,7 +878,7 @@ say     December: the phone's cover runs to 2028 and was given a note anyway, so
 # made the key comparable. Which sitting declared it is not this lock's
 # business; that by the time the question is asked it CAN be asked, is.
 recall {"fields": [{"key": "runs_out", "compare": "after", "value": "2026-12-06"}]}
-carries "runs_out":"2027-02-01"
+carries-either "runs_out":"2027-01-31" | "runs_out":"2027-02-01"
 say     December: the key the operator dates windows by cannot be compared as a date, so the question "what runs out by the end of March" is unaskable and was answered, if at all, by reading every thing there is
 
 # 🚨 **THE SAME FIVE WINDOWS, ASKED FOR WITHOUT A KIND OR A HANDLE — BY THE
@@ -885,6 +893,7 @@ say     December: the key the operator dates windows by cannot be compared as a 
 recall {"answers_type": "runs-out", "overdue": {"as_of": "2026-12-06"}}
 carries "runs_out":"2026-03-08"
 lacks   "runs_out":"2027-02-01"
+lacks   "runs_out":"2027-01-31"
 carries "overdue_excluded":4
 say     December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out
 window  phase-end
