@@ -52,6 +52,9 @@ pub enum Why {
 pub enum Blocker {
     /// The work is itself finished, so there is nothing to start.
     Finished,
+    /// The work is itself archived. Archived work is not started, however it is
+    /// named.
+    Archived,
     /// A dependency, by the handle the work holds, and why it blocks.
     Dependency { handle: String, why: Why },
     /// What the work waits on, as it is held.
@@ -64,6 +67,9 @@ pub enum Blocker {
 pub fn blocked_by(subject: &Subject<'_>, lookup: &dyn Lookup) -> Vec<Blocker> {
     let fields = subject.fields;
     let mut blockers = Vec::new();
+    if subject.archived {
+        blockers.push(Blocker::Archived);
+    }
     if Filter::Finished.holds_in(subject, lookup) {
         blockers.push(Blocker::Finished);
     }
@@ -89,9 +95,11 @@ pub fn blocked_by(subject: &Subject<'_>, lookup: &dyn Lookup) -> Vec<Blocker> {
     blockers
 }
 
-/// **Whether this work can be started**, asked of the tree.
+/// **Whether this work can be started**, asked of the tree. Archived work is
+/// not ready: the tree's `Finished` leaf is false for it, so the tree alone would
+/// read it as unfinished and startable.
 pub fn is_ready(subject: &Subject<'_>, lookup: &dyn Lookup) -> bool {
-    tree().holds_in(subject, lookup)
+    !subject.archived && tree().holds_in(subject, lookup)
 }
 
 #[cfg(test)]

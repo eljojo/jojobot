@@ -155,3 +155,43 @@ async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() 
     );
     story.finish().await;
 }
+
+/// "Can I start that one?" asked of a piece of work that was archived. An
+/// archived piece of work is not ready, however it is named, and the answer
+/// says why; the same piece of work before it was archived was ready.
+#[tokio::test]
+async fn an_archived_piece_of_work_is_not_ready_when_named_and_says_why() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.call(
+        "add_entity",
+        json!({"kind": "work", "handle": "omega", "name": "omega",
+               "source": "user-named", "sets": {"status": "now"}}),
+    )
+    .await;
+
+    // The positive the negative rests on: named by handle, it is ready.
+    let before = s
+        .call("recall", json!({"view": "ready", "subject": "work:omega"}))
+        .await;
+    let object = &before.json()["objects"][0];
+    assert_eq!(object["ready"], true, "{}", before.raw());
+
+    s.call(
+        "archive_entity",
+        json!({"handle": "work:omega", "reason": "no longer wanted"}),
+    )
+    .await;
+    let after = s
+        .call("recall", json!({"view": "ready", "subject": "work:omega"}))
+        .await;
+    let object = &after.json()["objects"][0];
+    assert_eq!(object["ready"], false, "{}", after.raw());
+    assert_eq!(
+        object["blocked_by"],
+        json!([{"blocker": "archived"}]),
+        "{}",
+        after.raw()
+    );
+    story.finish().await;
+}

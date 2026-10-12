@@ -120,6 +120,7 @@ pub async fn verdicts_of(
 fn blocker_json(blocker: &Blocker) -> serde_json::Value {
     match blocker {
         Blocker::Finished => serde_json::json!({ "blocker": "finished" }),
+        Blocker::Archived => serde_json::json!({ "blocker": "archived" }),
         Blocker::WaitingOn(handle) => {
             serde_json::json!({ "blocker": "waiting_on", "handle": handle })
         }

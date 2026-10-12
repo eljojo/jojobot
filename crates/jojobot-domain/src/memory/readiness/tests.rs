@@ -254,6 +254,23 @@ fn finished_work_is_not_ready_and_says_so() {
     assert!(blocked_by(&item(&under_way), &world).is_empty());
 }
 
+/// **Archived work is not ready, and blocked_by says it is archived.** Its pair
+/// is the same fields unarchived, which is ready. The tree and the blocker list
+/// agree about both.
+#[test]
+fn archived_work_is_not_ready_and_says_so() {
+    let world = World::new();
+    let fields = bag(&[("status", "now")]);
+    let archived = Subject {
+        archived: true,
+        ..item(&fields)
+    };
+    assert!(!is_ready(&archived, &world));
+    assert_eq!(blocked_by(&archived, &world), [Blocker::Archived]);
+    assert!(is_ready(&item(&fields), &world));
+    assert!(blocked_by(&item(&fields), &world).is_empty());
+}
+
 /// **Finished work that also waits on something names both**, finished first.
 #[test]
 fn finished_work_names_every_blocker() {
