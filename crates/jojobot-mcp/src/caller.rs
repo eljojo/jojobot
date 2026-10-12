@@ -157,10 +157,6 @@ fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
              handed back, call start_here with your bot name and resume set to that code; \
              otherwise boot again with start_here."
         ),
-        sid::RetiredBy::Exchanged => format!(
-            "Run {run} was exchanged for a key at {at}, so its old name no longer opens it. \
-             Boot again with start_here."
-        ),
     };
     // **Marked so `finish` lists what is in flight**: the bot is known, and the
     // refusal says nothing a bare `start_here` with that bot would not.

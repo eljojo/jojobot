@@ -167,8 +167,6 @@ pub enum RetiredBy {
     Resumed,
     /// The run wrapped, which took its key away.
     Wrapped,
-    /// The run's old name was exchanged for a key, once.
-    Exchanged,
 }
 
 /// **What the registry remembers about a key that no longer opens its run**, so
