@@ -162,6 +162,16 @@ async fn main() -> anyhow::Result<()> {
     let ct = CancellationToken::new();
     let app = build_app(state, ct.child_token());
 
+    // **Both stop signals are listened for before the serving line is printed.**
+    // A service manager stops a unit with SIGTERM and a terminal with SIGINT; a
+    // signal that arrived before its listener existed would take the default
+    // action and end the process with no shutdown at all, and the serving line is
+    // the moment a caller starts signalling.
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .context("listening for SIGINT")?;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("listening for SIGTERM")?;
+
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("binding {}", config.bind))?;
@@ -173,11 +183,20 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            let signal = tokio::select! {
+                _ = interrupt.recv() => "SIGINT",
+                _ = terminate.recv() => "SIGTERM",
+            };
+            tracing::info!(
+                signal,
+                "shutting down: the listener closes, the sessions end, and the connections \
+                 still open are let finish"
+            );
             ct.cancel();
         })
         .await
         .context("server error")?;
+    tracing::info!("shut down: no call in flight, the store stops with this process");
 
     Ok(())
 }
