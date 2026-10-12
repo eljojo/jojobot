@@ -391,3 +391,85 @@ async fn an_empty_replace_deletes_and_a_find_at_the_current_revision_lands() {
     );
     story.finish().await;
 }
+
+/// **A note that links to a thing is edited past the link.** The find means
+/// what recall shows, so a caller names the handle it sees. Words after the link
+/// change and the link stays a link: renaming the thing afterwards still moves
+/// what the note reads as. A find that starts or ends inside the handle is
+/// refused with nothing written, and one that covers the handle whole replaces
+/// it.
+#[tokio::test]
+async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() {
+    let story = Story::begin("bot:gamma").await;
+    let run = story.session().await;
+    run.add("person:kenny", "Kenny").await;
+    run.add("person:butters", "Butters").await;
+    let claim = run
+        .call(
+            "capture",
+            json!({
+                "subject": "person:kenny", "content": "a note about a visit",
+                "details": "met @person:butters at noon. A typo here.",
+                "provenance": "inference",
+            }),
+        )
+        .await
+        .json();
+    let claim = claim["address"]
+        .as_str()
+        .or_else(|| claim["fact"]["address"].as_str())
+        .expect("a capture hands back its address")
+        .to_string();
+
+    // **A find that starts inside the handle names no place in the stored
+    // text.** It is refused and the note is as it was.
+    run.refused(
+        "update_fact",
+        json!({
+            "address": claim, "find": "butters at noon", "replace": "x",
+            "field": "details", "provenance": "inference",
+        }),
+    )
+    .await
+    .says("whole handle")
+    .says("\"fix_by\":\"change\"");
+    assert_eq!(
+        details_of(&run.recall("person:kenny").await.json(), &claim),
+        "met @person:butters at noon. A typo here."
+    );
+
+    // **The words after the link change, and the link stays a link.**
+    run.call(
+        "update_fact",
+        json!({
+            "address": claim, "find": "A typo", "replace": "A fix",
+            "field": "details", "provenance": "inference",
+        }),
+    )
+    .await;
+    run.call(
+        "rename_entity",
+        json!({"handle": "person:butters", "to": "person:marjorine"}),
+    )
+    .await;
+    assert_eq!(
+        details_of(&run.recall("person:kenny").await.json(), &claim),
+        "met @person:marjorine at noon. A fix here.",
+        "the edit turned the link into the words that were typed"
+    );
+
+    // **A find that covers the handle whole replaces the link.**
+    run.call(
+        "update_fact",
+        json!({
+            "address": claim, "find": "@person:marjorine", "replace": "a friend",
+            "field": "details", "provenance": "inference",
+        }),
+    )
+    .await;
+    assert_eq!(
+        details_of(&run.recall("person:kenny").await.json(), &claim),
+        "met a friend at noon. A fix here."
+    );
+    story.finish().await;
+}

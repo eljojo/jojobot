@@ -338,12 +338,6 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
-        // **A find/replace is applied above the store, to the text it reads, and
-        // written as an ordinary edit carrying the revision of that read.** The
-        // store's own revision check then refuses it if the claim has been
-        // written since, so the words are never applied to a text the claim has
-        // moved past.
-        let mut args = args;
         // **A section's place is the server's to mint.** A move changes `order`
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
@@ -378,6 +372,12 @@ impl Jojobot {
             },
             None => None,
         };
+        // **A find/replace is read here for its receipt, and written as the edit
+        // it is.** The layer that holds both spellings of a mention applies it
+        // to the stored text, carrying the revision it read, so the store's own
+        // check refuses it if the claim has been written since. The words are
+        // never applied to a text the claim has moved past, and no byte outside
+        // the span is rewritten.
         let text_edit = match text_edit_of(&args) {
             Ok(edit) => edit,
             Err(refused) => return memory_declined("update_fact", refused),
@@ -394,10 +394,6 @@ impl Jojobot {
             .await
             {
                 Ok(read) => {
-                    match edit.field {
-                        TextField::Content => args.content = Some(read.text),
-                        TextField::Details => args.details = Some(read.text),
-                    }
                     revision_read = Some(read.revision);
                     edited_words = Some(read.edited);
                 }
@@ -492,6 +488,7 @@ impl Jojobot {
         let patch = FactPatch {
             content: args.content,
             details: args.details,
+            text_edit: text_edit.clone(),
             recorded_at: parse_date(args.recorded_at.as_deref())?,
             happened_at: parse_date(args.happened_at.as_deref())?,
             clear_happened_at: args.clear_happened_at.unwrap_or(false),

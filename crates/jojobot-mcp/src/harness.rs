@@ -126,6 +126,26 @@ pub(crate) fn handler_over(memory: Arc<InMemoryMemory>) -> Jojobot {
     )
 }
 
+/// **A handler over a store with the mention layer in front of it**, which is how
+/// `main` wires every store. A find and replace is applied by that layer and by
+/// no other, so a case about one is built here: over the bare store it would be
+/// handed an edit nothing applies.
+pub(crate) fn handler_with_mentions() -> Jojobot {
+    handler_over_mentions(Arc::new(plain_store()))
+}
+
+/// [`handler_with_mentions`], over a store the caller keeps a handle to.
+pub(crate) fn handler_over_mentions(memory: Arc<dyn Memory>) -> Jojobot {
+    Jojobot::new(
+        Arc::new(jojobot_domain::memory::mention::Mentioning::new(memory)),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 /// **A handler wrapped in what this crate's OWN `provisions()` ships**, the
 /// same decorator `main.rs` wraps the real store in.
 ///

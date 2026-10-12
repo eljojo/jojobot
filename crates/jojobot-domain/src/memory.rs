@@ -719,6 +719,13 @@ pub struct FactPatch {
     pub content: Option<String>,
     /// New nuance / why / merge notes.
     pub details: Option<String>,
+    /// **A find and replace over the text a reader is served**, made instead of
+    /// sending that text back whole. [`mention::Mentioning`] is the one layer
+    /// that holds both spellings of a mention, so it applies this edit to the
+    /// stored text and no other layer does: it clears the field before the
+    /// patch goes to the store below. It cannot be sent beside the text it
+    /// changes.
+    pub text_edit: Option<text_edit::TextEdit>,
     /// New lifecycle state. A refutation is **not** one of these: rewrite
     /// `content` to state the negative truth instead (see [`FactStatus`]).
     pub status: Option<FactStatus>,
@@ -890,6 +897,21 @@ pub fn refuses_a_stale_revision(
             expected,
             current,
         })
+}
+
+/// **A find and replace reaches a store only after the mention layer applied
+/// it.** That layer turns the edit into the stored text and clears the field, so
+/// a store that still holds one was handed an edit nothing applied. Writing the
+/// claim without the change would look like a success, so it is refused.
+pub fn refuses_an_unapplied_text_edit(patch: &FactPatch) -> Option<MemoryError> {
+    patch.text_edit.as_ref().map(|edit| {
+        MemoryError::InvalidFact(format!(
+            "a find and replace of the {} reached a store that does not apply it: it is applied \
+             by the layer that holds both spellings of a mention, so send the edit through \
+             that layer",
+            edit.field.as_str()
+        ))
+    })
 }
 
 /// **The role an entity IS, when it is a role object**: the slug of its handle.

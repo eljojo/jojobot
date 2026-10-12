@@ -2447,6 +2447,498 @@ pub async fn an_account_written_from_a_reason_stores_its_mentions<
     );
 }
 
+/// **A find and replace, made the way a caller makes it.**
+///
+/// The `find` is words of what recall shows, so it is matched in the served
+/// text. The answer is the write, or the refusal.
+async fn edit_by_find<M: Memory + ?Sized>(
+    mentioning: &M,
+    address: &FactAddress,
+    field: crate::memory::text_edit::TextField,
+    find: &str,
+    replace: &str,
+) -> Result<Guarded<Fact>, MemoryError> {
+    use crate::memory::text_edit::TextEdit;
+    mentioning
+        .update_fact(
+            address,
+            FactPatch {
+                text_edit: Some(TextEdit {
+                    field,
+                    find: find.into(),
+                    replace: replace.into(),
+                }),
+                ..Default::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+}
+
+/// What the store keeps in a claim's details.
+async fn kept_details<B: Memory + ?Sized>(bare: &B, subject: &EntityId, id: &FactId) -> String {
+    bare.recall(subject)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|f| &f.id == id)
+        .expect("the claim is there")
+        .details
+        .expect("the claim has details")
+}
+
+/// What a reader is served in a claim's details.
+async fn served_details<M: Memory + ?Sized>(m: &M, subject: &EntityId, id: &FactId) -> String {
+    kept_details(m, subject, id).await
+}
+
+/// **A thing to mention, and the badge it wears**, and an author for claims.
+async fn mentionable<M: Memory + ?Sized, B: Memory + ?Sized>(
+    mentioning: &M,
+    bare: &B,
+    rider: &str,
+) -> (EntityId, EntityId, String) {
+    let author = EntityId::person("person:contract-splice-author");
+    let rider = EntityId::person(rider);
+    ensure(mentioning, &author).await;
+    ensure(mentioning, &rider).await;
+    let badge = bare
+        .list_entities(None)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|e| e.id == rider)
+        .and_then(|e| e.badge)
+        .expect("the rider wears a badge");
+    (author, rider, badge)
+}
+
+/// A claim whose details are exactly `stored`, written under the layer that
+/// resolves: the way a claim that predates a rule is on disk.
+async fn staged<B: Memory + ?Sized>(bare: &B, author: &EntityId, stored: &str, day: Date) -> Fact {
+    capture(
+        bare,
+        NewFact {
+            details: Some(stored.to_string()),
+            ..NewFact::about(author.clone(), "a claim", day)
+        },
+    )
+    .await
+}
+
+/// 🚨 **A find and replace changes the bytes of its span and no others.**
+///
+/// The find means what recall shows, and the words that replace it are the
+/// only words the store rewrites. A claim written before code was literal
+/// holds a mark inside a code span; a claim from before mentions existed holds
+/// a typed handle that names a thing; a mark that nothing wears and a handle
+/// that names nothing are served with a note after them. **Editing the tail of
+/// any of these leaves every byte before it as stored**, so a mention keeps
+/// following its thing and the notes are never written into the text.
+///
+/// Each stored text is asserted whole, so a build that rewrote anything but the
+/// span fails.
+pub async fn a_find_and_replace_keeps_every_byte_outside_the_span_it_names<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+    rehandles: &dyn Rehandles,
+) {
+    use crate::memory::text_edit::TextField;
+    let mark = |badge: &str| format!("{}{badge}", mention::MARK);
+
+    // ① A mark inside a code span stays a mark.
+    let (author, rider, badge) =
+        mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let stored = format!("see {m} and `{m}` here. TAIL", m = mark(&badge));
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "TAIL2",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        format!("see {m} and `{m}` here. TAIL2", m = mark(&badge)),
+        "the mark inside the code span is no longer a mark",
+    );
+    assert_eq!(
+        served_details(mentioning, &author, &claim.id).await,
+        format!("see @{r} and `@{r}` here. TAIL2", r = rider.as_str()),
+    );
+
+    // ② A typed handle that names a thing stays the words that were typed.
+    let (author, rider, _) = mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let stored = format!("see @{} now. TAIL", rider.as_str());
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "TAIL2",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        format!("see @{} now. TAIL2", rider.as_str()),
+        "a handle outside the span was rewritten into a mark",
+    );
+
+    // ③ A mark nothing wears: the claim can be edited, and the note after it
+    // is not written into the text.
+    let (author, _, _) = mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let stored = format!("see {}zzzzzz now. TAIL", mention::MARK);
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    assert!(
+        served_details(mentioning, &author, &claim.id)
+            .await
+            .contains("(gone)"),
+        "the gone mark is served with its note",
+    );
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "TAIL2",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("a claim holding a gone mark can be edited outside it");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        format!("see {}zzzzzz now. TAIL2", mention::MARK),
+    );
+
+    // ④ A typed handle that names nothing: the same.
+    let (author, _, _) = mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let stored = "see @person:contract-mention-nobody now. TAIL";
+    let claim = staged(bare, &author, stored, date(2026, 10, 12)).await;
+    assert!(
+        served_details(mentioning, &author, &claim.id)
+            .await
+            .contains("(no such handle)"),
+        "the dangling handle is served with its note",
+    );
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "TAIL2",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("a claim holding a dangling handle can be edited outside it");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        "see @person:contract-mention-nobody now. TAIL2",
+    );
+
+    // ⑤ A handle renamed since it was written: the mark stays, and the edit
+    // is made over the new handle.
+    let (author, rider, _) = mentionable(mentioning, bare, "person:contract-splice-pilot").await;
+    let claim = capture(
+        mentioning,
+        NewFact {
+            details: Some(format!("see @{} now. TAIL", rider.as_str())),
+            ..NewFact::about(author.clone(), "a claim", date(2026, 10, 12))
+        },
+    )
+    .await;
+    let before = kept_details(bare, &author, &claim.id).await;
+    assert!(
+        before.contains(mention::MARK),
+        "the mention was stored as a mark"
+    );
+    let renamed = EntityId::person("person:contract-splice-moved");
+    rehandles.rehandle(&rider, &renamed).await;
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "TAIL2",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        before.replace("TAIL", "TAIL2"),
+    );
+    assert!(
+        served_details(mentioning, &author, &claim.id)
+            .await
+            .contains(renamed.as_str()),
+        "the mention follows the rename",
+    );
+
+    // ⑥ Control: a typed handle inside code, written after code was literal,
+    // stays typed.
+    let (author, _, _) = mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let claim = capture(
+        mentioning,
+        NewFact {
+            details: Some("`@person:contract-mention-nobody` stays code. TAIL".into()),
+            ..NewFact::about(author.clone(), "a claim", date(2026, 10, 12))
+        },
+    )
+    .await;
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "TAIL2",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        "`@person:contract-mention-nobody` stays code. TAIL2",
+    );
+}
+
+/// 🚨 **A find that cuts a link in half is refused, and one that covers a link
+/// whole replaces it.**
+///
+/// A link is one thing to a reader and two kinds of bytes in the store, so a
+/// find that starts or ends inside the handle names no place in the stored
+/// text. It is refused with nothing written, and the refusal says to include
+/// the whole handle. A find that covers the handle whole replaces the link,
+/// which is how a caller deletes a broken one.
+pub async fn a_find_that_cuts_a_link_is_refused_and_one_that_covers_it_replaces_it<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+) {
+    use crate::memory::text_edit::TextField;
+    let (author, rider, badge) =
+        mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let handle = format!("@{}", rider.as_str());
+    let stored = format!("see {}{badge} now. TAIL", mention::MARK);
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+
+    // Starts inside the handle.
+    let inside = &handle[handle.len() - 8..];
+    let cut_start = edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        &format!("{inside} now"),
+        "x",
+    )
+    .await;
+    assert!(
+        !matches!(cut_start, Ok(Guarded::Written(_))),
+        "a find starting inside a link was taken: {cut_start:?}",
+    );
+    // Ends inside the handle.
+    let cut_end = edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        &format!("see {}", &handle[..handle.len() - 8]),
+        "x",
+    )
+    .await;
+    assert!(
+        !matches!(cut_end, Ok(Guarded::Written(_))),
+        "a find ending inside a link was taken: {cut_end:?}",
+    );
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        stored,
+        "a refused edit wrote something",
+    );
+    assert_eq!(
+        bare.claim_history(&claim.address())
+            .await
+            .expect("history")
+            .len(),
+        1,
+        "a refused edit left a write behind",
+    );
+
+    // **A find that starts where a link ends, and one that ends where it
+    // starts, are on the edge and not inside it**: both are edits, and the
+    // stored bytes either side of the link are as stored.
+    let beside = staged(
+        bare,
+        &author,
+        &format!("see {}{badge} now. TAIL", mention::MARK),
+        date(2026, 10, 12),
+    )
+    .await;
+    edit_by_find(
+        mentioning,
+        &beside.address(),
+        TextField::Details,
+        " now.",
+        " then.",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("a find starting where a link ends is an edit");
+    edit_by_find(
+        mentioning,
+        &beside.address(),
+        TextField::Details,
+        "see ",
+        "saw ",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("a find ending where a link starts is an edit");
+    assert_eq!(
+        kept_details(bare, &author, &beside.id).await,
+        format!("saw {}{badge} then. TAIL", mention::MARK),
+    );
+
+    // Covers the handle whole: the link is replaced by the words.
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        &format!("see {handle} now"),
+        "see nobody now",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("a find covering the whole link is an edit");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        "see nobody now. TAIL",
+    );
+
+    // A broken link is deleted by covering it whole, note and all.
+    let stored = format!("keep {}zzzzzz and TAIL", mention::MARK);
+    let broken = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    edit_by_find(
+        mentioning,
+        &broken.address(),
+        TextField::Details,
+        &format!("{}zzzzzz (gone) and ", mention::MARK),
+        "",
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("a find covering a broken link whole is an edit");
+    assert_eq!(kept_details(bare, &author, &broken.id).await, "keep TAIL");
+}
+
+/// 🚨 **Only the words that replace a find are resolved, in the text they now
+/// sit in.**
+///
+/// A handle in the replacement outside code becomes a link, a handle inside
+/// code stays the words that were typed (rule 450), one that names nothing is
+/// blocked with nothing written, and a stored mark is never accepted from a
+/// caller. Bytes before and after are as stored.
+pub async fn the_words_that_replace_a_find_are_resolved_where_they_land<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+) {
+    use crate::memory::text_edit::TextField;
+    let (author, rider, badge) =
+        mentionable(mentioning, bare, "person:contract-splice-rider").await;
+    let handle = format!("@{}", rider.as_str());
+    let stored = "before TAIL after".to_string();
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+
+    // A handle outside code becomes a link.
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        &format!("met {handle}"),
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        format!("before met {}{badge} after", mention::MARK),
+    );
+
+    // A handle inside code stays literal, even for a thing that exists.
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        &format!("`{handle}`"),
+    )
+    .await
+    .expect("a unique find")
+    .written()
+    .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        format!("before `{handle}` after"),
+    );
+
+    // A handle naming nothing, outside code, is refused and nothing is written.
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    let nobody = edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "@person:contract-mention-nobody",
+    )
+    .await;
+    assert!(
+        !matches!(nobody, Ok(Guarded::Written(_))),
+        "a mention naming nothing was written: {nobody:?}",
+    );
+    assert_eq!(kept_details(bare, &author, &claim.id).await, stored);
+
+    // A stored mark is never accepted from a caller.
+    let forged = edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        &format!("{}{badge}", mention::MARK),
+    )
+    .await;
+    assert!(
+        !matches!(forged, Ok(Guarded::Written(_))),
+        "a stored mark was accepted from a caller: {forged:?}",
+    );
+    assert_eq!(kept_details(bare, &author, &claim.id).await, stored);
+}
+
 /// The mention contract, over a store that resolves and renders them and
 /// the same store read bare.
 pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
@@ -2463,6 +2955,10 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss(mentioning, bare).await;
     no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
     an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
+    a_find_and_replace_keeps_every_byte_outside_the_span_it_names(mentioning, bare, rehandles)
+        .await;
+    a_find_that_cuts_a_link_is_refused_and_one_that_covers_it_replaces_it(mentioning, bare).await;
+    the_words_that_replace_a_find_are_resolved_where_they_land(mentioning, bare).await;
     a_stale_handle_resolves_through_its_rename_history(bare, rehandles).await;
     a_childs_parent_pointer_follows_a_rename(bare, rehandles).await;
     an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;

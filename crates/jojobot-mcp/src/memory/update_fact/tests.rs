@@ -362,7 +362,7 @@ fn find_args(field: &str, find: &str, replace: &str) -> UpdateFactArgs {
 /// touched either.
 #[tokio::test]
 async fn a_unique_find_in_the_details_changes_that_span_and_nothing_else() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
 
     update_ok(&jojobot, find_args("details", "a typo", "a fix")).await;
@@ -379,7 +379,7 @@ async fn a_unique_find_in_the_details_changes_that_span_and_nothing_else() {
 /// are left alone.
 #[tokio::test]
 async fn a_unique_find_in_the_content_leaves_the_details_alone() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
 
     update_ok(&jojobot, find_args("content", "a typo", "a fix")).await;
@@ -394,7 +394,7 @@ async fn a_unique_find_in_the_content_leaves_the_details_alone() {
 /// find would not satisfy it. The first match is not taken.
 #[tokio::test]
 async fn a_find_that_matches_twice_is_refused_with_the_count_and_the_text_stays() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
 
     let refused = json_of(
@@ -414,7 +414,7 @@ async fn a_find_that_matches_twice_is_refused_with_the_count_and_the_text_stays(
 /// unchanged.** The match is exact, so a different case is no match.
 #[tokio::test]
 async fn a_find_that_matches_nothing_is_refused_with_a_count_of_zero() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
 
     let refused = json_of(
@@ -435,7 +435,7 @@ async fn a_find_that_matches_nothing_is_refused_with_a_count_of_zero() {
 /// the positive alone.
 #[tokio::test]
 async fn the_receipt_of_a_find_shows_the_removed_and_inserted_words() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
 
     let receipt = update_ok(&jojobot, find_args("details", "a typo", "a fix")).await;
@@ -467,7 +467,7 @@ async fn the_receipt_of_a_find_shows_the_removed_and_inserted_words() {
 /// long they were.** A cut that marked nothing would read as the whole.
 #[tokio::test]
 async fn removed_words_over_the_bound_are_shown_cut_and_marked() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     let long = "x".repeat(900);
     capture_ok(
         &jojobot,
@@ -495,7 +495,7 @@ async fn removed_words_over_the_bound_are_shown_cut_and_marked() {
 /// they sit beside a whole replacement of the same text.
 #[tokio::test]
 async fn a_find_call_that_is_not_whole_is_refused_and_writes_nothing() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
     // **Each broken call also carries a real change the find does not touch**, so
     // a build that let the call through would write it. Without that, a refusal of
@@ -582,7 +582,7 @@ async fn a_find_call_that_is_not_whole_is_refused_and_writes_nothing() {
 /// words are looked at, and the revision now current lands.
 #[tokio::test]
 async fn a_find_composes_with_the_revision_the_caller_read() {
-    let jojobot = handler();
+    let jojobot = handler_with_mentions();
     claim_with_details(&jojobot).await;
     // Revision 2: somebody else corrected the content.
     update_ok(
@@ -631,13 +631,15 @@ async fn a_find_composes_with_the_revision_the_caller_read() {
 #[tokio::test]
 async fn a_find_is_refused_when_the_claim_is_written_between_the_read_and_the_write() {
     let memory = Arc::new(InMemoryMemory::booted());
-    let jojobot = handler_over(memory.clone());
+    let jojobot = handler_over_mentions(memory.clone());
     claim_with_details(&jojobot).await;
     let racing = Jojobot::new(
-        Arc::new(MovesAfterTheRead {
-            inner: memory,
-            armed: std::sync::atomic::AtomicBool::new(true),
-        }),
+        Arc::new(jojobot_domain::memory::mention::Mentioning::new(Arc::new(
+            MovesAfterTheRead {
+                inner: memory,
+                armed: std::sync::atomic::AtomicBool::new(true),
+            },
+        ))),
         Arc::new(SpySearch::default()),
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
@@ -684,13 +686,15 @@ async fn a_find_is_refused_when_the_claim_is_written_between_the_read_and_the_wr
 #[tokio::test]
 async fn a_find_that_named_a_revision_is_refused_in_the_words_about_that_revision() {
     let memory = Arc::new(InMemoryMemory::booted());
-    let jojobot = handler_over(memory.clone());
+    let jojobot = handler_over_mentions(memory.clone());
     claim_with_details(&jojobot).await;
     let racing = Jojobot::new(
-        Arc::new(MovesAfterTheRead {
-            inner: memory,
-            armed: std::sync::atomic::AtomicBool::new(true),
-        }),
+        Arc::new(jojobot_domain::memory::mention::Mentioning::new(Arc::new(
+            MovesAfterTheRead {
+                inner: memory,
+                armed: std::sync::atomic::AtomicBool::new(true),
+            },
+        ))),
         Arc::new(SpySearch::default()),
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),

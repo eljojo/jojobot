@@ -49,6 +49,7 @@
 //! spelling of the stored form.
 
 use super::stored::{StoredMemory, Unrendered};
+use super::text_edit::{TextEdit, apply_text_edit};
 use super::{Entity, EntityId, kinds};
 
 /// **What marks a resolved mention in stored text.**
@@ -143,7 +144,28 @@ pub fn resolved(text: &str, known: &[Entity]) -> Result<String, KindsUnloaded> {
 /// reads as a sentence that is complete, and the reader has no way to know the
 /// pointer is gone.
 pub fn rendered(text: &str, known: &[Entity]) -> String {
-    rewrite(text, |at, in_code| {
+    rendered_mapped(text, known).0
+}
+
+/// **One rewritten piece of a rendering**: the stored bytes of a mention, and
+/// the served bytes they became. Both ranges are in bytes of their own text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Piece {
+    /// Where the mention sits in the stored text.
+    pub stored: std::ops::Range<usize>,
+    /// Where what replaced it sits in the served text.
+    pub served: std::ops::Range<usize>,
+}
+
+/// **What [`rendered`] serves, and where each rewritten piece of it came from.**
+///
+/// The pieces are the only places the two texts differ, in order, so a place in
+/// the served text outside every piece is a place in the stored text a fixed
+/// distance away. A caller that changes the served text and has to write the
+/// stored text uses the map to carry the change over without touching a stored
+/// byte outside it.
+pub fn rendered_mapped(text: &str, known: &[Entity]) -> (String, Vec<Piece>) {
+    rewrite_mapped(text, |at, in_code| {
         if text[at..].starts_with(MARK) {
             let badge = run_of(text, at + MARK.len(), is_badge_byte);
             if badge.is_empty() {
@@ -168,6 +190,104 @@ pub fn rendered(text: &str, known: &[Entity]) -> String {
             false => Some((format!("@{} {UNKNOWN}", handle.as_str()), end)),
         }
     })
+}
+
+/// **The stored text after a find and replace made over the served text.**
+///
+/// A caller reads a claim as [`rendered`] serves it, so its `find` means what
+/// recall shows: it is matched there, with the same count and the same refusals
+/// as any text edit. The change is then carried to the stored text through the
+/// rendering map, and **every stored byte outside the span the find covered is
+/// kept exactly as stored** (rule 449). A mark inside code stays a mark, a typed
+/// handle in old prose stays the words that were typed, and the notes a render
+/// adds after a broken mention are never written into the text. The text a
+/// caller sent is not parsed, so a claim whose stored text a rewrite of the
+/// whole would refuse can still be edited outside the broken part.
+///
+/// **Only the words that replace the find are resolved**, and in the text they
+/// land in: a handle in them becomes a mark when it sits outside code, and stays
+/// the words that were typed inside code (rule 450).
+///
+/// A find that starts or ends inside a link names no place in the stored text,
+/// so it is refused, and the refusal says to include the whole handle. A find
+/// that covers a link whole replaces it, which is how a broken link is deleted.
+///
+/// `Err(handle)` inside the answer is a handle in the replacement that names
+/// nothing, which the caller answers as blocked with candidates.
+pub fn edited_stored(
+    address: &super::FactAddress,
+    stored: &str,
+    edit: &TextEdit,
+    known: &[Entity],
+) -> Result<Result<String, EntityId>, super::MemoryError> {
+    refuse_forged(&[&edit.replace])?;
+    if any_unknowable(&[&edit.replace]) {
+        return Err(unloaded(KindsUnloaded));
+    }
+    let (served, pieces) = rendered_mapped(stored, known);
+    let (after, done) = apply_text_edit(address, &served, edit)?;
+    let found = done.start..done.start + edit.find.len();
+    for piece in &pieces {
+        for edge in [found.start, found.end] {
+            if piece.served.start < edge && edge < piece.served.end {
+                return Err(super::MemoryError::InvalidFact(format!(
+                    "`find` starts or ends inside the link '{}'. Send the whole handle in `find`, \
+                     or leave it out.",
+                    &served[piece.served.clone()]
+                )));
+            }
+        }
+    }
+    // **Where the span sits in the stored text**: the served place, less how
+    // much longer the served pieces before it are than the stored ones they
+    // came from. A place on a piece's edge counts the pieces ended before it.
+    let stored_at = |served_at: usize| {
+        let longer: isize = pieces
+            .iter()
+            .filter(|piece| piece.served.end <= served_at)
+            .map(|piece| piece.served.len() as isize - piece.stored.len() as isize)
+            .sum();
+        (served_at as isize - longer) as usize
+    };
+    // **The replacement, resolved where it now sits.** Its position in the
+    // text the reader will see decides what is code, and a handle that runs past
+    // its end is a link this edit would half write.
+    let put = found.start..found.start + edit.replace.len();
+    let mut resolved = String::with_capacity(edit.replace.len());
+    let mut cut = put.start;
+    for at in outside_code(&after) {
+        if !put.contains(&at) {
+            continue;
+        }
+        let Attempt::Mention(handle, end) = handle_at(&after, at) else {
+            continue;
+        };
+        if end > put.end {
+            return Err(super::MemoryError::InvalidFact(format!(
+                "`replace` ends inside the handle '@{}'. Send the whole handle in `replace`, or \
+                 leave it out.",
+                handle.as_str()
+            )));
+        }
+        let Some(entity) = known.iter().find(|e| e.id == handle) else {
+            return Ok(Err(handle));
+        };
+        // A thing wearing no badge is the record the build supplies: its handle
+        // is as permanent as anything here, so it is kept as written.
+        let Some(badge) = entity.badge.as_deref().filter(|badge| !badge.is_empty()) else {
+            continue;
+        };
+        resolved.push_str(&after[cut..at]);
+        resolved.push_str(&format!("{MARK}{badge}"));
+        cut = end;
+    }
+    resolved.push_str(&after[cut..put.end]);
+    Ok(Ok(format!(
+        "{}{}{}",
+        &stored[..stored_at(found.start)],
+        resolved,
+        &stored[stored_at(found.end)..]
+    )))
 }
 
 /// **Where a mention sits in text a reader is about to see, and what it
@@ -218,8 +338,17 @@ fn wearing<'a>(known: &'a [Entity], badge: &str) -> Option<&'a Entity> {
 /// stored mark is jojobot's own and is read wherever it sits: a handle in a code
 /// span was resolved before code was literal, and the row holds the badge there.
 fn rewrite(text: &str, at: impl Fn(usize, bool) -> Option<(String, usize)>) -> String {
+    rewrite_mapped(text, at).0
+}
+
+/// [`rewrite`], and where each piece it replaced sat before and sits after.
+fn rewrite_mapped(
+    text: &str,
+    at: impl Fn(usize, bool) -> Option<(String, usize)>,
+) -> (String, Vec<Piece>) {
     let code = code_ranges(text);
     let mut out = String::with_capacity(text.len());
+    let mut pieces = Vec::new();
     let mut cut = 0;
     for (start, _) in text.match_indices('@') {
         if start < cut {
@@ -229,11 +358,16 @@ fn rewrite(text: &str, at: impl Fn(usize, bool) -> Option<(String, usize)>) -> S
             continue;
         };
         out.push_str(&text[cut..start]);
+        let served_from = out.len();
         out.push_str(&replacement);
+        pieces.push(Piece {
+            stored: start..end,
+            served: served_from..out.len(),
+        });
         cut = end;
     }
     out.push_str(&text[cut..]);
-    out
+    (out, pieces)
 }
 
 /// **Every `@` that is not inside code**, in order.
@@ -1019,40 +1153,100 @@ impl super::Memory for Mentioning {
         patch: super::FactPatch,
         caller: &super::EntityId,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
-        refuse_forged(&[
-            patch.content.as_deref().unwrap_or(""),
-            patch.details.as_deref().unwrap_or(""),
-        ])?;
+        use super::text_edit::TextField;
+        // **A find and replace names the text it changes, so that text is not
+        // also sent.** The two together would say the same place twice.
+        let editing = patch.text_edit.as_ref().map(|edit| edit.field);
+        let sent = |field: TextField| match field {
+            TextField::Content => patch.content.is_some(),
+            TextField::Details => patch.details.is_some(),
+        };
+        if editing.is_some_and(sent) {
+            return Err(super::MemoryError::InvalidFact(
+                "a find and replace and the whole text it changes are both sent: send one".into(),
+            ));
+        }
+        // **The text under an edit is never screened or resolved as a whole**:
+        // only the words that replace the find are, in `edited_stored`.
+        let screened = [
+            patch
+                .content
+                .as_deref()
+                .filter(|_| editing != Some(TextField::Content))
+                .unwrap_or(""),
+            patch
+                .details
+                .as_deref()
+                .filter(|_| editing != Some(TextField::Details))
+                .unwrap_or(""),
+        ];
+        refuse_forged(&screened)?;
         let known = self.known().await?;
-        if let Some(blocked) = Self::screen(
-            &[
-                patch.content.as_deref().unwrap_or(""),
-                patch.details.as_deref().unwrap_or(""),
-            ],
-            &known,
-        ) {
+        if let Some(blocked) = Self::screen(&screened, &known) {
             return Ok(blocked);
         }
         let mut fields = patch.fields.clone();
         bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
+        let mut content = patch
+            .content
+            .as_deref()
+            .map(|c| resolved(c, &known))
+            .transpose()
+            .map_err(unloaded)?;
+        let mut details = patch
+            .details
+            .as_deref()
+            .map(|d| resolved(d, &known))
+            .transpose()
+            .map_err(unloaded)?;
+        let mut expected_revision = patch.expected_revision;
+        if let Some(edit) = &patch.text_edit {
+            // **Read as stored**, so the match is made over what the reader is
+            // served and the splice lands in what is kept. The write carries the
+            // revision of this read, so the store refuses it if the claim has
+            // moved since.
+            let chain = self.inner.claim_history(address).await?.open();
+            if let Some(refused) =
+                super::refuses_a_stale_revision(address, expected_revision, chain.len())
+            {
+                return Err(refused);
+            }
+            let newest = chain
+                .last()
+                .ok_or_else(|| super::MemoryError::UnknownFact {
+                    attempted: address.to_string(),
+                    nearest: Vec::new(),
+                })?;
+            let current = match edit.field {
+                TextField::Content => newest.content.as_str(),
+                TextField::Details => newest.details.as_deref().unwrap_or(""),
+            };
+            let text = match edited_stored(address, current, edit, &known)? {
+                Ok(text) => text,
+                Err(handle) => {
+                    let candidates = super::guard::screen(&handle, &[], &known);
+                    return Ok(super::Guarded::Blocked {
+                        attempted: handle,
+                        candidates,
+                    });
+                }
+            };
+            match edit.field {
+                TextField::Content => content = Some(text),
+                TextField::Details => details = Some(text),
+            }
+            expected_revision = Some(chain.len());
+        }
         let written = self
             .inner
             .update_fact(
                 address,
                 super::FactPatch {
                     fields,
-                    content: patch
-                        .content
-                        .as_deref()
-                        .map(|c| resolved(c, &known))
-                        .transpose()
-                        .map_err(unloaded)?,
-                    details: patch
-                        .details
-                        .as_deref()
-                        .map(|d| resolved(d, &known))
-                        .transpose()
-                        .map_err(unloaded)?,
+                    content,
+                    details,
+                    text_edit: None,
+                    expected_revision,
                     ..patch
                 },
                 caller,

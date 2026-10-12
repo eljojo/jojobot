@@ -4339,6 +4339,9 @@ impl Memory for DoltMemory {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        if let Some(refused) = jojobot_domain::memory::refuses_an_unapplied_text_edit(&patch) {
+            return Err(refused);
+        }
         let mut tx = self.pool.begin().await.map_err(store)?;
         // An edge's object names an entity, so an edit that attaches one is an
         // entity-touching write and faces the guard — screened before anything

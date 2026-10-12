@@ -2489,6 +2489,9 @@ impl Memory for InMemoryMemory {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        if let Some(refused) = super::super::refuses_an_unapplied_text_edit(&patch) {
+            return Err(refused);
+        }
         // An edge's object names an entity, so an edit that attaches one is an
         // entity-touching write and faces the guard — same check, same order:
         // screened before anything is rewritten.

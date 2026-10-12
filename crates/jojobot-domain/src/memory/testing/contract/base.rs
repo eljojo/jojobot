@@ -4133,6 +4133,43 @@ pub async fn a_text_edit_lands_on_the_text_it_read_and_is_refused_when_the_claim
     assert_eq!(writes_of_claim(store, &address).await, 3);
 }
 
+/// **A store handed a find and replace that nothing applied refuses it and
+/// writes nothing.** The mention layer applies the edit and clears the field
+/// before the patch goes down; a store that still holds one was reached without
+/// that layer, and writing the claim with the change silently left out would
+/// read as a success.
+pub async fn a_store_refuses_a_text_edit_nothing_applied<M: Memory>(store: &M) {
+    use super::super::super::text_edit::{TextEdit, TextField};
+    let subject = EntityId::person("person:contract-unapplied-edit");
+    let mut new = NewFact::about(subject.clone(), "a claim", date(2026, 10, 12));
+    new.details = Some("a typo here".to_string());
+    let captured = capture(store, new).await;
+    let refused = store
+        .update_fact(
+            &captured.address(),
+            FactPatch {
+                text_edit: Some(TextEdit {
+                    field: TextField::Details,
+                    find: "typo".into(),
+                    replace: "fix".into(),
+                }),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "an edit nothing applied was {refused:?}"
+    );
+    assert_eq!(
+        read_back(store, &subject, &captured.id).await.details,
+        Some("a typo here".to_string()),
+        "the refused edit wrote something"
+    );
+    assert_eq!(writes_of_claim(store, &captured.address()).await, 1);
+}
+
 /// Write `text` as the claim's details, against the revision it was read at.
 async fn edit_with<M: Memory>(store: &M, address: &FactAddress, text: String, revision: usize) {
     edit(
@@ -16701,6 +16738,7 @@ macro_rules! all_cases {
         $m!(update_fact_edits_in_place($store));
         $m!(an_edit_against_a_stale_revision_is_refused_and_writes_nothing($store));
         $m!(a_text_edit_lands_on_the_text_it_read_and_is_refused_when_the_claim_moved($store));
+        $m!(a_store_refuses_a_text_edit_nothing_applied($store));
         $m!(an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone($store));
         $m!(a_refutation_is_an_ordinary_content_edit($store));
         $m!(promotion_to_testimony_needs_confirmation($store));
