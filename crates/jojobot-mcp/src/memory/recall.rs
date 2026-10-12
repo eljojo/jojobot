@@ -1803,7 +1803,7 @@ impl Jojobot {
                        line over keys, status != done && due <= today+7d, with order for \
                        the sequence) or view (a question already worked out, asked by name, \
                        so start with one if it fits). A call that narrows nothing is refused: name one of subject, \
-                       kind, parent, answers_type or fields, or a record's own address \
+                       kind, parent, answers_type, fields or where, or a record's own address \
                        (history_record or built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a rhythm under a snooze also carries \
@@ -1858,6 +1858,7 @@ impl Jojobot {
         // none, and the view fills one in. A refusal of that question names the
         // view, because the caller never wrote the line it is about.
         let view_named = args.view.clone();
+        let caller_named_scope = args.scope.is_some();
         let where_is_the_views = args.expression.is_none();
         let (args, view_filters, asks_ready) = match args.view.clone() {
             None => (args, Vec::new(), false),
@@ -1983,10 +1984,23 @@ impl Jojobot {
             None => None,
             Some(text) => match filter::expression::parse(text, today) {
                 Ok(tree) => Some(tree),
-                Err(refused) => return memory_declined("recall", through_view(refused)),
+                Err(refused) => return memory_declined("recall", refused),
             },
         };
         let where_scope = parse_scope(args.scope.as_deref())?;
+        // **A `scope` the caller sent says how a `where` is asked**, so beside no
+        // `where` (the view's own counts) it would be ignored without a word. A
+        // walk's `keeping` expression has a refusal of its own just below.
+        if caller_named_scope && where_expression.is_none() && keeping_expression.is_none() {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(
+                    "scope says how a where is asked, and this call has no where: send one, \
+                     or leave scope off. fields carry a scope of their own"
+                        .into(),
+                ),
+            );
+        }
         // **A walk's expression is asked of what each reached thing holds now.**
         // The call's `scope` would be silently dropped beside it, so it is
         // refused, naming the form that does take a record scope.

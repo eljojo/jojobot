@@ -722,8 +722,8 @@ impl GraphQuery {
         let select = &self.select;
         if select.narrows_nothing() {
             return Err(MemoryError::InvalidQuery(
-                "name what to recall: a subject, a kind, a parent, a type, a key, or a \
-                 record's own address — history_record or built_on"
+                "name what to recall: a subject, a kind, a parent, a type, a key, a where \
+                 line, or a record's own address — history_record or built_on"
                     .into(),
             ));
         }

@@ -300,3 +300,76 @@ async fn a_walks_keeping_is_checked_and_its_unlicensed_drops_are_counted() {
     );
     story.finish().await;
 }
+
+/// **A recall that narrows nothing is refused, naming `where` among what narrows**,
+/// and a `where` alone answers.
+#[tokio::test]
+async fn the_refusal_of_a_recall_that_narrows_nothing_lists_where() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    a_board(&s).await;
+    s.refused("recall", json!({})).await.says("where");
+    let fixed = s.call("recall", json!({"where": "status = done"})).await;
+    assert_eq!(handles_of(&fixed), ["thing:epsilon"], "{}", fixed.raw());
+    story.finish().await;
+}
+
+/// **A view and a caller combine as the view's comment says.** A caller's `where`
+/// takes the view's place whole. A `scope` beside a question that has no `where`
+/// is refused, not ignored. A view whose own `where` does not parse is refused
+/// naming the view, where it is declared.
+#[tokio::test]
+async fn a_view_and_a_caller_combine_without_silence() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    a_board(&s).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "marked-things", "name": "Marked things",
+               "source": "user-named",
+               "sets": {"selects": "thing", "where": "status = next"}}),
+    )
+    .await;
+    // The view's own question, and a caller's where in its place, whole.
+    let own = s.call("recall", json!({"view": "marked-things"})).await;
+    assert_eq!(handles_of(&own), ["thing:delta"], "{}", own.raw());
+    let replaced = s
+        .call(
+            "recall",
+            json!({"view": "marked-things", "where": "status = done"}),
+        )
+        .await;
+    assert_eq!(
+        handles_of(&replaced),
+        ["thing:epsilon"],
+        "{}",
+        replaced.raw()
+    );
+
+    // A scope beside no where is refused; with a where it is the way forward.
+    s.refused("recall", json!({"kind": "thing", "scope": "record"}))
+        .await
+        .says("where");
+    let scoped = s
+        .call(
+            "recall",
+            json!({"view": "marked-things", "scope": "record"}),
+        )
+        .await;
+    assert!(scoped.json()["count"].is_number(), "{}", scoped.raw());
+
+    // A view whose where does not parse is refused where it is declared, naming
+    // the view and the key; spelt right, the same declaration lands.
+    let declare = |line: &str| {
+        json!({"kind": "view", "handle": "matches-nothing", "name": "Matches nothing",
+               "source": "user-named",
+               "sets": {"selects": "thing", "where": line}})
+    };
+    s.refused("add_entity", declare("status == next"))
+        .await
+        .says("matches-nothing")
+        .says("where")
+        .says("==");
+    s.call("add_entity", declare("status = next")).await;
+    story.finish().await;
+}

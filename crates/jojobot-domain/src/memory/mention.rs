@@ -710,10 +710,18 @@ fn bind_expression_fields(
     fields: &mut std::collections::BTreeMap<String, String>,
     declared: &[super::types::DeclaredType],
     known: &[Entity],
+    owner: &EntityId,
 ) -> Result<(), super::MemoryError> {
     for (key, value) in fields.iter_mut() {
         if holds_an_expression(key, declared) {
-            *value = bound_expression(value, known)?;
+            // The refusal names the thing the line was written on and the key,
+            // because the caller sent a field of a record and not the line alone.
+            *value = bound_expression(value, known).map_err(|refused| match refused {
+                super::MemoryError::InvalidQuery(words) => super::MemoryError::InvalidQuery(
+                    format!("the '{key}' of {owner} is a saved expression, and {words}"),
+                ),
+                other => other,
+            })?;
         }
     }
     Ok(())
@@ -964,7 +972,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = first.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
+        bind_expression_fields(&mut fields, &self.declared().await?, &known, &new.id)?;
         let written = self
             .inner
             .add_entity_with_first_claim(
@@ -1019,7 +1027,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = claim.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
+        bind_expression_fields(&mut fields, &self.declared().await?, &known, handle)?;
         let written = self
             .inner
             .update_entity_with_claim(
@@ -1113,7 +1121,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = fact.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
+        bind_expression_fields(&mut fields, &self.declared().await?, &known, &fact.subject)?;
         let written = self
             .inner
             .capture(super::NewFact {
@@ -1186,7 +1194,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = patch.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known)?;
+        bind_expression_fields(&mut fields, &self.declared().await?, &known, &address.home)?;
         let mut content = patch
             .content
             .as_deref()

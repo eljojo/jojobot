@@ -2346,7 +2346,7 @@ The graph query: say the shape you want and get that shape back.
 Use it for a handle, a kind, a type, a key and its value; use search when you only have words for it.
 THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question already worked out, asked by name, so start with one if it fits).
-A call that narrows nothing is refused: name one of subject, kind, parent, answers_type or fields, or a record's own address (history_record or built_on).
+A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields or where, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (fields_left_out names what it hid, and a view's shows_keys yields to it).
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.

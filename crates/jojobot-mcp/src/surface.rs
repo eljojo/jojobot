@@ -1116,7 +1116,10 @@ fn the_recall_description_says_how_old_what_an_object_holds_is() {
 /// caller to a kind or a subject it did not need.
 #[test]
 fn the_recall_description_lists_parent_among_the_ways_to_select() {
-    assert_description_names("recall", &["subject, kind, parent, answers_type or fields"]);
+    assert_description_names(
+        "recall",
+        &["subject, kind, parent, answers_type, fields or where"],
+    );
 }
 
 /// **`merge_entities` says its names become aliases of the survivor.**
