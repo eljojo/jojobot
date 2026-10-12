@@ -477,10 +477,11 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             found,
         } => {
             let way = if found == 0 {
+                let subject = address.split('#').next().unwrap_or(address);
                 format!(
-                    "Nothing was written: {e}. Read the {field} with recall to see the text as \
-                     it stands, then send `find` with words that occur in it. The match is \
-                     exact and case-sensitive."
+                    "Nothing was written: {e}. Read the {field} with recall (subject: \
+                     \"{subject}\", facts: true) to see the text as it stands, then send `find` \
+                     with words that occur in it. The match is exact and case-sensitive."
                 )
             } else {
                 format!(

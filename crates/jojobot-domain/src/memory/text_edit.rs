@@ -137,9 +137,10 @@ pub struct TextRead {
 /// refuses it if the claim has been written since, and the text it was applied
 /// to is never one the claim has moved past.
 ///
-/// A caller that named the revision it read ([`FactPatch::expected_revision`])
-/// is answered first: a claim at another revision is a stale edit whatever the
-/// words say, and "no occurrence" would send the caller to the wrong place.
+/// A claim that does not exist is refused first. Then a caller that named the
+/// revision it read ([`FactPatch::expected_revision`]) is answered: a claim at
+/// another revision is a stale edit whatever the words say, and "no occurrence"
+/// would send the caller to the wrong place.
 pub async fn read_text_edit<M: super::Memory + ?Sized>(
     store: &M,
     address: &FactAddress,
@@ -147,14 +148,14 @@ pub async fn read_text_edit<M: super::Memory + ?Sized>(
     expected_revision: Option<usize>,
 ) -> Result<TextRead, MemoryError> {
     let chain = store.claim_history(address).await?;
-    if let Some(refused) = super::refuses_a_stale_revision(address, expected_revision, chain.len())
-    {
-        return Err(refused);
-    }
     let newest = chain.last().ok_or_else(|| MemoryError::UnknownFact {
         attempted: address.to_string(),
         nearest: Vec::new(),
     })?;
+    if let Some(refused) = super::refuses_a_stale_revision(address, expected_revision, chain.len())
+    {
+        return Err(refused);
+    }
     let current = match edit.field {
         TextField::Content => newest.content.as_str(),
         TextField::Details => newest.details.as_deref().unwrap_or(""),

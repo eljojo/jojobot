@@ -4877,7 +4877,9 @@ touched the claim since: the `revision_count` `recall` served for it. A
 claim `recall` serves without one has been written once, so it is
 revision 1. When the claim has been written since, the edit is refused
 with `retry`, naming the revision it is at now, and nothing is written.
-Leave it off and the edit lands as it always did.
+Leave it off and the edit lands as it always did. An edit's receipt
+carries `revision`, the claim's count after that edit: send it as the
+next guarded edit's `expected_revision` without a `recall` between.
 ```
 
 #### `update_fact` — argument `/inputSchema.field`

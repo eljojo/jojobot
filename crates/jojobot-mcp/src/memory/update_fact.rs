@@ -268,7 +268,9 @@ pub struct UpdateFactArgs {
     /// claim `recall` serves without one has been written once, so it is
     /// revision 1. When the claim has been written since, the edit is refused
     /// with `retry`, naming the revision it is at now, and nothing is written.
-    /// Leave it off and the edit lands as it always did.
+    /// Leave it off and the edit lands as it always did. An edit's receipt
+    /// carries `revision`, the claim's count after that edit: send it as the
+    /// next guarded edit's `expected_revision` without a `recall` between.
     #[serde(default)]
     pub(crate) expected_revision: Option<u32>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -742,6 +744,16 @@ impl Jojobot {
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact));
                 if let Some(edited) = &edited_words {
                     crate::answer::note_text_edit(&mut body, edited);
+                }
+                // **The claim's write count after this edit**, the number `recall`
+                // serves as `revision_count`, so a second guarded edit sends it
+                // without a read in between. Left out when the store cannot say.
+                if let Ok(chain) = self.memory.claim_history(&fact.address()).await {
+                    body["revision"] = serde_json::json!(chain.len());
+                    body["revision_note"] = serde_json::json!(
+                        "send revision as expected_revision on the next edit of this claim, and \
+                         that edit is refused if the claim has been written since"
+                    );
                 }
                 let mut line = self
                     .what_an_update_left_standing(&fact, &cleared, keep)
