@@ -149,7 +149,10 @@ Shipped and live:
   that could not be reached is an outage and wears `retry`.
 - **M2/M2.5/M2.8** — `search` across facts, entities and prose; structured
   edges (location · membership · attendance · about · connection); aliases;
-  orienteering retrieval (every hit arrives with its surroundings).
+  orienteering retrieval (every hit arrives with its surroundings). **An
+  archived claim comes back by default, ranked below the claims that stand**,
+  a superseded one naming what replaced it; `status: active` narrows to those
+  that stand.
   `connection` says a link is there and that how it relates was not recorded —
   an admission, never a weaker `about`, because filing an unknown link as a
   claim launders it into one. A walk says when the claim behind a link was
@@ -176,9 +179,21 @@ Shipped and live:
   object names what it left out in `fields_left_out` and how to read it), and
   walks to a depth in either direction. **A view carries its own list as
   `shows_keys`**, and a caller's `keys` wins over it.
+  **`where` says which objects in one expression** — `=`, `!=`, the four
+  orderings, `in (…)`, `contains`, a bare key, `!`, `&&`, `||` and parentheses,
+  over values that may be a day relative to the asking session's own
+  (`today+3d`, `today-2w`). An ordering needs a type declaring what the key
+  holds; what it leaves out for want of one is counted in
+  `left_out_unlicensed`, and a key nothing holds is refused, as is an
+  expression over 4096 characters or nested past 32 levels. **`order`** sorts
+  before the answer is paged, and **`scope`** asks the expression of the thing
+  or of its records. **A view may hold `where`, `order` and `scope`**, its
+  `where` stored as an expression that is checked when it is written.
   **A view is a record of kind `view`, so the one the operator declares and the
   one the build supplies are the same shape and nothing branches on which.**
-  **The build supplies a charter and two views**, assembled in one place — a
+  **The build supplies a charter and three views** — `colleagues`, `loops`, and
+  `ready`, which lists the work that can be started and, for a named piece of
+  work, says what blocks it — assembled in one place: a
   capability ships data by adding an entry there, with no table, migration or
   verb. **Two kinds of link:** an **edge**, followed by one of the five shapes;
   and a **relation**, a key some type declared to hold a reference, followed by
@@ -207,6 +222,13 @@ Shipped and live:
   and reports as absent rather than borrowing the claim's.** **The surface says so at the moment of the write**,
   because a capability a caller does not know about does not change what the
   caller does.
+  **An edit may name the revision it read** (`expected_revision`, the count of
+  the claim's writes) and is refused with retry, naming the current one, if the
+  claim moved since; the check is a read inside the write, and the store's own
+  conflict refuses the second of two simultaneous edits. **An edit may change
+  part of a claim's text** with `find` and `replace` on a named `field`: a match
+  that is not exactly one is refused, and the receipt says what was removed and
+  inserted.
 - **A handle written into text is a link, not a spelling.** A caller writes
   `@kind:slug` into a claim's words, its nuance or a thing's prose; jojobot
   stores the permanent id that row wears and serves back the handle the thing
@@ -226,7 +248,9 @@ Shipped and live:
   handle in text is a link, not only a claim's** — **a journal beat and a mailbox
   message included** — **and text written before that was true is MIGRATED once
   onto permanent ids, so a rename reaches it.** ⛔️ **A surface that keeps naming
-  the old handle is a defect to close, never a limit to document.**
+  the old handle is a defect to close, never a limit to document.** **Text
+  inside code is literal:** a handle in a backtick span or a fenced block is
+  never linked, resolved or refused.
 - **Everything that points at a thing stores its permanent id.** Not only a
   handle written into text: an edge's object, the entries in a record's
   reference list, a child's parent, and **a field value that names a thing — a
@@ -260,8 +284,11 @@ Shipped and live:
   `sets`, written as its first claim and held to every guard a capture faces.
   **A record carries two bags**: its own fields, and what it `sets` on its
   thing — `capture`, `update_fact` and `update_entity` take `sets` too, so one
-  call records a claim and sets the thing, and a key stays in the bag it was
-  first written under. **Only the setting bag and the keys jojobot computes
+  call records a claim and sets the thing; a key stays in the bag it was first
+  written under, and `update_fact` naming in `sets` a key the record holds as
+  its own moves it in one call. **Every read shows the two bags apart** — a
+  record's `fields` and its `sets` — on recall, search hits, receipts and the
+  web page. **Only the setting bag and the keys jojobot computes
   reach the thing; a key written under `fields` stays on the record** (the
   class `stays`). A row written before that keeps reaching its thing, and no
   boot rewrites a class. The receipt names which keys reached the thing and
@@ -393,7 +420,10 @@ Shipped and live:
   by id, time and subject only, and search leaves it out and says so. **The
   operator reads it on their own page of the web UI**, served only to a
   one-person login, and marks a message processed there, opened or not; a page
-  view moves nothing. **`list_sent` is the sender's own
+  view moves nothing. **Every message that lands in a person's box is also
+  pushed to their phone** when the instance is set up for ntfy: the store
+  writes the push beside the message, and the sender retries it until its
+  window ends. **`list_sent` is the sender's own
   view**: where your mail got to and whether anyone has read it, read-only and
   moving nothing. **`read_mailbox` with `counts_only` is how you poll**:
   per-state counts and anything jojobot cannot read, taking delivery of none of
@@ -542,16 +572,24 @@ Shipped and live:
   may have several running at once, because the `sid` is what tells them apart.
   **A role is claimed at the door** (`claim`) and held on a lease every write
   renews. **A role is its own object, `role:<name>`, a child of the bot that
-  first claims it**, with the keys `holder`, `claimed_at` and `agent`; while
-  older stores still hold the flat `role/<name>/…` keys on the bot, every
-  reader reads both shapes, the object winning once it carries `claimed_at`.
-  Every role write goes through one function. **A claim for a role that belongs
+  first claims it**, with the keys `holder`, `claimed_at` and `agent`; the flat
+  `role/<name>/…` keys an older store held on the bot are moved onto the role
+  object once at start, and nothing reads them after. Every role write goes
+  through one function. **A claim for a role that belongs
   to another bot is refused at the door, naming the owner**, with no lease
   involved. **Only the owner or the chart head archives or restores a role
   object**, and a rename to a new parent or a merge touching one is judged the
   same way; while it stands archived, every claim on it is refused, the
   owner's too, naming the restore. `recall` with a `parent` lists a bot's
   roles.
+  **A session the operator started by hand can ask for a code**
+  (`start_here` with `ask_for_code`): the code lands in the operator's own box,
+  the operator types it into the session, and the boot that presents it holds
+  a **voucher** — an engine-written record nobody else creates, renames or
+  archives, ended when the run wraps or is resumed. **Nothing requires a
+  voucher yet**: the gate that does is the next slice of the chain of trust.
+  **A running session is told when another identity rewrote its bot's
+  charter**, on its status bar, until it reads the charter or the page.
   **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.** **A run's zone is the one it sent, else the one a resumed run holds, else the instance's own** — the `timezone` key on `topic:instance`, written once by the operator — **else UTC**, and the boot answer names the zone and where it came from. Nothing in the software names a zone.
   **AND THE SERVER MAY BE ACTING OUT A DAY OF ITS OWN.** `JOJOBOT_TODAY` sets one
   day for a whole run and the server's `now` becomes it — the date an undated
@@ -587,7 +625,13 @@ Shipped and live:
 > sees as a fresh, unbound connection per tool call, so a boot bound an identity
 > that was gone by the next request. **The `sid` is the only address**: the door
 > hands one back, and it rides every verb, reads included, so jojobot always
-> knows which bot is asking — reads are attributed, never journalled.
+> knows which bot is asking — reads are attributed, never journalled. **The
+> `sid` is a secret key** (`sk-` and 26 characters), held by the store only as
+> its hash and void once the run wraps; **the run's six-character name is
+> public and opens nothing** — it is what a boot offers and what `resume`
+> takes, and a resume by name replaces the key and voids the run's vouchers.
+> A run begun before keys exchanges its old name for a key once, on its first
+> call, and that call does not run.
 > `journal`/`amend_journal`/`wrap_session` take the `sid` and never a `bot`, and
 > **a session is bound to its identity at boot and never switches**, so naming
 > somebody else's session is refused rather than quietly honoured — a bug class
@@ -864,9 +908,9 @@ roles and never an operator.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
-  and fails on any warning or error line at boot. **It keeps two fixtures**, one
-  from each of the last two deployed builds, and every boot case runs over
-  both. `make refresh-upgrade-fixture` records a fixture again from a ref
+  and fails on any warning or error line at boot. **It keeps a fixture from each
+  of the last two deployed builds**, plus an older one that some cases still
+  read alone until they move onto the newer two. `make refresh-upgrade-fixture` records a fixture again from a ref
   (default the deployed one) whenever the deployed build moves. An empty
   `RUST_LOG` counts as unset. **`make carried` says what a carry would move**:
   this checkout's commits that main lacks, main's commits past origin/main, and
