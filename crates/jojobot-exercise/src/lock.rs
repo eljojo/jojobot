@@ -1550,6 +1550,29 @@ pub fn locks_of(source: &str) -> Vec<Lock> {
     read(&document).unwrap_or_else(|e| panic!("the room's locks must parse: {e:#}"))
 }
 
+/// **The needles of these locks that contain `day`.** A needle is checked as
+/// text in an answer, and the server writes its own day into the answers it
+/// stamps, so a needle that contains the server's day can be met by a stamp
+/// instead of by the fact it names. A room runs its server on a day no needle
+/// contains, and this is the question that says so.
+pub fn needles_naming(locks: &[Lock], day: &str) -> Vec<String> {
+    locks
+        .iter()
+        .flat_map(|lock| lock.expects.iter())
+        .flat_map(|expect| match expect {
+            Expect::Carries(text) | Expect::CarriesAnyCase(text) | Expect::Lacks(text) => {
+                vec![text.as_str()]
+            }
+            Expect::AtLeast(_, text) => vec![text.as_str()],
+            Expect::CarriesEither(alternatives) => {
+                alternatives.iter().map(String::as_str).collect()
+            }
+        })
+        .filter(|needle| needle.contains(day))
+        .map(str::to_string)
+        .collect()
+}
+
 /// **Whether a needle's own written form proves the claim it names still
 /// stands.**
 ///
@@ -2125,5 +2148,31 @@ mod standing_tests {
         assert!(
             !ambiguous_verdict(Some("Phase 2")).stands_as_finding(&[&once], &scoping_boundaries())
         );
+    }
+}
+
+#[cfg(test)]
+mod needles_naming_tests {
+    use super::*;
+
+    /// **A needle that contains the day is named, in every assertion that holds
+    /// text, and a needle that does not is not.**
+    #[test]
+    fn a_needle_holding_the_day_is_named_and_one_that_does_not_is_left_out() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:skateboard\"}\n\
+             carries \"2026-12-05\"\n\
+             carries-any-case Tina\n\
+             lacks   \"day 2026-12-05 passed\"\n\
+             at least 2 of \"on 2026-12-05\"\n\
+             carries-either \"2026-12-05\" | \"2026-12-06\"\n\
+             say     the skateboard\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let named = needles_naming(&locks, "2026-12-05");
+        assert_eq!(named.len(), 4, "{named:?}");
+        assert!(needles_naming(&locks, "2026-12-07").is_empty());
     }
 }

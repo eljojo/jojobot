@@ -19,6 +19,12 @@ use jojobot_exercise::run::{
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
+/// **The day this room's server runs on**, carried to the child as its own
+/// clock. Every moment the server stamps is this day, whatever the real date is,
+/// so no needle can be met by a stamp on one real day. It is a day no needle
+/// of this room holds, and `no_needle_here_is_the_servers_own_day` asks that.
+const SERVER_DAY: &str = "2028-07-11";
+
 /// The document a run is driven by, read from the root of the workspace.
 fn room_document() -> Playbook {
     let path = expectations::room_document(expectations::VAULT_ROOM);
@@ -73,9 +79,10 @@ async fn unworked_boundaries(room: &Surface, vault: &Playbook) -> Vec<Boundary> 
 /// A room furnished with the vault's own cast, and a booted identity to
 /// write through — the same shape `bike_room.rs` opens its rooms with.
 async fn furnished() -> (Room, Surface, String) {
-    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (room, surface) =
+        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
+            .await
+            .expect("a room");
     expectations::seed_for(expectations::VAULT_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)
@@ -1113,9 +1120,10 @@ async fn worked_the_vault(room: &Surface, vault: &Playbook) -> Vec<Boundary> {
 #[tokio::test]
 async fn every_lock_holds_once_the_vault_is_worked() {
     let (_room, surface) = {
-        let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-            .await
-            .expect("a room");
+        let (room, surface) =
+            Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
+                .await
+                .expect("a room");
         expectations::seed_for(expectations::VAULT_ROOM)
             .expect("the room has furniture")
             .furnish(&surface)
@@ -1235,5 +1243,33 @@ fn the_february_entry_ties_the_wharf_road_to_the_furnished_place() {
     assert!(
         sentence.contains(&furnished),
         "the sentence on the wharf road does not name {furnished}: {sentence}"
+    );
+}
+
+/// **The room's server runs on the day the room gave it, and never on the wall
+/// clock.** `ping` says which day the server is acting out. A server on the real
+/// clock says none, so this fails on every day if the pin is missing.
+#[tokio::test]
+async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
+    let (_room, surface, _sid) = furnished().await;
+    assert_eq!(
+        surface.stated_day().await.as_deref(),
+        Some(SERVER_DAY),
+        "the server is not acting out the day the room gave it"
+    );
+}
+
+/// **No needle of this room holds the day its server runs on.** A needle is
+/// matched as text in an answer, and the server writes its day into the moments
+/// it stamps, so a needle holding that day could be met by a stamp.
+#[test]
+fn no_needle_here_is_the_servers_own_day() {
+    let named = jojobot_exercise::lock::needles_naming(
+        &jojobot_exercise::lock::locks_of(expectations::VAULT_ROOM),
+        SERVER_DAY,
+    );
+    assert!(
+        named.is_empty(),
+        "a needle holds the day the server runs on, so a stamp can meet it: {named:?}"
     );
 }

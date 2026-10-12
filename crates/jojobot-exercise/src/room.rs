@@ -116,6 +116,24 @@ impl Room {
         binary: &Path,
         seed: &Path,
     ) -> Result<(Room, crate::surface::Surface)> {
+        Room::open_with_client_from_on(binary, seed, None).await
+    }
+
+    /// **The same room from a seed, on a day of the caller's naming**, carried to
+    /// the server the way [`Room::open_with_client_stating`] carries it.
+    pub async fn open_with_client_from_stating(
+        binary: &Path,
+        seed: &Path,
+        today: &str,
+    ) -> Result<(Room, crate::surface::Surface)> {
+        Room::open_with_client_from_on(binary, seed, Some(today)).await
+    }
+
+    async fn open_with_client_from_on(
+        binary: &Path,
+        seed: &Path,
+        today: Option<&str>,
+    ) -> Result<(Room, crate::surface::Surface)> {
         sweep_once();
         anyhow::ensure!(
             binary.is_file(),
@@ -141,7 +159,7 @@ impl Room {
                 last = Some(e);
                 continue;
             }
-            let room = match Room::spawn_bare(binary, &DeathSignal::Ask, None, dir).await {
+            let room = match Room::spawn_bare(binary, &DeathSignal::Ask, today, dir).await {
                 Ok(room) => room,
                 Err(e) => {
                     last = Some(e);
@@ -175,7 +193,34 @@ impl Room {
         F: FnOnce(crate::surface::Surface) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
-        let (room, surface) = Room::open_with_client(binary).await?;
+        Room::snapshot_after_on(binary, None, fill).await
+    }
+
+    /// **The same snapshot, built by a server on a day of the caller's naming**,
+    /// so every stamp the seed carries is that day and a copy opened on the same
+    /// day reads one clock throughout.
+    pub async fn snapshot_after_stating<F, Fut>(
+        binary: &Path,
+        today: &str,
+        fill: F,
+    ) -> Result<PathBuf>
+    where
+        F: FnOnce(crate::surface::Surface) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        Room::snapshot_after_on(binary, Some(today), fill).await
+    }
+
+    async fn snapshot_after_on<F, Fut>(
+        binary: &Path,
+        today: Option<&str>,
+        fill: F,
+    ) -> Result<PathBuf>
+    where
+        F: FnOnce(crate::surface::Surface) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        let (room, surface) = Room::open_with_client_on(binary, today).await?;
         fill(surface).await?;
         // **The directory is kept, the room is not.** The server is killed and
         // the directory, which is the whole point of building it, outlives the

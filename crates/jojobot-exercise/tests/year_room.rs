@@ -22,6 +22,12 @@ use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+/// **The day this room's server runs on**, carried to the child as its own
+/// clock. Every moment the server stamps is this day, whatever the real date is,
+/// so no needle can be met by a stamp on one real day. It is a day no needle
+/// of this room holds, and `no_needle_here_is_the_servers_own_day` asks that.
+const SERVER_DAY: &str = "2026-12-23";
+
 /// **The locks the year carries, in the order its document writes them.**
 ///
 /// The names are this file's rather than the document's: what is pinned is the
@@ -72,9 +78,10 @@ fn room_document() -> Playbook {
 /// sweep answering in January's frame would see a beat from its own future and
 /// keep offering it.
 async fn furnished_live() -> (Room, Surface) {
-    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (room, surface) =
+        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
+            .await
+            .expect("a room");
     expectations::seed_for(expectations::YEAR_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)
@@ -96,7 +103,7 @@ async fn filed_year_seed() -> PathBuf {
     YEAR_SEED
         .get_or_try_init(|| async {
             let binary = server_binary().expect("a jojobot binary");
-            Room::snapshot_after(&binary, |surface| async move {
+            Room::snapshot_after_stating(&binary, SERVER_DAY, |surface| async move {
                 expectations::seed_for(expectations::YEAR_ROOM)?
                     .furnish(&surface)
                     .await?;
@@ -116,9 +123,13 @@ async fn filed_year_seed() -> PathBuf {
 /// never another test's.
 async fn furnished() -> (Room, Surface) {
     let seed = filed_year_seed().await;
-    Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
-        .await
-        .expect("a room from the seed")
+    Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &seed,
+        SERVER_DAY,
+    )
+    .await
+    .expect("a room from the seed")
 }
 
 /// **A session for one sitting, in the day that sitting is in.**
@@ -5432,5 +5443,56 @@ async fn jobs_filed_under_the_operators_word_from_the_start_fail_no_lock() {
         judged.iter().all(|outcome| outcome.held),
         "a sitting that filed both jobs right the first time failed a lock: {}",
         saying(&judged),
+    );
+}
+
+/// **The room's server runs on the day the room gave it, and never on the wall
+/// clock.** `ping` says which day the server is acting out. A server on the real
+/// clock says none, so this fails on every day if the pin is missing.
+#[tokio::test]
+async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
+    let (_room, surface) = furnished_live().await;
+    assert_eq!(
+        surface.stated_day().await.as_deref(),
+        Some(SERVER_DAY),
+        "the server is not acting out the day the room gave it"
+    );
+}
+
+/// **No needle of this room holds the day its server runs on.** A needle is
+/// matched as text in an answer, and the server writes its day into the moments
+/// it stamps, so a needle holding that day could be met by a stamp.
+#[test]
+fn no_needle_here_is_the_servers_own_day() {
+    let named = jojobot_exercise::lock::needles_naming(
+        &jojobot_exercise::lock::locks_of(expectations::YEAR_ROOM),
+        SERVER_DAY,
+    );
+    assert!(
+        named.is_empty(),
+        "a needle holds the day the server runs on, so a stamp can meet it: {named:?}"
+    );
+}
+
+/// **A room opened from a seed runs on the room's day, and the seed was built on
+/// it.** The copy's server says the day, and the day the seed's first record
+/// was stamped on is that same day. A seed built on the real clock would carry
+/// the real date in every stamp, which is the stamp a needle can meet.
+#[tokio::test]
+async fn a_room_opened_from_its_seed_runs_and_was_stamped_on_the_day_the_room_gave_it() {
+    let (_room, surface) = furnished().await;
+    assert_eq!(
+        surface.stated_day().await.as_deref(),
+        Some(SERVER_DAY),
+        "the copy is not acting out the day the room gave it"
+    );
+    let answer = surface
+        .call("recall", json!({"subject": "person:milhouse"}))
+        .await;
+    let parsed: Value =
+        serde_json::from_str(&answer).unwrap_or_else(|e| panic!("a recall answers JSON: {e}"));
+    assert_eq!(
+        parsed["objects"][0]["as_of"], SERVER_DAY,
+        "the seed was stamped on another day: {answer}"
     );
 }

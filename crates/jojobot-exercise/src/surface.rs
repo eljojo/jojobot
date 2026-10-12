@@ -69,6 +69,15 @@ impl Surface {
         }
     }
 
+    /// **The day the room's server says it is acting out**, read from `ping`.
+    /// `None` is a server on the real clock, which is the state a room that
+    /// meant to pin its day must never be in.
+    pub async fn stated_day(&self) -> Option<String> {
+        let answer = self.call("ping", json!({})).await;
+        let body: Value = serde_json::from_str(&answer).ok()?;
+        body["clock"]["stated_day"].as_str().map(str::to_string)
+    }
+
     /// The same call, for a caller that must not carry on when it fails — the
     /// seed, whose whole job is to leave a known state behind.
     pub async fn must(&self, verb: &str, arguments: Value) -> Result<Value> {

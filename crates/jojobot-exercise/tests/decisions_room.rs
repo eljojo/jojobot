@@ -9,6 +9,17 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// **The day this room's server runs on**, carried to the child as its own
+/// clock. Every moment the server stamps is this day, whatever the real date is,
+/// so no needle can be met by a stamp on one real day. It is a day no needle
+/// of this room holds, and `no_needle_here_is_the_servers_own_day` asks that.
+const SERVER_DAY: &str = "2026-11-14";
+
+/// A room opened the way every sitting here opens it.
+async fn open_the_room() -> anyhow::Result<(Room, Surface)> {
+    Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY).await
+}
+
 #[test]
 fn the_decision_room_delivers_the_whole_register_across_cold_sittings() {
     let name = "rooms/decisions.md";
@@ -43,9 +54,7 @@ fn the_decision_room_delivers_the_whole_register_across_cold_sittings() {
 
 #[tokio::test]
 async fn the_decision_questions_have_separate_answer_addresses() {
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = open_the_room().await.expect("a room");
     expectations::seed_for("rooms/decisions.md")
         .expect("the starting world builds")
         .furnish(&surface)
@@ -253,10 +262,13 @@ async fn every_bears_on_citation_the_worked_solution_files_is_under_the_body_cap
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
     let seed = filed_register_seed().await;
-    let (_room, surface) =
-        Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
-            .await
-            .expect("a room");
+    let (_room, surface) = Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &seed,
+        SERVER_DAY,
+    )
+    .await
+    .expect("a room");
 
     // The same rule rows `file_register` reads, narrowed to the threads that
     // carry at least one "bears on" citation — every topic a citation could
@@ -379,7 +391,7 @@ async fn filed_register_seed() -> PathBuf {
     FILED_REGISTER
         .get_or_try_init(|| async {
             let binary = server_binary().expect("a jojobot binary");
-            Room::snapshot_after(&binary, |surface| async move {
+            Room::snapshot_after_stating(&binary, SERVER_DAY, |surface| async move {
                 expectations::seed_for("rooms/decisions.md")?
                     .furnish(&surface)
                     .await?;
@@ -399,7 +411,7 @@ async fn filed_prose_seed() -> PathBuf {
     FILED_PROSE
         .get_or_try_init(|| async {
             let binary = server_binary().expect("a jojobot binary");
-            Room::snapshot_after(&binary, |surface| async move {
+            Room::snapshot_after_stating(&binary, SERVER_DAY, |surface| async move {
                 expectations::seed_for("rooms/decisions.md")?
                     .furnish(&surface)
                     .await?;
@@ -566,9 +578,7 @@ async fn judge(surface: &Surface, boundaries: &[Boundary]) -> Vec<Outcome> {
 
 #[tokio::test]
 async fn every_check_fails_on_a_room_nobody_worked_in() {
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = open_the_room().await.expect("a room");
     expectations::seed_for("rooms/decisions.md")
         .expect("the starting world builds")
         .furnish(&surface)
@@ -592,9 +602,7 @@ async fn every_check_fails_on_a_room_nobody_worked_in() {
 async fn the_decision_room_is_solvable_through_the_served_surface() {
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = open_the_room().await.expect("a room");
     expectations::seed_for("rooms/decisions.md")
         .expect("the starting world builds")
         .furnish(&surface)
@@ -672,9 +680,7 @@ fn the_solvable_test_still_files_live_rather_than_borrowing_the_cached_seed() {
 async fn a_filing_lock_is_not_opened_by_a_later_answer_that_quotes_the_rule() {
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = open_the_room().await.expect("a room");
     expectations::seed_for("rooms/decisions.md")
         .expect("the starting world builds")
         .furnish(&surface)
@@ -742,10 +748,13 @@ async fn one_subject_of_prose_does_not_answer_the_working_state_or_capacity_ques
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
     let seed = filed_prose_seed().await;
-    let (_room, surface) =
-        Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
-            .await
-            .expect("a room");
+    let (_room, surface) = Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &seed,
+        SERVER_DAY,
+    )
+    .await
+    .expect("a room");
     let stored = surface
         .call(
             "search",
@@ -779,9 +788,7 @@ async fn one_subject_of_prose_does_not_answer_the_working_state_or_capacity_ques
 
 #[tokio::test]
 async fn rule_answer_locks_read_details_across_records_and_reject_extra_numbers() {
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = open_the_room().await.expect("a room");
     expectations::seed_for("rooms/decisions.md")
         .expect("the starting world builds")
         .furnish(&surface)
@@ -822,10 +829,13 @@ async fn rule_answer_locks_read_details_across_records_and_reject_extra_numbers(
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let seed = filed_register_seed().await;
-    let (_room, surface) =
-        Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
-            .await
-            .expect("a room");
+    let (_room, surface) = Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &seed,
+        SERVER_DAY,
+    )
+    .await
+    .expect("a room");
     let summary = jojobot_exercise::lock::needle_summary(
         &surface,
         &jojobot_exercise::lock::locks_of(expectations::DECISIONS_ROOM),
@@ -848,9 +858,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
 
 #[tokio::test]
 async fn question_six_requires_an_answer_without_a_rule_reference() {
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = open_the_room().await.expect("a room");
     expectations::seed_for("rooms/decisions.md")
         .expect("the starting world builds")
         .furnish(&surface)
@@ -920,10 +928,10 @@ async fn question_six_requires_an_answer_without_a_rule_reference() {
 async fn a_copy_of_the_filed_register_reads_the_same_as_another_copy() {
     let binary = server_binary().expect("a jojobot binary");
     let seed = filed_register_seed().await;
-    let (_room_a, a) = Room::open_with_client_from(&binary, &seed)
+    let (_room_a, a) = Room::open_with_client_from_stating(&binary, &seed, SERVER_DAY)
         .await
         .expect("the first copy opens");
-    let (_room_b, b) = Room::open_with_client_from(&binary, &seed)
+    let (_room_b, b) = Room::open_with_client_from_stating(&binary, &seed, SERVER_DAY)
         .await
         .expect("the second copy opens");
 
@@ -985,5 +993,63 @@ async fn a_copy_of_the_filed_register_reads_the_same_as_another_copy() {
         without_sid(&runs_b),
         "booting on a copy met a leftover session from the filing run and read it differently \
          than the other copy did — leftover run lists: {runs_a} / {runs_b}"
+    );
+}
+
+/// **The room's server runs on the day the room gave it, and never on the wall
+/// clock.** `ping` says which day the server is acting out. A server on the real
+/// clock says none, so this fails on every day if the pin is missing.
+#[tokio::test]
+async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
+    let (_room, surface) = async { open_the_room().await.expect("a room") }.await;
+    assert_eq!(
+        surface.stated_day().await.as_deref(),
+        Some(SERVER_DAY),
+        "the server is not acting out the day the room gave it"
+    );
+}
+
+/// **No needle of this room holds the day its server runs on.** A needle is
+/// matched as text in an answer, and the server writes its day into the moments
+/// it stamps, so a needle holding that day could be met by a stamp.
+#[test]
+fn no_needle_here_is_the_servers_own_day() {
+    let named = jojobot_exercise::lock::needles_naming(
+        &jojobot_exercise::lock::locks_of(expectations::DECISIONS_ROOM),
+        SERVER_DAY,
+    );
+    assert!(
+        named.is_empty(),
+        "a needle holds the day the server runs on, so a stamp can meet it: {named:?}"
+    );
+}
+
+/// **A room opened from a seed runs on the room's day, and the seed was built on
+/// it.** The copy's server says the day, and the day the seed's first record
+/// was stamped on is that same day. A seed built on the real clock would carry
+/// the real date in every stamp, which is the stamp a needle can meet.
+#[tokio::test]
+async fn a_room_opened_from_its_seed_runs_and_was_stamped_on_the_day_the_room_gave_it() {
+    let seed = filed_register_seed().await;
+    let (_room, surface) = Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &seed,
+        SERVER_DAY,
+    )
+    .await
+    .expect("a room");
+    assert_eq!(
+        surface.stated_day().await.as_deref(),
+        Some(SERVER_DAY),
+        "the copy is not acting out the day the room gave it"
+    );
+    let answer = surface
+        .call("recall", json!({"subject": "work:pm-state"}))
+        .await;
+    let parsed: Value =
+        serde_json::from_str(&answer).unwrap_or_else(|e| panic!("a recall answers JSON: {e}"));
+    assert_eq!(
+        parsed["objects"][0]["as_of"], SERVER_DAY,
+        "the seed was stamped on another day: {answer}"
     );
 }

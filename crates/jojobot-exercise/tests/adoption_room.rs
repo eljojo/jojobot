@@ -19,6 +19,12 @@ use jojobot_exercise::run::{Boundary, Observed, Outcome};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 
+/// **The day this room's server runs on**, carried to the child as its own
+/// clock. Every moment the server stamps is this day, whatever the real date is,
+/// so no needle can be met by a stamp on one real day. It is a day no needle
+/// of this room holds, and `no_needle_here_is_the_servers_own_day` asks that.
+const SERVER_DAY: &str = "2026-11-04";
+
 const BOTH: [&str; 2] = [ADOPTION_ROOM, ADOPTION_WORDING_ROOM];
 
 fn document(room: &str) -> Playbook {
@@ -29,9 +35,10 @@ fn document(room: &str) -> Playbook {
 /// A room furnished the way a run furnishes it, and a session to write into it
 /// as the occupant would.
 async fn furnished(room: &str) -> (Room, Surface, String) {
-    let (handle, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (handle, surface) =
+        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
+            .await
+            .expect("a room");
     expectations::seed_for(room)
         .expect("the room has furniture")
         .furnish(&surface)
@@ -499,4 +506,40 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
             summary.findings,
         );
     }
+}
+
+/// **The room's server runs on the day the room gave it, and never on the wall
+/// clock.** `ping` says which day the server is acting out. A server on the real
+/// clock says none, so this fails on every day if the pin is missing.
+#[tokio::test]
+async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
+    let (_room, surface, _sid) = furnished(ADOPTION_ROOM).await;
+    assert_eq!(
+        surface.stated_day().await.as_deref(),
+        Some(SERVER_DAY),
+        "the server is not acting out the day the room gave it"
+    );
+}
+
+/// **No needle of this room holds the day its server runs on.** A needle is
+/// matched as text in an answer, and the server writes its day into the moments
+/// it stamps, so a needle holding that day could be met by a stamp.
+#[test]
+fn no_needle_here_is_the_servers_own_day() {
+    let named = jojobot_exercise::lock::needles_naming(
+        &jojobot_exercise::lock::locks_of(ADOPTION_ROOM),
+        SERVER_DAY,
+    );
+    assert!(
+        named.is_empty(),
+        "a needle holds the day the server runs on, so a stamp can meet it: {named:?}"
+    );
+    let named = jojobot_exercise::lock::needles_naming(
+        &jojobot_exercise::lock::locks_of(ADOPTION_WORDING_ROOM),
+        SERVER_DAY,
+    );
+    assert!(
+        named.is_empty(),
+        "a needle holds the day the server runs on, so a stamp can meet it: {named:?}"
+    );
 }
