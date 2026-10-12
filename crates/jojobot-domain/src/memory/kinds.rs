@@ -28,7 +28,7 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 20] = [
+pub const SHIPPED: [&str; 21] = [
     "person",
     "project",
     "place",
@@ -49,6 +49,7 @@ pub const SHIPPED: [&str; 20] = [
     "role",
     "voucher",
     "challenge",
+    "document",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -370,6 +371,16 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new(crate::challenge::ISSUED_AT, ValueType::Text),
             Field::new(crate::challenge::WRONG_TRIES, ValueType::Number),
         ],
+        // **What a reader needs before opening a document**, all optional. The
+        // title is the thing's own name, not a key. `one_liner` is the one line
+        // saying what it is, the same key a bot carries for the same purpose.
+        // `stale_after` is the day past which the document promises nothing, and
+        // `resource` the page it mirrors when one still lives elsewhere.
+        "document" => vec![
+            Field::new("one_liner", ValueType::Text),
+            Field::new("stale_after", ValueType::Date),
+            Field::new("resource", ValueType::Text),
+        ],
         _ => Vec::new(),
     }
 }
@@ -604,6 +615,33 @@ pub fn all() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::attention::Outcome;
+
+    /// **A document declares what a reader needs before opening it, and requires
+    /// none of it.** Its title is the thing's own name; the one line saying what
+    /// it is, the day past which it promises nothing, and the page it mirrors are
+    /// optional keys. A document is whole with none of them.
+    #[test]
+    fn the_document_kind_declares_its_own_optional_fields() {
+        use super::super::types::ValueType;
+        assert!(SHIPPED.contains(&"document"), "document is a shipped kind");
+        let declared = keys_of("document");
+        let keys: Vec<(&str, ValueType)> = declared
+            .iter()
+            .map(|field| (field.key.as_str(), field.holds))
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                ("one_liner", ValueType::Text),
+                ("stale_after", ValueType::Date),
+                ("resource", ValueType::Text),
+            ]
+        );
+        assert!(
+            declared.iter().all(|field| !field.required),
+            "a document is whole with none of them: {declared:?}"
+        );
+    }
 
     /// **The loop kind declares the day a snooze lasts until, as a date.** The
     /// kind is what licenses an ordering on it, so *which loops are put off

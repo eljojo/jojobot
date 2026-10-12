@@ -1896,6 +1896,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::ROLE, "role"),
         (EntityKind::VOUCHER, "voucher"),
         (EntityKind::CHALLENGE, "challenge"),
+        (EntityKind::DOCUMENT, "document"),
     ];
     for (kind, token) in all {
         assert_eq!(kind.as_token(), token);

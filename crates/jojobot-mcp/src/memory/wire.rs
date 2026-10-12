@@ -431,6 +431,8 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         "voucher" => "Voucher",
         // A code waiting to be presented has no schema.org word either.
         "challenge" => "Challenge",
+        // schema.org's word for a file a person reads, held whole or in parts.
+        "document" => "DigitalDocument",
         // **A kind the software never heard of has no word waiting for it.**
         // The set of kinds is data, so a store may hold one this build has no
         // opinion about, and the honest answer is the caller's own token
@@ -544,6 +546,7 @@ mod tests {
             (EntityKind::ROLE, "role", "Role"),
             (EntityKind::VOUCHER, "voucher", "Voucher"),
             (EntityKind::CHALLENGE, "challenge", "Challenge"),
+            (EntityKind::DOCUMENT, "document", "DigitalDocument"),
         ];
         assert_eq!(
             table.len(),

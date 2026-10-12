@@ -13,7 +13,7 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a hand tool — and a companion animal is not one.

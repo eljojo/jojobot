@@ -215,10 +215,16 @@ impl EntityKind {
     /// code is given a voucher.
     pub const CHALLENGE: EntityKind = EntityKind("challenge");
 
+    /// **A long piece of markdown, held by section** (rule 449). The thing is the
+    /// document and each of its sections is one record on it, so a claim can cite
+    /// a part of it, an edit reaches one part, and a part has a history of its
+    /// own. See [`document`].
+    pub const DOCUMENT: EntityKind = EntityKind("document");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 20] = [
+    pub const ALL: [EntityKind; 21] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -239,6 +245,7 @@ impl EntityKind {
         EntityKind::ROLE,
         EntityKind::VOUCHER,
         EntityKind::CHALLENGE,
+        EntityKind::DOCUMENT,
     ];
 
     /// A kind from a token this crate already holds for the life of the

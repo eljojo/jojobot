@@ -2922,10 +2922,9 @@ fn no_agent_facing_text_teaches_the_store() {
             "mailbox label",
             "a box is owned by its bot, not a label on something else",
         ),
-        (
-            "document",
-            "an agent holds entities, facts and prose; a document is what the store keeps them in",
-        ),
+        // "document" was here while it meant a file the store kept entities in. A
+        // document is now a kind an agent writes and reads (rule 449), so the word
+        // is the agent's own.
         (
             "row",
             "a fact is a claim, not a line in whatever table holds it today",
