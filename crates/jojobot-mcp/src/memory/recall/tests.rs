@@ -7972,3 +7972,19 @@ async fn a_record_address_is_no_subject_for_the_ready_view_and_selects_nothing_b
         );
     }
 }
+
+/// **The `view` argument says a view's answer can be narrowed with `where`**, with
+/// the ready view as the example, beside what the ready view lists.
+#[test]
+fn the_view_argument_says_a_views_answer_can_be_narrowed_with_where() {
+    let published =
+        crate::teaching::published_arguments("recall").expect("recall publishes its arguments");
+    let doc = published["view"]["description"]
+        .as_str()
+        .expect("the view argument is described");
+    assert!(
+        doc.contains("\"ready\""),
+        "the ready view is still named: {doc}"
+    );
+    assert!(doc.contains("status = next"), "{doc}");
+}

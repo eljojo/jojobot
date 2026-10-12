@@ -868,3 +868,21 @@ async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_tha
     );
     story.finish().await;
 }
+
+/// **The procedure shows one board question answered with `where`**, so a
+/// session that asks the board something finds the argument in the place it
+/// learns where work stands.
+#[tokio::test]
+async fn the_projects_skill_answers_a_board_question_with_where() {
+    let story = Story::begin("bot:gamma").await;
+    let body = story.skill("projects").await.to_string();
+    assert!(
+        body.contains("status = next"),
+        "the skill shows a board question as a where expression: {body}"
+    );
+    assert!(
+        body.contains("work:sigma"),
+        "and the section it sits in is the one about where work stands: {body}"
+    );
+    story.finish().await;
+}

@@ -95,3 +95,60 @@ async fn what_can_be_started_and_what_stops_the_rest() {
 
     story.finish().await;
 }
+
+/// "Ready includes what I have already started. How do I get only what I have
+/// not?" The ready answer carries one line beside its list: ready means
+/// unblocked and not finished, so work in progress is in it, and `where` narrows
+/// the list. The line is on the ready view and nowhere else, and the narrowing it
+/// names does narrow.
+#[tokio::test]
+async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let work = |slug: &str, sets: serde_json::Value| {
+        json!({"kind": "work", "handle": slug, "name": slug,
+               "source": "user-named", "sets": sets})
+    };
+    s.call("add_entity", work("sigma", json!({"status": "done"})))
+        .await;
+    s.call("add_entity", work("tau", json!({"status": "now"})))
+        .await;
+    s.call(
+        "add_entity",
+        work("phi", json!({"status": "next", "depends_on": "work:sigma"})),
+    )
+    .await;
+
+    // The positive: the ready answer carries the line, and the work in progress
+    // is in the list it sits beside.
+    let ready = s.call("recall", json!({"view": "ready"})).await;
+    assert_eq!(listed(&ready), ["work:phi", "work:tau"], "{}", ready.raw());
+    let note = ready.json()["ready_note"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "the ready answer carries a line about where: {}",
+                ready.raw()
+            )
+        })
+        .to_string();
+    assert!(note.contains("where"), "{note}");
+    assert!(!note.contains('\n'), "one line: {note}");
+
+    // The narrowing the line shows is one that works, and it keeps the answer's
+    // own line.
+    assert!(note.contains("status = next"), "{note}");
+    let narrowed = s
+        .call("recall", json!({"view": "ready", "where": "status = next"}))
+        .await;
+    assert_eq!(listed(&narrowed), ["work:phi"], "{}", narrowed.raw());
+
+    // The negative: an ordinary read of the same work carries no such line.
+    let plain = s.call("recall", json!({"kind": "work"})).await;
+    assert!(
+        plain.json().get("ready_note").is_none(),
+        "an ordinary read names no ready line: {}",
+        plain.raw()
+    );
+    story.finish().await;
+}

@@ -448,6 +448,16 @@ date to quiet finished work.
 
     capture  subject: "work:sigma"  sets: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
 
+Ask the board a question over those keys with `where`, in a recall. The ready
+view lists work that is unblocked and not finished, so work already under way
+is in it. Narrow it to the work not started:
+
+    recall  view: "ready"  where: "status = next"
+
+Or ask what waits on one person:
+
+    recall  kind: "work"  where: "status = waiting && waiting_on = person:lisa"
+
 A project may add statuses of its own. Write the whole list on the project, in
 the order you want it, under `columns`. The list has to hold all five shipped
 words, `someday`, `next`, `now`, `waiting` and `done`, in any order. A list that
