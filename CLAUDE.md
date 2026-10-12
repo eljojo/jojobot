@@ -908,10 +908,11 @@ roles and never an operator.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
-  and fails on any warning or error line at boot. **It keeps a fixture from each
-  of the last two deployed builds**, plus an older one that some cases still
-  read alone until they move onto the newer two. `make refresh-upgrade-fixture` records a fixture again from a ref
-  (default the deployed one) whenever the deployed build moves. An empty
+  and fails on any warning or error line at boot. **It keeps two fixtures**, one
+  from each of the last two deployed builds, and the gate's boot cases read
+  them. `make refresh-upgrade-fixture DIR=<fixture directory>` records a fixture
+  again from a ref (default the deployed one) whenever the deployed build moves;
+  it names no directory of its own and refuses without one. An empty
   `RUST_LOG` counts as unset. **`make carried` says what a carry would move**:
   this checkout's commits that main lacks, main's commits past origin/main, and
   whether main moved on.
