@@ -526,6 +526,17 @@ impl Jojobot {
                  wrapped.",
             ));
         }
+        // **The key is issued before the code is spent.** The run is taken into
+        // the registry first, because a run it does not hold has no entry to
+        // set a key on, and a key that opens nothing is worse than a refusal.
+        // The key is written to the card before the call returns, so a store
+        // that refuses it leaves the window offered and the code still good.
+        self.registry.adopt(wrapped);
+        let name = wrapped
+            .sid
+            .clone()
+            .unwrap_or_else(|| sid::Sid(wrapped.id.as_str().to_string()));
+        let key = self.rekey(&name, sid::RetiredBy::Wrapped).await?;
         let opened = match self
             .sessions
             .set_wrap_window(
@@ -537,17 +548,19 @@ impl Jojobot {
             Ok(opened) => opened,
             Err(e) => {
                 tracing::warn!(error = %e, run = %wrapped.id, "a wrap window could not be opened");
+                // The window did not open, so the key just issued is taken away
+                // again: the run is as the refusal says it is.
+                self.registry.set_key(&name, sid::KeyState::Void, None);
+                if let Err(e) = self
+                    .sessions
+                    .set_key_hash(&wrapped.id, jojobot_domain::session::KEY_VOID)
+                    .await
+                {
+                    tracing::warn!(error = %e, run = %wrapped.id, "a key issued for a window that did not open could not be taken away");
+                }
                 return Err(spent("The window could not be opened just now."));
             }
         };
-        // **The code returns a key for the run's one last change.** The run's
-        // key was taken away by the wrap; this one is new and is written to the
-        // card before the call returns.
-        let name = opened
-            .sid
-            .clone()
-            .unwrap_or_else(|| sid::Sid(opened.id.as_str().to_string()));
-        let key = self.rekey(&name, sid::RetiredBy::Wrapped).await?;
         Ok(serde_json::json!({
             "available": true,
             "sid": key,
@@ -760,12 +773,21 @@ impl Jojobot {
         name: &sid::Sid,
         by: sid::RetiredBy,
     ) -> Result<String, CallToolResult> {
+        // **Only a run the registry holds is given a key.** The registry is
+        // where a key is looked up, so a key for a name it does not hold would
+        // open nothing, and the caller would carry it as if it did.
+        let Some(held) = self.registry.lookup_name(name.as_str()) else {
+            return Err(handle_declined(
+                "",
+                "No key was handed out: no run goes by that name in this jojobot, so a key for \
+                 it would open nothing. Nothing was changed. Call start_here with your bot name \
+                 and no resume to see what there is."
+                    .to_string(),
+            ));
+        };
         let key = jojobot_domain::session::mint_key();
         let hash = jojobot_domain::session::hash_key(&key);
-        if let Some(card) = self
-            .registry
-            .lookup_name(name.as_str())
-            .and_then(|h| h.card)
+        if let Some(card) = held.card
             && let Err(e) = self.sessions.set_key_hash(&card, &hash).await
         {
             tracing::warn!(error = %e, session = %card, "a run's new key could not be written");
@@ -3616,6 +3638,83 @@ mod tests {
             );
             assert_eq!(run_name(&jojobot, &new_key), name, "{step}");
         }
+    }
+
+    /// **A wrap code for a run the registry has not met hands back a key that
+    /// opens it.** The wrapped run is on the board and the registry never
+    /// learned it, as when another writer began it after the last rebuild. The
+    /// code takes the run in before it issues the key, so the key it hands back
+    /// is held by the registry and opens the run.
+    #[tokio::test]
+    async fn a_wrap_code_for_a_run_the_registry_never_met_hands_back_a_key_that_opens_it() {
+        let store = Arc::new(InMemorySessions::new());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (_wrapped, code) = wrapped_with_a_code(&store, 5, "bcd345").await;
+
+        let answered = boot_answering(&jojobot, "gamma", &code).await;
+        assert_eq!(answered["session"]["resumed"], true, "{answered}");
+        let key = answered["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code hands back a key: {answered}"))
+            .to_string();
+        assert_eq!(
+            run_name(&jojobot, &key),
+            "bcd345",
+            "the key opens the run it was issued for"
+        );
+    }
+
+    /// **A key that cannot be issued leaves the code unspent.** The store
+    /// refuses the new key, so the code is refused with its window as it was and
+    /// no key handed out, and the holder of the code can try again once the
+    /// store answers.
+    #[tokio::test]
+    async fn a_wrap_code_whose_key_cannot_be_issued_is_not_spent() {
+        let store = Arc::new(crate::session::testing::RefusingKey(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (wrapped, code) = wrapped_with_a_code(&store.0, 5, "bcd345").await;
+
+        let refused = boot_answering(&jojobot, "gamma", &code).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null() && refused.get("sid").is_none(),
+            "a refused code handed out a key: {refused}"
+        );
+        let window = store
+            .0
+            .read_session(&wrapped.id)
+            .await
+            .expect("read ok")
+            .wrap_window;
+        assert_eq!(
+            window,
+            Some(jojobot_domain::session::WrapWindow::Offered(code)),
+            "the code was spent although no key was issued"
+        );
+    }
+
+    /// **A key is issued only for a run the registry holds.** A name nothing
+    /// holds has no entry to set a key on and no card to write it to, so a key
+    /// for it would open nothing.
+    #[tokio::test]
+    async fn rekey_refuses_a_name_the_registry_does_not_hold() {
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::seeded()),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let refused = jojobot
+            .rekey(&Sid("zzzzzz".into()), sid::RetiredBy::Wrapped)
+            .await;
+        assert!(
+            refused.is_err(),
+            "a key was issued for a name nothing holds"
+        );
     }
 
     /// **A pick-up whose teaching cannot be forgotten is refused and changes

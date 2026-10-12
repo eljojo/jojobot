@@ -512,6 +512,108 @@ impl Sessions for RefusingWindowClear {
     }
 }
 
+/// **A session store that cannot write a run's key** while everything else
+/// works — the failure that leaves a run on its old key state. Writing the word
+/// that voids a key still lands, because taking a key away is what a failed
+/// issue falls back to.
+pub(crate) struct RefusingKey(pub(crate) InMemorySessions);
+
+#[async_trait]
+impl Sessions for RefusingKey {
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.0.sessions_of(bot).await
+    }
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.0.all_sessions().await
+    }
+    async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.0.read_session(id).await
+    }
+    async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        self.0.begin(new).await
+    }
+    async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        self.0.append(id, entry).await
+    }
+    async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        self.0.amend_last(id, text).await
+    }
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        touched: jiff::Timestamp,
+    ) -> Result<JournalEntry, SessionError> {
+        self.0.amend_beat(id, entry, text, touched).await
+    }
+    async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        self.0.set_focus(id, focus).await
+    }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_timezone(id, timezone).await
+    }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_stated_day(id, day).await
+    }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_wrap_window(id, window).await
+    }
+    async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+        self.0.close(id, to).await
+    }
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        self.0.add_served(id, chars).await
+    }
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.0.reopen(id).await
+    }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.0.set_charter_told(id, at).await
+    }
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        if hash == jojobot_domain::session::KEY_VOID {
+            return self.0.set_key_hash(id, hash).await;
+        }
+        Err(SessionError::Store(
+            "the key cell on the page could not be written".into(),
+        ))
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.0.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.0.charter_change_of(bot).await
+    }
+}
+
 /// **A session store that says how often the runs were read.** `sessions_of`
 /// and `all_sessions` return every run they match, so how many times one boot
 /// reaches for them is the difference between one read shared by the steps
