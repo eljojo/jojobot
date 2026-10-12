@@ -14566,6 +14566,98 @@ pub async fn a_fold_carries_the_lineage_that_points_at_what_it_moved<M: Memory>(
     );
 }
 
+/// **A survivor renamed after a fold is renamed without an override, and the
+/// folded thing goes on saying where it went.** The folded side's name is carried
+/// onto the survivor, so the survivor's own earlier selves are not other things:
+/// the rename is screened against everything else only. And the forwarding row
+/// names the survivor by the handle it wears now, however often it was renamed.
+///
+/// The pair of the first half is a rename that nears a thing that really is
+/// another's, which is blocked still.
+pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_side<M: Memory>(
+    store: &M,
+) {
+    let folded = EntityId::person("person:contract-survives-first");
+    let survivor = EntityId::person("person:contract-survives-second");
+    let other = EntityId::person("person:contract-survives-other");
+    let renamed = EntityId::person("person:contract-survives-first-heir");
+    let renamed_again = EntityId::person("person:contract-survives-ordinal");
+    for (id, name) in [
+        (&folded, "Survives First"),
+        (&survivor, "Survives Second"),
+        (&other, "Survives Other"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    store
+        .merge(&folded, &survivor, None, date(2026, 9, 2), &survivor)
+        .await
+        .expect("the fold lands");
+
+    // **Without an override.** The survivor now carries the folded side's name,
+    // and the forwarding row still wears it.
+    let landed = store
+        .rename_entity(&survivor, &renamed, None, date(2026, 9, 3), None)
+        .await
+        .expect("the rename answers");
+    assert!(
+        matches!(landed, Guarded::Written(_)),
+        "a survivor's own earlier self is not a near miss: {landed:?}",
+    );
+
+    // **The forwarding row names the survivor as it is called now**, after one
+    // rename and after another.
+    let said = |handle: &EntityId| {
+        let handle = handle.clone();
+        async move {
+            store
+                .list_entities(None)
+                .await
+                .expect("the listing answers")
+                .into_iter()
+                .find(|e| e.id == handle)
+                .and_then(|e| e.merged_into)
+        }
+    };
+    assert_eq!(said(&folded).await, Some(renamed.clone()));
+    let refused = store
+        .rename_entity(&folded, &folded, None, date(2026, 9, 5), None)
+        .await
+        .expect_err("a forwarding row is not renamed");
+    let MemoryError::AlreadyMerged { into, .. } = &refused else {
+        panic!("expected AlreadyMerged, got {refused:?}");
+    };
+    assert_eq!(
+        into,
+        renamed.as_str(),
+        "the refusal serves the current handle"
+    );
+    // **The paired negative**: a rename that nears another thing is blocked.
+    let near = EntityId::person("person:contract-survives-other-later");
+    let blocked = store
+        .rename_entity(&renamed, &near, None, date(2026, 9, 4), None)
+        .await
+        .expect("the rename answers");
+    let Guarded::Blocked { candidates, .. } = &blocked else {
+        panic!("a near miss of another thing is still blocked: {blocked:?}");
+    };
+    assert!(
+        candidates.iter().any(|c| c.handle == other),
+        "the candidate is the other thing: {candidates:?}",
+    );
+    assert!(
+        candidates.iter().all(|c| c.handle != folded),
+        "the survivor's own earlier self is no candidate: {candidates:?}",
+    );
+
+    let again = store
+        .rename_entity(&renamed, &renamed_again, None, date(2026, 9, 6), None)
+        .await
+        .expect("the rename answers");
+    assert!(matches!(again, Guarded::Written(_)), "{again:?}");
+    assert_eq!(said(&folded).await, Some(renamed_again.clone()));
+}
+
 /// 🚨 **A fold's raw-handle sweep matches the folded side's CURRENT handle
 /// only — it never chases a handle the folded side answered to before a
 /// rename — so a pointer written under an earlier spelling stays one hop
@@ -16814,6 +16906,7 @@ macro_rules! all_cases {
         $m!(a_fold_carries_the_lineage_that_points_at_what_it_moved($store));
         $m!(a_fold_moves_the_duplicates_names_to_the_survivor($store));
         $m!(a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side($store));
+        $m!(a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_side($store));
         $m!(a_fold_repoints_a_reference_field_naming_the_folded_side($store));
         $m!(a_fold_repoints_a_list_of_references_and_names_the_survivor_once($store));
         $m!(a_walk_from_a_folded_handle_says_where_it_went($store));

@@ -84,6 +84,24 @@ pub struct ForwardedLinkReport {
     pub skipped: Vec<String>,
 }
 
+/// **What the pass that brings forwarding rows to the current handle of their
+/// survivor did.**
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ForwardNameReport {
+    /// Forwarding rows that named a handle their survivor no longer wears and
+    /// now name the one it wears.
+    pub renamed: usize,
+    /// The pass had finished at an earlier boot, so this one read nothing.
+    pub settled: bool,
+    /// One line for each forwarding row the pass could not place. While any
+    /// remains, the pass is not marked finished.
+    pub skipped: Vec<String>,
+}
+
+/// **The name the renaming of forwarding rows to their survivor's current handle
+/// is marked under.**
+const FORWARD_NAMES_PASS: &str = "forwarding rows name the current handle";
+
 /// **The name the repointing of links off forwarding rows is marked under.**
 const FORWARDED_LINKS_PASS: &str = "field links on forwarding rows";
 
@@ -613,6 +631,100 @@ impl DoltMemory {
         // skipped may become placeable, and a finished pass is never read again.
         if report.skipped.is_empty() {
             super::finish_pass(&self.pool, FORWARDED_LINKS_PASS).await;
+        }
+        Ok(report)
+    }
+
+    /// **A forwarding row that names the handle its survivor wore at the fold,
+    /// brought to the handle the survivor wears now.**
+    ///
+    /// A fold stores the survivor's handle as it stood. A rename wrote only the
+    /// survivor's own row until this build, so a store that folded and then
+    /// renamed holds a forwarding row naming a handle that no row wears. Every
+    /// reader of where a folded thing went then served that old handle.
+    ///
+    /// **Each stored handle is placed through the rows that wear it and the
+    /// rows that wore it.** One badge places it; the row is rewritten to that
+    /// badge's current handle. A handle nothing ever wore, or that two things
+    /// wore, is listed and left, and the pass is not marked finished. One
+    /// transaction, so an interruption leaves nothing half done.
+    pub async fn migrate_forward_names(&self) -> Result<ForwardNameReport, MemoryError> {
+        let mut report = ForwardNameReport::default();
+        if super::finished_passes(&self.pool)
+            .await
+            .contains(FORWARD_NAMES_PASS)
+        {
+            report.settled = true;
+            return Ok(report);
+        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let rows: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, badge, merged_into FROM entity")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let former: Vec<(String, String)> =
+            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        for (id, _, into) in &rows {
+            let Some(into) = into else { continue };
+            let mut named: std::collections::BTreeSet<&str> = rows
+                .iter()
+                .filter(|(handle, _, _)| handle == into)
+                .map(|(handle, badge, _)| badge.as_deref().unwrap_or(handle.as_str()))
+                .collect();
+            named.extend(
+                former
+                    .iter()
+                    .filter(|(handle, _)| handle == into)
+                    .map(|(_, badge)| badge.as_str()),
+            );
+            let mut named = named.into_iter();
+            let badge = match (named.next(), named.next()) {
+                (Some(only), None) => only,
+                (None, _) => {
+                    report.skipped.push(format!(
+                        "{id} forwards to {into}: no thing has ever worn that handle"
+                    ));
+                    continue;
+                }
+                _ => {
+                    report.skipped.push(format!(
+                        "{id} forwards to {into}: more than one thing has worn that handle"
+                    ));
+                    continue;
+                }
+            };
+            let Some(now) = rows
+                .iter()
+                .find(|(handle, row_badge, _)| {
+                    row_badge.as_deref().unwrap_or(handle.as_str()) == badge
+                })
+                .map(|(handle, _, _)| handle)
+            else {
+                report.skipped.push(format!(
+                    "{id} forwards to {into}: the thing that wore it is gone"
+                ));
+                continue;
+            };
+            if now != into {
+                sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+                    .bind(now)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store)?;
+                report.renamed += 1;
+            }
+        }
+        tx.commit().await.map_err(store)?;
+        for line in &report.skipped {
+            tracing::warn!("store: {line}; the row is left");
+        }
+        if report.skipped.is_empty() {
+            super::finish_pass(&self.pool, FORWARD_NAMES_PASS).await;
         }
         Ok(report)
     }
@@ -3894,7 +4006,11 @@ impl Memory for DoltMemory {
         // Screened like a creation, with the thing's own row excluded — or
         // it would collide with its own former name the moment the new one
         // is close to it.
-        let others: Vec<Entity> = known.into_iter().filter(|e| &e.id != from).collect();
+        let earlier_selves = jojobot_domain::memory::folded_into(from, &known);
+        let others: Vec<Entity> = known
+            .into_iter()
+            .filter(|e| &e.id != from && !earlier_selves.contains(&e.id))
+            .collect();
         if let guard::Decision::Block(candidates) = guard::decide_under(
             to,
             &renamed.labels(),
@@ -3958,6 +4074,17 @@ impl Memory for DoltMemory {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        // **A forwarding row names the survivor by the handle it wears now.** A
+        // fold stores the handle as it stood, and this rename moves it, so every
+        // row that forwards here is brought along in the same transaction.
+        if from != to {
+            sqlx::query("UPDATE entity SET merged_into = ? WHERE merged_into = ?")
+                .bind(to.as_str())
+                .bind(from.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+        }
         // **Nothing else needs to move.** A parent pointer is a badge now;
         // the badge this row wears never changes across a rename, so a
         // child naming it as `parent` needs no sweep — the former,

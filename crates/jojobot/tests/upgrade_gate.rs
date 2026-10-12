@@ -1041,6 +1041,7 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
         [
             "field links on forwarding rows",
             "field value lowering",
+            "forwarding rows name the current handle",
             "mail mentions",
             "message sender column",
             "old role claims",
@@ -1443,6 +1444,108 @@ async fn a_link_an_older_fold_left_on_a_forwarding_row_is_repointed_by_the_first
     second.stop().await;
     assert!(settled, "the second boot says the pass is already done");
     drop(scratch);
+}
+
+/// The fold an older build left, and the survivor it renamed afterwards.
+const LAGGED_FOLDED: &str = "thing:upgrade-fixture-shell";
+const LAGGED_SURVIVOR_THEN: &str = "thing:upgrade-fixture-earlier";
+const LAGGED_SURVIVOR_NOW: &str = "thing:upgrade-fixture-later";
+
+/// **A fold followed by a rename of its survivor, stored the way a build that
+/// renamed only the survivor's own row left it**: the survivor wears its new
+/// handle and the old one is in the rename history, while the forwarding row
+/// still names the handle the survivor wore at the fold. Written below the
+/// surface into the recorded schema.
+async fn plant_a_fold_whose_survivor_was_renamed(pool: &sqlx::MySqlPool) {
+    for (handle, badge, name, merged_into) in [
+        (
+            LAGGED_FOLDED,
+            "shel01",
+            "A Recorded Shell",
+            Some(LAGGED_SURVIVOR_THEN),
+        ),
+        (LAGGED_SURVIVOR_NOW, "late01", "A Recorded Latecomer", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
+                                 archived_reason, archived_at)
+             VALUES (?, 'thing', ?, 'test', NULL, NULL, 'on-demand', '', ?, ?, NULL, NULL)",
+        )
+        .bind(handle)
+        .bind(name)
+        .bind(badge)
+        .bind(merged_into)
+        .execute(pool)
+        .await
+        .expect("the entity lands");
+    }
+    sqlx::query(
+        "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+         VALUES (?, 'late01', '2026-10-08', 1)",
+    )
+    .bind(LAGGED_SURVIVOR_THEN)
+    .execute(pool)
+    .await
+    .expect("the rename history lands");
+}
+
+/// **A forwarding row an older build left naming its survivor's former handle
+/// is brought to the current one by the first boot, served so by the read, and
+/// left alone by the next boot.** Held over both recorded stores.
+#[tokio::test]
+async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot() {
+    for (fixture_dir, label) in [
+        (DEPLOY_3_FIXTURE_DIR, "lagged-forward-deploy3"),
+        (DEPLOY_4_FIXTURE_DIR, "lagged-forward-deploy4"),
+    ] {
+        let Restored {
+            scratch,
+            state_dir,
+            store_port,
+            git_ref,
+            ..
+        } = restore_a_fixture(fixture_dir, label).await;
+
+        let mut store = open_the_store(&state_dir, store_port).await;
+        plant_a_fold_whose_survivor_was_renamed(store.pool()).await;
+        store.stop().await;
+
+        let first = boot_current(&state_dir, store_port, &git_ref).await;
+        let brought = first
+            .log
+            .iter()
+            .filter(|line| line.contains("forwarding rows brought to the handle their survivor"))
+            .count();
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
+            .await
+            .expect("connecting to the current binary");
+        let read = surface
+            .call("recall", json!({"subject": LAGGED_FOLDED}))
+            .await;
+        first.stop().await;
+        assert_eq!(
+            brought, 1,
+            "recorded at {git_ref}: the first boot brought the one row current and said so"
+        );
+        let read: serde_json::Value = serde_json::from_str(&read)
+            .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
+        assert_eq!(
+            read["objects"][0]["merged_into"], LAGGED_SURVIVOR_NOW,
+            "recorded at {git_ref}: the folded thing still names the old handle: {read}"
+        );
+
+        let second = boot_current(&state_dir, store_port, &git_ref).await;
+        let settled = second
+            .log
+            .iter()
+            .any(|line| line.contains("forwarding rows name their survivor: already done"));
+        second.stop().await;
+        assert!(
+            settled,
+            "recorded at {git_ref}: the second boot says the pass is already done"
+        );
+        drop(scratch);
+    }
 }
 
 /// The view an older build stored, and the two things it asks about.

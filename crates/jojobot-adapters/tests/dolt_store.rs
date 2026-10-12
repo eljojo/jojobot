@@ -6884,6 +6884,177 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
     store.stop().await;
 }
 
+/// **A forwarding row an older build left naming a handle its survivor wore
+/// before a rename is brought to the handle the survivor wears now, once.**
+///
+/// The old shape is written back by hand off the raw column: an older build
+/// renamed the survivor's own row and no other. A second fold whose survivor's
+/// old handle was taken by a different thing since cannot be told from the first
+/// and is listed and left, which keeps the pass open. The first case is the
+/// positive the second rests on.
+#[tokio::test]
+async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
+    let scratch = Scratch::new("forward-names");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forward_names")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let first = EntityId("thing:contract-lagged-first".into());
+    let second = EntityId("thing:contract-lagged-second".into());
+    let third = EntityId("thing:contract-lagged-third".into());
+    for (id, name) in [(&first, "Lagged First"), (&second, "Lagged Second")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    memory
+        .merge(
+            &first,
+            &second,
+            None,
+            date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the fold lands");
+    memory
+        .rename_entity(&second, &third, None, date(2026, 9, 3), None)
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+    let forwards = |handle: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>("SELECT merged_into FROM entity WHERE id = ?")
+                .bind(handle)
+                .fetch_one(&pool)
+                .await
+                .expect("the forwarding row reads")
+        }
+    };
+    assert_eq!(
+        forwards("thing:contract-lagged-first").await.as_deref(),
+        Some(third.as_str()),
+        "a rename by this build keeps the forwarding row current",
+    );
+
+    // **Written back to what an older build stored.**
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind(second.as_str())
+        .bind(first.as_str())
+        .execute(&pool)
+        .await
+        .expect("the old shape is written");
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 0), "{report:?}");
+    assert_eq!(
+        forwards("thing:contract-lagged-first").await.as_deref(),
+        Some(third.as_str()),
+    );
+    assert!(
+        memory
+            .migrate_forward_names()
+            .await
+            .expect("a second pass runs")
+            .settled,
+        "a pass that skipped nothing is marked finished",
+    );
+
+    // **The pair.** Another fold whose survivor's old handle a different thing
+    // has taken since: the handle names two things, and the pass does not guess.
+    let fourth = EntityId("thing:contract-lagged-fourth".into());
+    let fifth = EntityId("thing:contract-lagged-fifth".into());
+    let sixth = EntityId("thing:contract-lagged-sixth".into());
+    for (id, name) in [(&fourth, "Lagged Fourth"), (&fifth, "Lagged Fifth")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    memory
+        .merge(
+            &fourth,
+            &fifth,
+            None,
+            date(2026, 9, 4),
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the fold lands");
+    memory
+        .rename_entity(&fifth, &sixth, None, date(2026, 9, 5), None)
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+    // The survivor's name is close to the freed handle, so taking it needs the
+    // override the refusal mints.
+    let heir = NewEntity::new(fifth.clone(), "Lagged Heir", "contract-fixture");
+    let jojobot_domain::memory::Guarded::Blocked {
+        attempted,
+        candidates,
+    } = memory
+        .add_entity(heir.clone())
+        .await
+        .expect("add_entity answers")
+    else {
+        panic!("the freed handle should have met the survivor's name");
+    };
+    let token = jojobot_domain::memory::guard::override_token(&attempted, &candidates);
+    memory
+        .add_entity(NewEntity {
+            override_token: Some(token),
+            ..heir
+        })
+        .await
+        .expect("add_entity answers")
+        .written()
+        .expect("the freed handle is taken by a new thing");
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind(fifth.as_str())
+        .bind(fourth.as_str())
+        .execute(&pool)
+        .await
+        .expect("the old shape is written");
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarding rows name the current handle'")
+        .execute(&pool)
+        .await
+        .expect("the marker is dropped");
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (0, 1), "{report:?}");
+    assert!(
+        report.skipped[0].contains("contract-lagged-fourth"),
+        "{report:?}"
+    );
+    assert_eq!(
+        forwards("thing:contract-lagged-fourth").await.as_deref(),
+        Some(fifth.as_str()),
+        "the row it could not place is left as it was",
+    );
+    assert!(
+        !memory
+            .migrate_forward_names()
+            .await
+            .expect("a pass after a skip runs")
+            .settled,
+        "a pass that skipped a row is not marked finished",
+    );
+
+    store.stop().await;
+}
+
 /// **A link a fold of an older build left on the forwarding row is repointed at
 /// the thing the fold ended in, once, and a second run finds nothing.**
 ///
@@ -7156,25 +7327,20 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
         )
         .await
         .expect("the fold lands");
-    // The survivor carries the folded side's name, so the creation screen
-    // answers with a near-miss; the call is made again with the token it mints.
-    let jojobot_domain::memory::Guarded::Blocked {
-        attempted,
-        candidates,
-    } = memory
+    memory
         .rename_entity(&first, &third, None, date(2026, 9, 3), None)
         .await
         .expect("the rename answers")
-    else {
-        panic!("the survivor's carried name should have met the forwarding row's");
-    };
-    let token = jojobot_domain::memory::guard::override_token(&attempted, &candidates);
-    memory
-        .rename_entity(&first, &third, None, date(2026, 9, 3), Some(&token))
-        .await
-        .expect("the rename answers")
         .written()
-        .expect("the rename lands with the token");
+        .expect("the rename lands");
+    // **An older build renamed the survivor's own row and no other**, so the
+    // forwarding row still names the handle the survivor wore at the fold.
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind(first.as_str())
+        .bind(second.as_str())
+        .execute(&pool)
+        .await
+        .expect("the old shape is written");
 
     // **Written back to what a build that did not sweep field links stored.**
     let second_badge = badge_of(&pool, second.as_str()).await;

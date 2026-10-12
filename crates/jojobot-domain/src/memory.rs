@@ -2540,6 +2540,28 @@ pub fn chart_wanted_by_change(
     chart_wanted(&touched, after)
 }
 
+/// **The things folded into `survivor`, directly or through other folds.** Their
+/// rows stay and forward, and their names are carried onto the survivor, so they
+/// are the survivor's own earlier selves. A screen of a rename against other
+/// things leaves them out, or the survivor would be a near miss of itself.
+/// A forwarding row that loops is followed at most once.
+pub fn folded_into(survivor: &EntityId, index: &[Entity]) -> Vec<EntityId> {
+    let mut found: Vec<EntityId> = Vec::new();
+    let mut frontier = vec![survivor.clone()];
+    while let Some(at) = frontier.pop() {
+        for row in index {
+            if row.merged_into.as_ref() == Some(&at)
+                && !found.contains(&row.id)
+                && &row.id != survivor
+            {
+                found.push(row.id.clone());
+                frontier.push(row.id.clone());
+            }
+        }
+    }
+    found
+}
+
 /// **The bot a folded bot became.** A fold leaves the folded bot's row in place,
 /// forwarding to the survivor, and a report keeps the id of the manager it named.
 /// So the handle that id answers to may be a forwarding row whose claims have all

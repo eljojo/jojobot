@@ -527,6 +527,27 @@ pub async fn boot_store_pushing(
         ),
     }
 
+    // **Forwarding rows an older build left naming a handle their survivor wore
+    // before a rename, brought to the handle it wears now.** Runs before the pass
+    // below, which reads the same rows. Marked finished once it has committed
+    // and skipped no row; a row it could not place is warned about at every boot.
+    match linking.migrate_forward_names().await {
+        Ok(report) if report.settled => {
+            tracing::info!("store: forwarding rows name their survivor: already done");
+        }
+        Ok(report) => tracing::info!(
+            renamed = report.renamed,
+            skipped = report.skipped.len(),
+            "store: forwarding rows brought to the handle their survivor wears now"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            "FORWARDING ROWS NOT BROUGHT TO THEIR SURVIVOR'S HANDLE — a folded thing may \
+             name the handle its survivor wore before a rename. Nothing was lost; a restart \
+             repeats the pass."
+        ),
+    }
+
     // **Links a fold of an older build left on the forwarding row, repointed at
     // the thing it ended in.** Runs after the pass above, which makes the link
     // table agree with the writes it reads. Marked finished once it has

@@ -1817,7 +1817,12 @@ impl Memory for InMemoryMemory {
         // Screened like a creation, with the thing's own row excluded from
         // the index it is screened against — or it would collide with its
         // own former name the moment the new one is close to it.
-        let others: Vec<Entity> = known.iter().filter(|e| &e.id != from).cloned().collect();
+        let earlier_selves = super::super::folded_into(from, &known);
+        let others: Vec<Entity> = known
+            .iter()
+            .filter(|e| &e.id != from && !earlier_selves.contains(&e.id))
+            .cloned()
+            .collect();
         if let Decision::Block(candidates) = guard::decide_under(
             to,
             &renamed.labels(),
@@ -1862,6 +1867,12 @@ impl Memory for InMemoryMemory {
                 held.id = to.clone();
                 held.kind = renamed.kind;
                 held.parent = stored_parent.clone();
+            }
+            // **A forwarding row names the survivor by the handle it wears
+            // now.** The fold stored the handle as it stood, and a rename moves
+            // that handle.
+            if held.merged_into.as_ref() == Some(from) {
+                held.merged_into = Some(to.clone());
             }
         }
         drop(entities);
