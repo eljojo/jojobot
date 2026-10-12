@@ -83,3 +83,156 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
     );
     story.finish().await;
 }
+
+/// **A key held on records and not on the thing is refused with the scope that
+/// asks it**, through a plain call and through a view. A misspelt key is refused
+/// without that advice.
+#[tokio::test]
+async fn a_key_held_on_records_names_the_scope_that_asks_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    for (handle, name, colour) in [
+        ("thing:gamma", "Gamma", "red"),
+        ("thing:delta", "Delta", "blue"),
+    ] {
+        s.add(handle, name).await;
+        // An own field: it stays on the record and never reaches the thing.
+        s.call(
+            "capture",
+            json!({"subject": handle, "content": "painted", "provenance": "testimony",
+                   "fields": {"colour": colour}}),
+        )
+        .await;
+    }
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "marked-things", "name": "Red things",
+               "source": "user-named",
+               "sets": {"selects": "thing", "where": "colour = red"}}),
+    )
+    .await;
+
+    // The plain call: the refusal names the scope, and that call answers.
+    s.refused("recall", json!({"kind": "thing", "where": "colour = red"}))
+        .await
+        .says("scope")
+        .says("record");
+    let fixed = s
+        .call(
+            "recall",
+            json!({"kind": "thing", "where": "colour = red", "scope": "record"}),
+        )
+        .await;
+    assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
+
+    // Through the view: the refusal names the view, and the scope beside it answers.
+    s.refused("recall", json!({"view": "marked-things"}))
+        .await
+        .says("marked-things")
+        .says("scope");
+    let fixed = s
+        .call(
+            "recall",
+            json!({"view": "marked-things", "scope": "record"}),
+        )
+        .await;
+    assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
+
+    // The negative: a key no scope holds is a spelling mistake, and the refusal
+    // does not send the caller to a scope.
+    let misspelt = s
+        .refused("recall", json!({"kind": "thing", "where": "colur = red"}))
+        .await;
+    assert!(
+        !misspelt.raw().contains("scope"),
+        "a misspelt key is not a scope mistake: {}",
+        misspelt.raw()
+    );
+    story.finish().await;
+}
+
+/// **A comparison no declaration licenses is refused with the declaration to make**,
+/// and making it answers.
+#[tokio::test]
+async fn a_licence_refusal_names_the_type_to_declare() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    an_undeclared_board(&s).await;
+
+    s.refused("recall", json!({"kind": "thing", "where": "size > 3"}))
+        .await
+        .says("declare_type")
+        .says("size")
+        .says("number");
+    s.call(
+        "declare_type",
+        json!({"name": "thing", "fields": [{"key": "size", "holds": "number"}]}),
+    )
+    .await;
+    let fixed = s
+        .call("recall", json!({"kind": "thing", "where": "size > 3"}))
+        .await;
+    assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
+
+    s.refused(
+        "recall",
+        json!({"kind": "thing", "where": "touches contains essay.rs"}),
+    )
+    .await
+    .says("declare_type")
+    .says("touches")
+    .says("list");
+    s.call(
+        "declare_type",
+        json!({"name": "thing", "fields": [
+            {"key": "size", "holds": "number"},
+            {"key": "touches", "holds": "list:text"},
+        ]}),
+    )
+    .await;
+    let fixed = s
+        .call(
+            "recall",
+            json!({"kind": "thing", "where": "touches contains essay.rs"}),
+        )
+        .await;
+    assert_eq!(
+        handles_of(&fixed),
+        ["thing:delta", "thing:gamma"],
+        "{}",
+        fixed.raw()
+    );
+    story.finish().await;
+}
+
+/// **An order on a key nothing holds is refused as a term on it is**, naming the
+/// keys that are held, and an order on a key some hold still puts the rest last.
+#[tokio::test]
+async fn an_order_on_a_key_nothing_holds_is_refused_not_tied() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-10-09", None).await;
+    a_board(&s).await;
+
+    s.refused(
+        "recall",
+        json!({"kind": "thing", "order": {"key": "duedate"}}),
+    )
+    .await
+    .says("duedate")
+    .says("due");
+    // The positive: the key spelt as held orders them, and the thing holding none
+    // comes last.
+    let ordered = s
+        .call(
+            "recall",
+            json!({"kind": "thing", "order": {"key": "due", "direction": "ascending"}}),
+        )
+        .await;
+    assert_eq!(
+        handles_of(&ordered),
+        ["thing:epsilon", "thing:gamma", "thing:delta", "thing:omega"],
+        "{}",
+        ordered.raw()
+    );
+    story.finish().await;
+}

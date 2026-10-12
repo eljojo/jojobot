@@ -493,7 +493,7 @@ impl Leaf {
                 Test::Order(op, holds, _) => Err(MemoryError::InvalidQuery(format!(
                     "{} needs a key: an ordering is licensed by what that key was declared \
                      to hold, and a filter naming no key has no declaration to read. Name the \
-                     key, or ask for the value itself",
+                     key",
                     op.said(*holds),
                 ))),
                 Test::Equals(_) | Test::In(_) => Ok(()),
@@ -507,8 +507,8 @@ impl Leaf {
         match &self.test {
             Test::Contains(_) if !declares(declared, kind, key, |field| field.list) => {
                 return Err(MemoryError::InvalidQuery(format!(
-                    "'contains' needs a type declaring '{key}' to hold a list. Declare one, \
-                     or ask for the value itself",
+                    "'contains' needs a type declaring '{key}' to hold a list. {}",
+                    declare_it(kind, key, "list:text"),
                 )));
             }
             Test::Order(op, holds, wanted) => {
@@ -528,17 +528,33 @@ impl Leaf {
                 }
                 if !declares(declared, kind, key, |field| field.holds == *holds) {
                     return Err(MemoryError::InvalidQuery(format!(
-                        "{} needs a type declaring '{}' to hold a {}. Declare one, or ask for \
-                         the value itself",
+                        "{} needs a type declaring '{}' to hold a {}. {}",
                         op.said(*holds),
                         key,
                         holds.as_token(),
+                        declare_it(kind, key, holds.as_token()),
                     )));
                 }
             }
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// **The call that licenses a comparison**, named exactly: `declare_type`, the
+/// type to put the key on (the kind's own name when the question names a kind),
+/// and what the key holds.
+fn declare_it(kind: Option<&str>, key: &str, holds: &str) -> String {
+    match kind {
+        Some(kind) => format!(
+            "Declare it with declare_type: name \"{kind}\" with a field key \"{key}\" \
+             holding \"{holds}\""
+        ),
+        None => format!(
+            "Declare it with declare_type: a type with a field key \"{key}\" holding \
+             \"{holds}\""
+        ),
     }
 }
 

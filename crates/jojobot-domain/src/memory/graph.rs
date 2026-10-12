@@ -1513,23 +1513,50 @@ impl Ctx<'_> {
             .collect();
         for field in select.fields.iter().filter(|f| f.tree.is_some()) {
             let tree = field.as_filter();
-            let held_keys: BTreeSet<&str> = match field.scope {
-                Scope::Thing => population
-                    .iter()
-                    .filter_map(|e| self.held(&e.id))
-                    .flat_map(|fields| fields.keys().map(String::as_str))
-                    .collect(),
-                Scope::Record => population
-                    .iter()
-                    .filter_map(|e| self.facts.get(&e.id))
-                    .flatten()
-                    .flat_map(|fact| fact.fields.keys().map(String::as_str))
-                    .collect(),
+            let held_on_things: BTreeSet<&str> = population
+                .iter()
+                .filter_map(|e| self.held(&e.id))
+                .flat_map(|fields| fields.keys().map(String::as_str))
+                .collect();
+            let held_on_records: BTreeSet<&str> = population
+                .iter()
+                .filter_map(|e| self.facts.get(&e.id))
+                .flatten()
+                .flat_map(|fact| fact.fields.keys().map(String::as_str))
+                .collect();
+            let (held_keys, other_keys, other_scope) = match field.scope {
+                Scope::Thing => (&held_on_things, &held_on_records, Scope::Record),
+                Scope::Record => (&held_on_records, &held_on_things, Scope::Thing),
             };
             for key in tree.keys() {
                 let declared = self.declarations.iter().any(|d| d.field(key).is_some());
                 if declared || held_keys.contains(key) {
                     continue;
+                }
+                // **A key held at the other scope is a scope mistake, not a
+                // spelling mistake**, and the refusal names the scope that asks
+                // it. A key some scope holds is never told to be respelt.
+                if other_keys.contains(key) {
+                    let advice = match other_scope {
+                        Scope::Record => {
+                            "the records of these things hold it, so ask the \
+                            question of the records with scope: \"record\", or put the key on \
+                            the thing with sets"
+                        }
+                        Scope::Thing => {
+                            "the things hold it, so ask the question of what each \
+                            thing holds, which is the default scope: leave scope: \"record\" off"
+                        }
+                    };
+                    return Err(MemoryError::InvalidQuery(format!(
+                        "no {} among the {} this call selected holds a key named '{key}' in \
+                         the scope the question is asked in, but {advice}",
+                        match field.scope {
+                            Scope::Thing => "thing",
+                            Scope::Record => "record",
+                        },
+                        population.len(),
+                    )));
                 }
                 let in_use = if held_keys.is_empty() {
                     "none of the things this call selected holds any key".to_string()
@@ -1547,7 +1574,46 @@ impl Ctx<'_> {
                 )));
             }
         }
-        Ok(())
+        self.check_order_key(query, &population)
+    }
+
+    /// **An order on a key nothing holds is refused**, as a term on it is: every
+    /// thing would tie and come back in handle order, which reads as an order.
+    /// The population and the declarations are the ones a term is judged by, and
+    /// the keys are the folded fields of the things, since an ordering reads what
+    /// a thing holds now.
+    fn check_order_key(
+        &self,
+        query: &GraphQuery,
+        population: &[&Entity],
+    ) -> Result<(), MemoryError> {
+        let Some(order) = query.select.order.as_ref() else {
+            return Ok(());
+        };
+        let key = order.key.trim();
+        let held_keys: BTreeSet<&str> = population
+            .iter()
+            .filter_map(|e| self.held(&e.id))
+            .flat_map(|fields| fields.keys().map(String::as_str))
+            .collect();
+        let declared = self.declarations.iter().any(|d| d.field(key).is_some());
+        if declared || held_keys.contains(key) {
+            return Ok(());
+        }
+        let in_use = if held_keys.is_empty() {
+            "none of the things this call selected holds any key".to_string()
+        } else {
+            format!(
+                "the keys held among them are: {}",
+                held_keys.iter().copied().collect::<Vec<_>>().join(", ")
+            )
+        };
+        Err(MemoryError::InvalidQuery(format!(
+            "no thing among the {} this call selected holds a key named '{key}', and no type \
+             declares one, so ordering by it would leave them in handle order. Check the \
+             spelling: {in_use}",
+            population.len(),
+        )))
     }
 
     /// **Put the standing decisions of a thread ahead of it.** A read that names

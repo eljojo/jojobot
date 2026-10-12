@@ -1854,6 +1854,11 @@ impl Jojobot {
         // the call in: the note an object leaves when it is narrowed tells a
         // different way back for keys a view supplied.
         let caller_named_keys = args.keys.is_some();
+        // **Whether the question's `where` is the view's own**: the caller named
+        // none, and the view fills one in. A refusal of that question names the
+        // view, because the caller never wrote the line it is about.
+        let view_named = args.view.clone();
+        let where_is_the_views = args.expression.is_none();
         let (args, view_filters, asks_ready) = match args.view.clone() {
             None => (args, Vec::new(), false),
             Some(named) => match self.asked_by_name(&named, args).await {
@@ -1960,11 +1965,25 @@ impl Jojobot {
             },
             _ => None,
         };
+        let through_view = |refused: MemoryError| -> MemoryError {
+            match (&view_named, refused) {
+                (Some(name), MemoryError::InvalidQuery(words))
+                    if where_is_the_views && args.expression.is_some() =>
+                {
+                    MemoryError::InvalidQuery(format!(
+                        "the view '{name}' asks a question that cannot run: {words}. Send a \
+                         where or a scope of your own beside the view, and it takes the \
+                         place of the view's"
+                    ))
+                }
+                (_, refused) => refused,
+            }
+        };
         let where_expression = match args.expression.as_deref() {
             None => None,
             Some(text) => match filter::expression::parse(text, today) {
                 Ok(tree) => Some(tree),
-                Err(refused) => return memory_declined("recall", refused),
+                Err(refused) => return memory_declined("recall", through_view(refused)),
             },
         };
         let where_scope = parse_scope(args.scope.as_deref())?;
@@ -2510,7 +2529,7 @@ impl Jojobot {
             left_over,
         } = match graph::walk_in_window(self.memory.as_ref(), &session_docs, &query, window).await {
             Ok(answer) => answer,
-            Err(e) => return memory_declined("recall", e),
+            Err(e) => return memory_declined("recall", through_view(e)),
         };
         // The runs the walk was not shown, counted with the ones it withheld, on a
         // browse of runs and never when a subject is named.
