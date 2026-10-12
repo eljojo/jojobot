@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use jojobot_exercise::room::{Room, server_binary};
+use jojobot_exercise::room::server_binary;
 use jojobot_exercise::{expectations, replay};
 
 #[derive(Default)]
@@ -145,7 +145,21 @@ async fn replay_one(
     // The same three steps a paid run takes before the model arrives: a room on
     // the shipped server, furnished from the room's own document.
     let seed = expectations::seed_for(&document)?;
-    let (room, surface) = Room::open_with_client(&server_binary()?).await?;
+    // The server acts out the day the replayed run was made on, never the wall
+    // clock; a log that records no day is refused here, naming the run.
+    let (room, surface, day) = replay::open_for_run(&server_binary()?, &text, stream).await?;
+    // **Read back from the server, not trusted from the request**: the report
+    // names the day the server says it acts out.
+    let reported = surface.stated_day().await;
+    anyhow::ensure!(
+        reported.as_deref() == Some(day.day.as_str()),
+        "the replay of {} asked its server to act out {}, and the server reports {}",
+        stream.display(),
+        day.day,
+        reported
+            .as_deref()
+            .unwrap_or("no stated day (the wall clock)"),
+    );
     seed.furnish(&surface)
         .await
         .context("furnishing the room")?;
@@ -161,6 +175,7 @@ async fn replay_one(
         &room_name,
         &format!("{stem}.jsonl"),
         candidate,
+        &day,
         &replay::gaps(&text, &sittings, &results),
         &results,
     );

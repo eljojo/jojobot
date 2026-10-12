@@ -725,11 +725,132 @@ impl std::fmt::Display for Gap {
     }
 }
 
+/// **Where a replay's day was read from.** Both are the run's own log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaySource {
+    /// The run's own server announced it, in `clock.stated_day` of an answer it
+    /// gave. Every run made on a stated day carries it.
+    Announced,
+    /// The stamp in the log's file name, `<room>-<stamp>.jsonl`, read as the
+    /// UTC day it falls on. A run made on the wall clock announces nothing, and
+    /// this is the day it was made.
+    FileName,
+}
+
+/// **The day a replay's server acts out**, and where it came from.
+///
+/// A replay reproduces the run it replays, so its server acts out THAT run's
+/// day. A server on the wall clock would stamp the replay with the day it is
+/// made, and an answer that carries a stamp could meet a recorded value on one
+/// real day and not on the next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayDay {
+    pub day: String,
+    pub source: DaySource,
+}
+
+impl std::fmt::Display for ReplayDay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let from = match self.source {
+            DaySource::Announced => "announced by the run's own server",
+            DaySource::FileName => "the stamp in the run's file name, read as UTC",
+        };
+        write!(f, "{} ({from})", self.day)
+    }
+}
+
+/// **The day a recorded run's log records**, or a refusal naming the run.
+///
+/// In order: the day the run's own server announced in an answer, else the day
+/// of the stamp in the file's name. A log that records neither is refused, and
+/// so is one that announces two different days: nothing is guessed, because a
+/// replay on a guessed day can pass or fail on the calendar.
+pub fn day_of_run(stream: &str, file: &Path) -> anyhow::Result<ReplayDay> {
+    let mut announced: Vec<String> = Vec::new();
+    for sitting in read_stream(stream) {
+        for call in sitting.calls {
+            let Some(answer) = call.answer else { continue };
+            let Ok(body) = serde_json::from_str::<Value>(&answer) else {
+                continue;
+            };
+            if let Some(day) = body["clock"]["stated_day"].as_str()
+                && !announced.iter().any(|seen| seen == day)
+            {
+                announced.push(day.to_string());
+            }
+        }
+    }
+    let name = file.display();
+    match announced.as_slice() {
+        [day] => {
+            return Ok(ReplayDay {
+                day: day.clone(),
+                source: DaySource::Announced,
+            });
+        }
+        [] => {}
+        many => anyhow::bail!(
+            "{name} announces more than one day ({}), so there is no one day to replay it on",
+            many.join(", "),
+        ),
+    }
+    match stamped(file) {
+        Some((_, seconds)) => Ok(ReplayDay {
+            day: utc_day_of(seconds),
+            source: DaySource::FileName,
+        }),
+        None => anyhow::bail!(
+            "{name} records no day: its server announced none, and its file name carries no \
+             <room>-<stamp>.jsonl stamp. A replay on the wall clock could pass or fail on the \
+             calendar, so none is made.",
+        ),
+    }
+}
+
+/// The UTC day a count of seconds since 1970 falls on, as `YYYY-MM-DD`.
+///
+/// The civil-from-days arithmetic, so this crate takes no date dependency for
+/// one conversion.
+fn utc_day_of(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// **A room opened on the day a replayed run was made.**
+///
+/// The one place a replay opens its server: the binary and the cases that watch
+/// it both come here, so the day cannot be stated in one and forgotten in the
+/// other.
+pub async fn open_for_run(
+    binary: &Path,
+    stream: &str,
+    file: &Path,
+) -> anyhow::Result<(crate::room::Room, Surface, ReplayDay)> {
+    let day = day_of_run(stream, file)?;
+    let (room, surface) = crate::room::Room::open_with_client_stating(binary, &day.day).await?;
+    Ok((room, surface, day))
+}
+
 /// **The report a reader gets.**
 pub fn render(
     room: &str,
     stream: &str,
     candidate: &str,
+    day: &ReplayDay,
     gaps: &[Gap],
     results: &[SittingResult],
 ) -> String {
@@ -738,6 +859,7 @@ pub fn render(
     let differing: usize = summaries.iter().map(|s| s.differing).sum();
     let mut out = format!(
         "replay of {stream} (room {room}) on {candidate}\n\
+         server acted out {day}\n\
          {} sittings, {calls} calls, {differing} changed class\n",
         summaries.len()
     );
@@ -1586,7 +1708,14 @@ mod tests {
         };
         let gaps = [Gap::Unmapped(vec!["start_here.ticket (1 use)".to_string()])];
 
-        let text = render("vault", "vault-1.jsonl", "abc1234", &gaps, &[result]);
+        let text = render(
+            "vault",
+            "vault-1.jsonl",
+            "abc1234",
+            &a_day(),
+            &gaps,
+            &[result],
+        );
 
         for needle in [
             "Phase 3",
@@ -1612,14 +1741,126 @@ mod tests {
             "vault",
             "v-1.jsonl",
             "abc",
+            &a_day(),
             &[Gap::UnreadLines(2)],
             std::slice::from_ref(&result),
         );
-        let complete = render("vault", "v-1.jsonl", "abc", &[], &[result]);
+        let complete = render("vault", "v-1.jsonl", "abc", &a_day(), &[], &[result]);
 
         assert!(incomplete.contains("INCOMPLETE"), "{incomplete}");
         assert!(!complete.contains("INCOMPLETE"), "{complete}");
         assert!(incomplete.contains(SCOPE) && complete.contains(SCOPE));
+    }
+
+    // ── the day a replay acts out ───────────────────────────────────────────
+
+    fn a_day() -> ReplayDay {
+        ReplayDay {
+            day: "2031-05-06".into(),
+            source: DaySource::Announced,
+        }
+    }
+
+    /// A stream holding one `start_here` call whose answer is `answer`, in the
+    /// shape the CLI keeps.
+    fn a_stream_answering(answer: &str) -> String {
+        a_stream_answering_as("t1", answer)
+    }
+
+    /// The same, under a call id of its own, so two can share one log.
+    fn a_stream_answering_as(id: &str, answer: &str) -> String {
+        [
+            serde_json::json!({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": id,
+                 "name": format!("{VERB_PREFIX}start_here"), "input": {"bot": "assistant"}}
+            ]}})
+            .to_string(),
+            serde_json::json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "content": answer}
+            ]}})
+            .to_string(),
+        ]
+        .join("\n")
+    }
+
+    const ANNOUNCING: &str =
+        r#"{"session":{"sid":"abcd"},"clock":{"stated_day":"2031-05-06","note":"acting out"}}"#;
+    const SILENT: &str = r#"{"session":{"sid":"abcd"},"timezone":{"zone":"UTC"}}"#;
+
+    /// **A run whose own server announced its day replays on that day**, and the
+    /// day is read from what the server said, not from the file's name.
+    #[test]
+    fn a_run_that_announced_its_day_replays_on_it() {
+        let day = day_of_run(
+            &a_stream_answering(ANNOUNCING),
+            Path::new("year-1893499200.jsonl"),
+        )
+        .expect("the log records a day");
+        assert_eq!(day.day, "2031-05-06");
+        assert_eq!(day.source, DaySource::Announced);
+    }
+
+    /// **A run made on the wall clock replays on the day its file name stamps**,
+    /// read as UTC. Paired with the case above: the stamp is 2030-01-01 and the
+    /// announcement is 2031-05-06, so a reader that preferred the stamp would
+    /// pass this and fail that.
+    #[test]
+    fn a_run_that_announced_nothing_replays_on_the_day_of_its_file_name() {
+        let day = day_of_run(
+            &a_stream_answering(SILENT),
+            Path::new("year-1893499200.jsonl"),
+        )
+        .expect("the file name records a day");
+        assert_eq!(day.day, "2030-01-01");
+        assert_eq!(day.source, DaySource::FileName);
+    }
+
+    /// **A run whose log records no day is refused, naming the run.** Nothing is
+    /// guessed: a replay on the wall clock would pass or fail on the calendar.
+    #[test]
+    fn a_run_whose_log_records_no_day_is_refused_naming_the_run() {
+        for name in ["year-latest.jsonl", "year.jsonl", "notes"] {
+            let refused = day_of_run(&a_stream_answering(SILENT), Path::new(name))
+                .expect_err("no day is on record");
+            assert!(
+                refused.to_string().contains(name)
+                    && refused.to_string().to_lowercase().contains("no day"),
+                "the refusal does not name the run and say no day is on record: {refused}",
+            );
+        }
+    }
+
+    /// **A log that announces two days cannot be acted out**, and is refused
+    /// rather than replayed on the first.
+    #[test]
+    fn a_log_announcing_two_days_is_refused() {
+        let two = format!(
+            "{}\n{}",
+            a_stream_answering(ANNOUNCING),
+            a_stream_answering_as("t2", &ANNOUNCING.replace("2031-05-06", "2031-05-07")),
+        );
+        let refused =
+            day_of_run(&two, Path::new("year-1893499200.jsonl")).expect_err("two days are not one");
+        assert!(
+            refused.to_string().contains("2031-05-06")
+                && refused.to_string().contains("2031-05-07"),
+            "{refused}",
+        );
+    }
+
+    /// The conversion from a stamp to a day, against days worked out by hand.
+    #[test]
+    fn a_stamp_in_seconds_reads_as_the_utc_day_it_falls_on() {
+        for (seconds, day) in [
+            (0_u64, "1970-01-01"),
+            (86_399, "1970-01-01"),
+            (86_400, "1970-01-02"),
+            (951_782_400, "2000-02-29"),
+            (1_787_418_998, "2026-08-22"),
+            (1_893_499_200, "2030-01-01"),
+        ] {
+            assert_eq!(utc_day_of(seconds), day, "{seconds}");
+        }
     }
 
     // ── the streams on disk ─────────────────────────────────────────────────
