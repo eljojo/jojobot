@@ -354,7 +354,10 @@ impl Filter {
                 .try_for_each(|filter| filter.validate(declared, kind)),
             Filter::Not(inner) => inner.validate(declared, kind),
             Filter::Leaf(leaf) => leaf.validate(declared, kind),
-            Filter::Refs { .. } | Filter::Finished => Ok(()),
+            // The things a list names are not of the selected kind, so that
+            // kind's declaration does not govern the question asked of them.
+            Filter::Refs { then, .. } => then.validate(declared, None),
+            Filter::Finished => Ok(()),
         }
     }
 }

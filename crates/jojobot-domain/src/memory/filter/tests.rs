@@ -38,6 +38,46 @@ fn declaring_a_list(key: &str) -> DeclaredType {
     DeclaredType::new("tracked", vec![Field::listing(key, ValueType::Text)])
 }
 
+/// **The question a reference list asks of the things it names is validated
+/// like any other.** An ordering no declaration licenses is refused inside it,
+/// and declared the same leaf passes. The things named are not of the selected
+/// kind, so that kind's declaration does not govern them: a type that licenses
+/// the ordering for a thing of any kind does.
+#[test]
+fn the_question_inside_a_reference_list_is_validated_too() {
+    let inside = Filter::Refs {
+        key: "depends_on".into(),
+        quantifier: Quantifier::All,
+        then: Box::new(Filter::comparing("cost", Compare::Greater, "10")),
+    };
+    let refused = inside
+        .validate(&[], None)
+        .expect_err("no type declares cost");
+    assert!(refused.to_string().contains("cost"), "{refused}");
+    assert!(
+        inside
+            .validate(&[declaring("cost", ValueType::Number)], None)
+            .is_ok()
+    );
+    // The selected kind says text for its own cost, and a type of no kind says
+    // number: the leaf inside the list is not asked of the selected kind.
+    let kinds_own = DeclaredType::new("work", vec![Field::new("cost", ValueType::Text)]);
+    let loose = declaring("cost", ValueType::Number);
+    assert!(
+        inside
+            .validate(&[kinds_own.clone(), loose.clone()], Some("work"))
+            .is_ok()
+    );
+    assert!(
+        Filter::comparing("cost", Compare::Greater, "10")
+            .validate(&[kinds_own, loose], Some("work"))
+            .is_err(),
+        "the same leaf outside the list is governed by the selected kind"
+    );
+    // The finished leaf has nothing to validate, in or out of a list.
+    assert!(Filter::Finished.validate(&[], None).is_ok());
+}
+
 /// **Any keeps the work that satisfies one of its branches.** Now or next keeps
 /// two; the third, done, is the negative, and a single branch keeps only its own.
 #[test]
