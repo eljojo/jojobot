@@ -29,13 +29,15 @@
 
 **A declaration licenses the comparisons that need a type.** Before, after, less and more need a key declared a date or a number. `contains` needs a key declared a list. Equality, any-of, exists and their negations need nothing declared. A comparison used without its licence is refused, naming the declaration it needs. A declaration named like a kind belongs to that kind, so one kind's `due` never licenses another's; a type under any other name is vocabulary and licenses any object that carries its key. Where the two disagree about a key, the kind's declaration wins. A call that names no kind asks each object's own kind, and the answer counts what it left out by kind rather than shrinking in silence.
 
+**Each entity is judged by its own kind's declarations.** A board holds a `thing` named gamma and a `place` named daredevil-gorge, both with a `due`. If only the `thing` type declares `due` a date, `due < today+7d` with no kind keeps gamma, and the answer counts the place under `left_out_unlicensed` (kind `place`, count 1) with the `declare_type` that would keep it. A walk's `keeping` is judged the same way, per object it reaches, and counts what it drops. A call that names a kind is judged by that kind alone, before any read.
+
 **A negation keeps only things that hold the key.** `status != done` is the things holding some other status. A thing with no status is not among them, because *has none* and *has another* are different answers. `!` is the complement within what the call selected, never the whole store.
 
 **A date can be relative to the asker's day**: `today`, `today+3d`, `today-2w`, resolved when the question is asked, in that session's zone.
 
 **Order is one key and a direction**, applied before the answer is cut to size. Things lacking the key come last.
 
-**A mistake says where it is.** An expression that does not parse is refused, naming the token, its position and the words it accepts. A term on a key that nothing holds says so, rather than returning an empty answer that reads as *there is none*.
+**A mistake says where it is.** An expression that does not parse is refused, naming the token, its position and the words it accepts. A term on a key that nothing holds says so, rather than returning an empty answer that reads as *there is none*. A key the records hold and the thing does not is told to use `scope: record`, and a call through a view says the view. An order on a key nothing holds, and a walk's `keeping` on one, are refused the same way. A comparison without its declaration is refused with the `declare_type` to make. A `scope` beside no `where` is refused, not ignored.
 
 ## What a bot may reach
 
