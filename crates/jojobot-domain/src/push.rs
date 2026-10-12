@@ -281,6 +281,9 @@ pub struct Drained {
     pub sent: Vec<MessageId>,
     /// Pushes given up on in this pass, each with the reason it is not coming.
     pub abandoned: Vec<(MessageId, String)>,
+    /// Pushes whose outcome the outbox could not record, each with the store's
+    /// error. The row stays due, so the next pass tries the push again.
+    pub unrecorded: Vec<(MessageId, String)>,
     /// The earliest moment a pending push is next due, or `None` when nothing
     /// is pending. A runner that sleeps until this moment never polls.
     pub next_due: Option<Timestamp>,
@@ -304,65 +307,79 @@ impl Pushing<'_> {
     /// A push that goes out is marked sent. One that fails is rescheduled by the
     /// policy, or abandoned when `now` has reached the end of its window. One whose
     /// message cannot be read is abandoned at once with that reason: there is
-    /// nothing to say, so nothing is retried.
+    /// nothing to say, so nothing is retried. A push whose outcome the outbox
+    /// cannot record is listed in [`Drained::unrecorded`] and the pass goes on;
+    /// only a store that cannot list the due pushes fails the pass.
     pub async fn drain(&self, now: Timestamp) -> Result<Drained, PushError> {
         let mut drained = Drained::default();
         for push in self.outbox.due(now).await? {
-            // **Past its window a push is owed no longer.** The last try is made
-            // on the end of the window itself, and a row found after that, as on
-            // a restart, is given up on without being sent late.
-            let deadline = push
-                .enqueued_at
-                .checked_add(self.policy.window)
-                .unwrap_or(Timestamp::MAX);
-            if now > deadline {
-                self.give_up(
-                    &push,
-                    now,
-                    "the window for this push ran out before it was sent",
-                    &mut drained,
-                )
-                .await?;
-                continue;
-            }
-            let message = match self.mailboxes.message_by_id(&push.message).await {
-                Ok(Some(message)) => message,
-                Ok(None) => {
-                    self.give_up(
-                        &push,
-                        now,
-                        "no readable message wears that id",
-                        &mut drained,
-                    )
-                    .await?;
-                    continue;
-                }
-                Err(e) => {
-                    // The mail store failing is not the message being gone: it
-                    // is tried again like any other failure.
-                    if let Some(reason) = self
-                        .fail(&push, now, format!("the message could not be read: {e}"))
-                        .await?
-                    {
-                        drained.abandoned.push((push.message.clone(), reason));
-                    }
-                    continue;
-                }
-            };
-            match self.notifier.deliver(&Notification::of(&message)).await {
-                Ok(()) => {
-                    self.outbox.sent(&push.message, now).await?;
-                    drained.sent.push(push.message.clone());
-                }
-                Err(Undelivered(why)) => {
-                    if let Some(reason) = self.fail(&push, now, why).await? {
-                        drained.abandoned.push((push.message.clone(), reason));
-                    }
-                }
+            // **One row the store cannot record does not end the pass.** The row
+            // stays due and is tried again, and the rows behind it still go out.
+            if let Err(e) = self.settle(&push, now, &mut drained).await {
+                drained
+                    .unrecorded
+                    .push((push.message.clone(), e.to_string()));
             }
         }
         drained.next_due = self.outbox.next_due().await?;
         Ok(drained)
+    }
+
+    /// Try one due push and record how it ended.
+    async fn settle(
+        &self,
+        push: &Push,
+        now: Timestamp,
+        drained: &mut Drained,
+    ) -> Result<(), PushError> {
+        // **Past its window a push is owed no longer.** The last try is made
+        // on the end of the window itself, and a row found after that, as on
+        // a restart, is given up on without being sent late.
+        let deadline = push
+            .enqueued_at
+            .checked_add(self.policy.window)
+            .unwrap_or(Timestamp::MAX);
+        if now > deadline {
+            return self
+                .give_up(
+                    push,
+                    now,
+                    "the window for this push ran out before it was sent",
+                    drained,
+                )
+                .await;
+        }
+        let message = match self.mailboxes.message_by_id(&push.message).await {
+            Ok(Some(message)) => message,
+            Ok(None) => {
+                return self
+                    .give_up(push, now, "no readable message wears that id", drained)
+                    .await;
+            }
+            Err(e) => {
+                // The mail store failing is not the message being gone: it
+                // is tried again like any other failure.
+                if let Some(reason) = self
+                    .fail(push, now, format!("the message could not be read: {e}"))
+                    .await?
+                {
+                    drained.abandoned.push((push.message.clone(), reason));
+                }
+                return Ok(());
+            }
+        };
+        match self.notifier.deliver(&Notification::of(&message)).await {
+            Ok(()) => {
+                self.outbox.sent(&push.message, now).await?;
+                drained.sent.push(push.message.clone());
+            }
+            Err(Undelivered(why)) => {
+                if let Some(reason) = self.fail(push, now, why).await? {
+                    drained.abandoned.push((push.message.clone(), reason));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Record one failed delivery. `Some(reason)` when the window has run out and
@@ -538,6 +555,49 @@ mod tests {
             notifier,
             policy: SHORT,
         }
+    }
+
+    /// **A delivered push the outbox could not mark sent does not starve the
+    /// pushes behind it.** The pass goes on to the next row and names the one it
+    /// could not record; the next pass, with the store back, delivers it again
+    /// and marks it. The positive (the later row is delivered and marked) sits in
+    /// the same pass as the negative (the earlier row stays pending).
+    #[tokio::test]
+    async fn a_push_the_outbox_could_not_mark_sent_does_not_starve_the_ones_behind_it() {
+        use super::testing::{Call, FlakyOutbox};
+        let boxes = store().await;
+        let rows = boxes.outbox();
+        let first = post(&boxes, "person-ned-flanders", Some("first"), "one").await;
+        let second = post(&boxes, "person-ned-flanders", Some("second"), "two").await;
+        let flaky = FlakyOutbox::over(rows.clone());
+        flaky.fail_next(Call::Sent, 1);
+        let notifier = FakeNotifier::new();
+        let now = rows.rows()[1].push.enqueued_at;
+        let pushing = Pushing {
+            outbox: &flaky,
+            mailboxes: &boxes,
+            notifier: &notifier,
+            policy: SHORT,
+        };
+
+        let pass = pushing.drain(now).await.expect("the pass answers");
+        assert_eq!(pass.sent, vec![second.clone()], "{pass:?}");
+        assert_eq!(pass.unrecorded.len(), 1, "{pass:?}");
+        assert_eq!(pass.unrecorded[0].0, first, "{pass:?}");
+        let standing = |id: &MessageId| {
+            rows.rows()
+                .into_iter()
+                .find(|r| &r.push.message == id)
+                .expect("a row")
+                .standing
+        };
+        assert_eq!(standing(&second), Standing::Sent);
+        assert_eq!(standing(&first), Standing::Pending);
+
+        let again = pushing.drain(now).await.expect("the next pass answers");
+        assert_eq!(again.sent, vec![first.clone()], "{again:?}");
+        assert!(again.unrecorded.is_empty(), "{again:?}");
+        assert_eq!(standing(&first), Standing::Sent);
     }
 
     /// **A post to the person's box is delivered once, with the subject for the

@@ -120,6 +120,88 @@ impl Outbox for InMemoryOutbox {
     }
 }
 
+/// Which call of the [`Outbox`] port a [`FlakyOutbox`] fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Call {
+    /// `due`.
+    Due,
+    /// `next_due`.
+    NextDue,
+    /// `sent`.
+    Sent,
+    /// `failed`.
+    Failed,
+    /// `abandoned`.
+    Abandoned,
+}
+
+/// **An outbox whose store can be made to fail a call a given number of times,
+/// then recover.** A failed call changes nothing in the rows, as a refused write
+/// in a real store changes nothing.
+pub struct FlakyOutbox {
+    inner: std::sync::Arc<InMemoryOutbox>,
+    failing: Mutex<Vec<(Call, u32)>>,
+}
+
+impl FlakyOutbox {
+    /// A flaky face on `inner`, failing nothing yet.
+    pub fn over(inner: std::sync::Arc<InMemoryOutbox>) -> Self {
+        FlakyOutbox {
+            inner,
+            failing: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Fail the next `times` calls of `call`, then answer again.
+    pub fn fail_next(&self, call: Call, times: u32) {
+        self.failing.lock().expect("flaky lock").push((call, times));
+    }
+
+    fn check(&self, call: Call) -> Result<(), PushError> {
+        let mut failing = self.failing.lock().expect("flaky lock");
+        match failing.iter_mut().find(|(c, left)| *c == call && *left > 0) {
+            Some((_, left)) => {
+                *left -= 1;
+                Err(PushError::Store(format!("the store failed {call:?}")))
+            }
+            None => Ok(()),
+        }
+    }
+}
+
+#[async_trait]
+impl Outbox for FlakyOutbox {
+    async fn due(&self, now: Timestamp) -> Result<Vec<Push>, PushError> {
+        self.check(Call::Due)?;
+        self.inner.due(now).await
+    }
+
+    async fn next_due(&self) -> Result<Option<Timestamp>, PushError> {
+        self.check(Call::NextDue)?;
+        self.inner.next_due().await
+    }
+
+    async fn sent(&self, message: &MessageId, at: Timestamp) -> Result<(), PushError> {
+        self.check(Call::Sent)?;
+        self.inner.sent(message, at).await
+    }
+
+    async fn failed(
+        &self,
+        message: &MessageId,
+        attempts: u32,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), PushError> {
+        self.check(Call::Failed)?;
+        self.inner.failed(message, attempts, next_attempt_at).await
+    }
+
+    async fn abandoned(&self, message: &MessageId, at: Timestamp) -> Result<(), PushError> {
+        self.check(Call::Abandoned)?;
+        self.inner.abandoned(message, at).await
+    }
+}
+
 /// **A notifier that records what it was given and can be taken down.** While it
 /// is down every delivery fails; while it is up every delivery lands once.
 pub struct FakeNotifier {

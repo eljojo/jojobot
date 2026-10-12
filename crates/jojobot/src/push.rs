@@ -269,6 +269,10 @@ async fn run(
         }
         // Drained until nothing is pending, sleeping to the earliest retry in
         // between. A nudge during a sleep cuts it short and drains again.
+        // **A pass the store spoiled is retried on this task's own timer**, for
+        // as long as it stays spoiled, because no other message may ever arrive
+        // to nudge it.
+        let mut spoiled_passes = 0u32;
         loop {
             let pushing = Pushing {
                 outbox: outbox.as_ref(),
@@ -276,7 +280,7 @@ async fn run(
                 notifier: notifier.as_ref(),
                 policy,
             };
-            let next = match pushing.drain(Timestamp::now()).await {
+            let (next, spoiled) = match pushing.drain(Timestamp::now()).await {
                 Ok(drained) => {
                     for message in &drained.sent {
                         tracing::debug!(message = %message, "pushed to the operator's phone");
@@ -289,12 +293,30 @@ async fn run(
                              this message. It is in their box, unread."
                         );
                     }
-                    drained.next_due
+                    for (message, why) in &drained.unrecorded {
+                        tracing::warn!(
+                            message = %message,
+                            reason = %why,
+                            "the push outbox could not record how a push ended; it is tried \
+                             again"
+                        );
+                    }
+                    (drained.next_due, !drained.unrecorded.is_empty())
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "the push outbox could not be drained");
-                    None
+                    (None, true)
                 }
+            };
+            let next = if spoiled {
+                spoiled_passes = spoiled_passes.saturating_add(1);
+                let retry = Timestamp::now()
+                    .checked_add(policy.delay_after(spoiled_passes))
+                    .unwrap_or(Timestamp::MAX);
+                Some(next.map_or(retry, |due| due.max(retry)))
+            } else {
+                spoiled_passes = 0;
+                next
             };
             let Some(next) = next else { break };
             let wait = next
@@ -313,6 +335,113 @@ async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+    use jojobot_domain::mailbox::{Guarded, MailboxName, NewMessage};
+    use jojobot_domain::memory::EntityId;
+    use jojobot_domain::push::testing::{
+        Call, FakeNotifier, FlakyOutbox, InMemoryOutbox, Standing,
+    };
+
+    const QUICK: Policy = Policy {
+        first_delay: Duration::from_millis(30),
+        longest_delay: Duration::from_millis(120),
+        window: Duration::from_secs(60),
+    };
+
+    /// A store that pushes, with one message already in the person's box and the
+    /// runner started over an outbox that fails as told. The runner is returned
+    /// so it lives for the case.
+    async fn running(
+        flaky: impl FnOnce(&FlakyOutbox),
+    ) -> (Runner, Arc<InMemoryOutbox>, Arc<FakeNotifier>) {
+        jojobot_domain::memory::kinds::load_shipped();
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner().pushing());
+        boxes
+            .create_mailbox(
+                &MailboxName("person-ned-flanders".into()),
+                &EntityId("person:ned-flanders".into()),
+                None,
+            )
+            .await
+            .expect("a box");
+        let posted = boxes
+            .post_message(NewMessage {
+                mailbox: MailboxName("person-ned-flanders".into()),
+                body: "a body".into(),
+                subject: Some("a subject".into()),
+                sender: "gamma".into(),
+                sent_at: Timestamp::now(),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("the post lands");
+        assert!(matches!(posted, Guarded::Written(_)), "{posted:?}");
+        let rows = boxes.outbox();
+        let outbox = Arc::new(FlakyOutbox::over(rows.clone()));
+        flaky(&outbox);
+        let notifier = Arc::new(FakeNotifier::new());
+        let runner = Runner::start(outbox, boxes, notifier.clone(), QUICK);
+        (runner, rows, notifier)
+    }
+
+    /// Wait up to three seconds for `done`, polling the way a person would watch.
+    async fn within_three_seconds(mut done: impl FnMut() -> bool) -> bool {
+        for _ in 0..300 {
+            if done() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        done()
+    }
+
+    /// **A store error does not stop the retry timer.** The outbox fails to list
+    /// what is due on the runner's first pass; no other message ever arrives and
+    /// nothing nudges the task again, and the push still goes out on the task's
+    /// own timer once the store answers.
+    #[tokio::test]
+    async fn a_store_error_on_a_pass_is_retried_on_the_runners_own_timer() {
+        let (_runner, rows, notifier) = running(|o| o.fail_next(Call::Due, 1)).await;
+        assert!(
+            within_three_seconds(|| rows.rows()[0].standing == Standing::Sent).await,
+            "the push was never sent: {:?}",
+            rows.rows()
+        );
+        assert_eq!(notifier.delivered().len(), 1);
+    }
+
+    /// **A push the store could not mark sent is tried again on the timer**, not
+    /// on the next unrelated nudge, and ends marked sent.
+    #[tokio::test]
+    async fn a_push_the_store_could_not_mark_sent_is_marked_on_the_next_timed_pass() {
+        let (_runner, rows, notifier) = running(|o| o.fail_next(Call::Sent, 1)).await;
+        assert!(
+            within_three_seconds(|| rows.rows()[0].standing == Standing::Sent).await,
+            "the push was never marked sent: {:?}",
+            rows.rows()
+        );
+        assert_eq!(
+            notifier.delivered().len(),
+            2,
+            "a delivery whose record was lost is made again"
+        );
+    }
+
+    /// **A store that keeps failing to record is retried at the policy's pace,
+    /// not in a tight loop.** The row stays due, so a runner that slept to its
+    /// due moment would not sleep at all. Paired with the positive: the push is
+    /// tried again more than once.
+    #[tokio::test]
+    async fn a_store_that_keeps_failing_is_retried_at_the_policys_pace() {
+        let (_runner, _rows, notifier) = running(|o| o.fail_next(Call::Sent, u32::MAX)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let tries = notifier.delivered().len();
+        assert!(tries >= 2, "the push was not tried again: {tries}");
+        assert!(tries <= 12, "the retries were not paced: {tries}");
+    }
 
     /// **The readable part of a long body is cut at a character, never inside
     /// one.** A body of three-byte characters puts the 4,000th byte inside one;
