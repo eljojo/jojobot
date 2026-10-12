@@ -209,7 +209,7 @@ sitting  bot:lisa | 2026-09-02 | the paperwork | Filed the lease papers and the 
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 14 June 2026. The party was yesterday and it went great, though we ran out of chairs for ten minutes. Everybody who said yes came, except Kyle. Wendy brought Bebe, which I didn't expect, and Butters's partner turns out to be called Marjorine. I backed up the laptop today.
+> start jojobot as assistant — it is 14 June 2026. The party was yesterday and it went great, though we ran out of chairs for ten minutes. Everybody who said yes came, except Kyle. Wendy brought Apu, which I didn't expect, and Butters's partner turns out to be called Louise. I backed up the laptop today.
 
 ## Phase 7 — August, the road bike goes
 
@@ -259,8 +259,8 @@ the margin** (eleven against three is eight). **By month:** January 103,
 February 123, March 110, April 144, August 182, October 105, and nothing in
 the other five.
 
-**The chairs:** nine people (the host, Stan, Wendy, Bebe, Token, Randy, Sharon,
-Butters and Marjorine) against eight chairs, so one short, which agrees with
+**The chairs:** nine people (the host, Stan, Wendy, Apu, Token, Randy, Sharon,
+Butters and Louise) against eight chairs, so one short, which agrees with
 the aside that they ran out for ten minutes.
 
 **The move's open work** is the utilities and nothing else. **The sittings the
@@ -337,18 +337,18 @@ recall {"fields": [{"key": "answer_9"}], "keys": ["answer_9"]}
 carries-either one short | 1 short | short by one | short by 1 | one chair short | 1 chair short | one too few | one more chair | 1 more chair
 say     December: the answer about the chairs does not say they were one short, so either the guests or the chairs were counted wrong
 
-# 10. The partner is Marjorine. The slot holds the name the cold sitting gave.
+# 10. The partner is Louise. The slot holds the name the cold sitting gave.
 recall {"fields": [{"key": "answer_10"}], "keys": ["answer_10"]}
 carries "answer_10"
-carries-any-case marjorine
-say     December: the plus-one is not named Marjorine, so the April placeholder and the June name were not put together
+carries-any-case louise
+say     December: the plus-one is not named Louise, so the April placeholder and the June name were not put together
 
 # 10, the carrier. The placeholder from April and the name from June are ONE
-# thing when the person named Marjorine holds a record older than the June
-# sitting that named her. A rename or a merge leaves exactly that; a Marjorine
+# thing when the person named Louise holds a record older than the June
+# sitting that named her. A rename or a merge leaves exactly that; a Louise
 # made new in June, with the placeholder left standing beside her, does not.
-check   marjorine_is_the_april_plus_one_under_her_new_name
-say     December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one
+check   louise_is_the_april_plus_one_under_her_new_name
+say     December: nobody named Louise holds a record from before June, so the April plus-one and the June name are two people and not one
 
 # 11. The km of each month, from rides said in six different sittings. The
 # numbers are three digits so that none is a date or another answer's number.
@@ -365,7 +365,7 @@ say     December: the monthly totals are not 103, 123, 110, 144, 182 and 105, so
 check   the_move_is_open_only_on_the_utilities
 say     December: the work of the move is not done except for the utilities, so either a part was never written down or one still reads as open
 
-# 13. Who came. Bebe was never invited and Kyle cancelled, so April's list fails.
+# 13. Who came. Apu was never invited and Kyle cancelled, so April's list fails.
 check   the_party_was_attended_by_those_who_came_and_nobody_else
 say     December: the guests recorded are not the eight who came, so the party's attendance is April's list rather than the day's
 
@@ -433,9 +433,9 @@ three is in the transcript: a visit filed twice reads the same.
 **Whether the monthly totals pair each month with its number.** Question 11's
 lock holds the six numbers and cannot hold which is January's.
 
-**Whether Marjorine was ever the placeholder, when the placeholder held no
+**Whether Louise was ever the placeholder, when the placeholder held no
 record.** Question 10's carrier reads a record older than June on the person
-named Marjorine. A placeholder made in April and given no claim at all, then
+named Louise. A placeholder made in April and given no claim at all, then
 renamed, leaves nothing to read, and the lock fails a year that did the right
 thing. April's sitting says the partner is coming, which is a claim to file, so
 the room does not expect that year.

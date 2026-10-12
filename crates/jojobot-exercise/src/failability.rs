@@ -1448,7 +1448,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: ASKING_ROOM,
-        lock: "Phase 10 — December: the plus-one is not named Marjorine, so the April placeholder and the June name were not put together",
+        lock: "Phase 10 — December: the plus-one is not named Louise, so the April placeholder and the June name were not put together",
         file: "tests/asking_room.rs",
         function: "an_asking_room_nobody_worked_in_fails_every_lock",
         strength: Strength::Blanket,
@@ -1511,7 +1511,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: ASKING_ROOM,
-        lock: "Phase 10 — December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one",
+        lock: "Phase 10 — December: nobody named Louise holds a record from before June, so the April plus-one and the June name are two people and not one",
         file: "tests/asking_room.rs",
         function: "an_asking_room_nobody_worked_in_fails_every_lock",
         strength: Strength::Blanket,
@@ -1553,9 +1553,9 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: ASKING_ROOM,
-        lock: "Phase 10 — December: nobody named Marjorine holds a record from before June, so the April plus-one and the June name are two people and not one",
+        lock: "Phase 10 — December: nobody named Louise holds a record from before June, so the April plus-one and the June name are two people and not one",
         file: "tests/asking_room.rs",
-        function: "a_year_that_named_marjorine_afresh_fails_only_the_plus_one_carrier_lock",
+        function: "a_year_that_named_louise_afresh_fails_only_the_plus_one_carrier_lock",
         strength: Strength::Discriminating,
     },
     NegativeControl {

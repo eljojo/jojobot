@@ -125,7 +125,6 @@ const ROSTER: &[&str] = &[
     "org:quahog-community-college",
     "org:springfield-cyclery",
     "org:springfield-movers",
-    "person:bebe",
     "person:butters",
     "person:kenny",
     "person:kyle",

@@ -145,8 +145,8 @@
 //!   compare each one's own last check-in. The answer slot holds what the
 //!   cold sitting SAID; only the rhythms hold whether the check-ins were
 //!   filed, so the overdue arithmetic rests on them and not on a hand count.
-//! * **`marjorine_is_the_april_plus_one_under_her_new_name`** — find the
-//!   person named Marjorine and ask whether she holds a record older than the
+//! * **`louise_is_the_april_plus_one_under_her_new_name`** — find the
+//!   person named Louise and ask whether she holds a record older than the
 //!   day she was named. A rename carries the April claims to the new handle and
 //!   a merge moves them to the survivor, so the same record is the evidence
 //!   for either route; the placeholder's own handle is the occupant's and no
@@ -440,8 +440,8 @@ pub const CHECKS: [Hatch; 53] = [
             })
         },
     ),
-    ("marjorine_is_the_april_plus_one_under_her_new_name", || {
-        checked(|seen| Box::pin(marjorine_is_the_april_plus_one_under_her_new_name(seen)))
+    ("louise_is_the_april_plus_one_under_her_new_name", || {
+        checked(|seen| Box::pin(louise_is_the_april_plus_one_under_her_new_name(seen)))
     }),
 ];
 
@@ -3714,22 +3714,15 @@ async fn the_move_is_open_only_on_the_utilities(seen: &Observed<'_>) -> Result<(
 ///
 /// Read off the walk INTO the party along attendance, with a link whose claim
 /// was taken back left out: Kyle said yes in April and cancelled in May, and the
-/// walk keeps his name beside a mark saying so. Bebe was never invited and came,
+/// walk keeps his name beside a mark saying so. Apu was never invited and came,
 /// so a list copied from April fails. **A guest the host is allowed**: the host
 /// may be recorded as a ninth attendee, and no more than one extra is, so a
-/// placeholder left standing beside Marjorine is caught.
+/// placeholder left standing beside Louise is caught.
 async fn the_party_was_attended_by_those_who_came_and_nobody_else(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     const CAME: [&str; 8] = [
-        "stan",
-        "wendy",
-        "bebe",
-        "token",
-        "randy",
-        "sharon",
-        "butters",
-        "marjorine",
+        "stan", "wendy", "apu", "token", "randy", "sharon", "butters", "louise",
     ];
     let walked = read_json(
         &seen
@@ -3852,15 +3845,15 @@ async fn the_routines_behind_are_the_chain_and_randy_by_their_check_ins(
     }
 }
 
-/// **Marjorine is the person Butters's partner was in April.**
+/// **Louise is the person Butters's partner was in April.**
 ///
 /// The partner had no name in April and one in June. They are one person when
 /// the record of April sits on the person who now has the name: a rename keeps
 /// the claims on the new handle and a merge moves them onto the survivor, so
-/// **a person named Marjorine who holds a record older than the sitting that
-/// named her** is the evidence for either route. A Marjorine created in June
+/// **a person named Louise who holds a record older than the sitting that
+/// named her** is the evidence for either route. A Louise created in June
 /// holds nothing older, and a year with no such person holds nothing at all.
-async fn marjorine_is_the_april_plus_one_under_her_new_name(
+async fn louise_is_the_april_plus_one_under_her_new_name(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     const NAMED_ON: &str = "2026-06-14";
@@ -3882,14 +3875,14 @@ async fn marjorine_is_the_april_plus_one_under_her_new_name(
                     ["id", "name"].iter().any(|key| {
                         person[*key]
                             .as_str()
-                            .is_some_and(|said| said.to_lowercase().contains("marjorine"))
+                            .is_some_and(|said| said.to_lowercase().contains("louise"))
                     })
                 })
                 .collect()
         })
         .unwrap_or_default();
     if named.is_empty() {
-        return Err("no person is named Marjorine".into());
+        return Err("no person is named Louise".into());
     }
     let older = named.iter().any(|person| {
         person["facts"].as_array().is_some_and(|facts| {
@@ -3903,7 +3896,7 @@ async fn marjorine_is_the_april_plus_one_under_her_new_name(
     match older {
         true => Ok(()),
         false => Err(format!(
-            "Marjorine holds nothing recorded before {NAMED_ON}, so the April plus-one is not \
+            "Louise holds nothing recorded before {NAMED_ON}, so the April plus-one is not \
              her: {named:?}"
         )),
     }

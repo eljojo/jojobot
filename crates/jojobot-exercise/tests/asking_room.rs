@@ -463,24 +463,24 @@ async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
         room,
         sid,
         "add_entity",
-        json!({"kind": "person", "handle": "bebe", "name": "Bebe", "source": "the operator"}),
+        json!({"kind": "person", "handle": "apu", "name": "Apu", "source": "the operator"}),
     )
     .await;
-    attending(room, sid, "bebe", "came to the goodbye party with Wendy").await;
+    attending(room, sid, "apu", "came to the goodbye party with Wendy").await;
     match renamed {
         true => {
             did(
                 room,
                 sid,
                 "rename_entity",
-                json!({"handle": "person:plus-one", "to": "person:marjorine"}),
+                json!({"handle": "person:plus-one", "to": "person:louise"}),
             )
             .await;
             did(
                 room,
                 sid,
                 "update_entity",
-                json!({"handle": "person:marjorine", "name": "Marjorine"}),
+                json!({"handle": "person:louise", "name": "Louise"}),
             )
             .await;
         }
@@ -489,14 +489,14 @@ async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
                 room,
                 sid,
                 "add_entity",
-                json!({"kind": "person", "handle": "marjorine", "name": "Marjorine",
+                json!({"kind": "person", "handle": "louise", "name": "Louise",
                        "source": "the operator"}),
             )
             .await;
             attending(
                 room,
                 sid,
-                "marjorine",
+                "louise",
                 "came to the goodbye party with Butters",
             )
             .await;
@@ -523,8 +523,8 @@ async fn june_naming_the_partner(room: &Surface, sid: &str, renamed: bool) {
         room,
         sid,
         "2026-06-14: The party was yesterday and went great, though we ran out of chairs for ten minutes. \
-         Everybody who said yes came except Kyle. Wendy brought Bebe. Butters's partner is \
-         Marjorine. Backed up the laptop.",
+         Everybody who said yes came except Kyle. Wendy brought Apu. Butters's partner is \
+         Louise. Backed up the laptop.",
         "the party",
     )
     .await;
@@ -728,7 +728,7 @@ const ANSWERS: [(&str, &str, &str, &str); 16] = [
         "event:goodbye-party",
         "No: nine people and eight chairs, so one short.",
     ),
-    ("10", "person:marjorine", "person:butters", "Marjorine"),
+    ("10", "person:louise", "person:butters", "Louise"),
     (
         "11",
         "thing:fat-bike",
@@ -747,7 +747,7 @@ const ANSWERS: [(&str, &str, &str, &str); 16] = [
         "13",
         "event:goodbye-party",
         "event:goodbye-party",
-        "It went great. Stan, Wendy, Bebe, Token, Randy, Sharon, Butters and Marjorine came. \
+        "It went great. Stan, Wendy, Apu, Token, Randy, Sharon, Butters and Louise came. \
          Kyle cancelled.",
     ),
     (
@@ -806,7 +806,7 @@ enum Slip {
     /// October says the backup in words and files no check-in for it.
     TheBackupIsOnlySaid,
     /// June gives Butters's partner her name on a person made new.
-    MarjorineIsMadeNew,
+    LouiseIsMadeNew,
 }
 
 /// **The nine sittings of the year with one slip in one of them**, every other
@@ -818,7 +818,7 @@ async fn work_the_year_slipping(room: &Surface, slip: Slip) {
             (Slip::TheBackupIsOnlySaid, "2026-10-31") => {
                 october_backing_up(room, &sid, false).await
             }
-            (Slip::MarjorineIsMadeNew, "2026-06-14") => {
+            (Slip::LouiseIsMadeNew, "2026-06-14") => {
                 june_naming_the_partner(room, &sid, false).await
             }
             _ => work(room, &sid).await,
@@ -1213,17 +1213,17 @@ async fn solvable_nine_people_met_eight_chairs() {
     );
 }
 
-/// **Case 10. Butters's plus-one is Marjorine, and there is one of them.** The
+/// **Case 10. Butters's plus-one is Louise, and there is one of them.** The
 /// April placeholder was renamed, so no person is left standing as "plus-one".
 #[tokio::test]
-async fn solvable_the_plus_one_and_marjorine_are_one_person() {
+async fn solvable_the_plus_one_and_louise_are_one_person() {
     let (_room, surface) = year_worked().await;
     let people = surface
         .call("list_entities", json!({"kind": "person"}))
         .await;
     assert!(
-        people.contains("person:marjorine") && !people.contains("plus-one"),
-        "the April placeholder became Marjorine: {people}",
+        people.contains("person:louise") && !people.contains("plus-one"),
+        "the April placeholder became Louise: {people}",
     );
     let parsed: Value = serde_json::from_str(&people).expect("json");
     assert_eq!(
@@ -1521,14 +1521,14 @@ async fn a_year_that_only_said_the_backup_fails_only_the_routines_carrier_lock()
 }
 
 /// **Butters's partner was named on a person made new in June.** The wrong
-/// act: the April placeholder stays standing beside Marjorine, so the guests
+/// act: the April placeholder stays standing beside Louise, so the guests
 /// still total the eight and a host, and the answer still names her.
 #[tokio::test]
-async fn a_year_that_named_marjorine_afresh_fails_only_the_plus_one_carrier_lock() {
-    let (_room, surface) = worked_slipping(Slip::MarjorineIsMadeNew).await;
+async fn a_year_that_named_louise_afresh_fails_only_the_plus_one_carrier_lock() {
+    let (_room, surface) = worked_slipping(Slip::LouiseIsMadeNew).await;
     only_one_fails(
         &judge_all(&surface, &[]).await,
-        "nobody named Marjorine holds a record from before June",
+        "nobody named Louise holds a record from before June",
     );
 }
 
@@ -1671,7 +1671,7 @@ async fn prose_year(room: &Surface) {
                 .await;
             }
             5 => {
-                said(room, &sid, "event:goodbye-party", "went great, though we ran out of chairs for ten minutes; everybody who said yes came except Kyle; Wendy brought Bebe; Butters's partner is called Marjorine").await;
+                said(room, &sid, "event:goodbye-party", "went great, though we ran out of chairs for ten minutes; everybody who said yes came except Kyle; Wendy brought Apu; Butters's partner is called Louise").await;
                 said(
                     room,
                     &sid,
@@ -1812,7 +1812,7 @@ async fn a_year_written_entirely_in_prose_fails_every_lock_that_reads_what_was_k
         "of the September visit",
         "of the May visit",
         "jojobot does not find the chain behind",
-        "nobody named Marjorine holds a record from before June",
+        "nobody named Louise holds a record from before June",
     ];
     assert_eq!(
         failed.len(),
