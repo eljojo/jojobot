@@ -66,6 +66,69 @@ async fn restore_the_fixture(label: &str) -> Restored {
 
 /// **A fixture directory, restored into a store of this case's own.**
 async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
+    restore_a_fixture_recorded_earlier(fixture_dir, label, 0).await
+}
+
+/// **Every moment a store holds, moved back by `hours`**, as if the recording had
+/// been made that much earlier. The gate runs on the day it runs, so the age of
+/// a recording is whatever the calendar makes it; this makes the age a thing a
+/// case chooses. It reads every column of every table, so a moment a later build
+/// adds is aged without anybody remembering to list it. The epoch is the store's
+/// own "no moment" and stays where it is.
+async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
+    if hours == 0 {
+        return;
+    }
+    let columns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT CAST(table_name AS CHAR), CAST(column_name AS CHAR)
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND data_type IN ('varchar', 'text', 'char', 'longtext')",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the store's columns read");
+    for (table, column) in columns {
+        let held: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT DISTINCT `{column}` FROM `{table}` WHERE `{column}` LIKE '____-__-__T%Z'"
+        ))
+        .fetch_all(pool)
+        .await
+        .unwrap_or_else(|e| panic!("reading the moments in {table}.{column}: {e}"));
+        let mut moments: Vec<(jiff::Timestamp, String)> = held
+            .into_iter()
+            .filter_map(|text| text.parse().ok().map(|moment| (moment, text)))
+            .filter(|(moment, _)| *moment > jiff::Timestamp::UNIX_EPOCH)
+            .collect();
+        // The moments furthest from where they are going first, so a moved moment
+        // never lands on one still to move.
+        moments.sort();
+        if hours < 0 {
+            moments.reverse();
+        }
+        for (moment, text) in moments {
+            let moved = moment
+                .checked_sub(jiff::SignedDuration::from_hours(hours))
+                .expect("an aged moment is in range")
+                .to_string();
+            sqlx::query(&format!(
+                "UPDATE `{table}` SET `{column}` = ? WHERE `{column}` = ?"
+            ))
+            .bind(moved)
+            .bind(text)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("aging a moment in {table}.{column}: {e}"));
+        }
+    }
+}
+
+/// **A fixture directory, restored into a store of this case's own, and aged**
+/// by `earlier_hours` before the gate moves the moments it pins.
+async fn restore_a_fixture_recorded_earlier(
+    fixture_dir: &str,
+    label: &str,
+    earlier_hours: i64,
+) -> Restored {
     let fixture_ref = format!("{fixture_dir}/ref.txt");
     let fixture_dump = format!("{fixture_dir}/doltdump.sql");
     let git_ref = std::fs::read_to_string(&fixture_ref)
@@ -100,6 +163,29 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
                 panic!("replaying the fixture recorded at {git_ref} failed on:\n{statement}\n{e}")
             });
     }
+    // **The recording is aged before the gate pins anything.** The moments a case
+    // compares against the clock are the three the edits below set, each to a
+    // moment of its own choosing, so the age the recording was given changes
+    // none of them; every other moment in a fixture is only ever read back, and
+    // the aged cases after the boot cases are the standing proof.
+    let first_migration = |pool: sqlx::MySqlPool| async move {
+        let applied: String = sqlx::query_scalar("SELECT MIN(applied_at) FROM schema_migration")
+            .fetch_one(&pool)
+            .await
+            .expect("the first migration's moment reads");
+        applied
+            .parse::<jiff::Timestamp>()
+            .unwrap_or_else(|e| panic!("a recorded moment {applied:?} does not parse: {e}"))
+    };
+    let recorded_at = first_migration(restoring.pool().clone()).await;
+    age_the_recording(restoring.pool(), earlier_hours).await;
+    // **Stated, so an ageing that moved nothing cannot pass for one that did.**
+    let aged_to = first_migration(restoring.pool().clone()).await;
+    assert_eq!(
+        recorded_at.duration_since(aged_to),
+        jiff::SignedDuration::from_hours(earlier_hours),
+        "the recording made at {git_ref} was not aged by {earlier_hours} hours"
+    );
     // **The old claim is moved to ten minutes ago, as the store of a deploy a
     // little while ago holds it.** The recording is hours old and its lease has
     // lapsed by the time this runs, and a lapsed lease proves nothing about a
@@ -363,6 +449,47 @@ async fn the_current_binary_boots_on_a_store_the_deploy_4_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_4_FIXTURE_DIR, "boots-deploy4").await;
 }
 
+/// **The gate does not depend on how old the recording is.** The same boot, over
+/// the same fixture, as if it had been made six hours earlier than it was, and
+/// again as if three days earlier. A case that compares a recorded moment
+/// against the clock passes on the day it is recorded and fails on a later one,
+/// and the calendar is not a thing the gate can choose; this makes it one.
+///
+/// **The moments a case compares against the clock, and what pins each**, found
+/// by ageing every moment in both fixtures from ninety-six hours later to two
+/// hundred hours earlier and running the whole gate, then aiming each pin at
+/// nothing and running it again:
+///
+/// | moment | compared by | pinned by | reddens without the pin |
+/// |---|---|---|---|
+/// | the holder run's `session.started_at` (the sweep drops a run quiet for 24 hours) | the boot's sweep | moved to ten minutes ago | the aged boot cases on deploy 3, whose holder wrote no entry |
+/// | the holder run's journal entries, `at` and `touched` | the same sweep | moved with the start, keeping their gaps | the aged boot cases on deploy 4, whose holder wrote entries |
+/// | the holder's role `claimed_at` (a lease of 45 minutes) | nothing today | moved to ten minutes ago, on deploy 3 only: deploy 4 stores the claim in the role object, which the pin does not match | no case: the whole gate stays green with the pin aimed at nothing |
+///
+/// Every other moment (entity and claim write times, `fact.inserted_at`, the
+/// other runs' starts, the other roles' claims, messages, quarantine, teachings,
+/// migrations) is read back and compared with nothing; the cases below prove it
+/// by passing with all of them aged.
+#[tokio::test]
+async fn the_current_binary_boots_on_a_deploy_3_store_recorded_six_hours_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_3_FIXTURE_DIR, "boots-deploy3-earlier", 6).await;
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_deploy_4_store_recorded_six_hours_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_4_FIXTURE_DIR, "boots-deploy4-earlier", 6).await;
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_deploy_3_store_recorded_three_days_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_3_FIXTURE_DIR, "boots-deploy3-earlier-days", 72).await;
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_deploy_4_store_recorded_three_days_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_4_FIXTURE_DIR, "boots-deploy4-earlier-days", 72).await;
+}
+
 /// **The rows only the deployed build writes, read back by the current binary.**
 /// A key written under `sets`, a role object in its own shape, a closing entry on
 /// a wrapped run, a moment on every write and a wrap window are in no older
@@ -593,6 +720,10 @@ async fn the_rows_only_the_recording_build_writes_read_back(fixture_dir: &str, l
 }
 
 async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
+    boots_on_a_store_recorded_earlier(fixture_dir, label, 0).await;
+}
+
+async fn boots_on_a_store_recorded_earlier(fixture_dir: &str, label: &str, earlier_hours: i64) {
     let Restored {
         scratch,
         state_dir,
@@ -600,7 +731,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
         git_ref,
         held_before,
         handles,
-    } = restore_a_fixture(fixture_dir, label).await;
+    } = restore_a_fixture_recorded_earlier(fixture_dir, label, earlier_hours).await;
 
     // **The current binary boots over the restored store TWICE, and the second
     // boot changes nothing.** The first boot runs every migration and every
