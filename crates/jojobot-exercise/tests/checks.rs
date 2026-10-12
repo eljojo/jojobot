@@ -25,16 +25,19 @@ const THE_PILE_IS_IN_THE_BOX: usize = 2;
 
 /// **A room with nothing in it.** Not a room whose furniture failed — a room
 /// nobody furnished, which is what a check's control has to survive.
-async fn bare() -> (Room, Surface) {
-    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+async fn bare(document: &str) -> (Room, Surface) {
+    let (room, surface) = Room::open_for(
+        &server_binary().expect("a jojobot binary"),
+        &expectations::shipped_playbook(document).expect("the shipped room must read"),
+    )
+    .await
+    .expect("a room");
     (room, surface)
 }
 
 /// A room furnished the way a run furnishes it, and a session in it.
 async fn furnished(document: &str) -> (Room, Surface, String) {
-    let (room, surface) = bare().await;
+    let (room, surface) = bare(document).await;
     expectations::seed_for(document)
         .expect("the room has furniture")
         .furnish(&surface)
@@ -74,7 +77,7 @@ async fn judge(room: &Surface, document: &str, which: usize) -> Outcome {
 /// reporting on a board it never saw.
 #[tokio::test]
 async fn the_brief_check_fails_on_a_room_with_no_mail_and_holds_on_a_furnished_one() {
-    let (_bare, empty) = bare().await;
+    let (_bare, empty) = bare(expectations::HANDOVER_ROOM).await;
     let nothing = judge(&empty, expectations::HANDOVER_ROOM, BRIEF_LEFT_THE_BOX).await;
     assert!(
         !nothing.held,
@@ -102,7 +105,7 @@ async fn the_brief_check_fails_on_a_room_with_no_mail_and_holds_on_a_furnished_o
 /// day*, which says the session failed when the room did.
 #[tokio::test]
 async fn the_service_check_fails_on_a_room_with_no_bike_and_holds_when_the_day_is_a_value() {
-    let (_bare, empty) = bare().await;
+    let (_bare, empty) = bare(expectations::BIKE_ROOM).await;
     let nothing = judge(&empty, expectations::BIKE_ROOM, THE_SERVICE_IS_A_VALUE).await;
     assert!(
         !nothing.held,
@@ -136,7 +139,7 @@ async fn the_service_check_fails_on_a_room_with_no_bike_and_holds_when_the_day_i
 /// like one nobody left a handoff on**.
 #[tokio::test]
 async fn the_handoff_check_fails_on_a_room_with_no_brief_and_holds_when_one_was_left() {
-    let (_bare, empty) = bare().await;
+    let (_bare, empty) = bare(expectations::BIKE_ROOM).await;
     let nothing = judge(&empty, expectations::BIKE_ROOM, A_HANDOFF_IS_WAITING).await;
     assert!(
         !nothing.held,
@@ -348,7 +351,7 @@ async fn the_pointer_check_is_windowed_to_june_and_not_to_a_later_sitting() {
 /// an answer, and *no* is what it says.
 #[tokio::test]
 async fn a_refused_query_is_told_apart_from_an_answer_that_says_no() {
-    let (_room, surface) = bare().await;
+    let (_room, surface) = bare(expectations::BIKE_ROOM).await;
     let boundaries: Vec<Boundary> = Vec::new();
     let seen = Observed {
         room: &surface,

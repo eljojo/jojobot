@@ -1,5 +1,9 @@
 # The asking room
 
+**Server day: 2026-12-02.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **Nine sittings inside one year, none of them remembering the one before,
 and then one cold sitting that is asked fifteen ordinary questions about the
 whole of it.**

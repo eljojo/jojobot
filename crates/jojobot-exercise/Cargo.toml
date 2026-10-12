@@ -178,6 +178,10 @@ name = "trip_lock"
 required-features = ["retired"]
 
 [[test]]
+name = "paid_server_day"
+required-features = ["rooms"]
+
+[[test]]
 name = "usage_limit_run"
 required-features = ["rooms"]
 

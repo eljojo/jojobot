@@ -8,16 +8,27 @@ use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
-/// **The day this room's server runs on**, carried to the child as its own
-/// clock. Every moment the server stamps is this day, whatever the real date is,
+/// **The day this room's server runs on**, read from the room's own document
+/// (the one the paid path reads) and carried to the child as its own clock. Every moment the server stamps is this day, whatever the real date is,
 /// so no needle can be met by a stamp on one real day. It is a day no needle
 /// of this room holds, and `no_needle_here_is_the_servers_own_day` asks that.
-const SERVER_DAY: &str = "2026-11-14";
+static SERVER_DAY: LazyLock<String> = LazyLock::new(|| {
+    Playbook::read(&expectations::room_document(expectations::DECISIONS_ROOM))
+        .unwrap_or_else(|e| panic!("the shipped room must read: {e:#}"))
+        .stated_server_day()
+        .unwrap_or_else(|e| panic!("{e:#}"))
+        .to_string()
+});
 
 /// A room opened the way every sitting here opens it.
 async fn open_the_room() -> anyhow::Result<(Room, Surface)> {
-    Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY).await
+    Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
 }
 
 #[test]
@@ -265,7 +276,7 @@ async fn every_bears_on_citation_the_worked_solution_files_is_under_the_body_cap
     let (_room, surface) = Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
         &seed,
-        SERVER_DAY,
+        SERVER_DAY.as_str(),
     )
     .await
     .expect("a room");
@@ -391,7 +402,7 @@ async fn filed_register_seed() -> PathBuf {
     FILED_REGISTER
         .get_or_try_init(|| async {
             let binary = server_binary().expect("a jojobot binary");
-            Room::snapshot_after_stating(&binary, SERVER_DAY, |surface| async move {
+            Room::snapshot_after_stating(&binary, SERVER_DAY.as_str(), |surface| async move {
                 expectations::seed_for("rooms/decisions.md")?
                     .furnish(&surface)
                     .await?;
@@ -411,7 +422,7 @@ async fn filed_prose_seed() -> PathBuf {
     FILED_PROSE
         .get_or_try_init(|| async {
             let binary = server_binary().expect("a jojobot binary");
-            Room::snapshot_after_stating(&binary, SERVER_DAY, |surface| async move {
+            Room::snapshot_after_stating(&binary, SERVER_DAY.as_str(), |surface| async move {
                 expectations::seed_for("rooms/decisions.md")?
                     .furnish(&surface)
                     .await?;
@@ -751,7 +762,7 @@ async fn one_subject_of_prose_does_not_answer_the_working_state_or_capacity_ques
     let (_room, surface) = Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
         &seed,
-        SERVER_DAY,
+        SERVER_DAY.as_str(),
     )
     .await
     .expect("a room");
@@ -832,7 +843,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let (_room, surface) = Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
         &seed,
-        SERVER_DAY,
+        SERVER_DAY.as_str(),
     )
     .await
     .expect("a room");
@@ -928,10 +939,10 @@ async fn question_six_requires_an_answer_without_a_rule_reference() {
 async fn a_copy_of_the_filed_register_reads_the_same_as_another_copy() {
     let binary = server_binary().expect("a jojobot binary");
     let seed = filed_register_seed().await;
-    let (_room_a, a) = Room::open_with_client_from_stating(&binary, &seed, SERVER_DAY)
+    let (_room_a, a) = Room::open_with_client_from_stating(&binary, &seed, SERVER_DAY.as_str())
         .await
         .expect("the first copy opens");
-    let (_room_b, b) = Room::open_with_client_from_stating(&binary, &seed, SERVER_DAY)
+    let (_room_b, b) = Room::open_with_client_from_stating(&binary, &seed, SERVER_DAY.as_str())
         .await
         .expect("the second copy opens");
 
@@ -1004,7 +1015,7 @@ async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
     let (_room, surface) = async { open_the_room().await.expect("a room") }.await;
     assert_eq!(
         surface.stated_day().await.as_deref(),
-        Some(SERVER_DAY),
+        Some(SERVER_DAY.as_str()),
         "the server is not acting out the day the room gave it"
     );
 }
@@ -1016,7 +1027,7 @@ async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
 fn no_needle_here_is_the_servers_own_day() {
     let named = jojobot_exercise::lock::needles_naming(
         &jojobot_exercise::lock::locks_of(expectations::DECISIONS_ROOM),
-        SERVER_DAY,
+        SERVER_DAY.as_str(),
     );
     assert!(
         named.is_empty(),
@@ -1034,13 +1045,13 @@ async fn a_room_opened_from_its_seed_runs_and_was_stamped_on_the_day_the_room_ga
     let (_room, surface) = Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
         &seed,
-        SERVER_DAY,
+        SERVER_DAY.as_str(),
     )
     .await
     .expect("a room");
     assert_eq!(
         surface.stated_day().await.as_deref(),
-        Some(SERVER_DAY),
+        Some(SERVER_DAY.as_str()),
         "the copy is not acting out the day the room gave it"
     );
     let answer = surface
@@ -1049,7 +1060,8 @@ async fn a_room_opened_from_its_seed_runs_and_was_stamped_on_the_day_the_room_ga
     let parsed: Value =
         serde_json::from_str(&answer).unwrap_or_else(|e| panic!("a recall answers JSON: {e}"));
     assert_eq!(
-        parsed["objects"][0]["as_of"], SERVER_DAY,
+        parsed["objects"][0]["as_of"],
+        SERVER_DAY.as_str(),
         "the seed was stamped on another day: {answer}"
     );
 }

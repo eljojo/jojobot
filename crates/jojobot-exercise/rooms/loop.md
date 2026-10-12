@@ -1,5 +1,9 @@
 # The loop room
 
+**Server day: 2026-10-02.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **Two phases, and the second one has no memory of the first.** That is the
 whole design. Everything else — the goal, the furniture, the five locks — is
 there to make the second phase ask a question the first phase can only have

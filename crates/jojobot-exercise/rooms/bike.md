@@ -1,5 +1,9 @@
 # The bike room
 
+**Server day: 2026-08-12.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **One goal, one line of entry, and every other thing the occupant has to find
 for itself.** The model is not told what jojobot serves, which verb to reach
 for, or that anybody is measuring it. What it gets is one line. Everything

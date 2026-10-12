@@ -16,12 +16,18 @@ use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::{Boundary, Observed, Outcome};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
+use std::sync::LazyLock;
 
-/// **The day this room's server runs on**, carried to the child as its own
-/// clock. Every moment the server stamps is this day, whatever the real date is,
+/// **The day this room's server runs on**, read from the room's own document
+/// (the one the paid path reads) and carried to the child as its own clock. Every moment the server stamps is this day, whatever the real date is,
 /// so no needle can be met by a stamp on one real day. It is a day no needle
 /// of this room holds, and `no_needle_here_is_the_servers_own_day` asks that.
-const SERVER_DAY: &str = "2026-10-02";
+static SERVER_DAY: LazyLock<String> = LazyLock::new(|| {
+    room_document()
+        .stated_server_day()
+        .unwrap_or_else(|e| panic!("{e:#}"))
+        .to_string()
+});
 
 /// The document a run is driven by, read from the root of the workspace.
 fn room_document() -> Playbook {
@@ -32,10 +38,12 @@ fn room_document() -> Playbook {
 /// A room furnished the way a run furnishes it, and a handle to write into it
 /// as the occupant would.
 async fn furnished() -> (Room, Surface, String) {
-    let (room, surface) =
-        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
-            .await
-            .expect("a room");
+    let (room, surface) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room");
     let sid = boot_the_occupant(&surface).await;
     (room, surface, sid)
 }
@@ -476,7 +484,7 @@ async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
     let (_room, surface, _sid) = furnished().await;
     assert_eq!(
         surface.stated_day().await.as_deref(),
-        Some(SERVER_DAY),
+        Some(SERVER_DAY.as_str()),
         "the server is not acting out the day the room gave it"
     );
 }
@@ -488,7 +496,7 @@ async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
 fn no_needle_here_is_the_servers_own_day() {
     let named = jojobot_exercise::lock::needles_naming(
         &jojobot_exercise::lock::locks_of(expectations::LOOP_ROOM),
-        SERVER_DAY,
+        SERVER_DAY.as_str(),
     );
     assert!(
         named.is_empty(),

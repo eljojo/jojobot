@@ -39,9 +39,13 @@ async fn as_occupant(room: &Surface, sid: &str, verb: &str, mut args: serde_json
 
 #[tokio::test]
 async fn the_live_lock_is_wrong_and_the_windowed_lock_is_right() {
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (_room, surface) = Room::open_for(
+        &server_binary().expect("a jojobot binary"),
+        &expectations::shipped_playbook(expectations::VAULT_ROOM)
+            .expect("the shipped room must read"),
+    )
+    .await
+    .expect("a room");
     expectations::seed_for(expectations::VAULT_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)

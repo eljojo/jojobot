@@ -1,5 +1,9 @@
 # The adoption room
 
+**Server day: 2026-11-04.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **One sitting, one line, two facts, and nothing that names a type, a key or a
 verb.** It exists to answer one question about the surface: when the operator
 hands over a fact a shipped type exists for, does the model write it under that

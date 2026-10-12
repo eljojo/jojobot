@@ -1,5 +1,9 @@
 # The repair room
 
+**Server day: 2026-11-05.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **Three cold sittings, and the second and third only make sense if the first
 left something to put right.** The goal is not to file facts well. It is to
 find out whether a model that holds a mistake in the record can find the way to

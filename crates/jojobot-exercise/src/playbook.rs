@@ -45,6 +45,19 @@ const FRESH: &str = "fresh";
 /// fact about the sitting — what a maintainer would put there anyway.
 const DAY: &str = "**Day:";
 
+/// **The day the room's SERVER acts out**, written once in the document.
+///
+/// A server stamps its own clock day on the moments it writes and on the
+/// `as_of` of every answer, and a lock matches a needle as text in an answer.
+/// On the one real day that equals a needle's date, a stamp can meet that
+/// needle, so a run could pass or fail on the calendar. **The document states
+/// the day, and everything that opens the room's server reads it from here**:
+/// the paid path and the room's own test file, so the two cannot drift.
+///
+/// It is a different thing from a sitting's [`DAY`], which is the day the
+/// sitting CLAIMS in the calls it makes.
+const SERVER_DAY: &str = "**Server day:";
+
 /// **The marker that says a phase is one a person has to read.**
 ///
 /// Some things a demanding run measures cannot be locked, and that is not a
@@ -110,6 +123,9 @@ pub struct Phase {
 pub struct Playbook {
     pub source: String,
     pub phases: Vec<Phase>,
+    /// **The day this room's server acts out**, when the document states one.
+    /// See [`SERVER_DAY`]. The paid path refuses a document with none.
+    pub server_day: Option<String>,
 }
 
 impl Playbook {
@@ -124,7 +140,18 @@ impl Playbook {
     pub fn parse(source: &str, text: &str) -> Result<Playbook> {
         let mut phases: Vec<Phase> = Vec::new();
         let mut inside = false;
+        let mut server_day: Option<String> = None;
         for line in text.lines() {
+            if let Some(said) = line.trim_start().strip_prefix(SERVER_DAY) {
+                // **A line that looks like a stated day and holds none is
+                // refused here**, naming the document: it would otherwise read
+                // as a room that never stated one.
+                let day = day_in(said).with_context(|| {
+                    format!("{source}: the server day line names no date: {line:?}")
+                })?;
+                server_day.get_or_insert(day);
+                continue;
+            }
             if let Some(heading) = line.strip_prefix("## ") {
                 // A heading that is not a phase ENDS the phase before it, so
                 // the maintainer's prose after the last phase reaches nobody.
@@ -198,6 +225,21 @@ impl Playbook {
         Ok(Playbook {
             source: source.to_string(),
             phases,
+            server_day,
+        })
+    }
+
+    /// **The day this room's server acts out, or a refusal naming the room.**
+    ///
+    /// The paid path asks this before it spends anything: a room that states no
+    /// day would open its server on the wall clock.
+    pub fn stated_server_day(&self) -> Result<&str> {
+        self.server_day.as_deref().with_context(|| {
+            format!(
+                "{}: the document states no server day, so its run would open the server on \
+                 the wall clock — add a line `**Server day: YYYY-MM-DD.**` outside the phases",
+                self.source,
+            )
         })
     }
 }
@@ -346,6 +388,71 @@ Prose after the last phase, for a maintainer.
                 "{vague:?} names no day, so the sitting claims none",
             );
         }
+    }
+
+    /// **A document states the day its server acts out, once, and a sitting's
+    /// own day is a different thing.**
+    ///
+    /// Both halves in one case: the line is read, and a document without it
+    /// comes back with none rather than with the day of a sitting.
+    #[test]
+    fn a_document_states_the_day_its_server_acts_out_apart_from_its_sittings() {
+        let read = Playbook::parse(
+            "trivial",
+            "# A room\n\n**Server day: 2026-12-23.**\n\n\
+             ## Phase 1 — the opening\n\
+             **Session: fresh.** **Day: 2026-03-04.**\n\n> told\n",
+        )
+        .expect("the playbook reads");
+        assert_eq!(read.server_day.as_deref(), Some("2026-12-23"));
+        assert_eq!(read.phases[0].day.as_deref(), Some("2026-03-04"));
+
+        let silent = Playbook::parse(
+            "trivial",
+            "## Phase 1 — the opening\n**Session: fresh.** **Day: 2026-03-04.**\n\n> told\n",
+        )
+        .expect("the playbook reads");
+        assert_eq!(
+            silent.server_day, None,
+            "a sitting's day is not the server's day",
+        );
+    }
+
+    /// **A server day that names no date is refused when the document is read**,
+    /// naming the document: a line that looks stated and holds no day would
+    /// otherwise read as a room that never stated one.
+    #[test]
+    fn a_server_day_line_carrying_no_date_is_refused_naming_the_document() {
+        let refused = Playbook::parse(
+            "rooms/whatever.md",
+            "**Server day: 2026-3.**\n\n## Phase 1 — a\n\n> told\n",
+        )
+        .expect_err("a line with no date is not a stated day");
+        assert!(
+            refused.to_string().contains("rooms/whatever.md"),
+            "the refusal does not name the document: {refused}",
+        );
+    }
+
+    /// **The paid path asks for the day and is refused without one**, naming the
+    /// room, so a run never reaches the wall clock.
+    #[test]
+    fn a_playbook_that_states_no_server_day_is_refused_by_name() {
+        let silent = Playbook::parse("rooms/whatever.md", TRIVIAL).expect("it parses");
+        let refused = silent.stated_server_day().expect_err("no day is stated");
+        assert!(
+            refused.to_string().contains("rooms/whatever.md"),
+            "the refusal does not name the room: {refused}",
+        );
+        let stated = Playbook::parse(
+            "rooms/whatever.md",
+            "**Server day: 2026-12-23.**\n\n## Phase 1 — a\n\n> told\n",
+        )
+        .expect("it parses");
+        assert_eq!(
+            stated.stated_server_day().expect("the day is stated"),
+            "2026-12-23",
+        );
     }
 
     /// The marker, both ways in the same case: a check that only ever saw the

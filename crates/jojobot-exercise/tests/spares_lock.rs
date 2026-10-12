@@ -23,9 +23,13 @@ use serde_json::json;
 /// write through — the same shape the other lock-proof files open their
 /// rooms with.
 async fn furnished() -> (Room, Surface, String) {
-    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
+    let (room, surface) = Room::open_for(
+        &server_binary().expect("a jojobot binary"),
+        &expectations::shipped_playbook(expectations::VAULT_ROOM)
+            .expect("the shipped room must read"),
+    )
+    .await
+    .expect("a room");
     expectations::seed_for(expectations::VAULT_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)

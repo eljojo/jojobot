@@ -1,5 +1,9 @@
 # The trick room
 
+**Server day: 2026-09-30.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **A brief of ordinary requests, and for each one a convenient place to put what
 it says that is not where the question gets asked.** The goal is not to file
 facts well in general. It is to find out whether a model that is handed a

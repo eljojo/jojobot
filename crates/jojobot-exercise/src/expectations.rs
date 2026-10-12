@@ -129,6 +129,12 @@ pub fn room_document(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name)
 }
 
+/// **A shipped room's document, read** — the one place a test asks for the
+/// playbook of a room it holds open, so the day it states reaches the server.
+pub fn shipped_playbook(name: &str) -> anyhow::Result<crate::playbook::Playbook> {
+    crate::playbook::Playbook::read(&room_document(name))
+}
+
 /// The documents this build ships, by name — what a caller may point a run at.
 pub fn shipped_rooms() -> impl Iterator<Item = &'static str> {
     ROOMS.iter().map(|(document, _, _)| *document)

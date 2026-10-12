@@ -62,6 +62,8 @@ impl Expectation for NeverHoldsIn {
 }
 
 const PLAYBOOK: &str = "\
+**Server day: 2031-02-03.**
+
 ## Phase 1 — the first sitting
 
 > Do the first thing.

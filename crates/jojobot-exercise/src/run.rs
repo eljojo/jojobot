@@ -938,7 +938,12 @@ pub async fn go(
         playbook.source,
     );
 
-    let (room, surface) = Room::open_with_client(&crate::room::server_binary()?).await?;
+    // **The room's server acts out the day its document states**, never the
+    // wall clock: a run must not pass or fail on the calendar. A document that
+    // states none is refused here, before a room opens and before the agent is
+    // launched, because everything after this line spends money.
+    playbook.stated_server_day()?;
+    let (room, surface) = Room::open_for(&crate::room::server_binary()?, playbook).await?;
     seed.furnish(&surface)
         .await
         .context("furnishing the room")?;

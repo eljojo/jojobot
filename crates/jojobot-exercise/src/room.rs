@@ -106,6 +106,18 @@ impl Room {
         Room::open_with_client_on(binary, Some(today)).await
     }
 
+    /// **The room a document describes**: its server acts out the day the
+    /// document states, and a document that states none is refused.
+    ///
+    /// The paid path and every test that holds a room's locks open the room
+    /// here, so the day has one home: the document.
+    pub async fn open_for(
+        binary: &Path,
+        playbook: &crate::playbook::Playbook,
+    ) -> Result<(Room, crate::surface::Surface)> {
+        Room::open_with_client_stating(binary, playbook.stated_server_day()?).await
+    }
+
     /// **A room started from a caller's own seed directory**, rather than the
     /// shared empty template — what [`Room::snapshot_after`] built is the
     /// starting state, filled or not, and this is how a caller gets its own

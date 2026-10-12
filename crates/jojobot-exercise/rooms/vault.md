@@ -1,5 +1,9 @@
 # The second year
 
+**Server day: 2028-07-11.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 **Thirteen sittings inside one year, none of them remembering the one before,
 and every late question reaching across things nobody ever filed together.**
 

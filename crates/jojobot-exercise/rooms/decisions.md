@@ -1,5 +1,9 @@
 # The decision register
 
+**Server day: 2026-11-14.**
+The room's server acts out this day on every run, paid or not, so a stamp it writes
+never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
+
 A room about whether separate cold sittings can file and later recover design rules. The source is a real decision log, with operator references replaced before entering this public room. The answer sits in the store or it does not.
 
 The first nine sittings file the register. Each of the seven later sittings asks one question with no memory of the filing. A rule number is an address for an answer, not a filing instruction.

@@ -19,6 +19,7 @@ use jojobot_exercise::run::{
 };
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
+use std::sync::LazyLock;
 
 fn document() -> Playbook {
     Playbook::read(&expectations::room_document(AGENCY_ROOM))
@@ -44,13 +45,20 @@ struct Lab {
 /// 2026-10-12, did on 2026-10-12. The day is after the last sitting
 /// (2026-12-10) and is no date this room's needles or sittings use. **Never move
 /// the launch day to dodge the clock**: that moves the bomb.
-const SERVER_DAY: &str = "2026-12-11";
+static SERVER_DAY: LazyLock<String> = LazyLock::new(|| {
+    document()
+        .stated_server_day()
+        .unwrap_or_else(|e| panic!("{e:#}"))
+        .to_string()
+});
 
 async fn lab() -> Lab {
-    let (room, surface) =
-        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), SERVER_DAY)
-            .await
-            .expect("a room");
+    let (room, surface) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room");
     expectations::seed_for(AGENCY_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)
@@ -1491,7 +1499,8 @@ async fn the_rooms_server_stamps_the_day_the_room_gave_it() {
     let parsed: serde_json::Value =
         serde_json::from_str(&answer).unwrap_or_else(|e| panic!("a recall answers JSON: {e}"));
     assert_eq!(
-        parsed["objects"][0]["as_of"], SERVER_DAY,
+        parsed["objects"][0]["as_of"],
+        SERVER_DAY.as_str(),
         "the server stamped a day the room did not give it: {answer}"
     );
 }
