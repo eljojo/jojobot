@@ -69,9 +69,12 @@ mod curveball;
 mod dead_handle;
 #[path = "user_stories/degraded.rs"]
 mod degraded;
+/// One thing filed twice, put back together — and what a repair costs.
+/// A markdown file held by section, put whole and read back whole.
+#[path = "user_stories/documents.rs"]
+mod documents;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
-/// One thing filed twice, put back together — and what a repair costs.
 #[path = "user_stories/duplicates.rs"]
 mod duplicates;
 #[path = "user_stories/entitlements.rs"]

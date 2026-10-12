@@ -465,6 +465,17 @@ fn refuse_forged(text: &[&str]) -> Result<(), super::MemoryError> {
     }
 }
 
+/// **What the words of a claim would be refused for, asked before anything is
+/// written.** The stored mark is jojobot's and a handle that names nothing is
+/// refused with candidates: the two refusals [`Mentioning`] gives a capture, for
+/// a caller that has many claims to write and must know none is refused before
+/// it writes the first.
+pub fn refusal_for_text(text: &[&str], known: &[Entity]) -> Option<super::MemoryError> {
+    refuse_forged(text)
+        .err()
+        .or_else(|| Mentioning::screen_or_unknown(text, known))
+}
+
 /// Whether any of this text holds a mention-shaped substring this process
 /// cannot resolve because it has loaded no kinds.
 fn any_unknowable(text: &[&str]) -> bool {
@@ -1386,6 +1397,29 @@ mod tests {
             badge: badge.map(str::to_string),
             archived: None,
         }
+    }
+
+    /// **The words of a claim are screened before a write, the way a capture
+    /// screens them.** A handle naming something passes, one naming nothing is
+    /// refused with the handle, the stored mark is refused, and a handle in code
+    /// is not a mention at all.
+    #[test]
+    fn text_is_screened_for_the_mark_and_for_handles_that_name_nothing() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let known = [thing("person:milhouse", Some("k7h2mn"))];
+        assert!(refusal_for_text(&["saw @person:milhouse"], &known).is_none());
+        assert!(refusal_for_text(&["`@person:ralph` in code"], &known).is_none());
+        assert_eq!(
+            refusal_for_text(&["plain", "saw @person:ralph"], &known).map(|e| match e {
+                super::super::MemoryError::UnknownEntity { attempted, .. } => attempted,
+                other => panic!("{other:?}"),
+            }),
+            Some("person:ralph".to_string()),
+        );
+        assert!(matches!(
+            refusal_for_text(&["forged @#k7h2mn"], &known),
+            Some(super::super::MemoryError::InvalidFact(_))
+        ));
     }
 
     /// 🚨 **The stored spelling, pinned as a literal.**

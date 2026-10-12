@@ -16219,6 +16219,52 @@ pub async fn an_entity_edited_with_a_claim_is_made_whole_or_not_at_all<M: Memory
     );
 }
 
+/// **A markdown file split into sections, stored a section per claim, joins back
+/// to the file byte for byte.** A claim is one trimmed line and trimmed details,
+/// and the real store keeps its rows in a table, so what a fake keeping bytes
+/// verbatim answers says nothing about the shapes below: a pipe and a backslash
+/// in a heading, a Windows line break, tabs, trailing spaces, lines of spaces,
+/// indented code, non-ASCII text, a frontmatter block, and no final newline.
+pub async fn a_document_split_into_sections_joins_back_to_the_bytes_put<M: Memory>(store: &M) {
+    use crate::memory::document;
+    let subject = EntityId("document:contract-notes".into());
+    let text = "---\ntitle: a | b\n---\n\n# Heading with | a pipe and \\ a backslash  \n\n\
+                first line\r\nsecond line\r\n\r\n\tindented by a tab  \n   \n    code\n\n\
+                ## Caf\u{e9} \u{4e16}\u{754c}\t\ntext\n\n\n```\n# not a heading\n```\n\n\
+                ### Last\nno final newline";
+    let sections = document::split(text).expect("the text splits");
+    let orders = crate::memory::order::spread(None, None, sections.len()).expect("room");
+    for (section, order) in sections.iter().zip(&orders) {
+        capture(
+            store,
+            NewFact {
+                details: (!section.body.is_empty()).then(|| section.body.clone()),
+                fields: document::record_fields(section, order),
+                session: Some("session-document".to_string()),
+                ..NewFact::about(
+                    subject.clone(),
+                    section.first_line.clone(),
+                    date(2026, 10, 11),
+                )
+            },
+        )
+        .await;
+    }
+    let mut read: Vec<(String, document::Section)> = store
+        .recall(&subject)
+        .await
+        .expect("recall should succeed")
+        .iter()
+        .filter_map(|fact| {
+            document::from_record(&fact.content, fact.details.as_deref(), &fact.fields)
+        })
+        .collect();
+    read.sort_by(|a, b| a.0.cmp(&b.0));
+    let back: Vec<document::Section> = read.into_iter().map(|(_, section)| section).collect();
+    assert_eq!(back, sections, "each section comes back as it went in");
+    assert_eq!(document::join(&back), text, "and they join to the file");
+}
+
 /// **Every case of the memory contract, listed once.** The list is a macro so
 /// that counting the cases and running a slice of them read the same list: a
 /// case added here is counted and run, and no second list can drift from it.
@@ -16238,6 +16284,7 @@ macro_rules! all_cases {
         $m!(pipe_in_content_round_trips($store));
         $m!(a_backslash_in_content_round_trips($store));
         $m!(details_hold_paragraph_breaks_and_round_trip($store));
+        $m!(a_document_split_into_sections_joins_back_to_the_bytes_put($store));
         $m!(both_provenances_survive($store));
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));

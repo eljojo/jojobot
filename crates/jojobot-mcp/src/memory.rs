@@ -20,10 +20,13 @@ pub mod claim_room;
 pub(crate) mod clauses;
 pub mod declare_type;
 pub mod declined;
+pub(crate) mod documents;
 pub mod due;
 pub mod list_entities;
 pub mod merge_entities;
 pub mod parse;
+pub mod put_document;
+pub mod read_document;
 pub mod ready;
 pub mod recall;
 pub mod rename_entity;
@@ -46,6 +49,8 @@ pub use add_entity::AddEntityArgs;
 pub use capture::CaptureArgs;
 pub use declare_type::{DeclareTypeArgs, FieldArgs};
 pub use list_entities::ListEntitiesArgs;
+pub use put_document::PutDocumentArgs;
+pub use read_document::ReadDocumentArgs;
 pub use recall::RecallArgs;
 pub use rename_entity::RenameEntityArgs;
 pub use retract::RetractArgs;
@@ -71,6 +76,8 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
         + Jojobot::declare_type_router()
         + Jojobot::list_entities_router()
         + Jojobot::merge_entities_router()
+        + Jojobot::put_document_router()
+        + Jojobot::read_document_router()
         + Jojobot::recall_router()
         + Jojobot::rename_entity_router()
         + Jojobot::retract_router()

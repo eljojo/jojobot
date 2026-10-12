@@ -35,6 +35,12 @@ fn last_day() -> jiff::civil::Date {
     jiff::civil::date(9999, 12, 31)
 }
 
+/// A thing as a read serves it, held so a run of records is measured beside it.
+pub(crate) struct RecordRoom {
+    entity: Entity,
+    folded: Fold,
+}
+
 /// **A record's size as a read serves it, and the room one part has for it.**
 struct Measured {
     size: usize,
@@ -115,6 +121,25 @@ impl Jojobot {
         let fact = prospective_fact(new, held + 1, Some(widest_stamp(self.clock().now())));
         self.refuses_a_claim_too_big_to_read(&fact, creating, None)
             .await
+    }
+
+    /// **A thing read once, so that many records can be asked whether they pass.**
+    /// `None` when the thing or the store cannot be read: a thing this cannot
+    /// measure is not known to be over, so every record passes it, as in
+    /// [`Jojobot::refuses_a_claim_too_big_to_read`].
+    pub(crate) async fn room_for_records(&self, subject: &EntityId) -> Option<RecordRoom> {
+        let (entity, folded) = self.thing_as_read(subject, None).await?;
+        Some(RecordRoom { entity, folded })
+    }
+
+    /// **Whether a record about to be created passes the write guard** beside
+    /// the thing in `room`, given that the thing holds `held` records once the
+    /// whole write has landed. The arithmetic is the guard's own, not a copy:
+    /// a record that passes here is a record the guard lets in.
+    pub(crate) fn record_passes(&self, room: &RecordRoom, new: &NewFact, held: usize) -> bool {
+        let fact = prospective_fact(new, held, Some(widest_stamp(self.clock().now())));
+        let measured = self.measured_beside(&fact, &room.entity, room.folded.clone());
+        measured.size <= measured.room
     }
 
     /// **The same check for an edit**, asked of the record as the edit would

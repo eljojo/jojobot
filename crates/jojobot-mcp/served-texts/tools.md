@@ -1953,6 +1953,226 @@ A post into your own box delivers nothing, and a post that had nothing to
 hand over still succeeded.
 ```
 
+### Tool `put_document`
+
+#### `put_document` — description
+
+```text
+Write a whole markdown file onto a document: it is split at its headings and every heading with what sits under it is stored as one claim on the document, in order, each with its own address, history and provenance.
+read_document returns the file byte for byte; update_fact edits one section and leaves the others untouched.
+A section too long for one record is cut at the last blank line that fits.
+The document must already exist (add_entity, kind document).
+Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
+Every section is checked before any is written; a write that stops midway answers with the addresses that landed and where the rest begins.
+Answers with a receipt, not the text.
+A refusal is an answer with status: blocked and nothing written.
+```
+
+#### `put_document` — structure
+
+```json
+{
+  "inputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "after": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "document": {
+        "type": "string"
+      },
+      "markdown": {
+        "type": "string"
+      },
+      "provenance": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sid": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "source": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "source_ref": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "document",
+      "markdown"
+    ],
+    "type": "object"
+  },
+  "name": "put_document"
+}
+```
+
+#### `put_document` — argument `/inputSchema.after`
+
+```text
+**A section's address**, `document:homer#local-id`: write the new sections
+right after it. **Required when the document already has sections**, so
+that putting an edited file again cannot silently double the document.
+To change a section that is there, edit its record with `update_fact`;
+to take one away, archive its record.
+```
+
+#### `put_document` — argument `/inputSchema.document`
+
+```text
+The document to write onto, `document:homer`. **It must already exist**:
+a document jojobot does not know comes back with candidates and nothing
+is written. Make it with `add_entity` first, kind `document`; its `name`
+is its title.
+```
+
+#### `put_document` — argument `/inputSchema.markdown`
+
+```text
+**The whole markdown file**, as it should read back. It is split at its
+headings (`#` to `######`, not inside a fenced block of code) and each
+heading with what sits under it becomes one record on the document. A
+section too long for one record is cut at the last blank line that
+fits. Reading it back with `read_document` returns these exact bytes.
+
+A `@kind:slug` outside a code span or fence links to a thing that exists
+and is refused when it names nothing; inside code it is literal.
+```
+
+#### `put_document` — argument `/inputSchema.provenance`
+
+```text
+`testimony` (the operator said these words), `observation` (you READ
+them in a system of record, so `source` is required) or `inference`
+(you wrote or derived them; the default). One provenance covers every
+section of the call.
+```
+
+#### `put_document` — argument `/inputSchema.recorded_at`
+
+```text
+The day the sections were made, `YYYY-MM-DD`. Defaults to the day your
+run is in.
+```
+
+#### `put_document` — argument `/inputSchema.sid`
+
+```text
+**Your session id**, exactly as the boot door returned it. Pass it on
+every call — it is what tells jojobot which bot is asking.
+```
+
+#### `put_document` — argument `/inputSchema.source`
+
+```text
+**Where the text was read**, for an `observation`: the system of record.
+Stored on every section as `read_from`.
+```
+
+#### `put_document` — argument `/inputSchema.source_ref`
+
+```text
+**What was read there**, when it has a reference: an id, a path, a line.
+Stored on every section as `read_ref`.
+```
+
+### Tool `read_document`
+
+#### `read_document` — description
+
+```text
+Read a document as markdown: its live sections joined in order, byte for byte as they were put, as one markdown string.
+Archived sections are left out and counted.
+A document longer than one answer comes back in parts: the sections from `offset` that fit, with `next_offset` and a not_shown block naming the call that reads the rest.
+The document's own name, one_liner, stale_after and resource ride beside the text, never inside it.
+A document that does not exist is a blocked result with candidates.
+```
+
+#### `read_document` — structure
+
+```json
+{
+  "inputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "document": {
+        "type": "string"
+      },
+      "offset": {
+        "default": null,
+        "format": "uint",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "sid": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "document"
+    ],
+    "type": "object"
+  },
+  "name": "read_document"
+}
+```
+
+#### `read_document` — argument `/inputSchema.document`
+
+```text
+The document, `document:homer`.
+```
+
+#### `read_document` — argument `/inputSchema.offset`
+
+```text
+**The section to start from, counting from 0**, when a document is too
+long for one answer. The answer names the next one in `next_offset`.
+Leave it off to start at the top.
+```
+
+#### `read_document` — argument `/inputSchema.sid`
+
+```text
+**Your session id**, exactly as the boot door returned it. Pass it on
+every call — it is what tells jojobot which bot is asking. Reads are
+attributed, never journalled.
+```
+
 ### Tool `read_mailbox`
 
 #### `read_mailbox` — description

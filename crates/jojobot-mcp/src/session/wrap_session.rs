@@ -1138,6 +1138,24 @@ mod tests {
         refused(
             json_of(
                 &jojobot
+                    .put_document(Parameters(crate::memory::PutDocumentArgs {
+                        document: "document:homer".into(),
+                        markdown: "# After the wrap\n".into(),
+                        after: None,
+                        provenance: None,
+                        source: None,
+                        source_ref: None,
+                        recorded_at: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "put_document",
+        );
+        refused(
+            json_of(
+                &jojobot
                     .archive_entity(Parameters(ArchiveEntityArgs {
                         handle: "bot:gamma".into(),
                         reason: "test".into(),
@@ -1329,6 +1347,7 @@ mod tests {
         "mark_processed",
         "merge_entities",
         "post_message",
+        "put_document",
         "rename_entity",
         "retract",
         "set_charter",
@@ -1341,6 +1360,7 @@ mod tests {
         "list_runs",
         "list_sent",
         "ping",
+        "read_document",
         "read_mailbox",
         "read_message",
         "recall",

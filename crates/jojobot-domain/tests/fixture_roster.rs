@@ -76,6 +76,14 @@ fn kinds() -> Vec<&'static str> {
 /// The gate accepts a handle on this list or on [`ORDINARY`]; the two lists
 /// together are the allowlist, and no handle is on both.
 const ROSTER: &[&str] = &[
+    "document:alpha",
+    "document:bart",
+    "document:beta",
+    "document:homer",
+    "document:krusty",
+    "document:lisa",
+    "document:marge",
+    "document:skinner",
     "bot:bart",
     "bot:lisa",
     "bot:lisa",
@@ -235,6 +243,7 @@ const ROSTER: &[&str] = &[
 /// [`ROSTER`], where the bar shows it, or nowhere.
 const ORDINARY: &[&str] = &[
     "bot:assistant",
+    "document:contract-notes",
     // The views: the ones the software ships, and the ones a story or a page
     // case declares to stand beside them. **A shipped record names itself by
     // its handle**, so this scan reads it on the same terms as every other

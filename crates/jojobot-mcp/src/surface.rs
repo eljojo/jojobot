@@ -1223,6 +1223,8 @@ fn the_tool_surface_is_exactly_this_list() {
             "merge_entities",
             "ping",
             "post_message",
+            "put_document",
+            "read_document",
             "read_mailbox",
             "read_message",
             "recall",

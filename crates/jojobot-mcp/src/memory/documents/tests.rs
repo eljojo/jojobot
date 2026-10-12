@@ -1,0 +1,715 @@
+//! The document verbs, through the served surface: a file put and read back,
+//! one section edited, a document too long for one answer.
+
+use super::*;
+use crate::harness::*;
+use crate::memory::testing::*;
+use jojobot_domain::text::ANSWER_CEILING;
+use std::sync::Arc;
+
+const NOTES: &str = "---\nname: alpha\n---\n\n# Alpha notes\n\nA first paragraph.\n\n## Beta part\n\nText with a fence:\n\n```\n# not a heading\n@person:ralph\n```\n\n## Gamma part\n\nThe end, with no final newline.";
+
+async fn put_args(document: &str, markdown: &str) -> PutDocumentArgs {
+    PutDocumentArgs {
+        document: document.into(),
+        markdown: markdown.into(),
+        after: None,
+        provenance: None,
+        source: None,
+        source_ref: None,
+        recorded_at: None,
+        sid: Some(TEST_SID.into()),
+    }
+}
+
+async fn put(jojobot: &Jojobot, args: PutDocumentArgs) -> CallToolResult {
+    jojobot
+        .put_document(Parameters(args))
+        .await
+        .expect("put_document answers")
+}
+
+/// A document that exists, and the markdown put onto it.
+async fn put_ok(jojobot: &Jojobot, document: &str, markdown: &str) -> serde_json::Value {
+    ensure(jojobot, document).await;
+    let answered = json_of(&put(jojobot, put_args(document, markdown).await).await);
+    assert_ne!(
+        answered["status"], "blocked",
+        "the put was refused: {answered}"
+    );
+    answered
+}
+
+async fn read_part(jojobot: &Jojobot, document: &str, offset: Option<usize>) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .read_document(Parameters(ReadDocumentArgs {
+                document: document.into(),
+                offset,
+                sid: Some(TEST_SID.into()),
+            }))
+            .await
+            .expect("read_document answers"),
+    )
+}
+
+/// The whole document, read in as many parts as it takes.
+async fn read_all(jojobot: &Jojobot, document: &str) -> String {
+    let mut text = String::new();
+    let mut offset = None;
+    loop {
+        let part = read_part(jojobot, document, offset).await;
+        text.push_str(part["markdown"].as_str().expect("a part carries markdown"));
+        match part["next_offset"].as_u64() {
+            Some(next) => offset = Some(next as usize),
+            None => return text,
+        }
+    }
+}
+
+/// The records of a document: address, words and own fields, in write order,
+/// read in as many parts as `recall` needs under the answer ceiling.
+async fn records(jojobot: &Jojobot, document: &str) -> Vec<serde_json::Value> {
+    let mut held = Vec::new();
+    let mut offset = 0;
+    loop {
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    offset: Some(offset),
+                    ..recall_args(document)
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        held.extend(
+            body["objects"][0]["facts"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+        );
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next as u32,
+            None => return held,
+        }
+    }
+}
+
+/// **A whole put then a read is the file, byte for byte.** The positive half;
+/// the edited-section case below is the negative one. The shapes are the ones a
+/// trimming store would lose: a frontmatter block, a fence holding a `#` line
+/// and a handle, no final newline, trailing spaces, CRLF, a bare heading.
+#[tokio::test]
+async fn a_whole_put_then_a_read_is_the_file_byte_for_byte() {
+    let jojobot = handler_mentioning();
+    for (document, text) in [
+        ("document:homer", NOTES),
+        ("document:marge", "# One  \n\nbody\n\n\n\n"),
+        (
+            "document:lisa",
+            "preamble\n\n# One\r\n\r\nbody\r\n## Two\r\nmore\r\n",
+        ),
+        ("document:bart", "# Only a heading"),
+        ("document:krusty", "\n\n  # Indented\ntext\n"),
+        ("document:skinner", "# A\n# B\n# C\n"),
+    ] {
+        put_ok(&jojobot, document, text).await;
+        assert_eq!(read_all(&jojobot, document).await, text, "{text:?}");
+    }
+}
+
+/// **A frontmatter block in the file is its first section, verbatim**, at level
+/// 0; the document's own fields ride beside the text on a read, never in it.
+#[tokio::test]
+async fn a_frontmatter_block_is_the_first_section_and_the_fields_ride_beside_the_text() {
+    let jojobot = handler();
+    put_ok(&jojobot, "document:alpha", NOTES).await;
+    let held = records(&jojobot, "document:alpha").await;
+    assert_eq!(held[0]["content"], "---");
+    assert_eq!(held[0]["fields"]["level"], "0");
+    assert_eq!(held[1]["fields"]["level"], "1");
+    let part = read_part(&jojobot, "document:alpha", None).await;
+    assert_eq!(part["name"], "alpha");
+    assert!(
+        part["markdown"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("---\nname: alpha\n---")),
+        "{part}"
+    );
+    assert_eq!(part["sections"], held.len());
+}
+
+/// **The stored spellings of a section's keys are pinned by their literals**:
+/// a record written under another spelling is one a later build cannot read.
+#[tokio::test]
+async fn a_section_is_stored_under_the_keys_level_order_edges_and_continues() {
+    let jojobot = handler();
+    let answered = put_ok(&jojobot, "document:alpha", "# One\n\nbody\n# Two\n").await;
+    let held = records(&jojobot, "document:alpha").await;
+    assert_eq!(answered["first"], held[0]["address"]);
+    assert_eq!(answered["last"], held[1]["address"]);
+    assert_eq!(answered["bytes"], 18);
+    let fields = held[0]["fields"].clone();
+    let keys: Vec<&str> = fields
+        .as_object()
+        .expect("fields")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["edges", "level", "order"]);
+    assert_eq!(fields["level"], "1");
+    assert_eq!(fields["edges"], ";;\\n\\n;\\n");
+}
+
+/// **One edited section leaves every other section's bytes where they were.**
+/// The negative half of the round trip: nothing else moved.
+#[tokio::test]
+async fn editing_one_section_leaves_every_other_sections_bytes() {
+    let jojobot = handler();
+    put_ok(&jojobot, "document:alpha", NOTES).await;
+    let held = records(&jojobot, "document:alpha").await;
+    let beta = held
+        .iter()
+        .find(|fact| fact["content"] == "## Beta part")
+        .expect("the beta section")["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    let edited = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            find: Some("Text with a fence:".into()),
+            replace: Some("Text with a code block:".into()),
+            field: Some("details".into()),
+            ..update_args(&beta)
+        }))
+        .await
+        .expect("update_fact answers");
+    assert_ne!(json_of(&edited)["status"], "blocked", "{edited:?}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        NOTES.replace("Text with a fence:", "Text with a code block:")
+    );
+}
+
+/// **A put onto a document that has sections is refused unless it says where**,
+/// and the refusal names both ways forward. Nothing is written: putting an
+/// edited file again must not double the text.
+#[tokio::test]
+async fn a_put_onto_a_document_with_sections_is_refused_unless_it_names_after() {
+    let jojobot = handler();
+    put_ok(&jojobot, "document:alpha", "# One\n\nbody\n").await;
+    let refused = put(
+        &jojobot,
+        put_args("document:alpha", "# Two\n\nmore\n").await,
+    )
+    .await;
+    let body = blocked(&refused);
+    assert_eq!(body["fix_by"], "change");
+    let said = body.to_string();
+    assert!(
+        said.contains("after") && said.contains("update_fact"),
+        "{said}"
+    );
+    assert_eq!(records(&jojobot, "document:alpha").await.len(), 1);
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# One\n\nbody\n"
+    );
+}
+
+/// **`after` places new sections right behind the section it names**, in the
+/// middle of the document as well as at its end; and never between the halves of
+/// a section that was cut for size.
+#[tokio::test]
+async fn after_places_the_new_sections_behind_the_one_it_names() {
+    let jojobot = handler();
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# One\n\none\n\n# Three\n\nthree\n",
+    )
+    .await;
+    let one = records(&jojobot, "document:alpha").await[0]["address"]
+        .as_str()
+        .expect("address")
+        .to_string();
+    let answered = json_of(
+        &put(
+            &jojobot,
+            PutDocumentArgs {
+                after: Some(one),
+                ..put_args("document:alpha", "# Two\n\ntwo\n\n").await
+            },
+        )
+        .await,
+    );
+    assert_ne!(answered["status"], "blocked", "{answered}");
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# One\n\none\n\n# Two\n\ntwo\n\n# Three\n\nthree\n"
+    );
+}
+
+/// **`after` must name a live section of this document.** A record of another
+/// thing, and an address that names nothing, are refused with nothing written.
+#[tokio::test]
+async fn after_naming_something_that_is_not_a_section_here_is_refused() {
+    let jojobot = handler();
+    put_ok(&jojobot, "document:alpha", "# One\n\nbody\n").await;
+    put_ok(&jojobot, "document:beta", "# Other\n\nbody\n").await;
+    let other = records(&jojobot, "document:beta").await[0]["address"]
+        .as_str()
+        .expect("address")
+        .to_string();
+    for after in [other.as_str(), "document:alpha#f999"] {
+        let refused = put(
+            &jojobot,
+            PutDocumentArgs {
+                after: Some(after.into()),
+                ..put_args("document:alpha", "# Two\n").await
+            },
+        )
+        .await;
+        blocked(&refused);
+    }
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# One\n\nbody\n"
+    );
+}
+
+/// **A document that does not exist is not created by writing onto it**, and a
+/// thing of another kind is not a document.
+#[tokio::test]
+async fn a_put_creates_nothing_and_writes_only_onto_a_document() {
+    let jojobot = handler();
+    let missing = put(&jojobot, put_args("document:alpha", "# One\n").await).await;
+    assert_eq!(blocked(&missing)["status"], "blocked");
+    ensure(&jojobot, "place:springfield").await;
+    let wrong = put(&jojobot, put_args("place:springfield", "# One\n").await).await;
+    blocked(&wrong);
+    let listed = jojobot
+        .list_entities(Parameters(ListEntitiesArgs {
+            kind: Some("document".into()),
+            parent: None,
+            offset: None,
+            sid: Some(TEST_SID.into()),
+        }))
+        .await
+        .expect("list answers");
+    assert_eq!(json_of(&listed)["count"], 0, "{listed:?}");
+}
+
+/// **A text with nothing to put is refused by name.**
+#[tokio::test]
+async fn an_empty_or_blank_text_or_a_lone_carriage_return_is_refused() {
+    let jojobot = handler();
+    ensure(&jojobot, "document:alpha").await;
+    for text in ["", "  \n \n", "# One\rtwo"] {
+        let refused = put(&jojobot, put_args("document:alpha", text).await).await;
+        blocked(&refused);
+    }
+    assert!(records(&jojobot, "document:alpha").await.is_empty());
+}
+
+/// **Provenance rides on every section; an observation names where it was
+/// read.** Without `read_from` the call is refused before any section is
+/// written.
+#[tokio::test]
+async fn an_observation_without_a_source_is_refused_and_one_with_it_is_stored() {
+    let jojobot = handler();
+    ensure(&jojobot, "document:alpha").await;
+    let refused = put(
+        &jojobot,
+        PutDocumentArgs {
+            provenance: Some("observation".into()),
+            ..put_args("document:alpha", "# One\n\n# Two\n").await
+        },
+    )
+    .await;
+    blocked(&refused);
+    assert!(records(&jojobot, "document:alpha").await.is_empty());
+    let answered = json_of(
+        &put(
+            &jojobot,
+            PutDocumentArgs {
+                provenance: Some("observation".into()),
+                source: Some("the wiki".into()),
+                ..put_args("document:alpha", "# One\n\n# Two\n").await
+            },
+        )
+        .await,
+    );
+    assert_ne!(answered["status"], "blocked", "{answered}");
+    for held in records(&jojobot, "document:alpha").await {
+        assert_eq!(held["provenance"], "observation");
+        assert_eq!(held["fields"]["read_from"], "the wiki");
+    }
+}
+
+/// **A handle in prose that names nothing refuses the whole put, before the
+/// first section is written.** The same handle inside a fence is code and passes
+/// (the round-trip case above).
+#[tokio::test]
+async fn a_handle_in_prose_that_names_nothing_refuses_the_put_with_nothing_landed() {
+    let jojobot = handler_mentioning();
+    ensure(&jojobot, "document:homer").await;
+    let text = "# One\n\nfine\n\n# Two\n\nsee @person:ralph here\n\n# Three\n\nlast\n";
+    let refused = put(&jojobot, put_args("document:homer", text).await).await;
+    let body = blocked(&refused);
+    assert!(body.to_string().contains("person:ralph"), "{body}");
+    assert!(records(&jojobot, "document:homer").await.is_empty());
+}
+
+/// **A store that stops partway leaves the sections that landed, says which they
+/// are and where the rest begins, and the rest goes in after the last of them.**
+/// Nothing is taken back behind the caller.
+#[tokio::test]
+async fn a_store_that_stops_midway_names_what_landed_and_where_the_rest_begins() {
+    let inner = Arc::new(InMemoryMemory::seeded());
+    let failing = Jojobot::new(
+        Arc::new(FailsOnCapture {
+            inner: inner.clone(),
+            fails_from: 3,
+            seen: Default::default(),
+        }),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    ensure(&failing, "document:homer").await;
+    let text = "# One\n\nfirst\n\n# Two\n\nsecond\n\n# Three\n\nthird\n";
+    let stopped = failing
+        .put_document(Parameters(put_args("document:homer", text).await))
+        .await
+        .expect_err("a store that stopped is an error");
+    let body = stopped.data.clone().expect("the error carries data");
+    assert_eq!(body["fix_by"], "retry", "{body}");
+    assert_eq!(body["landed"].as_array().map(Vec::len), Some(2), "{body}");
+    assert_eq!(body["not_written"], 1);
+    let from = body["rest_begins_at_byte"].as_u64().expect("a byte offset") as usize;
+    assert_eq!(&text[..from], "# One\n\nfirst\n\n# Two\n\nsecond\n\n");
+    assert!(
+        stopped.message.contains("landed and stay"),
+        "the words say what is true: {}",
+        stopped.message
+    );
+    assert_eq!(
+        read_all(&failing, "document:homer").await,
+        &text[..from],
+        "what landed stays, and nothing was taken back"
+    );
+
+    // The store is back. The rest goes in behind the last section that landed.
+    let healthy = handler_over(inner);
+    let landed = body["landed"][1].as_str().expect("an address").to_string();
+    let finished = json_of(
+        &put(
+            &healthy,
+            PutDocumentArgs {
+                after: Some(landed),
+                ..put_args("document:homer", &text[from..]).await
+            },
+        )
+        .await,
+    );
+    assert_ne!(finished["status"], "blocked", "{finished}");
+    assert_eq!(read_all(&healthy, "document:homer").await, text);
+}
+
+/// **A write that landed is never reported as failed.** A store whose fold falls
+/// behind after each write still has every section, and the put says so.
+#[tokio::test]
+async fn a_fold_that_falls_behind_does_not_make_the_put_a_failure() {
+    let inner = Arc::new(InMemoryMemory::seeded());
+    let jojobot = Jojobot::new(
+        Arc::new(FoldBehindMemory(inner)),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let answered = put_ok(&jojobot, "document:homer", "# One\n\na\n\n# Two\n\nb\n").await;
+    assert_eq!(answered["sections"], 2);
+    assert_eq!(answered["fold"]["behind"], "stale");
+    assert_eq!(
+        read_all(&jojobot, "document:homer").await,
+        "# One\n\na\n\n# Two\n\nb\n"
+    );
+}
+
+/// **New sections go behind a section's cut chunks, never between them.**
+#[tokio::test]
+async fn after_a_cut_section_lands_behind_its_last_chunk() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    let text = format!("{big}# Last\n\nend\n");
+    put_ok(&jojobot, "document:homer", &text).await;
+    let held = records(&jojobot, "document:homer").await;
+    assert!(held.len() >= 3, "the big section was cut");
+    let head = held[0]["address"].as_str().expect("address").to_string();
+    let placed = json_of(
+        &put(
+            &jojobot,
+            PutDocumentArgs {
+                after: Some(head),
+                ..put_args("document:homer", "# Inserted\n\nnew\n\n").await
+            },
+        )
+        .await,
+    );
+    assert_ne!(placed["status"], "blocked", "{placed}");
+    assert_eq!(
+        read_all(&jojobot, "document:homer").await,
+        format!("{big}# Inserted\n\nnew\n\n# Last\n\nend\n")
+    );
+}
+
+/// **An anchor that matches nowhere, or in two places, is refused, and the
+/// section stays as it was**; so is an edit built on a revision that is no
+/// longer the section's.
+#[tokio::test]
+async fn an_anchor_matching_zero_or_two_places_or_a_stale_revision_is_refused() {
+    let jojobot = handler();
+    put_ok(&jojobot, "document:alpha", "# One\n\nsame same\n").await;
+    let address = records(&jojobot, "document:alpha").await[0]["address"]
+        .as_str()
+        .expect("address")
+        .to_string();
+    for find in ["absent", "same"] {
+        let refused = jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                find: Some(find.into()),
+                replace: Some("x".into()),
+                field: Some("details".into()),
+                ..update_args(&address)
+            }))
+            .await
+            .expect("update_fact answers");
+        blocked(&refused);
+    }
+    let stale = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            details: Some("changed".into()),
+            expected_revision: Some(7),
+            ..update_args(&address)
+        }))
+        .await
+        .expect("update_fact answers");
+    blocked(&stale);
+    assert_eq!(
+        read_all(&jojobot, "document:alpha").await,
+        "# One\n\nsame same\n"
+    );
+}
+
+/// **A document longer than one answer is read in parts, and each part says what
+/// it left out.** Concatenated, the parts are the file; no answer is over the
+/// ceiling.
+#[tokio::test]
+async fn a_long_document_is_read_in_parts_that_name_what_they_left_out() {
+    let jojobot = handler();
+    let mut text = String::new();
+    for n in 0..40 {
+        text.push_str(&format!(
+            "## Part {n}\n\n{}\n\n",
+            "word ".repeat(200).trim_end()
+        ));
+    }
+    put_ok(&jojobot, "document:alpha", &text).await;
+    let first = read_part(&jojobot, "document:alpha", None).await;
+    assert!(
+        first["next_offset"].as_u64().is_some_and(|n| n > 0),
+        "{first}"
+    );
+    assert!(first["not_shown"]["count"].as_u64().is_some_and(|n| n > 0));
+    assert_eq!(first["sections"], 40);
+    assert!(first.to_string().chars().count() <= ANSWER_CEILING);
+    let mut joined = String::new();
+    let mut offset = None;
+    let mut parts = 0;
+    loop {
+        let part = read_part(&jojobot, "document:alpha", offset).await;
+        assert!(
+            part.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM <= ANSWER_CEILING,
+            "a part is over the ceiling"
+        );
+        joined.push_str(part["markdown"].as_str().expect("markdown"));
+        parts += 1;
+        match part["next_offset"].as_u64() {
+            Some(next) => offset = Some(next as usize),
+            None => break,
+        }
+    }
+    assert!(parts > 1);
+    assert_eq!(joined, text);
+}
+
+/// **A section too long for one record is cut at the last blank line that
+/// fits**, every cut chunk says it carries on, and the file reads back whole.
+#[tokio::test]
+async fn a_section_too_long_for_a_record_is_cut_at_blank_lines_and_reads_back_whole() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut text = String::from("# Big\n\n");
+    for _ in 0..60 {
+        text.push_str(paragraph.trim_end());
+        text.push_str("\n\n");
+    }
+    let answered = put_ok(&jojobot, "document:alpha", &text).await;
+    assert!(
+        answered["cut_for_size"].as_u64().is_some_and(|n| n >= 1),
+        "{answered}"
+    );
+    let held = records(&jojobot, "document:alpha").await;
+    assert!(held.len() >= 2);
+    assert!(held[0]["fields"].get("continues").is_none());
+    assert!(
+        held[1..]
+            .iter()
+            .all(|fact| fact["fields"]["continues"] == "true")
+    );
+    assert!(held[1..].iter().all(|fact| fact["fields"]["level"] == "0"));
+    assert_eq!(read_all(&jojobot, "document:alpha").await, text);
+}
+
+/// **Archiving a section takes it out of the page and the read counts it.**
+#[tokio::test]
+async fn an_archived_section_is_left_out_of_the_page_and_counted() {
+    let jojobot = handler();
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# One\n\none\n\n# Two\n\ntwo\n\n# Three\n\nthree\n",
+    )
+    .await;
+    let two = records(&jojobot, "document:alpha").await[1]["address"]
+        .as_str()
+        .expect("address")
+        .to_string();
+    let archived = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            status: Some("archived".into()),
+            details: Some("dropped from the file".into()),
+            ..update_args(&two)
+        }))
+        .await
+        .expect("update_fact answers");
+    assert_ne!(json_of(&archived)["status"], "blocked", "{archived:?}");
+    // An ordinary claim about the document, archived, is not a section left out.
+    let remark = capture_ok(
+        &jojobot,
+        capture_args("document:alpha", "reviewed by a colleague"),
+    )
+    .await;
+    let remark = remark["address"].as_str().expect("address").to_string();
+    let archived_remark = jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            status: Some("archived".into()),
+            details: Some("no longer so".into()),
+            ..update_args(&remark)
+        }))
+        .await
+        .expect("update_fact answers");
+    assert_ne!(
+        json_of(&archived_remark)["status"],
+        "blocked",
+        "{archived_remark:?}"
+    );
+    let part = read_part(&jojobot, "document:alpha", None).await;
+    assert_eq!(part["markdown"], "# One\n\none\n\n# Three\n\nthree\n");
+    assert_eq!(part["archived_sections_left_out"], 1);
+    assert_eq!(part["sections"], 2);
+}
+
+/// **A caller that has not booted cannot put a document**, as for every other
+/// write.
+#[tokio::test]
+async fn a_put_from_nobody_is_refused() {
+    let jojobot = handler();
+    ensure(&jojobot, "document:alpha").await;
+    let refused = put(
+        &jojobot,
+        PutDocumentArgs {
+            sid: None,
+            ..put_args("document:alpha", "# One\n").await
+        },
+    )
+    .await;
+    assert!(
+        text_of(&refused).contains("start_here"),
+        "an unidentified write must point at the door: {}",
+        text_of(&refused)
+    );
+    assert!(records(&jojobot, "document:alpha").await.is_empty());
+}
+
+/// **A handle in prose that names something is a link, and a document reads back
+/// the handle its thing wears.** Outside code the mention is stored as the
+/// permanent id; inside a fence it stays the characters typed.
+#[tokio::test]
+async fn a_mention_in_prose_round_trips_and_one_in_a_fence_stays_literal() {
+    let jojobot = handler_mentioning();
+    ensure(&jojobot, "place:springfield").await;
+    let text = "# Visit\n\nWe went to @place:springfield today.\n\n```\n@place:springfield\n```\n";
+    put_ok(&jojobot, "document:alpha", text).await;
+    assert_eq!(read_all(&jojobot, "document:alpha").await, text);
+}
+
+/// **The document's own fields ride beside the text, never in it.**
+#[tokio::test]
+async fn the_documents_own_fields_ride_beside_the_text() {
+    let jojobot = handler();
+    put_ok(&jojobot, "document:homer", "# One\n\nbody\n").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [
+                    ("one_liner".to_string(), "Notes for the shop".to_string()),
+                    (
+                        "resource".to_string(),
+                        "https://example.test/notes".to_string(),
+                    ),
+                ]
+                .into(),
+            ),
+            ..capture_args("document:homer", "set the document's own fields")
+        },
+    )
+    .await;
+    let part = read_part(&jojobot, "document:homer", None).await;
+    assert_eq!(part["fields"]["one_liner"], "Notes for the shop");
+    assert_eq!(part["fields"]["resource"], "https://example.test/notes");
+    assert_eq!(part["markdown"], "# One\n\nbody\n");
+}
+
+/// **Only a document is read as one, and an offset past the end is an empty
+/// page rather than a failure.**
+#[tokio::test]
+async fn a_thing_that_is_not_a_document_is_refused_and_an_offset_past_the_end_is_empty() {
+    let jojobot = handler();
+    ensure(&jojobot, "place:springfield").await;
+    let refused = jojobot
+        .read_document(Parameters(ReadDocumentArgs {
+            document: "place:springfield".into(),
+            offset: None,
+            sid: Some(TEST_SID.into()),
+        }))
+        .await
+        .expect("read_document answers");
+    blocked(&refused);
+    put_ok(&jojobot, "document:homer", "# One\n\nbody\n").await;
+    let past = read_part(&jojobot, "document:homer", Some(99)).await;
+    assert_eq!(past["markdown"], "");
+    assert!(past.get("next_offset").is_none(), "{past}");
+    assert_eq!(past["sections"], 1);
+}

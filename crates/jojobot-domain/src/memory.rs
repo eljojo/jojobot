@@ -29,6 +29,7 @@ pub mod graph;
 pub mod guard;
 pub mod kinds;
 pub mod mention;
+pub mod order;
 pub mod owned;
 pub mod readiness;
 pub mod search;

@@ -290,6 +290,160 @@ pub fn join(sections: &[Section]) -> String {
     out
 }
 
+/// The field that holds a section's heading depth.
+pub const LEVEL: &str = "level";
+/// The field that holds a section's place among its siblings: an order key.
+pub const ORDER: &str = "order";
+/// The field that holds the whitespace trimmed off a section's parts.
+pub const EDGES: &str = "edges";
+/// The field that is `true` on a chunk carrying on the section before it.
+pub const CONTINUES: &str = "continues";
+
+/// **The own fields of the record that holds a section.** `edges` is always
+/// written, so a reader never has to guess what was trimmed.
+pub fn record_fields(section: &Section, order: &str) -> std::collections::BTreeMap<String, String> {
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert(LEVEL.to_string(), section.level.to_string());
+    fields.insert(ORDER.to_string(), order.to_string());
+    fields.insert(EDGES.to_string(), section.edges.encode());
+    if section.continues {
+        fields.insert(CONTINUES.to_string(), "true".to_string());
+    }
+    fields
+}
+
+/// **The section a record holds, and its order key**, or nothing when the record
+/// carries no order and so is not a section.
+///
+/// A record a caller edited keeps the fields it was written with, and the edit
+/// may have given a bare heading a body or taken the body away. The whitespace
+/// between the first line and the body is then made to fit: a body needs a line
+/// feed in front of it, and no body needs nothing there.
+pub fn from_record(
+    content: &str,
+    details: Option<&str>,
+    fields: &std::collections::BTreeMap<String, String>,
+) -> Option<(String, Section)> {
+    let order = fields.get(ORDER)?.clone();
+    let body = details.unwrap_or("").to_string();
+    let mut edges = fields
+        .get(EDGES)
+        .and_then(|encoded| Edges::decode(encoded))
+        .unwrap_or_else(|| Edges {
+            lead: String::new(),
+            mid: String::new(),
+            sep: "\n\n".to_string(),
+            tail: "\n\n".to_string(),
+        });
+    if body.is_empty() {
+        edges.sep.clear();
+    } else if !edges.sep.contains('\n') {
+        edges.sep = "\n\n".to_string();
+    }
+    Some((
+        order,
+        Section {
+            first_line: content.to_string(),
+            level: fields
+                .get(LEVEL)
+                .and_then(|level| level.parse().ok())
+                .unwrap_or(0),
+            body,
+            edges,
+            continues: fields.get(CONTINUES).is_some_and(|value| value == "true"),
+        },
+    ))
+}
+
+/// A section that cannot be cut small enough: not one character of it fits.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("not even the first character of the section fits in a record")]
+pub struct TooBig;
+
+/// **Cut a section into chunks that each pass `fits`**, and no more chunks than
+/// that takes. The text is cut at the last blank line that leaves a chunk
+/// passing; when the first paragraph alone does not pass, at the last line end;
+/// when one line alone does not pass, at the last character. The first chunk
+/// keeps the section's heading and level. Every later chunk has level 0 and
+/// `continues` set, and the whitespace at each cut is the first chunk's `tail`,
+/// so [`join`] of the chunks is [`join`] of the section.
+///
+/// `fits` must answer yes to a smaller piece whenever it answers yes to a larger
+/// one containing it; a record's size does.
+pub fn fit(
+    section: Section,
+    fits: &mut dyn FnMut(&Section) -> bool,
+) -> Result<Vec<Section>, TooBig> {
+    if fits(&section) {
+        return Ok(vec![section]);
+    }
+    let level = section.level;
+    let continues = section.continues;
+    let mut rest = join(std::slice::from_ref(&section));
+    let mut chunks = Vec::new();
+    loop {
+        let as_chunk = |raw: &str| {
+            let mut chunk = section_of(raw, if chunks.is_empty() { level } else { 0 });
+            chunk.continues = if chunks.is_empty() { continues } else { true };
+            chunk
+        };
+        let whole = as_chunk(&rest);
+        if fits(&whole) {
+            chunks.push(whole);
+            return Ok(chunks);
+        }
+        let cut = largest_cut(&rest, &mut |prefix| fits(&as_chunk(prefix))).ok_or(TooBig)?;
+        let chunk = as_chunk(&rest[..cut]);
+        chunks.push(chunk);
+        rest = rest[cut..].to_string();
+    }
+}
+
+/// The longest prefix of `text` that passes, cut at the coarsest kind of place
+/// that has one: after a blank line, after a line, after a character.
+fn largest_cut(text: &str, passes: &mut dyn FnMut(&str) -> bool) -> Option<usize> {
+    let first_text = text.len() - text.trim_start().len();
+    let blank_line_ends = text
+        .match_indices('\n')
+        .filter(|(at, _)| {
+            let after = &text[at + 1..];
+            let blank = after.len() - after.trim_start_matches([' ', '\t', '\r']).len();
+            after[blank..].starts_with('\n')
+        })
+        .map(|(at, _)| {
+            let after = &text[at + 1..];
+            let skipped = after.len() - after.trim_start().len();
+            at + 1 + skipped
+        });
+    let line_ends = text.match_indices('\n').map(|(at, _)| at + 1);
+    let characters = text.char_indices().map(|(at, c)| at + c.len_utf8());
+    let tiers: [Vec<usize>; 3] = [
+        blank_line_ends.collect(),
+        line_ends.collect(),
+        characters.collect(),
+    ];
+    for tier in tiers {
+        let candidates: Vec<usize> = tier
+            .into_iter()
+            .filter(|at| *at < text.len() && *at > first_text && !text[..*at].trim().is_empty())
+            .collect();
+        // Binary search for the last candidate that passes.
+        let (mut low, mut high) = (0, candidates.len());
+        while low < high {
+            let mid = (low + high) / 2;
+            if passes(&text[..candidates[mid]]) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        if low > 0 {
+            return Some(candidates[low - 1]);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,5 +600,149 @@ mod tests {
             split_count > 500,
             "only {split_count} generated texts split"
         );
+    }
+
+    fn size_of(section: &Section) -> usize {
+        section.first_line.len() + section.body.len()
+    }
+
+    /// **A section cut for size joins back to the section.** The cut falls on
+    /// every kind of place, and the join is the text, character for character,
+    /// including the blank lines the cut sits in.
+    #[test]
+    fn a_section_cut_for_size_joins_back_to_itself() {
+        let text = "## Title  \n\nfirst paragraph here\nwith two lines\n\n\nsecond paragraph\n\nthird \u{e9}\u{e9} paragraph, a little longer\n\n";
+        for cap in [20, 25, 40, 70] {
+            let section = split(text).expect("splits").remove(0);
+            let chunks = fit(section.clone(), &mut |s| size_of(s) <= cap).expect("fits");
+            assert_eq!(join(&chunks), join(&[section]), "cap {cap}");
+            assert!(chunks.iter().all(|c| size_of(c) <= cap), "cap {cap}");
+            assert_eq!(chunks[0].level, 2);
+            assert!(!chunks[0].continues);
+            assert!(chunks[1..].iter().all(|c| c.level == 0 && c.continues));
+        }
+    }
+
+    /// **A section that already fits is returned as it is**, and one that does not
+    /// is cut at a blank line rather than inside a paragraph when it can be.
+    #[test]
+    fn a_cut_falls_on_a_blank_line_when_one_leaves_a_chunk_that_fits() {
+        let section = split("# T\n\naaaa bbbb\n\ncccc dddd\n\neeee ffff\n")
+            .expect("splits")
+            .remove(0);
+        let whole = fit(section.clone(), &mut |_| true).expect("fits");
+        assert_eq!(whole, vec![section.clone()]);
+        let chunks = fit(section, &mut |s| size_of(s) <= 14).expect("fits");
+        let firsts: Vec<&str> = chunks.iter().map(|c| c.first_line.as_str()).collect();
+        assert_eq!(firsts, ["# T", "cccc dddd", "eeee ffff"]);
+        assert_eq!(chunks[0].body, "aaaa bbbb");
+    }
+
+    /// **A paragraph that is over the cap alone is cut inside**, at line ends
+    /// first and at characters when one line is over too.
+    #[test]
+    fn a_paragraph_over_the_cap_is_cut_at_lines_and_then_at_characters() {
+        let lines = split("# T\none one\ntwo two\nthree three\n")
+            .expect("splits")
+            .remove(0);
+        let chunks = fit(lines.clone(), &mut |s| size_of(s) <= 14).expect("fits");
+        assert!(chunks.len() > 1);
+        assert_eq!(join(&chunks), join(&[lines]));
+        let long = split("# T\nabcdefghijklmnopqrstuvwxyz\n")
+            .expect("splits")
+            .remove(0);
+        let chunks = fit(long.clone(), &mut |s| size_of(s) <= 8).expect("fits");
+        assert!(chunks.iter().all(|c| size_of(c) <= 8));
+        assert_eq!(join(&chunks), join(&[long]));
+    }
+
+    /// **A section nothing of which fits is refused**, not cut into nothing.
+    #[test]
+    fn a_section_no_piece_of_which_fits_is_refused() {
+        let section = split("# Title\nbody\n").expect("splits").remove(0);
+        assert_eq!(fit(section, &mut |_| false), Err(TooBig));
+    }
+
+    /// **The coarsest cut that leaves a chunk passing wins**, even when a finer
+    /// one would leave a longer chunk: a paragraph is cut inside only when it
+    /// alone is over.
+    #[test]
+    fn a_paragraph_is_kept_whole_when_a_blank_line_cut_will_do() {
+        let section = split("# T\n\naaaa\n\nbbbb\ncccc\n")
+            .expect("splits")
+            .remove(0);
+        let chunks = fit(section, &mut |s| size_of(s) <= 13).expect("fits");
+        let firsts: Vec<&str> = chunks.iter().map(|c| c.first_line.as_str()).collect();
+        assert_eq!(firsts, ["# T", "bbbb"]);
+        assert_eq!(chunks[1].body, "cccc");
+    }
+
+    /// **No more chunks than the cap takes.** Thirty short paragraphs of two
+    /// lengths are cut the way a greedy fill of the same paragraphs cuts them.
+    #[test]
+    fn the_chunks_are_as_few_as_the_cap_allows() {
+        let paragraphs: Vec<String> = (0..30).map(|i| "w".repeat(1 + i % 2)).collect();
+        let text = format!("# T\n\n{}\n", paragraphs.join("\n\n"));
+        let cap = 20;
+        let section = split(&text).expect("splits").remove(0);
+        let chunks = fit(section, &mut |s| size_of(s) <= cap).expect("fits");
+        let mut expected = 0;
+        let mut taken = vec!["# T".to_string()];
+        for paragraph in &paragraphs {
+            taken.push(paragraph.clone());
+            let candidate = split(&taken.join("\n\n")).expect("splits").remove(0);
+            if size_of(&candidate) > cap {
+                expected += 1;
+                taken = vec![paragraph.clone()];
+            }
+        }
+        expected += 1;
+        assert_eq!(chunks.len(), expected);
+        // Each chunk is as long as it can be: the next chunk's first paragraph
+        // would not have fitted on the end of it.
+        for pair in chunks.windows(2) {
+            let longer = format!("{}{}", join(&pair[..1]), pair[1].first_line);
+            let longer = split(&longer).expect("splits").remove(0);
+            assert!(size_of(&longer) > cap, "{longer:?} fitted");
+        }
+    }
+
+    /// **A section written as a record and read back is the section.** The
+    /// fields are the record's own, and a record with no order is no section.
+    #[test]
+    fn a_section_survives_the_record_that_holds_it() {
+        for text in [
+            "## Two  \r\n\r\nbody\r\n\r\n\r\n",
+            "# Only a heading\n",
+            "  # Indented\ntext",
+        ] {
+            let section = split(text).expect("splits").remove(0);
+            let fields = record_fields(&section, "V");
+            let details = (!section.body.is_empty()).then_some(section.body.as_str());
+            let (order, back) =
+                from_record(&section.first_line, details, &fields).expect("a section");
+            assert_eq!((order.as_str(), &back), ("V", &section), "{text:?}");
+        }
+        let mut cut = split("# T\nx\n").expect("splits").remove(0);
+        cut.continues = true;
+        let fields = record_fields(&cut, "a");
+        assert_eq!(fields.get(CONTINUES).map(String::as_str), Some("true"));
+        assert!(!record_fields(&split("# T\n").expect("splits")[0], "a").contains_key(CONTINUES));
+        assert!(from_record("# T", None, &Default::default()).is_none());
+    }
+
+    /// **An edit that changes whether a section has a body keeps the join
+    /// well-formed**: a body gets a line feed in front of it and a missing body
+    /// leaves none behind.
+    #[test]
+    fn an_edit_that_adds_or_takes_a_body_keeps_the_lines_apart() {
+        let bare = split("# T\n\n# U\nx\n").expect("splits").remove(0);
+        let fields = record_fields(&bare, "a");
+        let (_, with_body) = from_record("# T", Some("now text"), &fields).expect("a section");
+        assert_eq!(join(&[with_body]), "# T\n\nnow text\n\n");
+        let full = split("# T\n\nold\n").expect("splits").remove(0);
+        let fields = record_fields(&full, "a");
+        let (_, without) = from_record("# T", None, &fields).expect("a section");
+        assert_eq!(join(&[without]), "# T\n");
     }
 }
