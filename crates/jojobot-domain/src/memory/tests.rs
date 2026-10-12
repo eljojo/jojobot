@@ -2515,3 +2515,29 @@ fn a_caller_cannot_write_the_stored_mark_into_a_field_value() {
         );
     }
 }
+
+/// **The two refusals about a record the build supplies speak of records.** A
+/// session knows records, and the store's rows are not a word it was taught.
+#[test]
+fn the_supplied_record_refusals_do_not_speak_of_rows() {
+    let moved = MemoryError::SuppliedHandle {
+        attempted: "view:loops".into(),
+    }
+    .to_string();
+    let collided = MemoryError::SuppliedRecordCollidesWithStoredRow {
+        attempted: "view:loops".into(),
+    }
+    .to_string();
+    for (what, said) in [("the rename refusal", &moved), ("the collision", &collided)] {
+        assert!(
+            said.contains("view:loops") && said.contains("record"),
+            "{what} does not name the record: {said}"
+        );
+        assert!(
+            !said
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == "row"),
+            "{what} speaks of a row: {said}"
+        );
+    }
+}

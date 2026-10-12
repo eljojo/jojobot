@@ -30,6 +30,10 @@ pub struct PostMessageArgs {
     /// the handle that thing wears today, even after a rename.
     /// Text inside backticks or a fenced block is literal: a handle there is
     /// kept as written and never becomes a link.
+    ///
+    /// To quote the operator, write the address of the claim that holds their
+    /// words, `@kind:slug#fN`: jojobot writes those words in beside it, and
+    /// refuses a claim they did not say themselves.
     pub(crate) body: String,
     /// **Your session id.** Required here, because it is what jojobot records
     /// as the sender: a message from nobody is a message nobody can reply to,

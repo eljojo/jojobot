@@ -5841,7 +5841,7 @@ pub enum MemoryError {
     /// whether it is named as a rename's source or as either side of a
     /// fold.
     #[error(
-        "'{attempted}' is a record the build supplies: it exists, and there is no row under it to move"
+        "'{attempted}' is a record the build supplies: it exists, and there is no stored record under it to move"
     )]
     SuppliedHandle {
         /// The build-supplied handle that was named.
@@ -6037,7 +6037,7 @@ pub enum MemoryError {
     /// caught before the instance starts serving, not a write any verb can
     /// provoke — there is no `memory_declined` arm for it.
     #[error(
-        "'{attempted}' is supplied as a whole record, and the store already holds a row there — \
+        "'{attempted}' is supplied as a whole record, and the store already holds a record there — \
          the record supply shape is only for an address the store holds nothing of"
     )]
     SuppliedRecordCollidesWithStoredRow {

@@ -4492,3 +4492,45 @@ fn ask_for_code_does_not_name_where_the_operator_reads_their_mail() {
         );
     }
 }
+
+/// **No description says the same paragraph twice.** A paragraph that appears
+/// twice inside one description, a tool's or an argument's, spends a reader's
+/// context to hear it again. Short lines are left out: a heading or a one-word
+/// line repeats on purpose.
+#[test]
+fn no_served_description_repeats_a_paragraph() {
+    let mut repeated = Vec::new();
+    for (verb, text) in every_served_description() {
+        let mut seen = std::collections::BTreeSet::new();
+        for paragraph in text.split("\n\n").map(str::trim) {
+            if paragraph.chars().count() < 60 {
+                continue;
+            }
+            if !seen.insert(paragraph.to_string()) {
+                repeated.push(format!(
+                    "{verb}: {}",
+                    paragraph.chars().take(90).collect::<String>()
+                ));
+            }
+        }
+    }
+    assert!(
+        repeated.is_empty(),
+        "a description says a paragraph twice:\n{}",
+        repeated.join("\n")
+    );
+}
+
+/// **`post_message`'s body teaches quoting the operator by address, before the
+/// first post.** One sentence in the argument a caller reads while writing the
+/// message: the address of the claim that holds their words, `@kind:slug#fN`.
+/// Paired with the post it describes: `quoting_the_operator` writes one and
+/// reads the words back beside the citation.
+#[test]
+fn post_messages_body_teaches_quoting_the_operator_by_address() {
+    let body = argument_description("post_message", "body");
+    assert!(
+        body.contains("@kind:slug#fN") && body.contains("quote the operator"),
+        "post_message's body does not teach quoting the operator by address: {body}"
+    );
+}

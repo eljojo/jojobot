@@ -658,12 +658,12 @@ answer: {
 ### Memory refusal `SuppliedHandle`
 
 ```text
-reads: 'view:colleagues' is a record the build supplies: it exists, and there is no row under it to move
+reads: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move
 answer: {
   "attempted": "view:colleagues",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing changed: 'view:colleagues' is a record the build supplies: it exists, and there is no row under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move.",
+  "how_to_proceed": "Nothing changed: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move.",
   "status": "blocked",
   "wrote": false
 }
@@ -687,8 +687,8 @@ answer: {
 ### Memory refusal `SuppliedRecordCollidesWithStoredRow`
 
 ```text
-reads: 'view:colleagues' is supplied as a whole record, and the store already holds a row there — the record supply shape is only for an address the store holds nothing of
-answer: protocol error: 'view:colleagues' is supplied as a whole record, and the store already holds a row there — the record supply shape is only for an address the store holds nothing of
+reads: 'view:colleagues' is supplied as a whole record, and the store already holds a record there — the record supply shape is only for an address the store holds nothing of
+answer: protocol error: 'view:colleagues' is supplied as a whole record, and the store already holds a record there — the record supply shape is only for an address the store holds nothing of
 {
   "fix_by": "person"
 }

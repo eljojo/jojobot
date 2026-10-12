@@ -816,7 +816,7 @@ impl Jojobot {
         if caveats {
             // **A third question, beside the two above and folded into
             // neither.** See [`corpus_note`].
-            body["corpus"] = corpus_note();
+            body["corpus"] = corpus_note(query.include_history);
         }
         // **Every answer names what it left out and the argument that returns
         // it**, a full one as well as an empty one: a page of hits reads as the
@@ -1093,25 +1093,35 @@ const SHARES_A_WORD_SHOWN: usize = 5;
 /// **A third axis, and it is not folded into either of the other two.**
 ///
 /// Coverage answers *was everything searched*; [`matching_note`] answers *did
-/// the query match what is there*; this answers *is there content search
-/// never looks at at all* — true on a complete index, with a perfectly worded
-/// query, and neither of the other two says it.
+/// the query match what is there*; this answers *is there content a search
+/// does not look at unless it is told to* — true on a complete index, with a
+/// perfectly worded query, and neither of the other two says it.
 ///
 /// **True of the corpus however the query was worded, so it is said once a
 /// session and again on any thin answer** (see [`THIN_ANSWER`]), not on every
-/// answer. Matching only ever reaches a claim's CURRENT wording — a claim
-/// written more than once may hold, in an earlier wording, content this search
-/// can never surface, whatever the coverage state or how the query was worded. `recall` with
-/// `history_record` is the only door onto it; this note only says the door is
-/// worth trying, never that it holds something.
-fn corpus_note() -> serde_json::Value {
-    serde_json::json!({
-        "note": "matching only reaches a claim's CURRENT wording. A claim written more than \
-                 once may hold content that only an earlier wording carried, and search never \
-                 looks at that content at all — a thin or empty answer here can mean the words \
-                 sit in a superseded wording rather than that they were never recorded. recall \
-                 the subject with history_record to read what a claim used to say.",
-    })
+/// answer. A claim written more than once may hold, in an earlier wording,
+/// content that only an earlier wording carried. A search reaches those
+/// wordings when it passes `include_history`, and `recall` with
+/// `history_record` reads one whatever the search did; this note says which
+/// doors there are, never that one holds something.
+///
+/// **It follows the question that was asked.** A search that already matched the
+/// earlier wordings is not sent back to ask again.
+fn corpus_note(include_history: bool) -> serde_json::Value {
+    let note = if include_history {
+        "this search matched the earlier wordings of a claim as well as its current one, \
+         because include_history was set. A hit that matched through an earlier wording is \
+         the current record; recall the subject with history_record to read what a claim \
+         used to say."
+    } else {
+        "matching reaches only a claim's CURRENT wording unless include_history is set. A \
+         claim written more than once may hold content that only an earlier wording \
+         carried, so a thin or empty answer here can mean the words sit in a superseded \
+         wording rather than that they were never recorded. Search again with \
+         include_history, or recall the subject with history_record to read what a claim \
+         used to say."
+    };
+    serde_json::json!({ "note": note })
 }
 
 /// **An answer with fewer hits than this is thin.** A thin or empty answer is
@@ -1845,10 +1855,10 @@ mod tests {
     ///
     /// Coverage answers *was everything searched*. The matching note answers
     /// *did the query match what is there*. Neither answers *is there content
-    /// search never looks at at all* — matching only ever reaches a claim's
-    /// CURRENT wording, so a claim written more than once may hold, in an
-    /// earlier wording, content this search can never find regardless of how
-    /// complete the index is or how well the query is worded.
+    /// this search does not look at* — matching reaches a claim's CURRENT wording
+    /// unless `include_history` is set, so a claim written more than once may
+    /// hold, in an earlier wording, content this search does not find regardless
+    /// of how complete the index is or how well the query is worded.
     ///
     /// **Both halves in one read, on purpose.** A fully-loaded index means the
     /// note cannot be mistaken for a coverage gap; an exact-handle query means
@@ -1886,6 +1896,55 @@ mod tests {
             Some(note),
             body["matching"]["note"].as_str(),
             "the corpus note is not the matching note wearing a new key: {body}",
+        );
+    }
+
+    /// **The corpus note does not say search never looks at earlier wordings,
+    /// because a search can be told to.** Asked without `include_history`, the
+    /// note names the argument that reaches them; asked with it, the note says
+    /// the earlier wordings were matched and does not tell the caller to ask
+    /// again. Both halves, so a note that always sent a caller to
+    /// `include_history` would fail the second.
+    #[tokio::test]
+    async fn the_corpus_note_follows_whether_a_search_reached_earlier_wordings() {
+        let note_when = |asked: Option<bool>| async move {
+            let spy = Arc::new(SpySearch::answering(Vec::new()));
+            let body = json_of(
+                &handler_with(spy)
+                    .search(Parameters(SearchArgs {
+                        query: Some("person:alpha".into()),
+                        include_history: asked,
+                        ..search_args()
+                    }))
+                    .await
+                    .expect("search ok"),
+            );
+            body["corpus"]["note"]
+                .as_str()
+                .unwrap_or_else(|| panic!("the corpus note is there: {body}"))
+                .to_string()
+        };
+        let without = note_when(None).await;
+        assert!(
+            without.contains("include_history") && without.contains("history_record"),
+            "the note does not name both doors onto an earlier wording: {without}"
+        );
+        assert!(
+            !without.contains("never looks"),
+            "the note says search never looks at earlier wordings: {without}"
+        );
+        let with = note_when(Some(true)).await;
+        assert!(
+            !with.contains("never looks") && with.contains("history_record"),
+            "the note for a search that matched earlier wordings is wrong: {with}"
+        );
+        assert!(
+            !with.contains("Search again"),
+            "the note sends a caller back to a search it already made: {with}"
+        );
+        assert!(
+            !with.contains('\n') && !with.contains("  ") && !without.contains('\n'),
+            "a note is one clean line"
         );
     }
 
