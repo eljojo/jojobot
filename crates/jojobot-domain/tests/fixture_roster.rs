@@ -1177,6 +1177,7 @@ const ORDINARY: &[&str] = &[
     "thing:contract-links-survivor",
     "thing:contract-forged-holder",
     "person:contract-order-key",
+    "person:contract-details-rewrite",
     "person:contract-session-rewrite",
     "person:contract-testified-values",
     "thing:contract-bags",

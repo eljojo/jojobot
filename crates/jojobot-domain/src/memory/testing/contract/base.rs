@@ -16385,6 +16385,177 @@ pub async fn a_document_split_into_sections_joins_back_to_the_bytes_put<M: Memor
     assert_eq!(document::join(&back), text, "and they join to the file");
 }
 
+/// **What a testimony claim says includes its details**, and they belong to the
+/// session that wrote the claim as the claim's words do. Another session's
+/// rewrite of the details is refused with the route; the same details sent back
+/// are not a rewrite; the session that wrote the claim rewrites its own details
+/// and keeps its provenance; archiving a claim, which carries its reason in the
+/// details, is the route itself and open to any session; and an inference is
+/// rewritten as it always was.
+pub async fn a_rewrite_of_testimony_details_belongs_to_the_session_that_wrote_it<M: Memory>(
+    store: &M,
+) {
+    let subject = EntityId::person("person:contract-details-rewrite");
+    add(
+        store,
+        NewEntity::new(subject.clone(), "Details Rewrite", "contract-fixture"),
+    )
+    .await;
+    let written_in = |session: Option<&str>, provenance: Provenance, words: &str| NewFact {
+        provenance,
+        details: Some("brews it for four minutes".to_string()),
+        session: session.map(str::to_string),
+        ..NewFact::about(subject.clone(), words, date(2026, 10, 12))
+    };
+    let said = capture(
+        store,
+        written_in(Some("session-a"), Provenance::Testimony, "prefers tea"),
+    )
+    .await;
+    let guessed = capture(
+        store,
+        written_in(Some("session-a"), Provenance::Inference, "rides a bicycle"),
+    )
+    .await;
+    let unrecorded = capture(
+        store,
+        written_in(None, Provenance::Testimony, "owns a ferret"),
+    )
+    .await;
+    let details = |session: Option<&str>, words: Option<&str>| FactPatch {
+        details: words.map(str::to_string),
+        session: session.map(str::to_string),
+        ..Default::default()
+    };
+    let refused = |outcome: Result<Guarded<Fact>, MemoryError>, what: &str| {
+        assert!(
+            matches!(outcome, Err(MemoryError::TestimonyRewritten { .. })),
+            "{what} is refused with the route: {:?}",
+            outcome.map(|_| ()),
+        );
+    };
+    let held = |fact: Fact| fact.details;
+
+    // Another session's rewrite, and a clear of the details, are refused.
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                details(Some("session-b"), Some("brews it for ten minutes")),
+                &other_caller(),
+            )
+            .await,
+        "another session's rewrite of the details",
+    );
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                details(Some("session-b"), Some("")),
+                &other_caller(),
+            )
+            .await,
+        "another session's clear of the details",
+    ); // **Stating a provenance does not open the door**, as it does not for the
+    // words: the route is to archive and capture the correction.
+    for stated in [
+        Provenance::Testimony,
+        Provenance::Inference,
+        Provenance::Observation,
+    ] {
+        refused(
+            store
+                .update_fact(
+                    &said.address(),
+                    FactPatch {
+                        provenance: Some(stated),
+                        ..details(Some("session-b"), Some("brews it for ten minutes"))
+                    },
+                    &other_caller(),
+                )
+                .await,
+            "another session's rewrite of the details, stating a provenance",
+        );
+    }
+    refused(
+        store
+            .update_fact(
+                &unrecorded.address(),
+                details(Some("session-a"), Some("brews it for ten minutes")),
+                &other_caller(),
+            )
+            .await,
+        "a rewrite of the details of a claim with no recorded session",
+    );
+    assert_eq!(
+        held(read_back(store, &subject, &said.id).await).as_deref(),
+        Some("brews it for four minutes"),
+        "a refused rewrite leaves the details as they were",
+    );
+
+    // The same details sent back, with the spacing the store trims, are no
+    // rewrite and land for any session.
+    store
+        .update_fact(
+            &said.address(),
+            details(Some("session-b"), Some("  brews it for four minutes\n")),
+            &other_caller(),
+        )
+        .await
+        .expect("details sent back unchanged are not a rewrite")
+        .written()
+        .expect("nothing blocks it");
+
+    // The session that wrote the claim rewrites its own details and keeps its
+    // provenance.
+    let kept = store
+        .update_fact(
+            &said.address(),
+            details(Some("session-a"), Some("brews it for five minutes")),
+            &other_caller(),
+        )
+        .await
+        .expect("the writing session may rewrite its own details")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(kept.provenance, Provenance::Testimony, "kept, not demoted");
+    assert_eq!(
+        held(read_back(store, &subject, &said.id).await).as_deref(),
+        Some("brews it for five minutes"),
+    );
+
+    // An inference is rewritten as it always was.
+    store
+        .update_fact(
+            &guessed.address(),
+            details(Some("session-b"), Some("brews it for ten minutes")),
+            &other_caller(),
+        )
+        .await
+        .expect("another session rewrites the details of an inference")
+        .written()
+        .expect("nothing blocks it");
+
+    // The route itself: archiving carries its reason in the details, and any
+    // session may archive.
+    let archived = store
+        .update_fact(
+            &said.address(),
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                details: Some("the operator corrected this".to_string()),
+                session: Some("session-b".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("archiving is the route and is open to any session")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(archived.status, FactStatus::Archived);
+}
+
 /// **Every case of the memory contract, listed once.** The list is a macro so
 /// that counting the cases and running a slice of them read the same list: a
 /// case added here is counted and run, and no second list can drift from it.
@@ -16409,6 +16580,7 @@ macro_rules! all_cases {
         $m!(both_provenances_survive($store));
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
+        $m!(a_rewrite_of_testimony_details_belongs_to_the_session_that_wrote_it($store));
         $m!(a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it($store));
         $m!(a_resend_of_a_handle_valued_field_on_another_sessions_testimony_is_not_a_rewrite($store));
         $m!(a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal($store));

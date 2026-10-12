@@ -1908,17 +1908,19 @@ pub fn validate_happened_span(
 /// applies.**
 ///
 /// A claim is its own session's to rewrite and nobody else's testimony. **What a
-/// testimony claim says is its words and the value fields it carries**, in its
-/// own fields and in its setting bag alike. A patch that rewrites either is
+/// testimony claim says is its words, its details and the value fields it
+/// carries**, in its own fields and in its setting bag alike. A patch that rewrites either is
 /// refused unless the caller's session is the one that wrote the claim, and a
 /// claim with no recorded session is refused the same way, because nothing says
 /// the caller wrote it. The refusal names the route: archive it, then capture the
 /// corrected claim derived from it. **Only testimony is protected**: an inference
 /// or an observation is rewritten as it always was, whoever wrote it.
 ///
-/// **A resend says nothing new**: words sent back as they stand, and fields sent
-/// back with the values they hold, are not a rewrite, so a status move or a
-/// describing key that carries them lands.
+/// **A resend says nothing new**: words and details sent back as they stand, and
+/// fields sent back with the values they hold, are not a rewrite, so a status
+/// move or a describing key that carries them lands. **Archiving carries its
+/// reason in the details**, so what a patch that archives writes there is not a
+/// rewrite either.
 ///
 /// **What only describes the record says nothing the operator said**, so a patch
 /// that sets or clears nothing but describing keys is not a rewrite, and neither
@@ -1949,6 +1951,17 @@ pub fn settle_rewrite(
     if !rewrites_words {
         patch.content = None;
     }
+    // **The details are the claim's words too**, and a resend of the details the
+    // claim holds, spaced as the store keeps them, is no more a rewrite than a
+    // resend of its content. **Archiving is the route itself, and it carries its
+    // reason in the details**, so a patch that archives rewrites nothing the
+    // operator said by what it writes there.
+    let archives = patch.status == Some(FactStatus::Archived);
+    let rewrites_details = !archives
+        && patch
+            .details
+            .as_deref()
+            .is_some_and(|details| normalize_details(Some(details)) != fact.details);
     // **Setting a key, changing one and taking one off are the same rewrite.** A
     // key set to the value the claim already holds, or taken off a claim that does
     // not carry it, changes nothing. **Three kinds of key are not the operator's
@@ -1968,7 +1981,7 @@ pub fn settle_rewrite(
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });
-    if !rewrites_words && !rewrites_values {
+    if !rewrites_words && !rewrites_details && !rewrites_values {
         return Ok(patch);
     }
     let own = matches!(
@@ -5895,8 +5908,8 @@ pub enum MemoryError {
     /// `testimony` would go on naming the operator as the source of words they
     /// never said. The way to correct them leaves the original readable.
     #[error(
-        "{address} is testimony from an earlier session, so its words and its fields are not \
-         rewritten in place: archive it with a reason (update_fact, status: archived, details), \
+        "{address} is testimony from an earlier session, so its words, its details and its \
+         fields are not rewritten in place: archive it with a reason (update_fact, status: archived, details), \
          then capture the corrected claim with derived_from naming it. The original stays \
          readable: recall the subject with history_record: {address}"
     )]
