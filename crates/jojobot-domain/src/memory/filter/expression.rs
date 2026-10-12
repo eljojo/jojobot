@@ -397,6 +397,13 @@ impl Reader {
                 });
                 Ok(word.trim().to_string())
             }
+            // **A second `=` is the usual slip**: the word for equality in other
+            // languages is `==`, and here it is one `=`.
+            Kind::Equals => Err(refused(format!(
+                "the expression does not parse: '=' at position {} follows an '=', and \
+                 equality is written with one: status = done, not status == done",
+                token.position,
+            ))),
             _ => Err(self.unexpected(&token, accepted)),
         }
     }
@@ -431,6 +438,17 @@ impl Reader {
         let Some(token) = self.take() else {
             return Err(self.ended(accepted));
         };
+        // **A value in quotes is literal text**, so an ordering cannot read it as a
+        // date or a number, `today` included. Said apart from the generic refusal
+        // because the quotes are what the caller meant as a safety.
+        if let Kind::Quoted(word) = &token.kind {
+            return Err(refused(format!(
+                "the expression does not parse: a value in quotes is literal text, so \
+                 \"{word}\" at position {} is not a date or a number. Write it without the \
+                 quotes. Accepted: {accepted}",
+                token.position,
+            )));
+        }
         let Kind::Word(word) = &token.kind else {
             return Err(self.unexpected(&token, accepted));
         };

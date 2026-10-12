@@ -18,7 +18,7 @@ use super::dsl::{Session, Story};
 
 /// The board, and the declaration that makes `due` a date, `size` a number and
 /// `touches` a list.
-async fn a_board(s: &Session) {
+pub(super) async fn a_board(s: &Session) {
     s.call(
         "declare_type",
         json!({

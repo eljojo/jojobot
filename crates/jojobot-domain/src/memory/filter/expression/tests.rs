@@ -288,3 +288,28 @@ fn the_values_come_back_where_they_sit() {
         "an unreadable line has no values"
     );
 }
+
+/// **A doubled equals sign says equality is one.** The token after the first is
+/// not a value, and the refusal names what to write.
+#[test]
+fn a_doubled_equals_sign_says_equality_is_written_with_one() {
+    let words = refusal("status == done");
+    assert!(words.contains("=="), "{words}");
+    assert_eq!(tree("status = done"), Filter::equals("status", "done"));
+}
+
+/// **A quoted date or a quoted `today` is literal text, and the refusal of an
+/// ordering says so.** The same words without quotes are what the ordering reads.
+#[test]
+fn a_quoted_operand_of_an_ordering_says_a_quote_makes_it_literal_text() {
+    for text in [
+        "due < \"2026-01-01\"",
+        "due < \"today\"",
+        "due >= \"today+3d\"",
+    ] {
+        let words = refusal(text);
+        assert!(words.contains("literal"), "{text}: {words}");
+    }
+    tree("due < 2026-01-01");
+    tree("due < today");
+}
