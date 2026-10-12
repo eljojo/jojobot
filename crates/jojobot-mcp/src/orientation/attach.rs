@@ -161,7 +161,28 @@ impl Jojobot {
                         ),
                     ));
                 }
+                // **A pick-up by name is a different agent holding an old run**,
+                // so what jojobot taught the run and showed the run was true of
+                // the agent that is gone. The teaching is forgotten before the
+                // key moves, and a failure to forget it refuses the pick-up for
+                // the same reason a voucher that cannot be voided does: the old
+                // sitting's state must not outlive it. The shown-ledger lives in
+                // this process and cannot fail, so it is cleared once the key is
+                // new. A wrap code and a call with the live key take another
+                // route and forget nothing.
+                if let Err(e) = self.teachings.forget(&handle).await {
+                    tracing::warn!(error = %e, run = %handle, "a resume could not forget what the run was taught");
+                    return Err(handle_declined(
+                        "",
+                        format!(
+                            "No session was started, and run {handle} was not taken over: what \
+                             it was taught could not be forgotten, so the run is as it was. Try \
+                             again, and if it persists a person has to look at the store."
+                        ),
+                    ));
+                }
                 let key = self.rekey(&handle, sid::RetiredBy::Resumed).await?;
+                self.registry.forget_shown(handle.as_str());
                 // **A resume that names a zone moves the run into it**, card
                 // included, because a run outlives a device hop and the zone it
                 // began in is not always the zone it is being worked in. A
@@ -199,7 +220,7 @@ impl Jojobot {
                         );
                     }
                 }
-                match session {
+                let mut block = match session {
                     Some(session) => {
                         let mut block = serde_json::json!({
                             "available": true,
@@ -234,7 +255,17 @@ impl Jojobot {
                     // A run that never wrote: theirs, still good, and still
                     // nothing behind it.
                     None => self.fresh_block(sid::Minted { name: handle, key }),
+                };
+                if let Some(obj) = block.as_object_mut() {
+                    obj.insert(
+                        "shown_and_taught".into(),
+                        "This run was taken over by its name, so what it was shown and taught \
+                         before is forgotten: your answers from here teach and show as to a \
+                         fresh session."
+                            .into(),
+                    );
                 }
+                block
             }
             // ── a first boot: the two branches ──────────────────────────────
             None if live.is_empty() && offerable.is_none() => {
@@ -3621,6 +3652,60 @@ mod tests {
             );
             assert_eq!(run_name(&jojobot, &new_key), name, "{step}");
         }
+    }
+
+    /// **A pick-up whose teaching cannot be forgotten is refused and changes
+    /// nothing.** The old key still opens the run, so the sitting that holds it
+    /// is not cut off by a store that was down.
+    #[tokio::test]
+    async fn a_pick_up_that_cannot_forget_what_the_run_was_taught_is_refused() {
+        use jojobot_domain::teaching::{TeachingError, Teachings};
+
+        struct CannotForget(jojobot_domain::teaching::testing::InMemoryTeachings);
+        #[async_trait::async_trait]
+        impl Teachings for CannotForget {
+            async fn first_contact(
+                &self,
+                sid: &Sid,
+                domain: &str,
+                at: jiff::Timestamp,
+            ) -> Result<bool, TeachingError> {
+                self.0.first_contact(sid, domain, at).await
+            }
+
+            async fn forget(&self, _sid: &Sid) -> Result<(), TeachingError> {
+                Err(TeachingError::Store("the store is down".into()))
+            }
+        }
+
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::seeded()),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(CannotForget(
+                jojobot_domain::teaching::testing::InMemoryTeachings::new(),
+            )),
+            seeded_registry(),
+        );
+        name_the_operator(&jojobot, "milhouse").await;
+        make_bot(&jojobot, "gamma").await;
+        let key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &key, "started").await;
+        let name = run_name(&jojobot, &key);
+
+        let refused = boot_answering(&jojobot, "gamma", &name).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(refused.to_string().contains(&name), "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null(),
+            "no key was handed out: {refused}"
+        );
+        assert!(
+            jojobot.caller(Some(&key)).is_ok(),
+            "the old key still opens the run"
+        );
     }
 
     /// **Two pick-ups of one quiet run, started together, hand a key to one.**

@@ -68,4 +68,13 @@ impl Teachings for DoltTeachings {
         tx.commit().await.map_err(store)?;
         Ok(true)
     }
+
+    async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
+        sqlx::query("DELETE FROM session_teaching WHERE sid = ?")
+            .bind(sid.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(store)?;
+        Ok(())
+    }
 }

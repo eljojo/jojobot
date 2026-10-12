@@ -123,6 +123,14 @@ impl Ledger {
         }
     }
 
+    /// **Forget one session whole: what it was shown, what it was asked about,
+    /// and how many calls it made.** The next read it makes starts the ledger
+    /// again as for a session never seen. Another session's entries stay.
+    pub(crate) fn forget_session(&mut self, sid: &str) {
+        self.sessions.remove(sid);
+        self.order.retain(|held| held != sid);
+    }
+
     /// **Ask, once, about the thing this creation sits beside.**
     ///
     /// The thing must be of the same kind, must have been shown to this session
@@ -332,6 +340,45 @@ mod tests {
             .consult("s2", "place:wharf-road", "place", "Wharf Road", &[], None)
             .expect("a thing shared a word");
         assert_eq!(noticed.handle, "place:bet", "{noticed:?}");
+    }
+
+    /// **Forgetting a session empties what it was shown and what it was asked
+    /// about, and touches no other session.** The thing a forgotten session is
+    /// shown again is asked about again, because the question it had spent went
+    /// with the session.
+    #[test]
+    fn a_forgotten_session_is_asked_afresh_and_another_is_untouched() {
+        let consult = |ledger: &mut Ledger, sid: &str| {
+            ledger.consult(sid, "place:wharf-road", "place", "Wharf Road", &[], None)
+        };
+        let mut ledger = Ledger::default();
+        for sid in ["s1", "s2"] {
+            ledger.record(sid, vec![place("place:wonder-wharf", "Wonder Wharf")]);
+            assert!(
+                consult(&mut ledger, sid).is_some(),
+                "{sid} was shown a place sharing a word"
+            );
+        }
+
+        ledger.forget_session("s1");
+        assert!(!ledger.knows("s1"), "the forgotten session is not held");
+        assert!(
+            consult(&mut ledger, "s1").is_none(),
+            "what it was shown went with it"
+        );
+        assert!(ledger.knows("s2"), "another session is still held");
+
+        // Shown the same place again, it is asked about it again.
+        ledger.record("s1", vec![place("place:wonder-wharf", "Wonder Wharf")]);
+        assert!(
+            consult(&mut ledger, "s1").is_some(),
+            "the question it had spent went with the session"
+        );
+        // …while the session that was not forgotten had already spent its own.
+        assert!(
+            consult(&mut ledger, "s2").is_none(),
+            "another session's spent question stays spent"
+        );
     }
 
     /// **A session remembers at most `MAX_SHOWN_PER_SESSION` things, newest

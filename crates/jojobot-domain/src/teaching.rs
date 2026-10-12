@@ -59,6 +59,13 @@ pub trait Teachings: Send + Sync {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError>;
+
+    /// Forget everything this session was taught, so its next contact with
+    /// any domain is a first contact again.
+    ///
+    /// Another session's rows are untouched. A session with no rows is not an
+    /// error: there is nothing to forget.
+    async fn forget(&self, sid: &Sid) -> Result<(), TeachingError>;
 }
 
 /// Why a teaching operation failed. Adapters map their transport errors into

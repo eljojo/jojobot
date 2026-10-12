@@ -34,6 +34,12 @@ impl Teachings for InMemoryTeachings {
         let mut contacted = self.contacted.lock().expect("the ledger is poisoned");
         Ok(contacted.insert((sid.as_str().to_string(), domain.to_string())))
     }
+
+    async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
+        let mut contacted = self.contacted.lock().expect("the ledger is poisoned");
+        contacted.retain(|(held, _)| held != sid.as_str());
+        Ok(())
+    }
 }
 
 /// The contract — run against the fake here and against the real store in
@@ -114,6 +120,41 @@ pub mod contract {
         );
     }
 
+    /// Forgetting a session makes its next touch of every domain a first
+    /// contact, and leaves every other session's contacts where they were.
+    async fn forgetting_a_session_teaches_it_again_and_touches_no_other(store: &dyn Teachings) {
+        let (gone, kept) = (sid("hpwq"), sid("zxcv"));
+        for who in [&gone, &kept] {
+            for domain in ["claims", "mailbox"] {
+                store
+                    .first_contact(who, domain, at())
+                    .await
+                    .expect("the store answers");
+            }
+        }
+        store.forget(&gone).await.expect("the store forgets");
+        for domain in ["claims", "mailbox"] {
+            assert!(
+                store
+                    .first_contact(&gone, domain, at())
+                    .await
+                    .expect("the store answers"),
+                "a forgotten session meets {domain} as a first contact"
+            );
+            assert!(
+                !store
+                    .first_contact(&kept, domain, at())
+                    .await
+                    .expect("the store answers"),
+                "another session's {domain} contact stays recorded"
+            );
+        }
+        store
+            .forget(&sid("none"))
+            .await
+            .expect("forgetting a session with no rows is not an error");
+    }
+
     /// Run every case, each against a store of its own.
     pub async fn run_all<S, F, Fut>(fresh: F)
     where
@@ -125,6 +166,7 @@ pub mod contract {
         a_second_touch_is_not_first_contact(&fresh().await).await;
         a_second_domain_is_untouched_by_the_first(&fresh().await).await;
         a_second_session_is_untouched_by_the_first(&fresh().await).await;
+        forgetting_a_session_teaches_it_again_and_touches_no_other(&fresh().await).await;
     }
 }
 

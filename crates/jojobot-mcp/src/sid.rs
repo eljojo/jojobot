@@ -403,6 +403,14 @@ impl SessionRegistry {
             .record(name, returned);
     }
 
+    /// Forget everything one run was shown and asked about.
+    pub(crate) fn forget_shown(&self, name: &str) {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .forget_session(name);
+    }
+
     /// Drop a merged-away handle from what every session was shown.
     pub(crate) fn note_merged(&self, handle: &str) {
         self.seen

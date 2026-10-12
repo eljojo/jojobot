@@ -1333,11 +1333,12 @@ mod tests {
         );
     }
 
-    /// **A resumed session inherits what its predecessor was taught** — free,
-    /// because a resume answers back the SAME handle rather than minting a
-    /// new one, and the ledger is keyed on the handle.
+    /// **A run picked up by its name is taught again, and once.** The pick-up
+    /// hands the run to a different agent, which was not taught what the first
+    /// one was, so the ledger of the run starts empty. After that the run is
+    /// taught once like any session.
     #[tokio::test]
-    async fn a_resumed_session_does_not_receive_the_teaching_twice() {
+    async fn a_run_picked_up_by_its_name_is_taught_again_and_once() {
         let memory = Arc::new(InMemoryMemory::booted());
         let mailboxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let sessions = Arc::new(InMemorySessions::new());
@@ -1389,8 +1390,23 @@ mod tests {
         )
         .await;
         assert!(
-            again.get("teaching").is_none(),
-            "a resumed session does not receive the teaching twice: {again}"
+            again["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIMS_TEACHING)),
+            "the agent that took the run over is taught again: {again}"
+        );
+        // The positive the single teaching depends on: the same key writing
+        // again is the same agent, and is not taught a second time.
+        let once = capture_as(
+            &second,
+            &picked_up,
+            capture_args("alpha", "and chess as well"),
+        )
+        .await;
+        assert!(
+            once.get("teaching").is_none(),
+            "taught once after the pick-up, like any session: {once}"
         );
     }
 
