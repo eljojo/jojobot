@@ -2,7 +2,7 @@
 
 > **jojobot** · kind: feature-brief · boot: on-demand
 
-**The operator's window on their own instance: server-rendered pages over the graph, one per node, with a front page that shows what every bot is doing right now.** It is how a person checks that jojobot is right, sees what the bots did, and looks things up.
+**The operator's window on their own instance: server-rendered pages over the graph, one per node, browsed like a filesystem from its root.** It is how a person checks that jojobot is right, sees what the bots did, and looks things up.
 
 ## Pages, not an application
 
@@ -12,9 +12,9 @@
 
 **jojobot views are the model, and the HTML is the view.** A page may have its own HTML whenever that serves the operator better: a board drawn as a board, mail as mail, a list as a list. It always reads through a jojobot view, the same model the bots ask, and never the events or the store directly. A view a bot builds for itself that proves useful can be shipped with the software and given HTML of its own. The model takes who is asking from the start, so a page and a bot asking the same view each get what is theirs to see.
 
-## The front page: who is doing what, right now
+## The homepage is the root
 
-**The front page is the running-now view.** Each live run, its bot, the bot's own focus line in its own words, and its last activity with how long ago. jojobot never composes a summary of what a bot is doing; the bot's focus is the summary. **The root index is one click away.**
+**The homepage is the root of the filesystem: what jojobot holds, listed and linked, the way a directory index is.** It is jojobot's own front door, not a dashboard built for one reader. **What the bots are doing right now is a page reached from it**: each live run, its bot, the bot's own focus line in its own words, and its last activity with how long ago. jojobot never composes a summary of what a bot is doing; the bot's focus is the summary.
 
 ## A thing's page
 
