@@ -46,9 +46,9 @@
 
 **A document's frontmatter is these fields, derived on the way out, never stored as text.** A file put in with a frontmatter block keeps that block as its first section, verbatim, until something parses it into fields. That way the fields and the frontmatter can never disagree, because only one of them exists.
 
-## It ships after a room proves it
+## How it is proven
 
-**Documents ship only after a paid room shows a cold session hosting one, citing a section and editing it** through the surface as shipped. A document kind that an agent cannot use well is a second store that only looks native.
+**Stories through the surface prove each capability, with no model in the loop. Whether agents reach for a document unprompted is read from real use**, because a document kind that agents pass by is a second store that only looks native.
 
 ## What it is not
 
