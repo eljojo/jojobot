@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod logging;
 pub mod push;
 pub mod request_log;
 pub mod routes;

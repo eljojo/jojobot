@@ -1528,3 +1528,198 @@ async fn a_listen_dropped_by_the_client_logs_one_info_line_naming_it() {
     assert!(ended[0].contains("outcome=\"cancelled\""), "{}", ended[0]);
     ct.cancel();
 }
+
+/// The text of a log a person reads: the subscriber colours its fields, which
+/// splits `tool="capture"` with escape codes.
+fn without_colour(text: &str) -> String {
+    let mut kept = String::new();
+    let mut in_escape = false;
+    for c in text.chars() {
+        match (in_escape, c) {
+            (_, '\u{1b}') => in_escape = true,
+            (true, 'm') => in_escape = false,
+            (false, c) => kept.push(c),
+            _ => {}
+        }
+    }
+    kept
+}
+
+/// A teaching ledger that can be made to hold the next call open, so a tool call
+/// is still being answered when its client goes away.
+struct StallsWhenTold {
+    inner: jojobot_domain::teaching::testing::InMemoryTeachings,
+    stalled: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl jojobot_domain::teaching::Teachings for StallsWhenTold {
+    async fn first_contact(
+        &self,
+        sid: &jojobot_domain::session::Sid,
+        domain: &str,
+        at: jiff::Timestamp,
+    ) -> Result<bool, jojobot_domain::teaching::TeachingError> {
+        if self.stalled.load(std::sync::atomic::Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        self.inner.first_contact(sid, domain, at).await
+    }
+
+    async fn forget(
+        &self,
+        sid: &jojobot_domain::session::Sid,
+    ) -> Result<(), jojobot_domain::teaching::TeachingError> {
+        self.inner.forget(sid).await
+    }
+}
+
+/// **A connection the client or the proxy closes leaves one ERROR in the process
+/// log, and it is jojobot's own: the tool call that never got its answer.** The
+/// transport's own ERROR for the same close, "failed to send pending response
+/// during drain", says nothing the request log has not already said, so the log
+/// the binary writes leaves it out.
+///
+/// One log is read at the end of three closes: a client's standing stream, a
+/// `subscriptions/listen` held open as a POST, and a `capture` still being
+/// answered. The third is the positive the first two depend on: an ERROR that
+/// names the tool must survive the filter.
+#[tokio::test]
+async fn a_closed_connection_leaves_only_the_request_logs_error_in_the_process_log() {
+    use rmcp::ServiceExt;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
+    use rmcp::transport::StreamableHttpClientTransport;
+
+    let buffer = LogBuffer::default();
+    let writer = buffer.clone();
+    let _log = tracing::subscriber::set_default(jojobot::logging::logging(
+        move || writer.clone(),
+        tracing_subscriber::EnvFilter::new("info"),
+    ));
+    let teachings = Arc::new(StallsWhenTold {
+        inner: jojobot_domain::teaching::testing::InMemoryTeachings::new(),
+        stalled: std::sync::atomic::AtomicBool::new(false),
+    });
+    let held = teachings.clone();
+    let (addr, ct) = spawn_server(move |addr| {
+        let mut state = searchable_state(addr);
+        state.teachings = held;
+        state
+    })
+    .await;
+    let url = format!("http://{addr}/mcp");
+    let seen = |needle: &'static str| {
+        let buffer = buffer.clone();
+        async move {
+            for _ in 0..60 {
+                if without_colour(&buffer.warnings()).contains(needle) {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            panic!(
+                "{needle:?} never reached the log: {}",
+                without_colour(&buffer.warnings())
+            );
+        }
+    };
+    let client_info = || {
+        ClientInfo::new(
+            ClientCapabilities::default(),
+            Implementation::new("jojobot-test-client", "0.0.1"),
+        )
+    };
+
+    // A client's standing stream, closed by the client.
+    let client = client_info()
+        .serve(StreamableHttpClientTransport::from_uri(url.clone()))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    drop(client);
+    seen("mcp stream closed").await;
+
+    // A listen held open as a POST, closed by the client.
+    let http = reqwest::Client::new();
+    let mut stream = open_listen(&http, &url, None, 9).await;
+    let mut pending = String::new();
+    next_stream_message(&mut stream, &mut pending)
+        .await
+        .expect("the listen is acknowledged");
+    drop(stream);
+    seen("subscriptions/listen").await;
+
+    // A `capture` still being answered when its client goes away.
+    let client = client_info()
+        .serve(StreamableHttpClientTransport::from_uri(url.clone()))
+        .await
+        .unwrap();
+    let call = |name: &'static str, arguments: serde_json::Value| {
+        CallToolRequestParams::new(name).with_arguments(arguments.as_object().unwrap().clone())
+    };
+    let booted = client
+        .call_tool(call(
+            "start_here",
+            serde_json::json!({ "bot": "assistant", "brief": true }),
+        ))
+        .await
+        .unwrap();
+    let booted: serde_json::Value = serde_json::from_str(
+        &booted.content[0]
+            .as_text()
+            .expect("start_here answers")
+            .text,
+    )
+    .unwrap();
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .expect("a sid")
+        .to_string();
+    client
+        .call_tool(call(
+            "add_entity",
+            serde_json::json!({
+                "kind": "person", "handle": "homer",
+                "name": "Homer", "source": "user-named", "sid": sid,
+            }),
+        ))
+        .await
+        .unwrap();
+    teachings
+        .stalled
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let peer = client.peer().clone();
+    let capture = tokio::spawn(async move {
+        peer.call_tool(call(
+            "capture",
+            serde_json::json!({
+                "subject": "person:homer",
+                "content": "keeps a zamboni in the garage",
+                "provenance": "testimony",
+                "recorded_at": "2026-07-01",
+                "sid": sid,
+            }),
+        ))
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !capture.is_finished(),
+        "the capture was meant to be held open"
+    );
+    drop(client);
+    seen("tool=\"capture\"").await;
+    capture.abort();
+
+    // Let the transport finish whatever it reports after a close.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let text = without_colour(&buffer.warnings());
+    let errors: Vec<&str> = text.lines().filter(|l| l.contains(" ERROR ")).collect();
+    assert_eq!(errors.len(), 1, "one ERROR, the capture's: {text}");
+    assert!(
+        errors[0].contains("jojobot::request_log") && errors[0].contains("tool=\"capture\""),
+        "{}",
+        errors[0]
+    );
+    ct.cancel();
+}
