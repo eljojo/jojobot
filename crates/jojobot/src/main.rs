@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
         teachings: booted.teachings,
         registry: booted.registry,
         ui,
-        clock: config.clock,
+        clock: booted.clock,
         push,
         quiet_after: None,
     };

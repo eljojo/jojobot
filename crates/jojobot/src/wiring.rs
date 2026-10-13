@@ -278,6 +278,10 @@ pub struct Booted {
     pub teachings: Arc<dyn Teachings>,
     /// What `AppState.registry` is.
     pub registry: Arc<jojobot_mcp::sid::SessionRegistry>,
+    /// **The clock this server stamps with**, which is what `AppState.clock` is.
+    /// The clock the boot was given, continued after the newest stamp the store
+    /// already holds when that clock states a day.
+    pub clock: Clock,
 }
 
 /// **Name the records the store already holds over the ceiling**, from the scan
@@ -366,6 +370,34 @@ pub async fn boot_store_pushing(
     } else {
         tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
     }
+
+    // **A clock that states a day continues after what the store already holds
+    // on that day.** It counts from midnight in every process, so a process
+    // started over a store another process filled would stamp its first writes
+    // before that process's last. The clock is made once here and every stamp
+    // below, in the memory store and above it, comes from this one.
+    //
+    // **Not fatal, but loud**: a store that cannot answer here is one the boot
+    // reports on, and the clock then starts at midnight as it did before this
+    // pass existed. What follows is stamps that may sort before older ones, so
+    // the line says that.
+    let clock = match clock.stated() {
+        None => clock,
+        Some(day) => match jojobot_adapters::dolt::newest_stamp_on(store.pool(), day).await {
+            Ok(newest) => clock.continuing_after(newest),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    %day,
+                    "STATED CLOCK NOT CONTINUED — the newest stamp on the stated day could not be \
+                     read, so this server stamps from the day's midnight and a new record may \
+                     sort before an older one. Nothing stored was changed; a restart once the \
+                     store is reachable continues the clock."
+                );
+                clock
+            }
+        },
+    };
 
     // **Memory is served from the store**, over the same pool as mail and
     // sessions. There is no second store to reach and nothing to carry: the
@@ -902,6 +934,7 @@ pub async fn boot_store_pushing(
         sessions,
         teachings,
         registry,
+        clock,
     })
 }
 

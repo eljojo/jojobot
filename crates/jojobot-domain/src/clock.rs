@@ -58,6 +58,31 @@ impl Clock {
         }
     }
 
+    /// **This clock, made to continue after the newest stamp the store already
+    /// holds.** A stated clock restarts at its day's midnight in every process,
+    /// so a process started over a store another process filled would stamp its
+    /// first writes before that process's last ones.
+    ///
+    /// **It moves when the clock began, not what a stamp reads.** `began` is set
+    /// back by the distance from midnight to the newest stamp, so the clock
+    /// reads that stamp now and advances at the real rate from it. A stamp that
+    /// is before the stated day, and a wall clock, leave the clock as it was.
+    #[must_use]
+    pub fn continuing_after(self, newest: Option<Timestamp>) -> Self {
+        let Clock::Stated { day, began } = self else {
+            return self;
+        };
+        let midnight = Self::midnight(day);
+        let Some(newest) = newest.filter(|stamp| *stamp >= midnight) else {
+            return self;
+        };
+        let held_back = newest.duration_since(midnight);
+        match began.checked_sub(held_back) {
+            Ok(began) => Clock::Stated { day, began },
+            Err(_) => self,
+        }
+    }
+
     /// **The day this server is acting out**, or `None` on the real clock.
     ///
     /// This is the question a caller-facing announcement asks, and the one the
@@ -225,6 +250,51 @@ mod tests {
                  milliseconds apart read as simultaneous",
             );
         }
+    }
+
+    /// **A clock made after a stamp stamps after it.** The stamp is late in the
+    /// stated day, as one left by an earlier process that ran for hours would be.
+    #[test]
+    fn a_stated_clock_continuing_after_a_stamp_stamps_after_it() {
+        let late: Timestamp = "2026-06-01T23:15:00.123456789Z".parse().expect("a moment");
+        let clock = Clock::stating(day("2026-06-01")).continuing_after(Some(late));
+
+        let first = clock.now();
+        assert!(first > late, "{first} is not after {late}");
+        let second = clock.now();
+        assert!(second > first, "{second} is not after {first}");
+    }
+
+    /// **The control for the case above**: with no stamp to continue from, or one
+    /// that is not on the stated day, the clock starts at its day's midnight as
+    /// it always did. A clock that continued from anything would pass the case
+    /// above for the wrong reason.
+    #[test]
+    fn a_stated_clock_with_nothing_on_its_day_to_continue_from_starts_at_midnight() {
+        let midnight: Timestamp = "2026-06-01T00:00:00Z".parse().expect("a moment");
+        let a_minute = std::time::Duration::from_secs(60);
+        let before: Timestamp = "2026-05-31T23:59:00Z".parse().expect("a moment");
+
+        for newest in [None, Some(before)] {
+            let clock = Clock::stating(day("2026-06-01")).continuing_after(newest);
+            let now = clock.now();
+            assert!(now >= midnight, "{now} is before the stated day began");
+            assert!(
+                now.duration_since(midnight).unsigned_abs() < a_minute,
+                "{now} did not start at midnight after {newest:?}"
+            );
+        }
+    }
+
+    /// **The wall clock has nothing to continue.** It stays the wall clock
+    /// whatever stamp it is handed.
+    #[test]
+    fn the_real_clock_does_not_continue_from_anything() {
+        let late: Timestamp = "2026-06-01T23:15:00Z".parse().expect("a moment");
+        let clock = Clock::Real.continuing_after(Some(late));
+
+        assert_eq!(clock.stated(), None);
+        assert!(clock.now().duration_since(late).as_secs() > 0);
     }
 
     /// **A moment is read in the zone asked for on the wall clock, and on the

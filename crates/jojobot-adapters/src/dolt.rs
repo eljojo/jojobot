@@ -937,6 +937,55 @@ pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
     }
 }
 
+/// **The newest stamp the store holds on `day`**, or `None` when nothing in it
+/// was stamped on that day.
+///
+/// **Every column that keeps an instant is read**, found in the schema rather
+/// than listed here: an instant is text of 40 or 48 characters, and a column
+/// added later is read without anybody remembering to name it. The ledger of
+/// applied migrations is left out, because it records when the migration RAN, on
+/// the real clock, and not a moment of the run being acted out.
+///
+/// **The newest is found by the instant, not by the text.** `…:00.5Z` sorts
+/// before `…:00Z` as text and is the later of the two. So each column is asked
+/// for its newest second first, and only the rows of that second are parsed.
+pub async fn newest_stamp_on(
+    pool: &MySqlPool,
+    day: jiff::civil::Date,
+) -> Result<Option<jiff::Timestamp>, sqlx::Error> {
+    let columns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT CAST(table_name AS CHAR), CAST(column_name AS CHAR) \
+         FROM information_schema.columns \
+         WHERE table_schema = DATABASE() AND data_type = 'varchar' \
+           AND character_maximum_length IN (40, 48) AND table_name <> 'schema_migration'",
+    )
+    .fetch_all(pool)
+    .await?;
+    let on_the_day = format!("{day}T%");
+    let mut newest: Option<jiff::Timestamp> = None;
+    for (table, column) in columns {
+        let second: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT MAX(LEFT(`{column}`, 19)) FROM `{table}` WHERE `{column}` LIKE ?"
+        ))
+        .bind(&on_the_day)
+        .fetch_one(pool)
+        .await?;
+        let Some(second) = second else { continue };
+        let cells: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT `{column}` FROM `{table}` WHERE LEFT(`{column}`, 19) = ?"
+        ))
+        .bind(second)
+        .fetch_all(pool)
+        .await?;
+        let latest = cells
+            .iter()
+            .filter_map(|cell| cell.parse::<jiff::Timestamp>().ok())
+            .max();
+        newest = newest.max(latest);
+    }
+    Ok(newest)
+}
+
 /// **Ask the kernel to kill the store the moment jojobot dies, however jojobot
 /// dies.**
 ///
