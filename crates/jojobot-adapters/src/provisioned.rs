@@ -542,8 +542,11 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        self.inner.retract(address, reason, date, caller).await
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
     }
     /// **A handle the build supplies is taken, on either side of a fold —
     /// exactly as it is for add, update and rename** (rule 234). Checked
@@ -566,6 +569,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         for side in [folded, survivor] {
             if self.provisions.record_for(side).is_some() {
@@ -575,7 +579,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             }
         }
         self.inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
     }
     async fn declare_type(
@@ -973,6 +977,7 @@ mod tests {
                 None,
                 Date::constant(2026, 6, 13),
                 &EntityId("bot:sigma".into()),
+                None,
             )
             .await
             .expect_err("folding a supplied record away must be refused");
@@ -988,6 +993,7 @@ mod tests {
                 None,
                 Date::constant(2026, 6, 13),
                 &EntityId("bot:sigma".into()),
+                None,
             )
             .await
             .expect_err("folding a stored thing into a supplied record must be refused");
@@ -1002,6 +1008,7 @@ mod tests {
             None,
             Date::constant(2026, 6, 13),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("a fold of two stored things is still the decorator's to pass through");

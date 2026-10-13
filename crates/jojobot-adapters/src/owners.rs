@@ -264,6 +264,7 @@ mod tests {
                 _: Option<&str>,
                 _: jiff::civil::Date,
                 _: &EntityId,
+                _: Option<&str>,
             ) -> Result<Retraction, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
@@ -274,6 +275,7 @@ mod tests {
                 _: Option<&str>,
                 _: jiff::civil::Date,
                 _: &EntityId,
+                _: Option<&str>,
             ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

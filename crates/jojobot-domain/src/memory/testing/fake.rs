@@ -2941,6 +2941,7 @@ impl Memory for InMemoryMemory {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
@@ -3284,7 +3285,7 @@ impl Memory for InMemoryMemory {
             fields: Default::default(),
             ..record.clone()
         });
-        self.append_claim_write(&record, None);
+        self.append_claim_write(&record, session.map(str::to_string));
 
         // **The folded row stays and starts forwarding.** It is not deleted and
         // it is not left looking like a thing.
@@ -3324,6 +3325,7 @@ impl Memory for InMemoryMemory {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let index = self.known();
         let former = self.former();
@@ -3441,8 +3443,8 @@ impl Memory for InMemoryMemory {
         // **A retraction is two writes**: the one that marked the claim, and
         // the account's first. Taking a claim back is a write of it, so the
         // chain says when it stopped standing rather than only that it did.
-        self.append_claim_write(&retracted, None);
-        self.append_claim_write(&record, None);
+        self.append_claim_write(&retracted, session.map(str::to_string));
+        self.append_claim_write(&record, session.map(str::to_string));
         drop(facts);
         self.append_writes(
             &record.home,

@@ -60,6 +60,22 @@ impl Jojobot {
                 None
             }
         };
+        // **The claimant is the run acting**, so the claim, the renewal and the
+        // release each name the run that made them.
+        let session = match &write {
+            RoleWrite::Claim { claimant, .. }
+            | RoleWrite::Renew { claimant, .. }
+            | RoleWrite::Release { claimant } => Some((*claimant).to_string()),
+        };
+        // **A plain renewal names no session on the patch**, because it is the
+        // one patch a store answers by overwriting the lease moment and
+        // appending nothing, and a patch that carries a session is an ordinary
+        // edit (see `is_a_plain_renewal`). With no write there is no session to
+        // record.
+        let patch_session = match &write {
+            RoleWrite::Renew { .. } => None,
+            _ => session.clone(),
+        };
         let (fields, role_move, clear): (
             std::collections::BTreeMap<String, String>,
             Option<RoleMove>,
@@ -116,6 +132,7 @@ impl Jojobot {
                         fields,
                         clear_fields: clear,
                         role_move,
+                        session: patch_session,
                         ..FactPatch::default()
                     },
                     bot,
@@ -129,6 +146,7 @@ impl Jojobot {
                 // A lease is jojobot's own arithmetic on the role, so every key of it reaches.
                 fact.derived = fields.keys().cloned().collect();
                 fact.fields = fields;
+                fact.session = session.clone();
                 self.memory.capture(fact).await.map(|_| ())
             }
             // A renewal or a release of a role that has no record on its object
@@ -137,11 +155,10 @@ impl Jojobot {
             (None, Some(role_move)) => {
                 let made = self
                     .memory
-                    .capture(NewFact::about(
-                        object.clone(),
-                        role_claim_content(role),
-                        today,
-                    ))
+                    .capture(NewFact {
+                        session: session.clone(),
+                        ..NewFact::about(object.clone(), role_claim_content(role), today)
+                    })
                     .await?;
                 let Guarded::Written(fact) = made else {
                     return Err(MemoryError::InvalidFact(format!(
@@ -156,6 +173,7 @@ impl Jojobot {
                             fields,
                             clear_fields: clear,
                             role_move: Some(role_move),
+                            session: patch_session,
                             ..FactPatch::default()
                         },
                         bot,

@@ -6725,6 +6725,7 @@ pub trait Memory: Send + Sync {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError>;
 
     /// **Fold one thing into another** — the repair for a duplicate that got
@@ -6773,6 +6774,7 @@ pub trait Memory: Send + Sync {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError>;
 
     /// Replace an entity's **prose** — the human half of its doc, everything

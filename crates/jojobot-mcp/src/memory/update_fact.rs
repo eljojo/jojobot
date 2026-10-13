@@ -801,7 +801,7 @@ impl Jojobot {
                     }
                 }
                 if clears_due_on {
-                    self.clear_stored_due_moment(&fact.subject, &caller.bot)
+                    self.clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
                         .await;
                 }
                 self.beat(

@@ -353,6 +353,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
             Some("same thing"),
             date(2026, 9, 7),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("merge ok");

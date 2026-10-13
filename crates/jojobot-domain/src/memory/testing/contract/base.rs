@@ -1151,6 +1151,7 @@ pub async fn a_claim_carries_when_it_was_taken_in<M: Memory>(store: &M) {
             Some("written in error"),
             date(2026, 8, 2),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -1674,6 +1675,7 @@ pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) 
             Some("misread the notice"),
             date(2026, 4, 4),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -1835,6 +1837,7 @@ pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
             Some("never issued"),
             date(2026, 8, 2),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -2128,6 +2131,7 @@ pub async fn undoing_the_newest_manager_cannot_close_a_loop<M: Memory>(store: &M
                     Some("a mistake"),
                     date(2026, 10, 3),
                     &top,
+                    None,
                 )
                 .await
                 .map(|_| ())
@@ -2197,7 +2201,7 @@ pub async fn a_manager_folded_into_another_keeps_its_reports_in_the_chain<M: Mem
 
     // The duplicate is folded into the survivor. Gully still names the duplicate.
     store
-        .merge(&duplicate, &survivor, None, date(2026, 10, 2), &top)
+        .merge(&duplicate, &survivor, None, date(2026, 10, 2), &top, None)
         .await
         .expect("a duplicate with nothing guarded folds into its survivor");
 
@@ -2330,7 +2334,14 @@ pub async fn a_merge_cannot_fold_a_bot_into_one_that_sits_below_it<M: Memory>(st
     }
 
     let refused = store
-        .merge(&duplicate, &survivor, None, date(2026, 10, 2), &survivor)
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 10, 2),
+            &survivor,
+            None,
+        )
         .await;
     assert!(
         matches!(refused, Err(MemoryError::ChartCycle { .. })),
@@ -2359,6 +2370,7 @@ pub async fn a_merge_cannot_fold_a_bot_into_one_that_sits_below_it<M: Memory>(st
             None,
             date(2026, 10, 2),
             &spare_survivor,
+            None,
         )
         .await
         .expect("a merge of two bots on nobody's chain lands");
@@ -2491,6 +2503,7 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
             Some("a mistake"),
             date(2026, 10, 3),
             &stranger,
+            None,
         )
         .await
         .expect_err("a stranger cannot take back low's manager");
@@ -2501,6 +2514,7 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
             Some("a mistake"),
             date(2026, 10, 3),
             &top,
+            None,
         )
         .await
         .expect("top is above low and may take its manager back");
@@ -2515,7 +2529,14 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     )
     .await;
     let err = store
-        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &stranger)
+        .merge(
+            &donor,
+            &orphan_two,
+            None,
+            date(2026, 10, 4),
+            &stranger,
+            None,
+        )
         .await
         .expect_err("a stranger cannot place orphan two under mid by merging");
     assert!(
@@ -2523,7 +2544,7 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         "expected MergeCarriesGuardedKeys, got {err:?}"
     );
     store
-        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &mid)
+        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &mid, None)
         .await
         .expect("mid may adopt orphan two by merging its donor in");
 
@@ -2586,7 +2607,7 @@ pub async fn a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it<M: 
     .await;
 
     let refused = store
-        .merge(&carrier, &keeper, None, date(2026, 10, 2), &keeper)
+        .merge(&carrier, &keeper, None, date(2026, 10, 2), &keeper, None)
         .await
         .expect_err("a merge into the caller's own bot must not carry a ceiling onto it");
     assert!(
@@ -2617,11 +2638,18 @@ pub async fn a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it<M: 
     );
 
     store
-        .merge(&plain, &keeper, None, date(2026, 10, 3), &keeper)
+        .merge(&plain, &keeper, None, date(2026, 10, 3), &keeper, None)
         .await
         .expect("a duplicate carrying no ceiling merges into the caller's own bot");
     store
-        .merge(&carrier, &keeper, None, date(2026, 10, 4), &other_caller())
+        .merge(
+            &carrier,
+            &keeper,
+            None,
+            date(2026, 10, 4),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("the same merge lands when somebody else is the caller");
     assert_eq!(
@@ -5393,6 +5421,7 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
             Some("testing the ceiling guard"),
             date(2026, 8, 5),
             &bot,
+            None,
         )
         .await
         .expect_err("retracting the record that carries its own ceiling must be refused");
@@ -5406,6 +5435,7 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
             Some("testing the ceiling guard"),
             date(2026, 8, 5),
             &other_caller(),
+            None,
         )
         .await
         .expect("retracting it lands for another identity");
@@ -7656,6 +7686,7 @@ pub async fn retracting_a_record_marks_it_and_records_why<M: Memory>(store: &M) 
             Some("it was rebooked twice"),
             date(2026, 7, 4),
             &other_caller(),
+            None,
         )
         .await
         .expect("retracting a record should succeed");
@@ -7707,7 +7738,13 @@ pub async fn a_retraction_needs_no_reason<M: Memory>(store: &M) {
     .await;
 
     let taken_back = store
-        .retract(&event.address(), None, date(2026, 7, 4), &other_caller())
+        .retract(
+            &event.address(),
+            None,
+            date(2026, 7, 4),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("a retraction without a reason is still a retraction");
 
@@ -7754,6 +7791,7 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
             Some("it did not, in fact"),
             date(2026, 7, 4),
             &other_caller(),
+            None,
         )
         .await
         .expect("the first retraction lands");
@@ -7764,6 +7802,7 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
             Some("again"),
             date(2026, 7, 5),
             &other_caller(),
+            None,
         )
         .await;
     // **Refused as already-done, never as impossible.** The caller asked
@@ -7781,6 +7820,7 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
             Some("undo"),
             date(2026, 7, 5),
             &other_caller(),
+            None,
         )
         .await;
     assert!(
@@ -7847,6 +7887,7 @@ pub async fn the_retraction_marker_is_not_one_of_the_things_fields<M: Memory>(st
             Some("the receipt said otherwise"),
             date(2026, 4, 19),
             &other_caller(),
+            None,
         )
         .await
         .expect("retracting the claim should succeed");
@@ -7899,6 +7940,7 @@ pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
             Some("it did not, in fact"),
             date(2026, 7, 4),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -7947,7 +7989,13 @@ pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
         "the refused edit wrote nothing"
     );
     let reversal = store
-        .retract(&account, Some("undo"), date(2026, 7, 5), &other_caller())
+        .retract(
+            &account,
+            Some("undo"),
+            date(2026, 7, 5),
+            &other_caller(),
+            None,
+        )
         .await;
     assert!(
         matches!(reversal, Err(MemoryError::NotRetractable { .. })),
@@ -7999,6 +8047,7 @@ pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
             Some("nothing here"),
             date(2026, 7, 4),
             &other_caller(),
+            None,
         )
         .await;
     assert!(
@@ -9522,6 +9571,7 @@ async fn a_retraction_on_a_captured_claim_lands<M: Memory, B: support::Backing<M
             Some("no longer true"),
             date(2026, 5, 23),
             &other_caller(),
+            None,
         )
         .await
         .expect("a retraction on either backing's claim is a write the gate allows");
@@ -9780,7 +9830,14 @@ pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: M
 
     // The supplied record as the duplicate side.
     let as_folded = store
-        .merge(&shipped, &stored, None, date(2026, 6, 13), &other_caller())
+        .merge(
+            &shipped,
+            &stored,
+            None,
+            date(2026, 6, 13),
+            &other_caller(),
+            None,
+        )
         .await
         .expect_err("folding a build-supplied record away must be refused");
     assert!(
@@ -9791,7 +9848,14 @@ pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: M
 
     // The supplied record as the survivor side.
     let as_survivor = store
-        .merge(&stored, &shipped, None, date(2026, 6, 13), &other_caller())
+        .merge(
+            &stored,
+            &shipped,
+            None,
+            date(2026, 6, 13),
+            &other_caller(),
+            None,
+        )
         .await
         .expect_err("folding a stored record into a build-supplied one must be refused");
     assert!(
@@ -9814,7 +9878,14 @@ pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: M
     // every miss.
     let nobody = EntityId("thing:contract-supplied-merge-nobody".into());
     let unknown = store
-        .merge(&nobody, &stored, None, date(2026, 6, 13), &other_caller())
+        .merge(
+            &nobody,
+            &stored,
+            None,
+            date(2026, 6, 13),
+            &other_caller(),
+            None,
+        )
         .await
         .expect_err("a handle nothing ever held must still miss");
     assert!(
@@ -10946,6 +11017,7 @@ pub async fn a_walk_marks_a_link_whose_claim_the_store_took_back<M: Memory>(stor
             Some("was never at it — a different evening"),
             date(2026, 8, 12),
             &other_caller(),
+            None,
         )
         .await
         .expect("a claim that stands may be taken back");
@@ -12602,6 +12674,7 @@ pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M:
             Some("it was never so"),
             date(2026, 4, 19),
             &other_caller(),
+            None,
         )
         .await
         .expect("a retraction is not refused by the fit guard");
@@ -14061,6 +14134,7 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
             Some("one person, filed twice"),
             date(2026, 5, 3),
             &other_caller(),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -14117,7 +14191,7 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
     // **Neither side may be folded twice.** A chain stops answering in one
     // hop, so it is refused rather than followed.
     let again = store
-        .merge(&spare, &kept, None, date(2026, 5, 4), &other_caller())
+        .merge(&spare, &kept, None, date(2026, 5, 4), &other_caller(), None)
         .await
         .expect_err("a folded row is not a side to fold");
     assert!(
@@ -14127,7 +14201,7 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
 
     // And nothing folds into itself.
     let itself = store
-        .merge(&kept, &kept, None, date(2026, 5, 4), &other_caller())
+        .merge(&kept, &kept, None, date(2026, 5, 4), &other_caller(), None)
         .await
         .expect_err("a fold has two sides");
     assert!(
@@ -14170,6 +14244,7 @@ pub async fn a_walk_from_a_folded_handle_says_where_it_went<M: Memory>(store: &M
             Some("one person, filed twice"),
             date(2026, 5, 4),
             &other_caller(),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -14264,7 +14339,14 @@ pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store:
         .expect("the duplicate takes prose");
 
     store
-        .merge(&spare, &kept, None, date(2026, 5, 20), &other_caller())
+        .merge(
+            &spare,
+            &kept,
+            None,
+            date(2026, 5, 20),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("the fold lands");
 
@@ -14346,7 +14428,14 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
     let stale = written.address();
 
     store
-        .merge(&spare, &kept, None, date(2026, 5, 11), &other_caller())
+        .merge(
+            &spare,
+            &kept,
+            None,
+            date(2026, 5, 11),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("the fold lands");
 
@@ -14370,7 +14459,7 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
     );
 
     let retracted = store
-        .retract(&stale, None, date(2026, 5, 11), &other_caller())
+        .retract(&stale, None, date(2026, 5, 11), &other_caller(), None)
         .await
         .expect_err("retract must answer the same way");
     assert!(
@@ -14496,6 +14585,7 @@ pub async fn a_fold_carries_the_lineage_that_points_at_what_it_moved<M: Memory>(
             Some("one person, filed twice"),
             date(2026, 6, 3),
             &other_caller(),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -14590,7 +14680,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
         add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
     }
     store
-        .merge(&folded, &survivor, None, date(2026, 9, 2), &survivor)
+        .merge(&folded, &survivor, None, date(2026, 9, 2), &survivor, None)
         .await
         .expect("the fold lands");
 
@@ -14758,7 +14848,14 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     .await;
 
     store
-        .merge(&after, &survivor, None, date(2026, 7, 4), &other_caller())
+        .merge(
+            &after,
+            &survivor,
+            None,
+            date(2026, 7, 4),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("the fold lands");
 
@@ -14930,6 +15027,7 @@ pub async fn a_fold_repoints_a_reference_field_naming_the_folded_side<M: Memory>
             None,
             date(2026, 9, 2),
             &other_caller(),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -15042,6 +15140,7 @@ pub async fn a_fold_repoints_a_list_of_references_and_names_the_survivor_once<M:
             None,
             date(2026, 9, 2),
             &other_caller(),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -15125,6 +15224,7 @@ pub async fn merge_refuses_a_session_kind_handle_on_either_side<M: Memory>(store
             None,
             date(2026, 5, 3),
             &other_caller(),
+            None,
         )
         .await
         .expect_err("a session named as the folded side must be refused, not merged away");
@@ -15140,6 +15240,7 @@ pub async fn merge_refuses_a_session_kind_handle_on_either_side<M: Memory>(store
             None,
             date(2026, 5, 3),
             &other_caller(),
+            None,
         )
         .await
         .expect_err("a session named as the survivor must be refused, not written into");
@@ -15185,7 +15286,14 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     .await;
 
     let refused = store
-        .merge(&jukebox, &bot, None, date(2026, 10, 2), &other_caller())
+        .merge(
+            &jukebox,
+            &bot,
+            None,
+            date(2026, 10, 2),
+            &other_caller(),
+            None,
+        )
         .await
         .expect_err("a merge that overfills the room must be refused, not landed");
     match refused {
@@ -15233,7 +15341,14 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     )
     .await;
     store
-        .merge(&jukebox, &bot, None, date(2026, 10, 3), &other_caller())
+        .merge(
+            &jukebox,
+            &bot,
+            None,
+            date(2026, 10, 3),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("with one slot free the same merge lands");
 
@@ -15253,7 +15368,14 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     .await;
     let long = capture(store, thought(&kettle, "abcdef", &needle)).await;
     let refused = store
-        .merge(&kettle, &narrow, None, date(2026, 10, 5), &other_caller())
+        .merge(
+            &kettle,
+            &narrow,
+            None,
+            date(2026, 10, 5),
+            &other_caller(),
+            None,
+        )
         .await
         .expect_err("a merge that lands a thought over the cap must be refused");
     match refused {
@@ -15275,7 +15397,14 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     ensure(store, &fits).await;
     capture(store, thought(&fits, "abcde", &needle)).await;
     store
-        .merge(&fits, &narrow, None, date(2026, 10, 6), &other_caller())
+        .merge(
+            &fits,
+            &narrow,
+            None,
+            date(2026, 10, 6),
+            &other_caller(),
+            None,
+        )
         .await
         .expect("a thought exactly at the cap lands");
 }
@@ -17094,8 +17223,125 @@ macro_rules! all_cases {
         $m!(add_entity_refuses_a_session_kind_handle($store));
         $m!(merge_refuses_a_session_kind_handle_on_either_side($store));
         $m!(a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused($store));
+        $m!(a_retraction_and_a_merge_record_the_session_that_made_them($store));
 
     };
+}
+
+/// **A retraction and a fold record the session that made them.** Each writes
+/// two claims, and each is written with the session the caller sent: the claim
+/// taken back gains a write of its own, and the account the act leaves is a
+/// first write. An ordinary capture names its session as it always did, which is
+/// the positive the rest is read against.
+pub async fn a_retraction_and_a_merge_record_the_session_that_made_them<M: Memory>(store: &M) {
+    let thing = EntityId("topic:contract-acting-thing".into());
+    let keep = EntityId("topic:contract-acting-keep".into());
+    let dup = EntityId("topic:contract-acting-dup".into());
+    for (id, name) in [(&thing, "Gravel Pit"), (&keep, "Orchard"), (&dup, "Meadow")] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let written = |writes: &[crate::memory::ClaimWrite]| -> Vec<Option<String>> {
+        writes.iter().map(|write| write.session.clone()).collect()
+    };
+    let claimed = capture(
+        store,
+        NewFact {
+            session: Some("run-first".into()),
+            ..NewFact::about(thing.clone(), "the quarry opens at dawn", date(2026, 8, 1))
+        },
+    )
+    .await;
+    let control = store
+        .claim_history(&claimed.address())
+        .await
+        .expect("the history of a captured claim");
+    assert_eq!(
+        written(&control),
+        vec![Some("run-first".to_string())],
+        "an ordinary capture names its session"
+    );
+
+    // ── a retraction: the claim gains a write and the account is a first write ─
+    let taken_back = store
+        .retract(
+            &claimed.address(),
+            Some("written in error"),
+            date(2026, 8, 2),
+            &other_caller(),
+            Some("run-second"),
+        )
+        .await
+        .expect("the retraction lands");
+    let history = store
+        .claim_history(&claimed.address())
+        .await
+        .expect("the history of a retracted claim");
+    assert_eq!(
+        written(&history),
+        vec![
+            Some("run-first".to_string()),
+            Some("run-second".to_string())
+        ],
+        "the retraction is a write of the claim and names the run that made it"
+    );
+    let account = store
+        .claim_history(&taken_back.record.address())
+        .await
+        .expect("the history of the account");
+    assert_eq!(
+        written(&account),
+        vec![Some("run-second".to_string())],
+        "the account of a retraction names the run that made it"
+    );
+
+    // ── a fold: the account on the survivor is a first write ──────────────────
+    capture(
+        store,
+        NewFact::about(dup.clone(), "the meadow floods in spring", date(2026, 8, 1)),
+    )
+    .await;
+    let folded = store
+        .merge(
+            &dup,
+            &keep,
+            Some("one orchard under two names"),
+            date(2026, 8, 3),
+            &other_caller(),
+            Some("run-third"),
+        )
+        .await
+        .expect("the fold lands");
+    let account = store
+        .claim_history(&folded.record.address())
+        .await
+        .expect("the history of the fold's account");
+    assert_eq!(
+        written(&account),
+        vec![Some("run-third".to_string())],
+        "the account of a fold names the run that made it"
+    );
+
+    // ── and a caller with no run still writes, naming none ────────────────────
+    let unnamed = capture(
+        store,
+        NewFact::about(thing.clone(), "the quarry closes at dusk", date(2026, 8, 4)),
+    )
+    .await;
+    let taken = store
+        .retract(
+            &unnamed.address(),
+            None,
+            date(2026, 8, 5),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a retraction with no run lands");
+    let history = store
+        .claim_history(&taken.record.address())
+        .await
+        .expect("the history");
+    assert_eq!(written(&history), vec![None], "no run, no name invented");
 }
 
 /// How many parts a real store runs the contract in, side by side.

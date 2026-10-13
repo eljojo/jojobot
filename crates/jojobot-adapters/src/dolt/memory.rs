@@ -4324,7 +4324,7 @@ impl Memory for DoltMemory {
         // uses.** One row shape and one reader: a second would be a second
         // place for the columns to drift.
         let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, w.written_at, {FACT_WRITE_COLUMNS} FROM fact_write w
+            "SELECT w.ordinal, w.written_at, w.session, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
         ))
         .bind(key.as_str())
@@ -4386,7 +4386,11 @@ impl Memory for DoltMemory {
                     object: resolved,
                 });
             }
-            history.push(ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at));
+            // **The run that made the write, as the row kept it.** `None` for a
+            // write kept before the column existed and for one no run made.
+            let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
+            write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
+            history.push(write);
         }
         tx.commit().await.map_err(store)?;
         Ok(history)
@@ -4412,7 +4416,7 @@ impl Memory for DoltMemory {
         // entity holds, ordered so each claim's own writes stay oldest-first
         // once grouped by id below.
         let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, w.written_at, {FACT_WRITE_COLUMNS} FROM fact_write w
+            "SELECT w.ordinal, w.written_at, w.session, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
         ))
         .bind(key.as_str())
@@ -4448,11 +4452,9 @@ impl Memory for DoltMemory {
                     object: resolved,
                 });
             }
-            histories.entry(id).or_default().push(ClaimWrite::of(
-                &fact,
-                ordinal.max(0) as usize,
-                written_at,
-            ));
+            let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
+            write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
+            histories.entry(id).or_default().push(write);
         }
         tx.commit().await.map_err(store)?;
         Ok(histories)
@@ -5009,6 +5011,7 @@ impl Memory for DoltMemory {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
@@ -5309,7 +5312,7 @@ impl Memory for DoltMemory {
             inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
-        Self::write_fact(&mut tx, &record, &self.clock, None).await?;
+        Self::write_fact(&mut tx, &record, &self.clock, session).await?;
         Self::append_writes(
             &mut tx,
             &record.home,
@@ -5368,6 +5371,7 @@ impl Memory for DoltMemory {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **The full listing is built only on a miss** — two miss branches
@@ -5467,8 +5471,8 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
-        Self::write_fact(&mut tx, &retracted, &self.clock, None).await?;
-        Self::write_fact(&mut tx, &record, &self.clock, None).await?;
+        Self::write_fact(&mut tx, &retracted, &self.clock, session).await?;
+        Self::write_fact(&mut tx, &record, &self.clock, session).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.

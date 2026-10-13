@@ -168,7 +168,7 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
         "a prose write left the signal where it was"
     );
     last = fake.write_summary().await.expect("answers");
-    fake.retract(&fact.address(), None, date(2026, 7, 2), &milhouse)
+    fake.retract(&fact.address(), None, date(2026, 7, 2), &milhouse, None)
         .await
         .expect("retracts");
     assert_ne!(
@@ -177,7 +177,7 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
         "a retraction left the signal where it was"
     );
     last = fake.write_summary().await.expect("answers");
-    fake.merge(&milhouse, &bart, None, date(2026, 7, 3), &bart)
+    fake.merge(&milhouse, &bart, None, date(2026, 7, 3), &bart, None)
         .await
         .expect("merges");
     assert_ne!(
@@ -392,7 +392,7 @@ async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
         .written()
         .expect("lands");
     store
-        .merge(&spare, &kept, None, date(2026, 7, 2), &holder)
+        .merge(&spare, &kept, None, date(2026, 7, 2), &holder, None)
         .await
         .expect("the fold lands");
 
@@ -934,6 +934,7 @@ async fn a_hand_built_doc_holds_what_the_store_would_hold() {
             Some("it was three"),
             date(2026, 4, 19),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -2664,6 +2665,7 @@ async fn a_claim_taken_back_before_the_scan_is_not_served_after_it() {
             Some("it never happened"),
             date(2026, 7, 3),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("retract ok");
@@ -3623,6 +3625,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
             Some("one bot, filed twice"),
             date(2026, 8, 2),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the merge lands");
@@ -4852,6 +4855,7 @@ impl Memory for Scanned {
         _: Option<&str>,
         _: Date,
         _: &EntityId,
+        _: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         unimplemented!("this double only scans")
     }
@@ -4862,6 +4866,7 @@ impl Memory for Scanned {
         _: Option<&str>,
         _: Date,
         _: &EntityId,
+        _: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         unimplemented!("this double only scans")
     }
@@ -5019,8 +5024,11 @@ impl Memory for SummarizedScan {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        self.inner.retract(address, reason, date, caller).await
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
     }
     async fn merge(
         &self,
@@ -5029,9 +5037,10 @@ impl Memory for SummarizedScan {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         self.inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
     }
 }
@@ -5168,6 +5177,7 @@ impl Memory for Delegated {
         _: Option<&str>,
         _: Date,
         _: &EntityId,
+        _: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
@@ -5178,6 +5188,7 @@ impl Memory for Delegated {
         _: Option<&str>,
         _: Date,
         _: &EntityId,
+        _: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
@@ -8544,8 +8555,9 @@ impl Memory for FixedWriteSummary {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        self.0.retract(address, reason, date, caller).await
+        self.0.retract(address, reason, date, caller, session).await
     }
     async fn merge(
         &self,
@@ -8554,8 +8566,11 @@ impl Memory for FixedWriteSummary {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
-        self.0.merge(folded, survivor, reason, date, caller).await
+        self.0
+            .merge(folded, survivor, reason, date, caller, session)
+            .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.0.set_prose(entity, prose).await

@@ -1033,7 +1033,7 @@ impl Jojobot {
         match captured {
             Guarded::Written(fact) => {
                 if clears_due_on {
-                    self.clear_stored_due_moment(&fact.subject, &caller.bot)
+                    self.clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
                         .await;
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())

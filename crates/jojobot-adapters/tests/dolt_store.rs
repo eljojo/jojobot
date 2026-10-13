@@ -1664,6 +1664,7 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
                 None,
                 date(2026, 8, 2),
                 &EntityId("bot:sigma".into()),
+                None,
             )
             .await;
         if lands {
@@ -5207,6 +5208,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
             Some("no longer true"),
             date(2026, 9, 8),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("retract ok");
@@ -5224,6 +5226,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
             None,
             date(2026, 9, 8),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect_err("an unwritten near-miss handle must not resolve");
@@ -5250,6 +5253,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
             None,
             date(2026, 9, 8),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect_err("an address with no fact must not resolve");
@@ -5441,6 +5445,7 @@ async fn write_summary_answers_the_real_store() {
             None,
             date(2026, 1, 1),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("merge ok");
@@ -6287,7 +6292,14 @@ async fn a_merge_moves_the_link_rows_with_the_writes() {
         .expect("the claim lands");
 
     memory
-        .merge(&duplicate, &survivor, None, date(2026, 8, 2), &survivor)
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 8, 2),
+            &survivor,
+            None,
+        )
         .await
         .expect("the fold lands");
 
@@ -6360,7 +6372,14 @@ async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
     }
 
     let folded = memory
-        .merge(&duplicate, &survivor, None, date(2026, 8, 4), &survivor)
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 8, 4),
+            &survivor,
+            None,
+        )
         .await;
     assert!(
         folded.is_ok(),
@@ -6440,7 +6459,14 @@ async fn latest_write_wins(survivor_day: i8, duplicate_day: i8, holds: &str) {
     }
 
     survivors
-        .merge(&duplicate, &survivor, None, date(2026, 8, 9), &survivor)
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 8, 9),
+            &survivor,
+            None,
+        )
         .await
         .expect("the fold lands");
 
@@ -6572,7 +6598,14 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
         }
 
         memory
-            .merge(&duplicate, &survivor, None, date(2026, 8, 4), &survivor)
+            .merge(
+                &duplicate,
+                &survivor,
+                None,
+                date(2026, 8, 4),
+                &survivor,
+                None,
+            )
             .await
             .unwrap_or_else(|e| panic!("the fold lands when {what}: {e:?}"));
 
@@ -6655,7 +6688,14 @@ async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_
     );
 
     memory
-        .merge(&duplicate, &survivor, None, date(2026, 8, 3), &survivor)
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 8, 3),
+            &survivor,
+            None,
+        )
         .await
         .expect("the fold lands");
 
@@ -6925,6 +6965,7 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
             None,
             date(2026, 9, 2),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -6992,6 +7033,7 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
             None,
             date(2026, 9, 4),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -7138,6 +7180,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
             None,
             date(2026, 9, 2),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the first fold lands");
@@ -7148,6 +7191,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
             None,
             date(2026, 9, 3),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the second fold lands");
@@ -7326,6 +7370,7 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
             None,
             date(2026, 9, 2),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -7421,6 +7466,7 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
             None,
             date(2026, 9, 4),
             &EntityId("bot:sigma".into()),
+            None,
         )
         .await
         .expect("the second fold lands");

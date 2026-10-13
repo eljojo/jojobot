@@ -209,7 +209,12 @@ impl Jojobot {
     /// readable. **It never fails the capture that asked for it**: the capture
     /// has landed, and this is jojobot's own bookkeeping riding along on
     /// somebody else's write, as `moved_due_moment` is. A failure is logged.
-    pub(crate) async fn clear_stored_due_moment(&self, subject: &EntityId, bot: &EntityId) {
+    pub(crate) async fn clear_stored_due_moment(
+        &self,
+        subject: &EntityId,
+        bot: &EntityId,
+        session: &str,
+    ) {
         let carrier = match self.memory.recall(subject).await {
             Ok(facts) => facts.into_iter().find(|fact| {
                 fact.status == FactStatus::Active && fact.fields.contains_key(attention::DUE_ON)
@@ -222,6 +227,7 @@ impl Jojobot {
         let Some(carrier) = carrier else { return };
         let patch = FactPatch {
             clear_fields: vec![attention::DUE_ON.to_string()],
+            session: Some(session.to_string()),
             ..Default::default()
         };
         if let Err(e) = self

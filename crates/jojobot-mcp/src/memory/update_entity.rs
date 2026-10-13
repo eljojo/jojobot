@@ -262,7 +262,8 @@ impl Jojobot {
                 // the record that carried the key it came from, not always the
                 // claim this call wrote. See `clear_stored_due_moment`.
                 if matches!(due_moved, jojobot_domain::attention::DueMove::Cleared) {
-                    self.clear_stored_due_moment(&entity.id, &caller.bot).await;
+                    self.clear_stored_due_moment(&entity.id, &caller.bot, caller.sid.as_str())
+                        .await;
                 }
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;

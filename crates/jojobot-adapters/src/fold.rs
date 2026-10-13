@@ -376,9 +376,13 @@ impl Memory for Folded {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let _forget = self.forgetting_ages();
-        let taken_back = self.inner.retract(address, reason, date, caller).await?;
+        let taken_back = self
+            .inner
+            .retract(address, reason, date, caller, session)
+            .await?;
         match self.refresh(&taken_back.retracted.home).await {
             Ok(()) => Ok(taken_back),
             Err(source) => Err(fold_behind(
@@ -399,6 +403,7 @@ impl Memory for Folded {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         let _forget = self.forgetting_ages();
         // **Who points at the folded side, read before the fold** — after it
@@ -412,7 +417,7 @@ impl Memory for Folded {
         }
         let done = self
             .inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await?;
         // **The merged-away handle's entry is dropped, never refreshed.** A
         // merge moves its writes to the survivor, so the store's version
@@ -688,6 +693,7 @@ mod tests {
                 Some("moved back"),
                 date(2026, 9, 9),
                 &EntityId("bot:sigma".into()),
+                None,
             )
             .await
             .expect("retract ok");
@@ -740,6 +746,7 @@ mod tests {
                 Some("same thing"),
                 date(2026, 9, 10),
                 &EntityId::person("person:gamma"),
+                None,
             )
             .await
             .expect("merge ok");
@@ -939,8 +946,9 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Retraction, MemoryError> {
-            self.0.retract(address, reason, date, caller).await
+            self.0.retract(address, reason, date, caller, session).await
         }
         async fn merge(
             &self,
@@ -949,8 +957,11 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Merge, MemoryError> {
-            self.0.merge(folded, survivor, reason, date, caller).await
+            self.0
+                .merge(folded, survivor, reason, date, caller, session)
+                .await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
             self.0.set_prose(entity, prose).await
@@ -1111,8 +1122,11 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Retraction, MemoryError> {
-            self.inner.retract(address, reason, date, caller).await
+            self.inner
+                .retract(address, reason, date, caller, session)
+                .await
         }
         async fn merge(
             &self,
@@ -1121,9 +1135,10 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Merge, MemoryError> {
             self.inner
-                .merge(folded, survivor, reason, date, caller)
+                .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -1249,8 +1264,11 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Retraction, MemoryError> {
-            self.inner.retract(address, reason, date, caller).await
+            self.inner
+                .retract(address, reason, date, caller, session)
+                .await
         }
         async fn merge(
             &self,
@@ -1259,9 +1277,10 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Merge, MemoryError> {
             self.inner
-                .merge(folded, survivor, reason, date, caller)
+                .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -1579,8 +1598,12 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Retraction, MemoryError> {
-            let retracted = self.inner.retract(address, reason, date, caller).await?;
+            let retracted = self
+                .inner
+                .retract(address, reason, date, caller, session)
+                .await?;
             self.written
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(retracted)
@@ -1592,9 +1615,10 @@ mod tests {
             reason: Option<&str>,
             date: Date,
             caller: &EntityId,
+            session: Option<&str>,
         ) -> Result<Merge, MemoryError> {
             self.inner
-                .merge(folded, survivor, reason, date, caller)
+                .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {

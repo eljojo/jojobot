@@ -550,10 +550,14 @@ impl Memory for IndexedMemory {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let taken_back = self.inner.retract(address, reason, date, caller).await?;
+        let taken_back = self
+            .inner
+            .retract(address, reason, date, caller, session)
+            .await?;
         let reread = self.refresh(&taken_back.retracted.home).await;
         self.caught_up(began, vec![reread]).await;
         Ok(taken_back)
@@ -578,6 +582,7 @@ impl Memory for IndexedMemory {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
@@ -588,7 +593,7 @@ impl Memory for IndexedMemory {
         };
         let done = self
             .inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await?;
         // The folded bot's runs read as the survivor's now.
         self.index.names_changed();

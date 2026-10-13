@@ -320,6 +320,7 @@ pub async fn search_excludes_a_retracted_record_by_default<M: Memory, S: Search>
             Some("it never happened"),
             date(2026, 7, 3),
             &other_caller(),
+            None,
         )
         .await
         .expect("retracting a record should succeed");
@@ -646,7 +647,7 @@ pub async fn a_name_the_duplicate_wore_finds_the_survivor_after_a_fold<M: Memory
     );
 
     store
-        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller())
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller(), None)
         .await
         .expect("the fold lands");
 
@@ -724,7 +725,7 @@ pub async fn a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold<
     );
 
     store
-        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller())
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller(), None)
         .await
         .expect("the fold lands");
 

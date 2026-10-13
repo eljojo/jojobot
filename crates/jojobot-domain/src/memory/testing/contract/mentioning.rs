@@ -1279,6 +1279,7 @@ pub async fn a_retraction_still_follows_a_later_rename<M: Memory + ?Sized>(store
             Some("no longer so"),
             date(2026, 6, 13),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -1753,6 +1754,7 @@ pub async fn a_retraction_through_a_stale_address_reaches_the_record_it_always_n
             Some("no longer so"),
             date(2026, 5, 14),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -1775,7 +1777,7 @@ pub async fn a_retraction_through_a_stale_address_reaches_the_record_it_always_n
     let never = FactAddress::new(now, FactId("f99".into()));
     assert!(
         store
-            .retract(&never, None, date(2026, 5, 14), &other_caller())
+            .retract(&never, None, date(2026, 5, 14), &other_caller(), None)
             .await
             .is_err(),
         "a local id this thing never held must still miss, whichever of its handles is asked",
@@ -1928,6 +1930,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             Some("named @person:contract-mention-nobody"),
             date(2026, 4, 23),
             &other_caller(),
+            None,
         )
         .await;
     match refused {
@@ -1956,6 +1959,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             Some("named @person:contract-refscreen-author"),
             date(2026, 4, 23),
             &other_caller(),
+            None,
         )
         .await
         .expect("a retraction reason naming something real is not refused");
@@ -2000,6 +2004,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             Some("named @person:contract-mention-nobody"),
             date(2026, 4, 23),
             &other_caller(),
+            None,
         )
         .await;
     assert!(
@@ -2024,6 +2029,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             Some("named @person:contract-refscreen-survivor"),
             date(2026, 4, 24),
             &other_caller(),
+            None,
         )
         .await
         .expect("a merge reason naming something real is not refused");
@@ -2320,6 +2326,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
             Some("nobody at @place:contract-mention-inn remembers it"),
             date(2026, 4, 19),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");
@@ -2379,6 +2386,7 @@ pub async fn an_account_written_from_a_reason_stores_its_mentions<
             Some("both were the same member of @org:contract-mention-guild"),
             date(2026, 4, 18),
             &other_caller(),
+            None,
         )
         .await
         .expect("the fold lands");
@@ -2420,6 +2428,7 @@ pub async fn an_account_written_from_a_reason_stores_its_mentions<
             Some("@org:contract-mention-guild says otherwise"),
             date(2026, 4, 19),
             &other_caller(),
+            None,
         )
         .await
         .expect("the retraction lands");

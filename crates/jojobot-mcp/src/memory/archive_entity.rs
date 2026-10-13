@@ -83,7 +83,7 @@ impl Jojobot {
             return Ok(refused);
         }
         if args.restore.unwrap_or(false) {
-            return self.restore(&handle, &args).await;
+            return self.restore(&handle, &args, caller.sid.as_str()).await;
         }
         let entity = match self.memory.archive_entity(&handle, &args.reason).await {
             Ok(entity) => entity,
@@ -118,6 +118,7 @@ impl Jojobot {
         &self,
         handle: &EntityId,
         args: &ArchiveEntityArgs,
+        session: &str,
     ) -> Result<CallToolResult, McpError> {
         let (entity, was) = match self.memory.restore_entity(handle).await {
             Ok(restored) => restored,
@@ -146,6 +147,7 @@ impl Jojobot {
             .memory
             .capture(NewFact {
                 provenance: Provenance::Inference,
+                session: Some(session.to_string()),
                 ..NewFact::about(entity.id.clone(), content, day)
             })
             .await;

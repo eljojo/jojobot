@@ -1401,6 +1401,7 @@ impl super::Memory for Mentioning {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &super::EntityId,
+        session: Option<&str>,
     ) -> Result<super::Retraction, super::MemoryError> {
         refuse_forged(&[reason.unwrap_or("")])?;
         let known = self.known().await?;
@@ -1415,7 +1416,7 @@ impl super::Memory for Mentioning {
             .map_err(unloaded)?;
         let mut done = self
             .inner
-            .retract(address, reason.as_deref(), date, caller)
+            .retract(address, reason.as_deref(), date, caller, session)
             .await?
             .open();
         self.render_fact(&mut done.retracted, &known, &former, &declared);
@@ -1431,6 +1432,7 @@ impl super::Memory for Mentioning {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<super::Merge, super::MemoryError> {
         refuse_forged(&[reason.unwrap_or("")])?;
         let known = self.known().await?;
@@ -1445,7 +1447,7 @@ impl super::Memory for Mentioning {
             .map_err(unloaded)?;
         let mut done = self
             .inner
-            .merge(folded, survivor, reason.as_deref(), date, caller)
+            .merge(folded, survivor, reason.as_deref(), date, caller, session)
             .await?
             .open();
         self.render_fact(&mut done.record, &known, &former, &declared);

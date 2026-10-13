@@ -160,7 +160,13 @@ impl Jojobot {
         // `capture`'s own note on the same shape.
         let (taken_back, fold_behind) = match self
             .memory
-            .retract(&address, args.reason.as_deref(), date, &caller.bot)
+            .retract(
+                &address,
+                args.reason.as_deref(),
+                date,
+                &caller.bot,
+                Some(caller.sid.as_str()),
+            )
             .await
         {
             Ok(taken_back) => (taken_back, None),

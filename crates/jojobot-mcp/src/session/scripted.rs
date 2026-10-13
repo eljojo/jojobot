@@ -293,8 +293,11 @@ impl Memory for Scripted {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        self.inner.retract(address, reason, date, caller).await
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
     }
     async fn merge(
         &self,
@@ -303,9 +306,10 @@ impl Memory for Scripted {
         reason: Option<&str>,
         date: Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         self.inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {

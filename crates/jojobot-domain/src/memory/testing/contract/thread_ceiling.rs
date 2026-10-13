@@ -193,6 +193,7 @@ async fn the_key_is_set_only_above_the_bots_that_write_into_the_thread<M: Memory
             Some("a mistake"),
             date(2026, 10, 4),
             &writer,
+            None,
         )
         .await
         .expect_err("the writer does not retract the claim that sets its ceiling");

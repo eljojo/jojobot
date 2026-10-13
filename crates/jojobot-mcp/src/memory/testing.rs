@@ -666,8 +666,9 @@ impl Memory for DownMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.1.retract(address, reason, date, caller).await
+        self.1.retract(address, reason, date, caller, session).await
     }
     async fn merge(
         &self,
@@ -676,8 +677,11 @@ impl Memory for DownMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        self.1.merge(folded, survivor, reason, date, caller).await
+        self.1
+            .merge(folded, survivor, reason, date, caller, session)
+            .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.1.set_prose(entity, prose).await
@@ -808,8 +812,12 @@ impl Memory for FoldBehindMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        let taken_back = self.0.retract(address, reason, date, caller).await?;
+        let taken_back = self
+            .0
+            .retract(address, reason, date, caller, session)
+            .await?;
         Err(fold_behind(Landed::Retraction(Box::new(taken_back))))
     }
     async fn merge(
@@ -819,8 +827,12 @@ impl Memory for FoldBehindMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        let done = self.0.merge(folded, survivor, reason, date, caller).await?;
+        let done = self
+            .0
+            .merge(folded, survivor, reason, date, caller, session)
+            .await?;
         Err(fold_behind(Landed::Merge(Box::new(done))))
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -956,8 +968,11 @@ impl Memory for RacingMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.inner.retract(address, reason, date, caller).await
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
     }
     async fn merge(
         &self,
@@ -966,6 +981,7 @@ impl Memory for RacingMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
         if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             self.inner
@@ -986,7 +1002,7 @@ impl Memory for RacingMemory {
                 .await?;
         }
         self.inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -1127,8 +1143,11 @@ impl Memory for MovesAfterTheRead {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.inner.retract(address, reason, date, caller).await
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
     }
     async fn merge(
         &self,
@@ -1137,9 +1156,10 @@ impl Memory for MovesAfterTheRead {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
         self.inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -1263,8 +1283,9 @@ impl Memory for ConflictingMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.0.retract(address, reason, date, caller).await
+        self.0.retract(address, reason, date, caller, session).await
     }
     async fn merge(
         &self,
@@ -1273,8 +1294,11 @@ impl Memory for ConflictingMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        self.0.merge(folded, survivor, reason, date, caller).await
+        self.0
+            .merge(folded, survivor, reason, date, caller, session)
+            .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.0.set_prose(entity, prose).await
@@ -1415,8 +1439,11 @@ impl Memory for FailsOnCapture {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.inner.retract(address, reason, date, caller).await
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
     }
     async fn merge(
         &self,
@@ -1425,9 +1452,10 @@ impl Memory for FailsOnCapture {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
         self.inner
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {

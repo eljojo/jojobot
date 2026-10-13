@@ -17,6 +17,10 @@ mod support;
 // the folder is named explicitly.
 /// "Is this value still good?" — the day the store learned a thing, and the day
 /// of a value older than the thing.
+/// The claim a retraction, a fold, a restore, a role move or a due clear leaves
+/// names the run that made it.
+#[path = "user_stories/acting_session.rs"]
+mod acting_session;
 #[path = "user_stories/age_of_a_value.rs"]
 mod age_of_a_value;
 /// How big an answer is allowed to get, and what a list does at the edge.

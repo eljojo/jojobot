@@ -123,6 +123,7 @@ impl Jojobot {
                 args.reason.as_deref(),
                 date,
                 &caller.bot,
+                Some(caller.sid.as_str()),
             )
             .await
         {

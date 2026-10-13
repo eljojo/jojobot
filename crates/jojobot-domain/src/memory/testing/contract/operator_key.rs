@@ -99,7 +99,7 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
 
     // ── nobody is named: any bot names the operator, by a merge too ─────────
     store
-        .merge(&spare, &record, None, date(2026, 10, 2), &other)
+        .merge(&spare, &record, None, date(2026, 10, 2), &other, None)
         .await
         .expect("a merge that names the operator lands while nobody is named");
     assert_eq!(held_on(record.clone()).await, Some(one.to_string()));
@@ -175,6 +175,7 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
             Some("a mistake"),
             date(2026, 10, 4),
             &other,
+            None,
         )
         .await
         .expect_err("only the head retracts the record that names the operator");
@@ -183,7 +184,7 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
 
     // ── a merge cannot carry the key onto a record that holds it ────────────
     let err = store
-        .merge(&second, &record, None, date(2026, 10, 5), &other)
+        .merge(&second, &record, None, date(2026, 10, 5), &other, None)
         .await
         .expect_err("only the head merges a named operator onto a named record");
     assert!(
@@ -253,7 +254,7 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
         "both records hold the key before the merge"
     );
     store
-        .merge(&second, &record, None, date(2026, 10, 8), &head)
+        .merge(&second, &record, None, date(2026, 10, 8), &head, None)
         .await
         .expect("the head merges a record that holds the operator onto one that holds it");
     assert!(

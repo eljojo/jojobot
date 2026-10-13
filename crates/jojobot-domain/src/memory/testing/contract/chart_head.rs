@@ -150,7 +150,7 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     )
     .await;
     let err = store
-        .merge(&twin, &second, None, date(2026, 10, 3), &omega)
+        .merge(&twin, &second, None, date(2026, 10, 3), &omega, None)
         .await
         .expect_err("no other bot places a head by merging a manager onto it");
     assert!(
@@ -158,7 +158,7 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
         "expected a refusal naming the head alone, got {err:?}"
     );
     store
-        .merge(&twin, &second, None, date(2026, 10, 3), &second)
+        .merge(&twin, &second, None, date(2026, 10, 3), &second, None)
         .await
         .expect("the head may merge a manager onto itself");
     let merged = store.fields(&second).await.expect("second is readable");

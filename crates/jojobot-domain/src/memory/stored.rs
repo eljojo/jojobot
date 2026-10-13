@@ -166,6 +166,7 @@ pub trait StoredMemory: Send + Sync {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &super::EntityId,
+        session: Option<&str>,
     ) -> Result<Stored<super::Retraction>, super::MemoryError>;
     async fn merge(
         &self,
@@ -174,6 +175,7 @@ pub trait StoredMemory: Send + Sync {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Stored<super::Merge>, super::MemoryError>;
     async fn set_prose(
         &self,
@@ -374,9 +376,10 @@ impl StoredMemory for Unrendered {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &super::EntityId,
+        session: Option<&str>,
     ) -> Result<Stored<super::Retraction>, super::MemoryError> {
         self.0
-            .retract(address, reason, date, caller)
+            .retract(address, reason, date, caller, session)
             .await
             .map(Stored::new)
     }
@@ -387,9 +390,10 @@ impl StoredMemory for Unrendered {
         reason: Option<&str>,
         date: jiff::civil::Date,
         caller: &EntityId,
+        session: Option<&str>,
     ) -> Result<Stored<super::Merge>, super::MemoryError> {
         self.0
-            .merge(folded, survivor, reason, date, caller)
+            .merge(folded, survivor, reason, date, caller, session)
             .await
             .map(Stored::new)
     }
