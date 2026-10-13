@@ -6403,12 +6403,23 @@ pub trait Memory: Send + Sync {
     /// Defaulted off [`list_entities`](Memory::list_entities) and
     /// [`recall`](Memory::recall): an adapter that can select on the pointer
     /// overrides it, and one that cannot is still correct.
+    ///
+    /// **An address written under a handle the thing no longer wears finds the
+    /// same claims as the current one.** A pointer is read back naming its
+    /// source by the handle the thing wears now, so the address is resolved
+    /// through the thing's rename history, with [`resolve_handle`], before the
+    /// pointers are compared.
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         validate_subject(&source.home)?;
+        let known = self.list_entities(None).await?;
+        let former = self.former_handles().await?;
+        let source = resolve_handle(&source.home, &known, &former)
+            .map(|entity| FactAddress::new(entity.id.clone(), source.local.clone()))
+            .unwrap_or_else(|| source.clone());
         let mut standing_on = Vec::new();
-        for entity in self.list_entities(None).await? {
+        for entity in &known {
             for fact in self.recall(&entity.id).await? {
-                if fact.derived_from.as_ref() == Some(source) {
+                if fact.derived_from.as_ref() == Some(&source) {
                     standing_on.push(fact);
                 }
             }

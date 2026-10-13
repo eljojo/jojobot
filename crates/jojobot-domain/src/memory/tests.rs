@@ -1,4 +1,4 @@
-use super::testing::{InMemoryMemory, contract};
+use super::testing::{InMemoryMemory, WithoutBuiltOn, contract};
 use super::*;
 
 fn thing(handle: &str, badge: Option<&str>) -> Entity {
@@ -1601,6 +1601,20 @@ async fn the_fake_stores_a_mention_as_a_badge_and_serves_it_as_a_handle() {
     contract::run_all_mentioning(
         &mention::Mentioning::new(bare.clone()),
         &*bare,
+        &contract::FakeRehandles(store),
+    )
+    .await;
+}
+
+/// **The port's own `built_on` finds what was built on a claim through an
+/// address written under a handle the thing no longer wears.** Run against a
+/// store that forwards the required methods and overrides nothing else, so the
+/// body that answers is the default's.
+#[tokio::test]
+async fn the_default_built_on_resolves_a_former_handle() {
+    let store = std::sync::Arc::new(InMemoryMemory::booted());
+    contract::built_on_through_a_stale_address_finds_what_was_built_on_the_claim(
+        &WithoutBuiltOn(store.clone()),
         &contract::FakeRehandles(store),
     )
     .await;
