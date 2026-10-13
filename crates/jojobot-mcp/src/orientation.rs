@@ -28,7 +28,7 @@ pub mod start_here;
 
 pub use start_here::OrientArgs;
 
-pub(crate) use identity::booting_unknown;
+pub(crate) use identity::{Answering, booting_unknown};
 
 /// This context's half of the surface — one router per verb file, summed.
 pub(crate) fn router() -> ToolRouter<Jojobot> {

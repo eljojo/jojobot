@@ -3079,14 +3079,24 @@ async fn assert_every_recorded_record_reads_back(
         fail("the wrapped session's own state", &read);
     }
     // **The starred rule rides the boot** of the identity it was written on.
-    if !booted["identity"]["rules"].as_array().is_some_and(|rules| {
-        rules
-            .iter()
-            .any(|rule| rule["content"] == "the recorder keeps its recording rule")
-    }) {
+    // The boot that makes the offer carries it; the answer to the offer, which
+    // the boot above is, leaves the rules out.
+    let offering = surface
+        .call("start_here", json!({"bot": "assistant", "brief": true}))
+        .await;
+    let offering: serde_json::Value = serde_json::from_str(&offering)
+        .unwrap_or_else(|_| fail("the assistant's boot that makes the offer", &offering));
+    if !offering["identity"]["rules"]
+        .as_array()
+        .is_some_and(|rules| {
+            rules
+                .iter()
+                .any(|rule| rule["content"] == "the recorder keeps its recording rule")
+        })
+    {
         fail(
             "the starred rule on the assistant's boot",
-            &booted.to_string(),
+            &offering.to_string(),
         );
     }
     assert_the_newer_shapes_read_back(surface, git_ref).await;

@@ -106,7 +106,9 @@ fn rank_rule_details(identity: &mut serde_json::Value, budget: usize) {
     if identity.is_null() {
         return;
     }
-    if let Some(rules) = identity["rules"].as_array_mut() {
+    // **`get_mut`, not an index.** An identity with no `rules` key is the answer
+    // to the offer, and indexing it mutably would add the key back as `null`.
+    if let Some(rules) = identity.get_mut("rules").and_then(|r| r.as_array_mut()) {
         for (i, rule) in rules.iter_mut().enumerate() {
             if !kept_rules.contains(&i) {
                 elide_rule_details(rule);
@@ -255,6 +257,30 @@ fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> E
         note: Some(note),
     }
 }
+
+/// **What the answer to the offer leaves out, and the call that returns it.**
+/// The offering call shipped each of these parts, so the answer carries what is
+/// new: the run, its key, the role claim, the zone. The call named here is the
+/// boot with no `resume`, which ships all of them again. It is the same call
+/// whichever part is wanted, so it is said once.
+fn offer_answer_left_out(bot: &EntityId) -> serde_json::Value {
+    serde_json::json!({
+        "parts": OFFER_ANSWER_LEFT_OUT,
+        "returned_by": {"tool": "start_here", "arguments": {"bot": bot.as_str()}},
+        "note": "The call that made the offer shipped these parts and this answer does not \
+                 send them again. Call start_here with the bot and no `resume` to read them.",
+    })
+}
+
+/// The parts of a boot an answer to the offer leaves out, named as a reader
+/// finds them: a top-level block, a key of `identity`, or a key of `session`.
+const OFFER_ANSWER_LEFT_OUT: [&str; 5] = [
+    "orientation",
+    "snapshot",
+    "rules",
+    "unseated_rules",
+    "handover",
+];
 
 /// **The entity half of the snapshot**, summarised from the one index read a
 /// whole answer shares. A free function so the boot and a write that measures
@@ -429,6 +455,12 @@ impl Jojobot {
         // **A wrap code takes no role.** It reopens a wrapped run for one last
         // change, so neither the named claim nor the bot's own is decided.
         let by_wrap_code = resume.is_some_and(jojobot_domain::session::is_wrap_code);
+        // **Only the answer to the offer leaves out the offer's parts.** A wrap
+        // code also sends `resume`, but no offer stands behind it.
+        let answering = Answering::of(resume);
+        // **The essay is one of those parts**, so the answer to the offer sends
+        // none, as a caller that asked for `brief` gets none.
+        let brief = brief || answering.is_offer();
         let claim = claim.filter(|_| !by_wrap_code);
         let carried_role: Option<String> = match (claim, bot) {
             (None, Some(bot)) if !by_wrap_code => {
@@ -462,7 +494,7 @@ impl Jojobot {
                 .identity(
                     index,
                     bot,
-                    resume.is_some(),
+                    answering,
                     // **The day this run states, and the clock in its own zone
                     // when it states none.** The boot is where a run declares
                     // the day it is working in, so a rule's staleness read on
@@ -505,7 +537,10 @@ impl Jojobot {
         // it, so a boot that listed boxes beside bots would ask a caller to
         // hold two directories and the correspondence between them. Addressing
         // is by handle; a box name is not something anybody needs.
-        let snapshot = self.snapshot_block(bot, entities).await;
+        let snapshot = match answering.is_offer() {
+            true => serde_json::Value::Null,
+            false => self.snapshot_block(bot, entities).await,
+        };
         // **Only after the identity resolved.** A name that is no bot boots
         // nothing, so it starts no session and sweeps nothing either — binding
         // a connection to an identity jojobot just refused would be a session
@@ -817,6 +852,9 @@ impl Jojobot {
         }
         if let (Some(notice), Some(obj)) = (over_the_ceiling, answer.as_object_mut()) {
             obj.insert("over_the_ceiling".into(), notice);
+        }
+        if let (true, Some(bot), Some(obj)) = (answering.is_offer(), bot, answer.as_object_mut()) {
+            obj.insert("left_out".into(), offer_answer_left_out(bot));
         }
         json_result(&answer)
     }

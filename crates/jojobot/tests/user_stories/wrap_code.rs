@@ -446,10 +446,7 @@ async fn the_handover_after_a_reopened_run_is_the_closing_story() {
         .call("wrap_session", json!({"story": "plain story: all done"}))
         .await;
     let (booted, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "otto", "brief": true, "resume": "new"}),
-        )
+        .call("start_here", json!({"bot": "otto", "brief": true}))
         .await;
     let handover = booted.json()["session"]["handover"]["story"].to_string();
     assert!(
@@ -486,10 +483,7 @@ async fn the_handover_after_a_reopened_run_is_the_closing_story() {
     .await;
 
     let (booted, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "otto", "brief": true, "resume": "new"}),
-        )
+        .call("start_here", json!({"bot": "otto", "brief": true}))
         .await;
     let handover = booted.json()["session"]["handover"].to_string();
     assert!(
@@ -543,10 +537,7 @@ async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
         .await;
 
     let (booted, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "otto", "brief": true, "resume": "new"}),
-        )
+        .call("start_here", json!({"bot": "otto", "brief": true}))
         .await;
     let handover = booted.json()["session"]["handover"].to_string();
     assert!(

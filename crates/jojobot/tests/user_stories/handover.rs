@@ -147,12 +147,12 @@ async fn the_resume_offer_names_each_run_and_resuming_by_one_lands() {
     story.finish().await;
 }
 
-/// "The offer is the second time I have read the essay. What do I send back?" The
-/// offer tells the caller to send `brief: true` on the call that answers it, and
-/// that answer then carries no essay and still carries its run. The answer
-/// without `brief` carries the essay, so the saving is real.
+/// "The offer is the second time I have read the essay. What do I send back?" Send
+/// nothing extra: the answer to the offer carries the run and its key, leaves out
+/// what the offer shipped, and names the call that returns it. The offer carries
+/// the essay, the snapshot and the handover story, so the saving is real.
 #[tokio::test]
-async fn the_resume_offer_names_brief_and_the_answer_with_it_skips_the_essay() {
+async fn the_answer_to_the_offer_carries_only_what_is_new_and_names_the_call_for_the_rest() {
     let story = Story::begin("bot:otto").await;
     let first = story.session().await;
     first
@@ -163,45 +163,55 @@ async fn the_resume_offer_names_brief_and_the_answer_with_it_skips_the_essay() {
         .await;
     let first_sid = first.run().to_string();
 
+    // The positive: the offer carries every part the answer then leaves out.
     let (door, minted) = story.call("start_here", json!({"bot": "otto"})).await;
     assert!(minted.is_none(), "an offer mints no handle");
     let offer = door.json();
-    let how = offer["session"]["how_to_proceed"]
-        .as_str()
-        .unwrap_or_else(|| panic!("the offer says how to proceed: {offer}"));
     assert!(
-        how.contains("brief"),
-        "the offer names the argument that skips the essay: {how}"
-    );
-
-    // The positive: an answer that does not send `brief` carries the essay.
-    let (plain, _) = story
-        .call("start_here", json!({"bot": "otto", "resume": "new"}))
-        .await;
-    let plain = plain.json();
-    assert!(
-        plain["orientation"]
+        offer["orientation"]
             .as_str()
             .is_some_and(|essay| !essay.is_empty()),
-        "without brief the answer carries the essay: {plain}"
+        "the offer carries the essay: {offer}"
     );
+    assert!(offer["snapshot"]["entities"].is_object(), "{offer}");
+    assert!(offer["session"]["handover"].is_object(), "{offer}");
+    assert!(offer.get("left_out").is_none(), "{offer}");
 
-    // The advice taken: no essay, and the run is still handed back.
+    // The answer, with nothing sent beside `resume`: no essay, no snapshot, no
+    // handover, and the run is still handed back with the key to write with.
     let (answered, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "otto", "brief": true, "resume": first_sid}),
-        )
+        .call("start_here", json!({"bot": "otto", "resume": first_sid}))
         .await;
     let answered = answered.json();
-    assert!(
-        answered["orientation"].is_null(),
-        "with brief the answer carries no essay: {answered}"
-    );
+    assert!(answered["orientation"].is_null(), "{answered}");
+    assert!(answered["snapshot"].is_null(), "{answered}");
+    assert!(answered["session"].get("handover").is_none(), "{answered}");
     assert_eq!(answered["session"]["run"], first_sid, "{answered}");
     assert!(
         answered["session"]["sid"].is_string(),
         "and the answer still carries the key to write with: {answered}"
     );
+
+    // Each left-out part is named, with the call that returns it.
+    let left_out = &answered["left_out"];
+    let parts: Vec<&str> = left_out["parts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the answer names what it left out: {answered}"))
+        .iter()
+        .filter_map(|part| part.as_str())
+        .collect();
+    for part in ["orientation", "snapshot", "handover"] {
+        assert!(parts.contains(&part), "{part} is not named: {answered}");
+    }
+    assert_eq!(left_out["returned_by"]["tool"], "start_here", "{answered}");
+
+    // The call it names returns them.
+    let (again, _) = story
+        .call("start_here", left_out["returned_by"]["arguments"].clone())
+        .await;
+    let again = again.json();
+    assert!(again["orientation"].is_string(), "{again}");
+    assert!(again["snapshot"]["entities"].is_object(), "{again}");
+    assert!(again["session"]["handover"].is_object(), "{again}");
     story.finish().await;
 }

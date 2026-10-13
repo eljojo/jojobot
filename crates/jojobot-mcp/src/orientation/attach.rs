@@ -309,8 +309,8 @@ impl Jojobot {
                     "choices": choices,
                     "how_to_proceed": "This identity has work already in flight. Call start_here \
                                        again with resume: the name of the run you are picking up, \
-                                       or resume: \"new\" for a fresh session. Send brief: true \
-                                       on that call too. Only a run that has been quiet for 45 \
+                                       or resume: \"new\" for a fresh session. That answer \
+                                       carries only what is new. Only a run that has been quiet for 45 \
                                        minutes can be picked up by its name; a run still writing \
                                        is continued with its own key. Nothing was closed and \
                                        nothing was written; choosing new leaves the runs above \
@@ -346,9 +346,13 @@ impl Jojobot {
             if frame_is_news {
                 obj.insert("swept_in".into(), Self::frame(today, self.clock().stated()));
             }
-            // **On every branch**, because the sitting that most needs a
-            // handover is the one with nothing to resume.
-            obj.insert("handover".into(), Self::handover(handover.as_ref()));
+            // **On every branch but the answer to the offer**, because the
+            // sitting that most needs a handover is the one with nothing to
+            // resume. The answer to the offer is the other one: the offering
+            // call shipped the story, and `left_out` names it.
+            if resume.is_none() {
+                obj.insert("handover".into(), Self::handover(handover.as_ref()));
+            }
         }
         Ok(block)
     }
@@ -3463,21 +3467,30 @@ mod tests {
             .await;
         }
 
+        // The boot that makes the offer carries the core whole, whatever the
+        // chronology weighs. The answer to the offer leaves the essay out.
+        let offering = boot(&jojobot, "gamma").await;
+        let orientation = offering["orientation"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a rules-free bot still gets the essay's core: {offering}"));
+        assert_eq!(
+            orientation,
+            crate::orientation::essay::ORIENTATION_CORE.as_str(),
+            "the core must ride whole even when the remainder is declined entirely",
+        );
+        let whole = offering.to_string().chars().count();
+        assert!(
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "the whole offering boot must fit the one declared ceiling: {whole} chars"
+        );
+
         let resumed = boot_answering(&jojobot, "gamma", &sid).await;
         let whole = resumed.to_string().chars().count();
         assert!(
             whole <= jojobot_domain::text::BOOT_ANSWER.budget,
             "the whole answer must fit the one declared ceiling: {whole} chars"
         );
-
-        let orientation = resumed["orientation"]
-            .as_str()
-            .expect("a rules-free bot still gets the essay's core: {resumed}");
-        assert_eq!(
-            orientation,
-            crate::orientation::essay::ORIENTATION_CORE.as_str(),
-            "the core must ride whole even when the remainder is declined entirely",
-        );
+        assert!(resumed["orientation"].is_null(), "{resumed}");
     }
 
     /// …and a chronology that fits comes back whole, with the marker saying so.
@@ -4219,5 +4232,257 @@ mod tests {
         assert_eq!(keyed["status"], "blocked", "{keyed}");
         let how = keyed["how_to_proceed"].as_str().unwrap_or_default();
         assert!(!how.contains("exchange"), "{keyed}");
+    }
+
+    /// The parts of a boot an answer to the offer leaves out, by the name the
+    /// answer's `left_out` gives each.
+    const OFFER_ELIDES: [&str; 5] = [
+        "orientation",
+        "snapshot",
+        "rules",
+        "unseated_rules",
+        "handover",
+    ];
+
+    /// **A bot with a wrapped run behind it, a run to pick up, one carried rule
+    /// and one rule at home**: the shape whose offering boot ships every part an
+    /// answer to the offer then leaves out.
+    async fn a_bot_whose_boot_offers_a_run(jojobot: &Jojobot, store: &InMemorySessions) {
+        make_bot(jojobot, "gamma").await;
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:gamma", "checks the board before starting")
+            },
+        )
+        .await;
+        capture_ok(
+            jojobot,
+            capture_args("bot:gamma", "reports at the end of each piece of work"),
+        )
+        .await;
+        let wrapped = store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: fixture_sid(line!()),
+                focus: "the run that wrapped".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(3),
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin ok");
+        store
+            .append(
+                &wrapped.id,
+                NewEntry::manual(
+                    "wrapped with the plan half done",
+                    jiff::Timestamp::now() - jiff::SignedDuration::from_hours(2),
+                    None,
+                ),
+            )
+            .await
+            .expect("append ok");
+        store
+            .close(&wrapped.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+        store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: fixture_sid(line!()),
+                focus: "reading the hand-off".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin ok");
+    }
+
+    /// An answer to the offer, naming a role and a zone on the same call.
+    async fn answer_the_offer(
+        jojobot: &Jojobot,
+        answer: &str,
+        brief: Option<bool>,
+    ) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    compacted: None,
+                    claim: Some("dev-dispatch".into()),
+                    timezone: Some("America/Toronto".into()),
+                    today: None,
+                    bot: Some("gamma".into()),
+                    brief,
+                    skill: None,
+                    section: None,
+                    resume: Some(answer.into()),
+                    sid: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        )
+    }
+
+    /// Everything an answer to the offer leaves out is present in the boot that
+    /// made the offer, and absent from the answer.
+    fn assert_every_part_shipped(boot: &serde_json::Value) {
+        assert!(boot["orientation"].is_string(), "{boot}");
+        assert!(boot["snapshot"]["entities"].is_object(), "{boot}");
+        assert!(
+            boot["identity"]["rules"]
+                .as_array()
+                .is_some_and(|rules| !rules.is_empty()),
+            "{boot}"
+        );
+        assert!(boot["identity"]["unseated_rules"].is_object(), "{boot}");
+        assert!(boot["session"]["handover"]["story"].is_string(), "{boot}");
+        assert!(boot.get("left_out").is_none(), "{boot}");
+    }
+
+    /// **The answer to the resume-or-new offer carries what is new and leaves
+    /// out what the offering call just shipped.** The essay, the snapshot, the
+    /// carried rules, the map of the rules at home and the handover story are
+    /// each absent, and one `left_out` block names each of them and the call
+    /// that returns them. The run, its key, the role claim and the zone are
+    /// still in it.
+    ///
+    /// **Paired**: the offering boot ships every one of those parts (the
+    /// positive the absence depends on), and the call `left_out` names, run
+    /// as named, ships them again.
+    #[tokio::test]
+    async fn the_answer_to_the_offer_leaves_out_what_the_offer_shipped() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+
+        let offering = boot(&jojobot, "gamma").await;
+        assert_every_part_shipped(&offering);
+        let run = offering["session"]["choices"][0]["run"]
+            .as_str()
+            .expect("one option")
+            .to_string();
+
+        let answer = answer_the_offer(&jojobot, &run, None).await;
+        // What the answer exists to deliver.
+        assert_eq!(answer["session"]["resumed"], true, "{answer}");
+        assert!(answer["session"]["sid"].is_string(), "{answer}");
+        assert_eq!(answer["session"]["claim"]["status"], "taken", "{answer}");
+        assert_eq!(answer["timezone"]["zone"], "America/Toronto", "{answer}");
+
+        // What it leaves out, each part by the name `left_out` gives it.
+        assert!(answer["orientation"].is_null(), "{answer}");
+        assert_eq!(answer["orientation_elided"], true, "{answer}");
+        assert!(answer["snapshot"].is_null(), "{answer}");
+        assert!(answer["identity"].get("rules").is_none(), "{answer}");
+        assert!(
+            answer["identity"].get("unseated_rules").is_none(),
+            "{answer}"
+        );
+        assert!(answer["session"].get("handover").is_none(), "{answer}");
+        let mut parts: Vec<&str> = answer["left_out"]["parts"]
+            .as_array()
+            .unwrap_or_else(|| panic!("an elision names its parts: {answer}"))
+            .iter()
+            .filter_map(|part| part.as_str())
+            .collect();
+        parts.sort_unstable();
+        let mut expected = OFFER_ELIDES.to_vec();
+        expected.sort_unstable();
+        assert_eq!(parts, expected, "{answer}");
+        // The rules at home still say they exist: the count is what a reader
+        // needs to know there is more to read.
+        assert_eq!(answer["identity"]["rules_elided"], true, "{answer}");
+
+        // The call it names is a boot of this bot with no `resume`, and that
+        // boot ships every part again.
+        let call = &answer["left_out"]["returned_by"];
+        assert_eq!(call["tool"], "start_here", "{answer}");
+        assert_eq!(
+            call["arguments"],
+            serde_json::json!({"bot": "bot:gamma"}),
+            "{answer}"
+        );
+        let again = boot(&jojobot, "gamma").await;
+        assert_every_part_shipped(&again);
+
+        // The point of it: the answer is smaller by at least the essay.
+        let (offered, answered) = (offering.to_string().len(), answer.to_string().len());
+        println!("offering boot {offered} bytes, answer to the offer {answered} bytes");
+        assert!(
+            answered + crate::orientation::essay::ORIENTATION_CORE.len() <= offered,
+            "the answer ({answered}) is not smaller than the offer ({offered}) by the essay"
+        );
+    }
+
+    /// **`new` answers the same offer, so it leaves out the same parts**, and
+    /// `brief` changes nothing about what is named: a caller that sent it is
+    /// still told where the essay went.
+    #[tokio::test]
+    async fn answering_the_offer_with_new_leaves_out_the_same_parts() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        assert_every_part_shipped(&boot(&jojobot, "gamma").await);
+
+        let answer = answer_the_offer(&jojobot, "new", Some(true)).await;
+        assert!(answer["session"]["sid"].is_string(), "{answer}");
+        assert!(answer["snapshot"].is_null(), "{answer}");
+        assert!(answer["identity"].get("rules").is_none(), "{answer}");
+        assert!(answer["session"].get("handover").is_none(), "{answer}");
+        assert_eq!(
+            answer["left_out"]["parts"].as_array().map(Vec::len),
+            Some(OFFER_ELIDES.len()),
+            "{answer}"
+        );
+    }
+
+    /// **A wrap code is not an answer to the offer.** It reopens one wrapped
+    /// run and has no offer behind it, so its answer ships the parts the offer
+    /// answer leaves out. Paired with the offer answer above, which leaves them
+    /// out on the same bot.
+    #[tokio::test]
+    async fn a_wrap_code_answer_still_ships_every_part() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:gamma", "checks the board before starting")
+            },
+        )
+        .await;
+        let (_wrapped, code) = wrapped_with_a_code(&store, 1, "t002").await;
+
+        let opened = answer_the_offer(&jojobot, &code, None).await;
+        assert_eq!(opened["session"]["resumed"], true, "{opened}");
+        assert!(opened["orientation"].is_string(), "{opened}");
+        assert!(opened["snapshot"]["entities"].is_object(), "{opened}");
+        assert!(
+            opened["identity"]["rules"]
+                .as_array()
+                .is_some_and(|rules| !rules.is_empty()),
+            "{opened}"
+        );
+        assert!(opened.get("left_out").is_none(), "{opened}");
     }
 }

@@ -39,10 +39,11 @@ pub struct OrientArgs {
     /// wrapped run's own sid back so that run can take one last change. The run
     /// stays wrapped. No role is taken, nothing is swept and no lease renews.
     ///
-    /// Answering the resume-or-new offer? Send `brief: true` with it, since the
-    /// essay does not change between calls. That answer carries no charter, because
-    /// only a boot that shipped one hands the offer back, so you are holding it
-    /// already; booting again with no `resume` reads it in full. A boot given a
+    /// Answering the resume-or-new offer? That answer carries what is new (the
+    /// run, its key, the role claim, the zone) and leaves out what the offer
+    /// shipped: the essay, the snapshot, the charter, the carried rules and the
+    /// map of those at home, and the handover story. `left_out` names each and
+    /// the call that returns them, a boot with no `resume`. A boot given a
     /// `wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
     /// back, the run stays wrapped for one last change, and no role is taken,
     /// nothing is swept and no lease renews.

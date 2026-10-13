@@ -239,15 +239,47 @@ pub(crate) fn unseated_rules(
     Some(block)
 }
 
+/// **What a boot is an answer to.** A wrap code and an answer to the
+/// resume-or-new offer both send `resume`, and they are not the same call: a
+/// wrap code has no offer behind it, so only the offer's answer can leave out
+/// what the offering call just shipped.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answering {
+    /// An ordinary boot, which makes the offer when there is one to make.
+    Nothing,
+    /// A wrap code, which reopens one wrapped run.
+    WrapCode,
+    /// A run's name or `new`, the two answers to the offer.
+    Offer,
+}
+
+impl Answering {
+    /// Classified by the `resume` argument the door was sent.
+    pub(crate) fn of(resume: Option<&str>) -> Self {
+        match resume {
+            None => Self::Nothing,
+            Some(answer) if jojobot_domain::session::is_wrap_code(answer) => Self::WrapCode,
+            Some(_) => Self::Offer,
+        }
+    }
+
+    /// **Only the offer's answer leaves out the offer's own parts.**
+    pub(crate) fn is_offer(self) -> bool {
+        self == Self::Offer
+    }
+}
+
 impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
     /// the rules its facts carry, and the live state of the box it owns.
     /// `Err(candidates)` is the guards' answer for a name that is no bot.
     ///
-    /// **A caller answering the resume-or-new offer gets no charter.** It is the
+    /// **A caller answering with `resume` gets no charter.** It is the
     /// largest fixed block in the answer, and it crowds out the session record a
-    /// resume exists to deliver. The rules are not treated the same way: they
-    /// are dated claims that change one at a time.
+    /// resume exists to deliver. **Only the answer to the offer also gets no
+    /// rules**, the carried ones and the map of those at home: the offering call
+    /// shipped them, and the answer says that they are left out and which call
+    /// returns them (see `orient`).
     ///
     /// **The reason is the size of the block, never a claim about the reader.**
     /// Nothing here knows whether this caller has the charter: `resume` is an
@@ -259,7 +291,7 @@ impl Jojobot {
         &self,
         index: &[Entity],
         bot: &EntityId,
-        answering_an_offer: bool,
+        answering: Answering,
         as_of: jiff::civil::Date,
     ) -> Result<Result<serde_json::Value, Vec<EntityMatch>>, McpError> {
         let Some(entity) = index.iter().find(|e| &e.id == bot) else {
@@ -272,7 +304,7 @@ impl Jojobot {
         //
         // `null` means a bot with nothing to say: one nobody has written for
         // and the build supplies nothing for.
-        let charter = match answering_an_offer {
+        let charter = match answering != Answering::Nothing {
             true => None,
             false => self
                 .memory
@@ -338,7 +370,7 @@ impl Jojobot {
             // **Marked, because `null` here already means something else**: a
             // bot nobody has written a charter for. A reader left to tell
             // withheld from absent would report the absence.
-            "charter_elided": answering_an_offer,
+            "charter_elided": answering != Answering::Nothing,
             "rules": carried
                 .iter()
                 .map(|rule| fact_json(rule, as_of, None))
@@ -391,7 +423,22 @@ impl Jojobot {
         ) {
             obj.insert("unseated_rules".into(), map);
         }
-        if answering_an_offer && let Some(obj) = body.as_object_mut() {
+        // **The answer to the offer drops the rules the offering call shipped**,
+        // the carried ones, their note and the map of those at home. They were
+        // built above so the offering boot and this one cannot disagree about
+        // what a rule is. `rules_elided` says less came back; the answer's
+        // `left_out` names the parts and the call that returns them.
+        if answering.is_offer()
+            && let Some(obj) = body.as_object_mut()
+        {
+            for part in ["rules", "rules_note", "unseated_rules"] {
+                obj.remove(part);
+            }
+            obj.insert("rules_elided".into(), true.into());
+        }
+        if answering != Answering::Nothing
+            && let Some(obj) = body.as_object_mut()
+        {
             obj.insert(
                 "note".into(),
                 "your charter is not in this answer. To read it, call start_here with your bot \
@@ -977,7 +1024,7 @@ mod tests {
                         claim: None,
                         bot: Some("otto".into()),
                         today: today.map(str::to_string),
-                        resume: Some("new".into()),
+                        resume: None,
                         brief: Some(true),
                         timezone: None,
                         skill: None,
@@ -1301,12 +1348,11 @@ mod tests {
             "the way back is the boot that does not answer an offer: {note}"
         );
 
-        // Everything a resume is for survives it.
+        // Everything a resume is for survives it. The rules are not among them:
+        // the offering call shipped them, and the answer's `left_out` names them.
         assert_eq!(resumed["identity"]["bot"]["id"], "bot:gamma");
-        assert!(
-            resumed["identity"]["rules"].is_array(),
-            "the rules are dated claims and each can change: {resumed}"
-        );
+        assert!(resumed["identity"].get("rules").is_none(), "{resumed}");
+        assert_eq!(resumed["identity"]["rules_elided"], true, "{resumed}");
         assert_eq!(resumed["identity"]["owned_mailbox"]["name"], "gamma");
     }
 
