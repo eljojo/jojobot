@@ -671,12 +671,23 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
     p.nothing_new_in("after the deliveries", &["gamma", "delta", "milhouse"])
         .await;
 
+    // **A message nobody has taken**, so that taking it by id moves it.
+    let seven = w
+        .post_message(post("delta", "gamma", "seven", 75))
+        .await
+        .expect("post")
+        .written()
+        .expect("not blocked");
     calls.reset();
-    w.read_message(&three.id).await.expect("read_message");
+    w.read_message(&seven.id).await.expect("read_message");
     wrote_without_reading("read_message", calls);
     p.agree("after one message is taken by id").await;
-    w.read_message(&three.id).await.expect("read_message again");
-    p.agree("after the same message is taken again").await;
+    w.read_message(&seven.id).await.expect("read_message again");
+    w.read_message(&three.id)
+        .await
+        .expect("read_message of one already taken");
+    p.agree("after messages already taken are taken again")
+        .await;
 
     calls.reset();
     w.mark_processed(&one.id, Some("done with one"))
