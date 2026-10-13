@@ -395,9 +395,10 @@ Shipped and live:
 > `processed` included, and the state rides on the hit beside the box, the
 > sender and the id. Retrieval is the ONE place the two contexts meet, and it
 > meets them as a reader: a `Hit` carries a `Message`, nothing writes across.
-> **Every answer is backed by a read taken for it** — each half re-reads its
-> own store before answering, so a record the store has since lost stops being
-> served, which nothing inside the process can notice any other way. A half
+> **Every answer comes from what this process holds** — the memory half from
+> the fold in memory, the mail half from its last listing of the boxes, re-read
+> only when a write has landed since. So a record removed or edited outside
+> this process is seen only after a restart (the one-writer rule above). A half
 > that could not take its read says so rather than vouching — so **each half of
 > every answer states its own coverage**, because "no record says that" and
 > "jojobot has read no records" are different claims and a caller acts on both.
@@ -602,7 +603,9 @@ Shipped and live:
   **AND THE SERVER MAY BE ACTING OUT A DAY OF ITS OWN.** `JOJOBOT_TODAY` sets one
   day for a whole run and the server's `now` becomes it — the date an undated
   write gets, when a loop falls due, whether an earlier run has gone quiet, and
-  both stamped columns. **Unset is the real clock.** ⭐ **So *the clock* above is
+  both stamped columns. A restart on the same stated day continues after the
+  newest stamp the store holds on that day, so the clock never runs backwards
+  across processes. **Unset is the real clock.** ⭐ **So *the clock* above is
   the server's clock rather than the wall clock, and on a simulated instance a
   run that states nothing is answered on the fiction.** **A day that is no day
   refuses the boot rather than falling back.**
