@@ -622,10 +622,10 @@ mod tests {
     /// to ten characters. A check that measured with its own moment let a rule
     /// pass by that difference and then land over the ceiling.
     ///
-    /// The check's clock here states a day, which stamps whole seconds: the
-    /// narrowest rendering. The store stamps with the wall clock, which renders a
-    /// full fraction, and the case reads that width off a record the store
-    /// stamped. It finds the length at which a starred rule fits the ceiling with
+    /// The check's own moment here is cut to the whole second: the narrowest
+    /// rendering, since a stated clock keeps the fraction of a second and would
+    /// otherwise render as wide as the store's. The case reads the store's width
+    /// off a record the store stamped. It finds the length at which a starred rule fits the ceiling with
     /// the check's own stamp and is over with the store's, and asks the check
     /// about that rule: it must refuse. A rule shorter by the whole difference in
     /// width is accepted, so a check that refused every rule would not pass.
@@ -646,11 +646,12 @@ mod tests {
             new.fields = [("starred".to_string(), "true".to_string())].into();
             new
         };
-        let checks = jojobot.clock().now();
+        let checks = jiff::Timestamp::from_second(jojobot.clock().now().as_second())
+            .expect("a moment cut to the second");
         assert_eq!(
             checks.to_string().len(),
             "2026-06-01T00:00:00Z".len(),
-            "a stated clock stamps whole seconds: {checks}"
+            "the check's moment is cut to the whole second: {checks}"
         );
         // **Stamped on another bot**, so the bot being measured holds no record
         // the floor would also list.

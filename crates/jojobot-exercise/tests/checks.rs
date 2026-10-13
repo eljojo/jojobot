@@ -405,3 +405,89 @@ async fn a_refused_query_is_told_apart_from_an_answer_that_says_no() {
         outcome.saying,
     );
 }
+
+/// **Messages posted back to back on a server acting out a day are stamped in
+/// the order they were posted.**
+///
+/// Every room runs on a stated day, and the check that finds the brief takes the
+/// OLDEST message on the board and trusts that it is the brief. That holds only
+/// if a stamp orders messages. A stamp that counts whole seconds gives two
+/// messages posted in the same second the same stamp, and then "the oldest" is
+/// whichever of them the board lists first — the brief on one run, the
+/// occupant's own handoff on the next, and a room that was worked correctly
+/// fails the lock "the brief is still sitting new".
+///
+/// **Six posts, one after another, in a room that answers in milliseconds**: a
+/// clock that counts seconds cannot give six different stamps to six calls made
+/// inside two seconds, so this reddens on every run of that clock and not on
+/// the one in a hundred that straddles a second. **The count is asserted first**,
+/// or a board that lost the mail would hold the order of nothing.
+#[tokio::test]
+async fn messages_posted_back_to_back_on_a_stated_day_are_stamped_in_the_order_posted() {
+    let (_room, surface) =
+        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), "2026-08-12")
+            .await
+            .expect("a room");
+    let booted = surface
+        .must("start_here", json!({"bot": "assistant", "brief": true}))
+        .await
+        .expect("the shipped identity boots");
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .expect("a handle")
+        .to_string();
+
+    for n in 1..=6 {
+        let posted = did(
+            &surface,
+            &sid,
+            "post_message",
+            json!({"to": "assistant", "subject": format!("note {n}"), "body": "a line"}),
+        )
+        .await;
+        assert!(
+            !posted.contains("blocked") && !posted.contains("transport_error"),
+            "post {n} was not taken: {posted}",
+        );
+    }
+
+    let board = surface
+        .call(
+            "search",
+            json!({"query": "*", "include_mail": true, "limit": 200}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&board).expect("the board is JSON");
+    let mut stamps: Vec<(u32, String)> = parsed["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter(|hit| hit["hit"] == "message")
+        .filter_map(|hit| {
+            let number = hit["subject"]
+                .as_str()?
+                .strip_prefix("note ")?
+                .parse()
+                .ok()?;
+            Some((number, hit["sent_at"].as_str()?.to_string()))
+        })
+        .collect();
+    stamps.sort();
+    assert_eq!(
+        stamps.len(),
+        6,
+        "the six posts did not all reach the board, so their order cannot be read: {board}",
+    );
+    for pair in stamps.windows(2) {
+        assert!(
+            pair[0].1 < pair[1].1,
+            "note {} is stamped {} and note {} is stamped {}: two messages posted one after \
+             the other read as simultaneous, so the oldest of them is not the first posted. \
+             All six: {stamps:?}",
+            pair[0].0,
+            pair[0].1,
+            pair[1].0,
+            pair[1].1,
+        );
+    }
+}

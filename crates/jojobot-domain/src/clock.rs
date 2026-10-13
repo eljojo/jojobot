@@ -17,9 +17,9 @@
 //! lives in this crate because the MCP layer and the store adapters both need
 //! one word for it.
 
+use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use jiff::{SignedDuration, Timestamp};
 
 /// **The clock this server runs on.**
 ///
@@ -91,10 +91,12 @@ impl Clock {
             Clock::Real => Timestamp::now(),
             Clock::Stated { day, began } => {
                 let midnight = Self::midnight(*day);
-                let elapsed = Timestamp::now().as_second() - began.as_second();
-                midnight
-                    .checked_add(SignedDuration::from_secs(elapsed))
-                    .unwrap_or(midnight)
+                // **The elapsed time keeps its fraction of a second.** Counted in
+                // whole seconds, every write inside one second would carry the
+                // same stamp, and a reader that sorts or takes the oldest by stamp
+                // would pick among them by whatever order it holds them in.
+                let elapsed = Timestamp::now().duration_since(*began);
+                midnight.checked_add(elapsed).unwrap_or(midnight)
             }
         }
     }
@@ -199,6 +201,32 @@ mod tests {
 
         assert!(second >= first, "{second} is not before {first}");
     }
+    /// **Two writes inside one second do not share a stamp.** A stated clock
+    /// advances so that writes are readable in the order they happened, and a
+    /// reader that sorts by stamp, or takes the oldest, is told a lie by two
+    /// writes with the same one: their order is then whatever order the reader
+    /// happens to hold them in. A pair taken a few milliseconds apart has to
+    /// differ, and the later has to be the greater.
+    ///
+    /// Many pairs, not one: a pair that straddles a whole second would differ
+    /// on a clock that counts whole seconds, so a single pair could pass for the
+    /// wrong reason. Twenty pairs of three milliseconds do not all straddle one.
+    #[test]
+    fn two_stamps_taken_milliseconds_apart_differ_and_are_in_order() {
+        let clock = Clock::stating(day("2026-06-01"));
+
+        for pair in 0..20 {
+            let first = clock.now();
+            std::thread::sleep(std::time::Duration::from_millis(3));
+            let second = clock.now();
+            assert!(
+                second > first,
+                "pair {pair}: {second} does not come after {first}, so two writes made \
+                 milliseconds apart read as simultaneous",
+            );
+        }
+    }
+
     /// **A moment is read in the zone asked for on the wall clock, and on the
     /// day it was stamped on a stated clock.** The same moment is the 8th in
     /// Tokyo and the 7th in UTC; a stated clock stamps the 7th and the 7th it
