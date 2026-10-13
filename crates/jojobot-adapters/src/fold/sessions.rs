@@ -227,7 +227,14 @@ impl Sessions for FoldedSessions {
     }
 
     async fn summary_of(&self, id: &SessionId) -> Result<Option<SessionSummary>, SessionError> {
-        self.inner.summary_of(id).await
+        // An id that could never be a run's is no run, and is not an error.
+        if validate_session_id(id).is_err() {
+            return Ok(None);
+        }
+        match self.held(|image| image.run(id).map(SessionSummary::of)) {
+            Some(summary) => Ok(summary),
+            None => self.inner.summary_of(id).await,
+        }
     }
 
     async fn run_counts(&self) -> Result<BTreeMap<EntityId, usize>, SessionError> {
