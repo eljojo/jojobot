@@ -242,20 +242,33 @@ fn a_second_process_reports_whether_it_could_claim_the_port() {
         return;
     };
     let port: u16 = port.parse().expect("a port number");
-    let said = match jojobot_ports::try_claim(port).expect("the claim can be tried") {
+    // Told a directory, it claims from there; told none, from the shared one.
+    let claimer = match std::env::var_os("JOJOBOT_CLAIM_PROBE_DIR") {
+        Some(dir) => Allocator::within(port, port + 1, dir.into()),
+        None => Allocator::shared(),
+    };
+    let said = match claimer.try_claim(port).expect("the claim can be tried") {
         Some(_) => "PROBE:claimed",
         None => "PROBE:held-elsewhere",
     };
     println!("{said}");
 }
 
-/// **A claim reaches another PROCESS, and goes when its holder lets go.** A
-/// real second process must be refused the port while this one holds it and
-/// given it afterwards; the second answer is the control, since a probe that is
-/// always refused would satisfy the first on its own.
-#[test]
-fn another_process_cannot_claim_a_held_port_and_can_once_it_is_released() {
-    let held = jojobot_ports::claim().expect("a port");
+/// **A second process is refused a port this one holds and given it once this
+/// one lets go**, whatever `between_halves` does with the freed port in the
+/// moment between.
+fn a_second_process_is_refused_a_held_port_and_given_it_once_released<G>(
+    between_halves: impl FnOnce(u16) -> G,
+) {
+    // **A port no arbiter hands out, claimed in a directory of this case's
+    // own.** The shared range and the shared directory belong to every suite on
+    // the machine, and another suite's claim can take a port the moment it is
+    // let go. Above the shared range and the kernel's outgoing range, in a
+    // directory only this case and its probe open, nobody else claims it.
+    let dir = scratch("release");
+    let held = Allocator::within(61_000, 62_000, dir.to_path_buf())
+        .claim()
+        .expect("a port");
     let port = held.port();
     let probe = || {
         let out = std::process::Command::new(std::env::current_exe().expect("this binary"))
@@ -265,6 +278,7 @@ fn another_process_cannot_claim_a_held_port_and_can_once_it_is_released() {
                 "--nocapture",
             ])
             .env("JOJOBOT_CLAIM_PROBE_PORT", port.to_string())
+            .env("JOJOBOT_CLAIM_PROBE_DIR", dir.as_os_str())
             .output()
             .expect("the second process runs");
         String::from_utf8_lossy(&out.stdout).into_owned()
@@ -275,11 +289,34 @@ fn another_process_cannot_claim_a_held_port_and_can_once_it_is_released() {
         "a second process was given a port this one holds: {while_held}",
     );
     drop(held);
+    let _between = between_halves(port);
     let after = probe();
     assert!(
         after.contains("PROBE:claimed"),
         "the port stayed claimed after its holder let go: {after}",
     );
+}
+
+/// **A claim reaches another PROCESS, and goes when its holder lets go.** A
+/// real second process must be refused the port while this one holds it and
+/// given it afterwards; the second answer is the control, since a probe that is
+/// always refused would satisfy the first on its own.
+#[test]
+fn another_process_cannot_claim_a_held_port_and_can_once_it_is_released() {
+    a_second_process_is_refused_a_held_port_and_given_it_once_released(|_| ());
+}
+
+/// **The control half does not depend on what other claimers take.** Between
+/// the holder letting go and the second process asking, another suite's claim
+/// can take the freed port, and the second process is then refused a port its
+/// holder released. Here that claimer is made certain to arrive.
+#[test]
+fn the_release_is_seen_by_a_second_process_whatever_another_claimer_takes() {
+    a_second_process_is_refused_a_held_port_and_given_it_once_released(|port| {
+        jojobot_ports::try_claim(port)
+            .expect("the claim can be tried")
+            .expect("another claimer was given the freed port, or the case proves nothing")
+    });
 }
 
 /// **Whether to skip a case that needs a write to be denied**, and the skip said
