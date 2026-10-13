@@ -186,6 +186,15 @@ impl Probe<'_> {
             .await;
             self.check(when, "scan_entity", s, f.scan_entity(h), d.scan_entity(h))
                 .await;
+            // The document a scan reads and the records a recall reads are one
+            // read of the same rows; the image keeps one copy of them.
+            if let (Ok(Some(doc)), Ok(recalled)) = (d.scan_entity(h).await, d.recall(h).await) {
+                assert_eq!(
+                    format!("{:?}", doc.facts),
+                    format!("{recalled:?}"),
+                    "{when}: scan_entity({s}) and recall({s}) answer with different records"
+                );
+            }
             self.check(when, "backing", s, f.backing(h), d.backing(h))
                 .await;
             self.check(when, "key_trails", s, f.key_trails(h), d.key_trails(h))

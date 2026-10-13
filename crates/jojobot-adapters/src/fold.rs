@@ -349,7 +349,7 @@ impl Memory for Folded {
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        match self.held(|image| image.doc(subject).map(|doc| doc.facts.clone())) {
+        match self.held(|image| image.doc(subject).map(|doc| doc.scan.facts.clone())) {
             Some(answer) => answer,
             None => self.inner.recall(subject).await,
         }

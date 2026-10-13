@@ -29,9 +29,9 @@ const LOAD_WIDTH: usize = 8;
 #[derive(Clone)]
 pub(super) struct Doc {
     /// The thing's document: its row, its prose, its records and its fields.
+    /// `recall` answers with its records: a scan and a recall are one read of
+    /// the same rows, which the battery asserts on every store.
     pub scan: DocScan,
-    /// `recall` of the thing.
-    pub facts: Vec<Fact>,
     /// `fields_versioned` of the thing: what it holds, and the marker of the
     /// writes behind it.
     pub fields: BTreeMap<String, String>,
@@ -54,7 +54,6 @@ impl Doc {
             .as_ref()
             .map(|e| e.id.clone())
             .ok_or_else(|| MemoryError::Store("a scanned document names no thing".into()))?;
-        let facts = inner.recall(&handle).await?;
         let (fields, version) = inner.fields_versioned(&handle).await?;
         let ages = inner.field_ages(&handle).await?;
         let histories = inner.claim_histories(&handle).await?;
@@ -62,7 +61,6 @@ impl Doc {
         let trails = inner.key_trails(&handle).await?;
         Ok(Doc {
             scan,
-            facts,
             fields,
             version,
             ages,
@@ -215,7 +213,7 @@ impl Image {
             let Some(doc) = self.docs.get(&entity.id) else {
                 continue;
             };
-            for fact in &doc.facts {
+            for fact in &doc.scan.facts {
                 if let Some(source) = &fact.derived_from {
                     self.built_on
                         .entry((source.home.0.clone(), source.local.0.clone()))
@@ -231,7 +229,7 @@ impl Image {
     fn names_in(&self, docs: &[&Doc]) -> Vec<String> {
         let mut names = std::collections::BTreeSet::new();
         for doc in docs {
-            for fact in &doc.facts {
+            for fact in &doc.scan.facts {
                 names.extend(names_in_fields(&fact.fields, &self.types));
             }
         }
@@ -334,7 +332,12 @@ impl Image {
         }
         Err(MemoryError::UnknownFact {
             attempted: address.to_string(),
-            nearest: doc.facts.iter().map(|f| f.address().to_string()).collect(),
+            nearest: doc
+                .scan
+                .facts
+                .iter()
+                .map(|f| f.address().to_string())
+                .collect(),
         })
     }
 
@@ -396,7 +399,7 @@ impl Image {
             if let Some(fact) = self
                 .docs
                 .get(holder)
-                .and_then(|doc| doc.facts.iter().find(|f| &f.id == id))
+                .and_then(|doc| doc.scan.facts.iter().find(|f| &f.id == id))
             {
                 rows.push((self.storage_key(holder), id, fact));
             }
