@@ -7,6 +7,15 @@ use super::*;
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
 /// real store's per-doc numbering. A fresh instance starts empty.
+/// One merge as the fake keeps it, under the storage keys.
+struct StoredMerge {
+    folded: EntityId,
+    survivor: EntityId,
+    at: jiff::Timestamp,
+    session: Option<String>,
+    claims: Vec<(FactId, FactId)>,
+}
+
 #[derive(Default)]
 pub struct InMemoryMemory {
     /// **Whether a key sent as an own field reaches its thing**, as it did
@@ -68,6 +77,9 @@ pub struct InMemoryMemory {
     /// the real store keeps `entity_write`: creation, an edit, a rename, an
     /// archive or restore, a merge and a prose write each leave a moment.
     entity_writes: Mutex<Vec<(EntityId, jiff::Timestamp)>>,
+    /// **Every merge made, as the real store appends it**: the two storage
+    /// keys, the moment, the run, and each folded claim's old and new local id.
+    merges: Mutex<Vec<StoredMerge>>,
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
@@ -611,6 +623,29 @@ impl InMemoryMemory {
     ///
     /// `None` only when the handle resolves to nothing at all — not now, not
     /// ever — which is the caller's cue to refuse rather than store.
+    /// **Where an address went when its thing was merged away**, followed through
+    /// a survivor that was merged later. `None` when no merge moved it.
+    fn moved(&self, address: &FactAddress) -> Option<FactAddress> {
+        let (key, _) = self.resolve(&address.home)?;
+        let merges = self.merges.lock().expect("fake mutex poisoned");
+        let mut at = (key, address.local.clone());
+        let mut moved = false;
+        loop {
+            let Some((survivor, now)) = merges.iter().find_map(|m| {
+                m.claims
+                    .iter()
+                    .find(|(was, _)| m.folded == at.0 && was == &at.1)
+                    .map(|(_, now)| (m.survivor.clone(), now.clone()))
+            }) else {
+                break;
+            };
+            at = (survivor, now);
+            moved = true;
+        }
+        drop(merges);
+        moved.then(|| FactAddress::new(self.current_handle(&at.0), at.1))
+    }
+
     fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
         let known = self.known();
         let former = self.former();
@@ -1566,6 +1601,8 @@ impl Memory for InMemoryMemory {
     }
 
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        let moved = self.moved(source);
+        let source = moved.as_ref().unwrap_or(source);
         super::super::validate_subject(&source.home)?;
         let mut standing_on = Vec::new();
         for entity in self.index() {
@@ -2381,7 +2418,47 @@ impl Memory for InMemoryMemory {
         Ok(super::super::FieldAges { newest, keys })
     }
 
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<crate::memory::MergeEvent>, MemoryError> {
+        let wanted = match entity {
+            Some(entity) => match self.resolve(entity) {
+                Some((key, _)) => Some(key),
+                None => return Ok(Vec::new()),
+            },
+            None => None,
+        };
+        Ok(self
+            .merges
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .filter(|m| {
+                wanted
+                    .as_ref()
+                    .is_none_or(|key| &m.folded == key || &m.survivor == key)
+            })
+            .map(|m| crate::memory::MergeEvent {
+                folded: self.current_handle(&m.folded),
+                survivor: self.current_handle(&m.survivor),
+                merged_at: m.at,
+                session: m.session.clone(),
+                claims: m.claims.clone(),
+            })
+            .collect())
+    }
+
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        Ok(self.moved(address))
+    }
+
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        let moved = self.moved(address);
+        let address = moved.as_ref().unwrap_or(address);
         let index = self.known();
         let former = self.former();
         let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
@@ -2540,6 +2617,8 @@ impl Memory for InMemoryMemory {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        let moved = self.moved(address);
+        let address = moved.as_ref().unwrap_or(address);
         if let Some(refused) = super::super::refuses_an_unapplied_text_edit(&patch) {
             return Err(refused);
         }
@@ -3298,6 +3377,16 @@ impl Memory for InMemoryMemory {
             }
         }
         let rehomed = moved.len();
+        self.merges
+            .lock()
+            .expect("fake mutex poisoned")
+            .push(StoredMerge {
+                folded: folded_key.clone(),
+                survivor: survivor_key.clone(),
+                at: self.clock().now(),
+                session: session.map(str::to_string),
+                claims: moved.clone(),
+            });
 
         let existing = facts.iter().filter(|f| f.home == survivor_key).count();
         let record = Fact {
@@ -3367,6 +3456,8 @@ impl Memory for InMemoryMemory {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
+        let moved = self.moved(address);
+        let address = moved.as_ref().unwrap_or(address);
         let index = self.known();
         let former = self.former();
         let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {

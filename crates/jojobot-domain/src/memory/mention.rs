@@ -1321,6 +1321,23 @@ impl super::Memory for Mentioning {
     /// **Every chain renders exactly as [`Self::claim_history`] renders one**,
     /// so the batched read and the single read cannot disagree about what a
     /// mention in an earlier wording says.
+    /// **Straight through**: an event holds handles and no text to resolve. A
+    /// layer that leaves it to the trait default answers no event.
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<super::MergeEvent>, super::MemoryError> {
+        self.inner.merge_events(entity).await
+    }
+
+    /// **Straight through**, for the same reason.
+    async fn moved_address(
+        &self,
+        address: &super::FactAddress,
+    ) -> Result<Option<super::FactAddress>, super::MemoryError> {
+        self.inner.moved_address(address).await
+    }
+
     async fn claim_histories(
         &self,
         entity: &EntityId,

@@ -144,6 +144,15 @@ pub trait StoredMemory: Send + Sync {
         &self,
         address: &super::FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, super::MemoryError>;
+    /// Handles, ids and moments only: no text a caller wrote, so the plain type.
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<super::MergeEvent>, super::MemoryError>;
+    async fn moved_address(
+        &self,
+        address: &super::FactAddress,
+    ) -> Result<Option<super::FactAddress>, super::MemoryError>;
     async fn claim_histories(
         &self,
         entity: &EntityId,
@@ -344,6 +353,18 @@ impl StoredMemory for Unrendered {
         address: &super::FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, super::MemoryError> {
         self.0.keys_kept_off_the_thing(address).await
+    }
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<super::MergeEvent>, super::MemoryError> {
+        self.0.merge_events(entity).await
+    }
+    async fn moved_address(
+        &self,
+        address: &super::FactAddress,
+    ) -> Result<Option<super::FactAddress>, super::MemoryError> {
+        self.0.moved_address(address).await
     }
     async fn claim_histories(
         &self,

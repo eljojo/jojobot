@@ -588,6 +588,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0076_message_supersedes.sql"),
         leaves: Leaves::Column("message", "supersedes"),
     },
+    Migration {
+        version: "0080_merge_event",
+        sql: include_str!("../../migrations/0080_merge_event.sql"),
+        leaves: Leaves::Table("merge_event"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

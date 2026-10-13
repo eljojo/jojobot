@@ -551,5 +551,51 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "reading both runs in full is the cost the summaries exist to avoid"
     );
 
+    // ── merge_events and moved_address: implemented by the store ────────────
+    //
+    // A layer that left either to the trait default would answer "no event" and
+    // "nothing moved" in production, over a store that kept both.
+    let keeper = created(indexed.as_ref(), "person:krusty", "Krusty").await;
+    let twin = created(indexed.as_ref(), "person:skinner", "Skinner").await;
+    let claim = indexed
+        .capture(NewFact::about(
+            twin.clone(),
+            "keeps a ledger of favours",
+            date(2026, 9, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    indexed
+        .merge(
+            &twin,
+            &keeper,
+            Some("one man, filed twice"),
+            date(2026, 9, 2),
+            &gamma,
+            Some("stack-run"),
+        )
+        .await
+        .expect("the fold lands");
+    let events = indexed
+        .merge_events(Some(&keeper))
+        .await
+        .expect("the events read through every layer");
+    assert_eq!(
+        events.len(),
+        1,
+        "the outermost memory port answers the event the store kept: {events:?}"
+    );
+    assert_eq!(events[0].session.as_deref(), Some("stack-run"));
+    assert!(
+        indexed
+            .moved_address(&claim.address())
+            .await
+            .expect("the map reads through every layer")
+            .is_some(),
+        "the outermost memory port says where the claim went"
+    );
+
     server.stop().await;
 }

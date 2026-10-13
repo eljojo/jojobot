@@ -17039,6 +17039,8 @@ macro_rules! all_cases {
         $m!(a_fold_repoints_a_reference_field_naming_the_folded_side($store));
         $m!(a_fold_repoints_a_list_of_references_and_names_the_survivor_once($store));
         $m!(a_walk_from_a_folded_handle_says_where_it_went($store));
+        $m!(a_merge_reads_back_as_an_event_with_its_session_and_the_claim_map($store));
+        $m!(an_address_from_before_a_merge_still_names_its_claim($store));
         $m!(a_claims_lineage_is_walkable_from_its_source($store));
         $m!(a_folded_value_says_who_backs_it($store));
         $m!(a_summed_key_has_no_backing_to_report($store));

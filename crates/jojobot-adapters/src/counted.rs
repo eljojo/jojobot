@@ -188,6 +188,20 @@ impl Memory for Counted {
         self.hit("claim_histories");
         self.inner.claim_histories(entity).await
     }
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
+        self.hit("merge_events");
+        self.inner.merge_events(entity).await
+    }
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        self.hit("moved_address");
+        self.inner.moved_address(address).await
+    }
     async fn key_trails(
         &self,
         entity: &EntityId,

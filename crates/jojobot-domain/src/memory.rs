@@ -5224,6 +5224,30 @@ pub struct Merge {
     pub rehomed: usize,
 }
 
+/// **A merge as an appended event** (decision log 292, card 2248): which thing
+/// was folded into which, when, in which run, and where each of the folded
+/// thing's claims went. The event is written with the fold and never changes.
+///
+/// A claim's address is local to the thing that holds it, so both sides own an
+/// `f1`; the folded thing's claims therefore take new numbers under the
+/// survivor, and [`MergeEvent::claims`] is the map from the old number to the new
+/// one. [`Memory::moved_address`] reads it, so an address handed out before the
+/// merge still names its claim afterwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeEvent {
+    /// The handle that was folded away, as it is served today.
+    pub folded: EntityId,
+    /// The handle that survived, as it is served today.
+    pub survivor: EntityId,
+    /// When the fold landed.
+    pub merged_at: jiff::Timestamp,
+    /// The run that made the merge, when it had one.
+    pub session: Option<String>,
+    /// Each claim the folded thing held: its local id there, then its local id
+    /// under the survivor. Oldest first.
+    pub claims: Vec<(FactId, FactId)>,
+}
+
 /// **The names a fold carries from the duplicate to the survivor**, in order: the
 /// duplicate's display name, then its aliases. A name the survivor already
 /// answers to is left out, compared without regard to case, and so is a name
@@ -6653,6 +6677,34 @@ pub trait Memory: Send + Sync {
             histories.insert(fact.id, chain);
         }
         Ok(histories)
+    }
+
+    /// **Every merge made, oldest first**, or only those that folded `entity`
+    /// away or took it in. A thing nobody merged with has none. A merge made
+    /// before events were kept has no event: it reads as it always did.
+    ///
+    /// Defaulted to none, for a store that keeps no events. ⚠️ **A decorator
+    /// must forward it**, or it answers none in production.
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<MergeEvent>, MemoryError> {
+        let _ = entity;
+        Ok(Vec::new())
+    }
+
+    /// **Where a claim's address went when its thing was merged away**: the
+    /// address it has under the survivor, followed through a survivor that was
+    /// itself merged later. `None` when the address was not moved by a merge
+    /// that kept an event — including one that was never a claim.
+    ///
+    /// Defaulted to `None`. ⚠️ **A decorator must forward it.**
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        let _ = address;
+        Ok(None)
     }
 
     /// **The answers of [`history`](Memory::history) and

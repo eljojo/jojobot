@@ -103,6 +103,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0074_session_key_hash",
     "0075_session_teaching_run_name",
     "0076_message_supersedes",
+    "0080_merge_event",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

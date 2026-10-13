@@ -470,6 +470,24 @@ impl Memory for IndexedMemory {
         self.inner.keys_kept_off_the_thing(address).await
     }
 
+    /// **Straight through, and it does not touch the index**: a merge's event
+    /// is not a document. A decorator that leaves this to the trait default
+    /// answers no event in production.
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
+        self.inner.merge_events(entity).await
+    }
+
+    /// **Straight through**, for the same reason.
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        self.inner.moved_address(address).await
+    }
+
     /// **Straight through, and it does not touch the index**, for the reason
     /// [`claim_history`](Self::claim_history) does not. A decorator that
     /// leaves this to the trait default serves the default in production.

@@ -536,6 +536,20 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         self.inner.claim_histories(entity).await
     }
+    /// **Straight through**: a left-over default here answers no event.
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
+        self.inner.merge_events(entity).await
+    }
+    /// **Straight through**: a left-over default here answers that nothing moved.
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        self.inner.moved_address(address).await
+    }
     /// **Straight through**: a left-over default here would answer from this
     /// layer's own `history` and walk the store one key at a time.
     async fn key_trails(

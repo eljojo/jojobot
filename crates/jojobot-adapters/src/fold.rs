@@ -365,8 +365,35 @@ impl Memory for Folded {
         }
     }
 
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
+        self.inner.merge_events(entity).await
+    }
+
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        self.inner.moved_address(address).await
+    }
+
+    /// **An address from before a merge is asked of the store only when the
+    /// image says its thing was merged away**, so a claim read costs nothing
+    /// extra: the image names no claim of a folded thing, and the event's map says
+    /// where the claim went.
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         match self.held(|image| image.claim_history(address)) {
+            Some(Err(merged @ MemoryError::AlreadyMerged { .. })) => {
+                let Some(moved) = self.inner.moved_address(address).await? else {
+                    return Err(merged);
+                };
+                match self.held(|image| image.claim_history(&moved)) {
+                    Some(answer) => answer,
+                    None => self.inner.claim_history(address).await,
+                }
+            }
             Some(answer) => answer,
             None => self.inner.claim_history(address).await,
         }
@@ -564,6 +591,17 @@ impl Memory for Folded {
 
     /// **Selected on the pointer in memory**, not by reading every record.
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        // An address on a thing merged away is moved first, when the merge kept
+        // an event; the image asks the store only for such an address.
+        let merged_away = self
+            .held(|image| image.is_merged_away(&source.home))
+            .unwrap_or(false);
+        if merged_away && let Some(moved) = self.inner.moved_address(source).await? {
+            return match self.held(|image| image.built_on(&moved)) {
+                Some(answer) => answer,
+                None => self.inner.built_on(&moved).await,
+            };
+        }
         match self.held(|image| image.built_on(source)) {
             Some(answer) => answer,
             None => self.inner.built_on(source).await,

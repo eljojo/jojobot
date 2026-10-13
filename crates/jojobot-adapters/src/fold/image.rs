@@ -385,6 +385,11 @@ impl Image {
 
     /// `built_on`: the records worked out from one claim, in the order of the
     /// storage key each is filed under, then by id.
+    /// Whether this handle names a thing that was merged away.
+    pub fn is_merged_away(&self, handle: &EntityId) -> bool {
+        self.entity(handle).is_some_and(|e| e.merged_into.is_some())
+    }
+
     pub fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         jojobot_domain::memory::validate_subject(&source.home)?;
         let home = self

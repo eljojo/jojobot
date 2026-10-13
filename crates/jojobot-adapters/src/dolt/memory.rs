@@ -1311,6 +1311,45 @@ impl DoltMemory {
     /// makes findable, `WHERE badge = ?`, checked against what the build
     /// supplies first because [`known`](Self::known) does too: a stored row
     /// wins a collision, but nothing stored collides with what nobody wrote.
+    /// **Where an address went when its thing was merged away**, followed through
+    /// a survivor that was merged later. `None` when no merge that kept an event
+    /// moved it, which is every address on a thing nobody merged and every
+    /// address on a thing merged before events were kept.
+    async fn moved_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        let Some((mut key, _)) = self.resolve(tx, &address.home).await? else {
+            return Ok(None);
+        };
+        let mut local = address.local.as_str().to_string();
+        let mut moved = false;
+        // A merge cannot fold a thing into itself, so the chain ends; the bound
+        // is for a store that has been edited by hand.
+        for _ in 0..64 {
+            let next = sqlx::query(
+                "SELECT survivor, survivor_id FROM merge_event
+                 WHERE folded = ? AND folded_id = ? AND ordinal > 0
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(key.as_str())
+            .bind(&local)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            let Some(next) = next else { break };
+            key = EntityId(next.try_get::<String, _>("survivor").map_err(store)?);
+            local = next.try_get::<String, _>("survivor_id").map_err(store)?;
+            moved = true;
+        }
+        if !moved {
+            return Ok(None);
+        }
+        let handle = self.current_handle(tx, &key).await?;
+        Ok(Some(FactAddress::new(handle, FactId(local))))
+    }
+
     async fn current_handle(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -4304,8 +4343,89 @@ impl Memory for DoltMemory {
             .collect())
     }
 
+    async fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let rows = match entity {
+            None => {
+                sqlx::query(
+                    "SELECT merge_no, ordinal, folded, survivor, merged_at, session, folded_id,
+                            survivor_id
+                     FROM merge_event ORDER BY merge_no, ordinal",
+                )
+                .fetch_all(&mut *tx)
+                .await
+            }
+            Some(entity) => {
+                let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+                    return Ok(Vec::new());
+                };
+                sqlx::query(
+                    "SELECT merge_no, ordinal, folded, survivor, merged_at, session, folded_id,
+                            survivor_id
+                     FROM merge_event
+                     WHERE merge_no IN (SELECT merge_no FROM merge_event
+                                        WHERE ordinal = 0 AND (folded = ? OR survivor = ?))
+                     ORDER BY merge_no, ordinal",
+                )
+                .bind(key.as_str())
+                .bind(key.as_str())
+                .fetch_all(&mut *tx)
+                .await
+            }
+        }
+        .map_err(store)?;
+        let mut events: Vec<jojobot_domain::memory::MergeEvent> = Vec::new();
+        for row in &rows {
+            let ordinal: i64 = row.try_get("ordinal").map_err(store)?;
+            if ordinal == 0 {
+                let merged_at: String = row.try_get("merged_at").map_err(store)?;
+                events.push(jojobot_domain::memory::MergeEvent {
+                    folded: self
+                        .current_handle(
+                            &mut tx,
+                            &EntityId(row.try_get::<String, _>("folded").map_err(store)?),
+                        )
+                        .await?,
+                    survivor: self
+                        .current_handle(
+                            &mut tx,
+                            &EntityId(row.try_get::<String, _>("survivor").map_err(store)?),
+                        )
+                        .await?,
+                    merged_at: merged_at
+                        .parse()
+                        .map_err(|e| MemoryError::Store(format!("a merge event's moment: {e}")))?,
+                    session: row.try_get("session").map_err(store)?,
+                    claims: Vec::new(),
+                });
+            } else if let Some(event) = events.last_mut() {
+                event.claims.push((
+                    FactId(row.try_get::<String, _>("folded_id").map_err(store)?),
+                    FactId(row.try_get::<String, _>("survivor_id").map_err(store)?),
+                ));
+            }
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(events)
+    }
+
+    async fn moved_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let moved = self.moved_in(&mut tx, address).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(moved)
+    }
+
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
+        let moved = self.moved_in(&mut tx, address).await?;
+        let address = moved.as_ref().unwrap_or(address);
         // A miss on the HANDLE is an entity miss, exactly as every other
         // addressed read answers one. A stale-but-renamed handle resolves
         // through its own history, same as every other lookup here.
@@ -4604,6 +4724,8 @@ impl Memory for DoltMemory {
             return Err(refused);
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
+        let moved = self.moved_in(&mut tx, address).await?;
+        let address = moved.as_ref().unwrap_or(address);
         // An edge's object names an entity, so an edit that attaches one is an
         // entity-touching write and faces the guard — screened before anything
         // is rewritten. **What EXISTS includes what the build supplies**, for
@@ -5227,9 +5349,13 @@ impl Memory for DoltMemory {
         let rehomed = moving.len();
         let mut renamed: std::collections::HashMap<String, String> =
             std::collections::HashMap::with_capacity(moving.len());
+        // The old and the new local id of each claim, in the order they moved:
+        // the map the merge event keeps.
+        let mut address_map: Vec<(String, String)> = Vec::with_capacity(moving.len());
         for was in moving {
             let now = Self::mint(&mut tx, &survivor_key).await?;
             renamed.insert(was.clone(), now.as_str().to_string());
+            address_map.push((was.clone(), now.as_str().to_string()));
             for statement in [
                 "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = ?",
                 "UPDATE fact SET derived_from = ?, derived_from_id = ? \
@@ -5400,6 +5526,19 @@ impl Memory for DoltMemory {
         )
         .await?;
 
+        // **The merge as an appended event**, in the transaction that makes it:
+        // who was folded into whom, when, in which run, and where each claim
+        // went. Nothing reads it to decide anything about the fold itself.
+        append_merge_event(
+            &mut tx,
+            &folded_key,
+            &survivor_key,
+            &self.clock,
+            session,
+            &address_map,
+        )
+        .await?;
+
         // **The folded row stays and starts forwarding.** Written last, so a
         // failure anywhere above rolls back a row that still says it is a thing
         // rather than one pointing at a fold that did not happen.
@@ -5451,6 +5590,8 @@ impl Memory for DoltMemory {
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
+        let moved = self.moved_in(&mut tx, address).await?;
+        let address = moved.as_ref().unwrap_or(address);
         // **The full listing is built only on a miss** — two miss branches
         // below can reach one, each building its own: a handle that resolves
         // to nothing, or a resolved handle with no fact at this address.
@@ -5621,6 +5762,8 @@ impl Memory for DoltMemory {
         validate_subject(&source.home)?;
         self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
+        let moved = self.moved_in(&mut tx, source).await?;
+        let source = moved.as_ref().unwrap_or(source);
         // **The column holds the badge, and a caller's address names a
         // handle.** Resolved here for the same reason every other addressed
         // lookup resolves one first — a stale-but-renamed handle still finds
@@ -6486,6 +6629,51 @@ async fn append_entity_write(
         .execute(&mut **tx)
         .await
         .map_err(store)?;
+    Ok(())
+}
+
+/// **Append one merge event and the map of the claims it moved** (card 2248).
+/// The event is row zero and each claim follows from one, so a merge of an empty
+/// duplicate is still an event.
+async fn append_merge_event(
+    tx: &mut Transaction<'_, MySql>,
+    folded: &EntityId,
+    survivor: &EntityId,
+    clock: &Clock,
+    session: Option<&str>,
+    claims: &[(String, String)],
+) -> Result<(), MemoryError> {
+    // **Asked for optionally, and counted from zero.** This store answers an
+    // aggregate over a table with no row in it with no row at all, so the first
+    // merge ever made finds nothing to read a number from.
+    let highest: Option<Option<i64>> = sqlx::query_scalar("SELECT MAX(merge_no) FROM merge_event")
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+    let event: i64 = highest.flatten().unwrap_or(0) + 1;
+    let at = clock.now().to_string();
+    let header = std::iter::once((None, None));
+    let rows = claims
+        .iter()
+        .map(|(was, now)| (Some(was.as_str()), Some(now.as_str())));
+    for (ordinal, (was, now)) in header.chain(rows).enumerate() {
+        sqlx::query(
+            "INSERT INTO merge_event
+               (merge_no, ordinal, folded, survivor, merged_at, session, folded_id, survivor_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(event)
+        .bind(ordinal as i64)
+        .bind(folded.as_str())
+        .bind(survivor.as_str())
+        .bind(&at)
+        .bind(session)
+        .bind(was)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
+    }
     Ok(())
 }
 
