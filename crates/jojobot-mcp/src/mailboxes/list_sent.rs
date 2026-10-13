@@ -572,6 +572,7 @@ mod tests {
             !json_of(
                 &jojobot
                     .read_message(Parameters(ReadMessageArgs {
+                        history: None,
                         message_id: theirs["id"].as_str().expect("an id").to_string(),
                         // Asked of the box's OWN drainer, which is the only
                         // caller that can take delivery — and the only one whose

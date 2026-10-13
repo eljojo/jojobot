@@ -113,6 +113,7 @@ async fn a_refusal_a_read_verb_earns_does_not_say_a_write_was_skipped() {
         advice(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: "nope99".into(),
                     sid: Some(sid.clone()),
                 }))
@@ -181,6 +182,7 @@ async fn a_quarantined_message_read_by_id_does_not_say_a_write_was_skipped() {
 
     let refused = jojobot
         .read_message(Parameters(ReadMessageArgs {
+            history: None,
             message_id: id,
             sid: Some(sid),
         }))

@@ -182,20 +182,26 @@ impl Mailboxes for Nudging {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
-        self.inner.read_mailbox(name, taken_by).await
+        self.inner.read_mailbox(name, taken_by, acting).await
     }
 
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
-        self.inner.read_message(id).await
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: crate::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
+        self.inner.read_message(id, acting).await
     }
 
     async fn mark_processed(
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        self.inner.mark_processed(id, notes).await
+        self.inner.mark_processed(id, notes, acting).await
     }
 
     async fn quarantine(
@@ -203,9 +209,16 @@ impl Mailboxes for Nudging {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
-        self.inner.quarantine(id, by, reason, at).await
+        self.inner.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &crate::mailbox::MessageId,
+    ) -> Result<Vec<crate::mailbox::MessageEvent>, crate::mailbox::MailboxError> {
+        self.inner.message_history(id).await
     }
 }
 

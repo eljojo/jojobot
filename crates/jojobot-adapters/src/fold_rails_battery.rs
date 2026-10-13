@@ -544,8 +544,16 @@ impl MailRails<'_> {
                 n,
                 &self.counted.calls,
                 self.switched,
-                self.folded.read_mailbox(&which, TakenBy::Posting),
-                self.direct.read_mailbox(&which, TakenBy::Posting),
+                self.folded.read_mailbox(
+                    &which,
+                    TakenBy::Posting,
+                    jojobot_domain::mailbox::Acting::anyone_anytime(),
+                ),
+                self.direct.read_mailbox(
+                    &which,
+                    TakenBy::Posting,
+                    jojobot_domain::mailbox::Acting::anyone_anytime(),
+                ),
             )
             .await;
         }
@@ -556,8 +564,16 @@ impl MailRails<'_> {
             "nonesuch",
             &self.counted.calls,
             &[],
-            self.folded.read_mailbox(&unknown, TakenBy::Posting),
-            self.direct.read_mailbox(&unknown, TakenBy::Posting),
+            self.folded.read_mailbox(
+                &unknown,
+                TakenBy::Posting,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            ),
+            self.direct.read_mailbox(
+                &unknown,
+                TakenBy::Posting,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            ),
         )
         .await;
     }
@@ -648,7 +664,11 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
 
     calls.reset();
     let delivery = w
-        .read_mailbox(&name("gamma"), TakenBy::Reading)
+        .read_mailbox(
+            &name("gamma"),
+            TakenBy::Reading,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
         .await
         .expect("read_mailbox")
         .written()
@@ -666,19 +686,27 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .expect("post")
         .written()
         .expect("not blocked");
-    w.read_mailbox(&name("gamma"), TakenBy::Posting)
+    w.read_mailbox(
+        &name("gamma"),
+        TakenBy::Posting,
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("read_mailbox")
+    .written()
+    .expect("not blocked");
+    p.agree("after a second delivery that also hands over a leftover")
+        .await;
+    for n in ["delta", "milhouse"] {
+        w.read_mailbox(
+            &name(n),
+            TakenBy::Reading,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
         .await
         .expect("read_mailbox")
         .written()
         .expect("not blocked");
-    p.agree("after a second delivery that also hands over a leftover")
-        .await;
-    for n in ["delta", "milhouse"] {
-        w.read_mailbox(&name(n), TakenBy::Reading)
-            .await
-            .expect("read_mailbox")
-            .written()
-            .expect("not blocked");
     }
     p.nothing_new_in("after the deliveries", &["gamma", "delta", "milhouse"])
         .await;
@@ -691,43 +719,68 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .written()
         .expect("not blocked");
     calls.reset();
-    w.read_message(&seven.id).await.expect("read_message");
+    w.read_message(&seven.id, jojobot_domain::mailbox::Acting::anyone_anytime())
+        .await
+        .expect("read_message");
     wrote_without_reading("read_message", calls);
     p.agree("after one message is taken by id").await;
-    w.read_message(&seven.id).await.expect("read_message again");
-    w.read_message(&three.id)
+    w.read_message(&seven.id, jojobot_domain::mailbox::Acting::anyone_anytime())
+        .await
+        .expect("read_message again");
+    w.read_message(&three.id, jojobot_domain::mailbox::Acting::anyone_anytime())
         .await
         .expect("read_message of one already taken");
     p.agree("after messages already taken are taken again")
         .await;
 
     calls.reset();
-    w.mark_processed(&one.id, Some("done with one"))
-        .await
-        .expect("mark_processed");
+    w.mark_processed(
+        &one.id,
+        Some("done with one"),
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("mark_processed");
     wrote_without_reading("mark_processed", calls);
     p.agree("after a message is processed").await;
-    w.mark_processed(&one.id, None)
-        .await
-        .expect("mark_processed again keeps the notes");
-    w.mark_processed(&replacement.id, None)
-        .await
-        .expect("mark a message processed from new");
+    w.mark_processed(
+        &one.id,
+        None,
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("mark_processed again keeps the notes");
+    w.mark_processed(
+        &replacement.id,
+        None,
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("mark a message processed from new");
     p.agree("after a second processing and one straight from new")
         .await;
     p.nothing_new_in("after a message is processed", &["gamma"])
         .await;
     assert!(
-        w.mark_processed(&MessageId("zzzzzz".into()), None)
-            .await
-            .is_err(),
+        w.mark_processed(
+            &MessageId("zzzzzz".into()),
+            None,
+            jojobot_domain::mailbox::Acting::anyone_anytime()
+        )
+        .await
+        .is_err(),
         "a message that does not exist is refused"
     );
     p.agree("after a refused mark").await;
 
-    w.quarantine(&three.id, &name("delta"), "not trusted", at(80))
-        .await
-        .expect("quarantine");
+    w.quarantine(
+        &three.id,
+        &name("delta"),
+        "not trusted",
+        jojobot_domain::mailbox::Acting::unnamed(at(80)),
+    )
+    .await
+    .expect("quarantine");
     p.agree("after a quarantine").await;
 
     w.repoint_owner(&bot("gamma"), &bot("epsilon"))

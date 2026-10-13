@@ -1096,6 +1096,7 @@ pub trait Mailboxes: Send + Sync {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError>;
 
     /// Take delivery of **one** message by id, moving that one `new → read` and
@@ -1112,7 +1113,11 @@ pub trait Mailboxes: Send + Sync {
     /// [`MailboxError::UnknownMessage`] and an id naming an unreadable card is
     /// [`MailboxError::Quarantined`] — the same two answers `mark_processed`
     /// gives, because they are the same two conditions.
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError>;
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: Acting<'_>,
+    ) -> Result<Delivered, MailboxError>;
 
     /// Move a message to `processed`, optionally recording the outcome.
     /// Terminal: nothing is deleted, and nothing moves out of `processed`.
@@ -1120,6 +1125,7 @@ pub trait Mailboxes: Send + Sync {
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: Acting<'_>,
     ) -> Result<Message, MailboxError>;
 
     /// **Quarantine a message ON PURPOSE — a decision, not damage.** Refused
@@ -1136,8 +1142,118 @@ pub trait Mailboxes: Send + Sync {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: Acting<'_>,
     ) -> Result<Quarantined, MailboxError>;
+
+    /// **Every change of state a message went through, in the order they
+    /// happened** — each naming the run that made it, when, and the state it
+    /// left. A read, not a delivery: nothing moves, and the message's own state
+    /// is read by the verbs above.
+    ///
+    /// **A message changed before the store kept events has none**, and an empty
+    /// answer says nothing was recorded, never that nothing happened. An id that
+    /// names no message is [`MailboxError::UnknownMessage`]. **A quarantined
+    /// message is answered**: its events are the account of why it left the
+    /// board, so this does not refuse it the way a delivery does.
+    async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError>;
+}
+
+/// **Who made a change to a message, and when.**
+///
+/// One argument for the two things every verb that moves a message's state needs
+/// to record, so a verb is not widened twice. `session` is the run's public name,
+/// as [`NewMessage::posted_by_session`] is, and never the key the caller sent.
+/// It is `None` when the caller has no run yet, which a run that has only read
+/// is: a run's record is made by its first write. **A change nobody can name a
+/// run for is recorded without one**, and reads as unattributed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Acting<'a> {
+    /// The run that made the change.
+    pub session: Option<&'a str>,
+    /// The moment the change was made, on the server's own clock.
+    pub at: Timestamp,
+}
+
+impl<'a> Acting<'a> {
+    /// A change made by no run known to the store, at `at`.
+    pub fn unnamed(at: Timestamp) -> Self {
+        Acting { session: None, at }
+    }
+
+    /// A change made by `session`, at `at`.
+    pub fn by(session: &'a str, at: Timestamp) -> Self {
+        Acting {
+            session: Some(session),
+            at,
+        }
+    }
+
+    /// **A change by nobody in particular, at the start of time.** For a case
+    /// that is about something other than who moved a message or when.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn anyone_anytime() -> Self {
+        Acting::unnamed(Timestamp::UNIX_EPOCH)
+    }
+}
+
+/// **What kind of change a message event records.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageEventKind {
+    /// A message went from `new` to `read`.
+    Read,
+    /// A message was marked `processed`, again or for the first time.
+    Processed,
+    /// A message was set aside on purpose.
+    Quarantined,
+}
+
+impl MessageEventKind {
+    /// The token the store keeps.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            MessageEventKind::Read => "read",
+            MessageEventKind::Processed => "processed",
+            MessageEventKind::Quarantined => "quarantined",
+        }
+    }
+
+    /// Parse a stored token; `None` for one this build does not know.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "read" => Some(MessageEventKind::Read),
+            "processed" => Some(MessageEventKind::Processed),
+            "quarantined" => Some(MessageEventKind::Quarantined),
+            _ => None,
+        }
+    }
+}
+
+/// **One change of state, as it happened.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageEvent {
+    /// Which change this is for the message, counting from one.
+    pub ordinal: usize,
+    /// What kind of change.
+    pub kind: MessageEventKind,
+    /// When it happened.
+    pub at: Timestamp,
+    /// **The run that made it**, by its public name. `None` for a change no run
+    /// was known for.
+    pub by_session: Option<String>,
+    /// **The box the change was made through**: the box a delivery read, the box
+    /// the message was filed in for a read of one or a retirement, and the box
+    /// that decided for a quarantine.
+    pub by_box: Option<MailboxName>,
+    /// **The state the message held before this change.** A quarantine keeps
+    /// the state the message was set aside from, which the message itself no
+    /// longer says.
+    pub prior_state: MessageState,
+    /// **The notes this change was given**, and `None` when the caller gave
+    /// none. The message's own notes may carry an earlier call's forward;
+    /// the event says only what this call sent.
+    pub notes: Option<String>,
+    /// The reason a quarantine gave.
+    pub reason: Option<String>,
 }
 
 /// **What a deliberate quarantine actually wrote**, read back rather than

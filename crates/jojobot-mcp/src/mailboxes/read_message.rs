@@ -16,6 +16,14 @@ pub struct ReadMessageArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **Read the message's history of state changes instead of taking it.**
+    /// With `true` the call takes NO delivery and moves nothing: the message is
+    /// left in the state it is in, and the answer is its changes in the order
+    /// they happened, each naming the run, when, the state it left, and the
+    /// notes or reason it was given. Allowed exactly where reading the message
+    /// is. Without it this verb takes delivery, as always.
+    #[serde(default)]
+    pub(crate) history: Option<bool>,
 }
 
 /// Take delivery of one message by id, leaving the rest of its box alone.
@@ -41,7 +49,9 @@ impl Jojobot {
                        delivery hands over, seen_before and all: true means somebody had \
                        already taken this message, so it is a leftover rather than fresh \
                        mail. Taking delivery is NOT handling: call mark_processed once you \
-                       have acted, and only then. A refusal is an answer with status: blocked \
+                       have acted, and only then. WITH `history: true` THIS VERB TAKES NO \
+                       DELIVERY: it answers the message's changes of state in order, with the \
+                       run that made each, and leaves the message where it is. A refusal is an answer with status: blocked \
                        and nothing taken, in three kinds: an id that names nothing at all; an \
                        id naming an item jojobot cannot read (which comes back saying why, \
                        and needs a person rather than a retry); and a message that is not \
@@ -84,6 +94,7 @@ impl Jojobot {
         {
             return Ok(refused);
         }
+        let readable = located.clone();
         if let Some(message) = located
             // **The guard is on the STATE CHANGE, not on the bytes.** `processed`
             // is a terminal archive: reading one moves nothing and takes nothing
@@ -105,7 +116,28 @@ impl Jojobot {
                 return Ok(not_yours(&id, &message.mailbox));
             }
         }
-        match self.mailboxes.read_message(&id).await {
+        // **The history is read where the message is readable, and nowhere
+        // else.** Everything above, privacy and ownership included, has already
+        // been asked; a message nobody can read falls through to the delivery
+        // verb, which owns the refusals for one that is unknown or set aside and
+        // moves nothing when it gives them.
+        if args.history.unwrap_or(false)
+            && let Some(message) = &readable
+        {
+            return match self.mailboxes.message_history(&id).await {
+                Ok(events) => json_result(&history_json(message, &events)),
+                Err(e) => mailbox_declined(e),
+            };
+        }
+        let run = match self.acting_run(args.sid.as_deref()) {
+            Ok(run) => run,
+            Err(refused) => return Ok(refused),
+        };
+        let acting = jojobot_domain::mailbox::Acting {
+            session: run.as_deref(),
+            at: self.clock().now(),
+        };
+        match self.mailboxes.read_message(&id, acting).await {
             Ok(delivered) => {
                 let mut rendered = delivered_json(&delivered);
                 let viewer = self
@@ -120,6 +152,63 @@ impl Jojobot {
             Err(e) => mailbox_declined(e),
         }
     }
+}
+
+/// **A message's changes of state on the wire**, oldest first.
+///
+/// The envelope is the message's identity and the state it holds now, never its
+/// body: a history is a question about what happened to it. **An empty history
+/// says what that means**, because a message changed before jojobot kept events
+/// reads the same as one nobody has touched, and an empty list would pass for
+/// *nothing happened*.
+fn history_json(message: &mailbox::Message, events: &[mailbox::MessageEvent]) -> serde_json::Value {
+    let rendered: Vec<serde_json::Value> = events
+        .iter()
+        .map(|event| {
+            let mut one = serde_json::json!({
+                "nth": event.ordinal,
+                "kind": event.kind.as_token(),
+                "at": event.at.to_string(),
+                "prior_state": event.prior_state.as_token(),
+            });
+            if let Some(fields) = one.as_object_mut() {
+                if let Some(run) = &event.by_session {
+                    fields.insert("run".into(), run.as_str().into());
+                }
+                if let Some(by_box) = &event.by_box {
+                    fields.insert("box".into(), by_box.as_str().into());
+                }
+                if let Some(notes) = &event.notes {
+                    fields.insert("notes".into(), notes.as_str().into());
+                }
+                if let Some(reason) = &event.reason {
+                    fields.insert("reason".into(), reason.as_str().into());
+                }
+            }
+            one
+        })
+        .collect();
+    let mut history = serde_json::json!({
+        "count": events.len(),
+        "events": rendered,
+    });
+    if let Some(fields) = history.as_object_mut()
+        && events.is_empty()
+    {
+        fields.insert(
+            "note".into(),
+            "no change of state is recorded for this message. It may have changed before \
+             jojobot kept them, so this does not say nothing happened to it"
+                .into(),
+        );
+    }
+    serde_json::json!({
+        "id": message.id.as_str(),
+        "mailbox": message.mailbox.as_str(),
+        "state": message.state.as_token(),
+        "taken": false,
+        "history": history,
+    })
 }
 
 #[cfg(test)]
@@ -179,6 +268,7 @@ mod tests {
         let archived = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: processed["id"].as_str().expect("an id").to_string(),
                     sid: None,
                 }))
@@ -207,6 +297,7 @@ mod tests {
         let delivered = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id.clone(),
                     sid: Some(reader.clone()),
                 }))
@@ -232,6 +323,7 @@ mod tests {
         let again = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id,
                     sid: Some(reader),
                 }))
@@ -260,6 +352,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id.clone(),
                     sid: Some(gamma),
                 }))
@@ -300,6 +393,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id,
                     sid: None,
                 }))
@@ -351,6 +445,7 @@ mod tests {
         let read = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id.clone(),
                     sid: Some(gamma),
                 }))
@@ -374,6 +469,7 @@ mod tests {
 
         let result = jojobot
             .read_message(Parameters(ReadMessageArgs {
+                history: None,
                 message_id: "999999".into(),
                 sid: None,
             }))
@@ -408,6 +504,7 @@ mod tests {
 
         let result = jojobot
             .read_message(Parameters(ReadMessageArgs {
+                history: None,
                 message_id: id.clone(),
                 sid: None,
             }))
@@ -478,7 +575,11 @@ mod tests {
             if state == "processed" {
                 jojobot
                     .mailboxes
-                    .mark_processed(&mailbox::MessageId(id.clone()), None)
+                    .mark_processed(
+                        &mailbox::MessageId(id.clone()),
+                        None,
+                        jojobot_domain::mailbox::Acting::anyone_anytime(),
+                    )
                     .await
                     .expect("the store retires it");
             }
@@ -486,6 +587,7 @@ mod tests {
                 let refused = json_of(
                     &jojobot
                         .read_message(Parameters(ReadMessageArgs {
+                            history: None,
                             message_id: id.clone(),
                             sid: reader.clone(),
                         }))
@@ -551,6 +653,7 @@ mod tests {
             let read = json_of(
                 &jojobot
                     .read_message(Parameters(ReadMessageArgs {
+                        history: None,
                         message_id: private_id.clone(),
                         sid: Some(reader.clone()),
                     }))
@@ -628,7 +731,11 @@ mod tests {
         // on a person's box stands between it and the reader.
         jojobot
             .mailboxes
-            .mark_processed(&mailbox::MessageId(id.clone()), None)
+            .mark_processed(
+                &mailbox::MessageId(id.clone()),
+                None,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("the store retires it");
         let read = |sid: String| {
@@ -638,6 +745,7 @@ mod tests {
                 json_of(
                     &jojobot
                         .read_message(Parameters(ReadMessageArgs {
+                            history: None,
                             message_id: id,
                             sid: Some(sid),
                         }))

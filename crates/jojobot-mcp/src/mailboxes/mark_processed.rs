@@ -77,6 +77,16 @@ impl Jojobot {
         if let Err(refused) = self.attributable_for_write(args.sid.as_deref()).await {
             return Ok(refused);
         }
+        // **The run this change is recorded under**, by its public name, and the
+        // moment on the server's own clock.
+        let run = match self.acting_run(args.sid.as_deref()) {
+            Ok(run) => run,
+            Err(refused) => return Ok(refused),
+        };
+        let acting = jojobot_domain::mailbox::Acting {
+            session: run.as_deref(),
+            at: self.clock().now(),
+        };
         let id = MessageId(args.message_id.trim().to_string());
         // **Mail in a person's box is moved by that person alone.** Neither the
         // retirement nor the quarantine below is asked of a bot, whoever wrote
@@ -133,7 +143,7 @@ impl Jojobot {
             };
             return match self
                 .mailboxes
-                .quarantine(&id, &mine.name, reason, self.clock().now())
+                .quarantine(&id, &mine.name, reason, acting)
                 .await
             {
                 Ok(quarantined) => {
@@ -152,7 +162,7 @@ impl Jojobot {
             .filter(|n| !n.is_empty());
         match self
             .mailboxes
-            .mark_processed(&id, args.notes.as_deref())
+            .mark_processed(&id, args.notes.as_deref(), acting)
             .await
         {
             Ok(processed) => {
@@ -334,6 +344,7 @@ mod tests {
         let kept = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id,
                     sid: None,
                 }))
@@ -745,6 +756,7 @@ mod tests {
         let read = blocked(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: target["id"].as_str().expect("an id").to_string(),
                     sid: Some(sid.clone()),
                 }))
@@ -824,6 +836,7 @@ mod tests {
         let read = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: theirs["id"].as_str().expect("an id").to_string(),
                     sid: Some(dev_sid),
                 }))

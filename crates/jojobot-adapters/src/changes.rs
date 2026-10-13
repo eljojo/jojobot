@@ -104,14 +104,19 @@ impl Mailboxes for MailChanges {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
-        let delivered = self.inner.read_mailbox(name, taken_by).await;
+        let delivered = self.inner.read_mailbox(name, taken_by, acting).await;
         self.changed();
         delivered
     }
 
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
-        let read = self.inner.read_message(id).await;
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
+        let read = self.inner.read_message(id, acting).await;
         self.changed();
         read
     }
@@ -120,8 +125,9 @@ impl Mailboxes for MailChanges {
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        let retired = self.inner.mark_processed(id, notes).await;
+        let retired = self.inner.mark_processed(id, notes, acting).await;
         self.changed();
         retired
     }
@@ -131,11 +137,19 @@ impl Mailboxes for MailChanges {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
-        let held = self.inner.quarantine(id, by, reason, at).await;
+        let held = self.inner.quarantine(id, by, reason, acting).await;
         self.changed();
         held
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }
 

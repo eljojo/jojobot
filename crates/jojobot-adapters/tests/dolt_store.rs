@@ -3149,7 +3149,7 @@ async fn dolt_satisfies_the_mailbox_contract() {
         .await
         .expect("the store comes up");
 
-    const ROOM: usize = 52;
+    const ROOM: usize = 60;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
         let pool = migrated_database(&store, &format!("mail{n}"))
@@ -3239,7 +3239,13 @@ async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed
         let racer = mailboxes_store.clone();
         let id = posted.id.clone();
         handles.push(tokio::spawn(async move {
-            racer.mark_processed(&id, Some(&format!("racer {i}"))).await
+            racer
+                .mark_processed(
+                    &id,
+                    Some(&format!("racer {i}")),
+                    jojobot_domain::mailbox::Acting::anyone_anytime(),
+                )
+                .await
         }));
     }
     let mut landed = 0;

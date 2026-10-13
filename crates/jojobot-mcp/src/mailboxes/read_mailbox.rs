@@ -283,10 +283,18 @@ impl Jojobot {
         // on the conservative one. Nothing goes silent either way — a leftover
         // is still delivered, counted, flagged and owed.
         let new_only = args.new_only.unwrap_or(true);
+        let run = match self.acting_run(args.sid.as_deref()) {
+            Ok(run) => run,
+            Err(refused) => return Ok(refused),
+        };
+        let acting = jojobot_domain::mailbox::Acting {
+            session: run.as_deref(),
+            at: self.clock().now(),
+        };
         match self
             .mailboxes
             // Somebody opened their box: they were looking.
-            .read_mailbox(&name, mailbox::TakenBy::Reading)
+            .read_mailbox(&name, mailbox::TakenBy::Reading, acting)
             .await
             .map_err(mailbox_error)?
         {

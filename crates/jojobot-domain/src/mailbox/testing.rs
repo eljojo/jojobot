@@ -18,9 +18,10 @@ use crate::memory::{EntityId, guard as memory_guard};
 
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NOTES_BUDGET, NewMessage, Quarantined, StateCounts, SupersedeRefusal,
-    Superseded, TakenBy, guard, normalize_body, normalize_notes, normalize_subject, validate_body,
-    validate_mailbox_name, validate_message_id, validate_notes, validate_sender, validate_subject,
+    MessageEvent, MessageEventKind, MessageId, MessageState, NOTES_BUDGET, NewMessage, Quarantined,
+    StateCounts, SupersedeRefusal, Superseded, TakenBy, guard, normalize_body, normalize_notes,
+    normalize_subject, validate_body, validate_mailbox_name, validate_message_id, validate_notes,
+    validate_sender, validate_subject,
 };
 
 /// The in-memory [`Mailboxes`] fake — a real store that holds a write, with no
@@ -45,6 +46,10 @@ pub struct InMemoryMailboxes {
     /// above into two different refusals rather than one. An id here is
     /// always also in `quarantined`; the reverse is not true.
     deliberate: Mutex<Vec<(MessageId, String, String, Timestamp)>>,
+    /// **Every change of state a message went through**, in the order they
+    /// happened, kept beside the message exactly as the real store keeps them
+    /// beside the row.
+    events: Mutex<Vec<(MessageId, MessageEvent)>>,
     /// Whether a board read fails. Writes still land: this is the store being
     /// unreachable for a read, not gone.
     blind: Mutex<bool>,
@@ -202,6 +207,15 @@ impl InMemoryMailboxes {
         let mut next = self.next_id.lock().expect("id lock");
         *next += 1;
         MessageId(next.to_string())
+    }
+
+    /// **Keep one change of state**, numbered among the message's own, so a
+    /// history reads in the order the changes happened. The number on `event` is
+    /// replaced.
+    fn keep_event(&self, id: &MessageId, mut event: MessageEvent) {
+        let mut events = self.events.lock().expect("event lock");
+        event.ordinal = events.iter().filter(|(held, _)| held == id).count() + 1;
+        events.push((id.clone(), event));
     }
 
     /// The refusal every verb that addresses a card by id owes: a quarantined
@@ -528,6 +542,7 @@ impl Mailboxes for InMemoryMailboxes {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
         validate_mailbox_name(name)?;
         let names = self.names();
@@ -562,6 +577,7 @@ impl Mailboxes for InMemoryMailboxes {
             .collect();
         withheld.sort_by_key(|w| Self::numeric(&w.id));
         let snapshot = messages.clone();
+        let mut moved_to_read: Vec<MessageId> = Vec::new();
         let mut delivered: Vec<Delivered> = messages
             .iter_mut()
             .filter(|m| {
@@ -578,6 +594,7 @@ impl Mailboxes for InMemoryMailboxes {
                 // time the recipient posted anything.
                 if m.state == MessageState::New {
                     m.taken_by = Some(taken_by);
+                    moved_to_read.push(m.id.clone());
                 }
                 m.state = MessageState::Read;
                 Delivered {
@@ -586,6 +603,21 @@ impl Mailboxes for InMemoryMailboxes {
                 }
             })
             .collect();
+        for id in &moved_to_read {
+            self.keep_event(
+                id,
+                MessageEvent {
+                    ordinal: 0,
+                    kind: MessageEventKind::Read,
+                    at: acting.at,
+                    by_session: acting.session.map(str::to_string),
+                    by_box: Some(name.clone()),
+                    prior_state: MessageState::New,
+                    notes: None,
+                    reason: None,
+                },
+            );
+        }
         // Oldest **by the instant the sender declared**, not by the order this
         // store happened to be handed them — the same total order the real
         // adapter reads off the board, with the minted id breaking a tie.
@@ -636,7 +668,11 @@ impl Mailboxes for InMemoryMailboxes {
             .collect())
     }
 
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: crate::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
         validate_message_id(id)?;
         self.refuse_if_quarantined(id)?;
 
@@ -655,6 +691,19 @@ impl Mailboxes for InMemoryMailboxes {
             // recorded the same way opening a box is. A pickup that recorded
             // nothing would read back as though nobody took it.
             message.taken_by = Some(TakenBy::Reading);
+            self.keep_event(
+                id,
+                MessageEvent {
+                    ordinal: 0,
+                    kind: MessageEventKind::Read,
+                    at: acting.at,
+                    by_session: acting.session.map(str::to_string),
+                    by_box: Some(message.mailbox.clone()),
+                    prior_state: MessageState::New,
+                    notes: None,
+                    reason: None,
+                },
+            );
         }
         let message = message.clone();
         Ok(Delivered {
@@ -667,6 +716,7 @@ impl Mailboxes for InMemoryMailboxes {
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         validate_message_id(id)?;
         validate_notes(notes)?;
@@ -678,10 +728,25 @@ impl Mailboxes for InMemoryMailboxes {
                 attempted: id.to_string(),
             }
         })?;
+        let prior = message.state;
         message.state = MessageState::Processed;
-        if let Some(notes) = normalize_notes(notes) {
-            message.notes = Some(notes);
+        let given = normalize_notes(notes);
+        if let Some(notes) = &given {
+            message.notes = Some(notes.clone());
         }
+        self.keep_event(
+            id,
+            MessageEvent {
+                ordinal: 0,
+                kind: MessageEventKind::Processed,
+                at: acting.at,
+                by_session: acting.session.map(str::to_string),
+                by_box: Some(message.mailbox.clone()),
+                prior_state: prior,
+                notes: given,
+                reason: None,
+            },
+        );
         let message = message.clone();
         Ok(read_as_stored(&messages, &message))
     }
@@ -691,7 +756,7 @@ impl Mailboxes for InMemoryMailboxes {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
         validate_message_id(id)?;
         self.refuse_if_quarantined(id)?;
@@ -711,8 +776,23 @@ impl Mailboxes for InMemoryMailboxes {
             });
         }
         let mailbox = message.mailbox.clone();
+        let prior = message.state;
         drop(messages);
         let reason = reason.trim().to_string();
+        let at = acting.at;
+        self.keep_event(
+            id,
+            MessageEvent {
+                ordinal: 0,
+                kind: MessageEventKind::Quarantined,
+                at: acting.at,
+                by_session: acting.session.map(str::to_string),
+                by_box: Some(by.clone()),
+                prior_state: prior,
+                notes: None,
+                reason: Some(reason.clone()),
+            },
+        );
         self.quarantined.lock().expect("quarantine lock").push((
             mailbox.clone(),
             id.clone(),
@@ -731,6 +811,31 @@ impl Mailboxes for InMemoryMailboxes {
             reason,
             at,
         })
+    }
+
+    async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError> {
+        validate_message_id(id)?;
+        if !self
+            .messages
+            .lock()
+            .expect("message lock")
+            .iter()
+            .any(|m| &m.id == id)
+        {
+            return Err(MailboxError::UnknownMessage {
+                attempted: id.to_string(),
+            });
+        }
+        let mut kept: Vec<MessageEvent> = self
+            .events
+            .lock()
+            .expect("event lock")
+            .iter()
+            .filter(|(held, _)| held == id)
+            .map(|(_, event)| event.clone())
+            .collect();
+        kept.sort_by_key(|event| event.ordinal);
+        Ok(kept)
     }
 }
 
@@ -858,7 +963,11 @@ pub mod contract {
     /// Read a box, asserting the guard waved it through.
     pub async fn read(store: &dyn Mailboxes, mailbox: &str) -> Delivery {
         store
-            .read_mailbox(&name(mailbox), TakenBy::Reading)
+            .read_mailbox(
+                &name(mailbox),
+                TakenBy::Reading,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read_mailbox should succeed")
             .written()
@@ -1160,7 +1269,11 @@ pub mod contract {
         let boxes = store.list_mailboxes().await.expect("list ok");
         assert_eq!(boxes.len(), 1, "the old box does not survive: {boxes:?}");
         let delivery = store
-            .read_mailbox(&repointed.name, TakenBy::Reading)
+            .read_mailbox(
+                &repointed.name,
+                TakenBy::Reading,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read ok")
             .written()
@@ -1550,7 +1663,10 @@ pub mod contract {
             "…and on the way back out"
         );
 
-        let processed = store.mark_processed(&posted.id, None).await.expect("ok");
+        let processed = store
+            .mark_processed(&posted.id, None, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("ok");
         assert_eq!(
             processed.subject.as_deref(),
             Some("the shipment"),
@@ -1605,7 +1721,7 @@ pub mod contract {
         post(store, "inbox", "milhouse", "the rest of the box", 60).await;
 
         let delivered = store
-            .read_message(&wanted.id)
+            .read_message(&wanted.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         assert_eq!(delivered.message.id, wanted.id);
@@ -1626,7 +1742,7 @@ pub mod contract {
 
         // Taking it twice is the leftover case, not a second delivery.
         let again = store
-            .read_message(&wanted.id)
+            .read_message(&wanted.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         assert!(
@@ -1646,12 +1762,16 @@ pub mod contract {
         create(store, "inbox").await;
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
         store
-            .mark_processed(&posted.id, Some("filed under shipments"))
+            .mark_processed(
+                &posted.id,
+                Some("filed under shipments"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("mark_processed ok");
 
         let delivered = store
-            .read_message(&posted.id)
+            .read_message(&posted.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         assert_eq!(
@@ -1693,11 +1813,15 @@ pub mod contract {
         let taken = post(store, "inbox", "milhouse", "already taken", 60).await;
         let done = post(store, "errands", "otto", "long since handled", 120).await;
         store
-            .read_message(&taken.id)
+            .read_message(&taken.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         store
-            .mark_processed(&done.id, Some("filed"))
+            .mark_processed(
+                &done.id,
+                Some("filed"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
 
@@ -1721,7 +1845,11 @@ pub mod contract {
         let counts = counts(store, "inbox").await.expect("inbox exists");
         assert_eq!((counts.new, counts.read, counts.processed), (1, 1, 0));
         assert!(
-            !store.read_message(&fresh.id).await.expect("ok").seen_before,
+            !store
+                .read_message(&fresh.id, crate::mailbox::Acting::anyone_anytime())
+                .await
+                .expect("ok")
+                .seen_before,
             "the scan did not take delivery of anything"
         );
     }
@@ -1736,11 +1864,20 @@ pub mod contract {
         let done = post(store, "errands", "otto", "long since handled", 60).await;
         let doomed = post(store, "inbox", "alpha", "the count is wrong", 120).await;
         store
-            .mark_processed(&done.id, Some("filed"))
+            .mark_processed(
+                &done.id,
+                Some("filed"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
         store
-            .quarantine(&doomed.id, &name("inbox"), "not to be trusted", at(5))
+            .quarantine(
+                &doomed.id,
+                &name("inbox"),
+                "not to be trusted",
+                crate::mailbox::Acting::unnamed(at(5)),
+            )
             .await
             .expect("quarantined");
 
@@ -1794,7 +1931,11 @@ pub mod contract {
         post(store, "inbox", "milhouse", "somebody else's", 90).await;
         post(store, "errands", "alpha", "alpha three", 120).await;
         store
-            .mark_processed(&handled.id, Some("filed"))
+            .mark_processed(
+                &handled.id,
+                Some("filed"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
 
@@ -1831,7 +1972,10 @@ pub mod contract {
     pub async fn reading_an_unknown_message_is_a_miss(store: &dyn Mailboxes) {
         create(store, "inbox").await;
         let err = store
-            .read_message(&MessageId("999999".into()))
+            .read_message(
+                &MessageId("999999".into()),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect_err("an unknown id must not report success");
         assert!(
@@ -2008,7 +2152,11 @@ pub mod contract {
         read(store, "inbox").await;
 
         let processed = store
-            .mark_processed(&posted.id, Some("filed under shipments"))
+            .mark_processed(
+                &posted.id,
+                Some("filed under shipments"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("mark_processed ok");
         assert_eq!(processed.id, posted.id);
@@ -2040,7 +2188,11 @@ pub mod contract {
         read(store, "inbox").await;
 
         let processed = store
-            .mark_processed(&posted.id, Some("FAILED: the loading dock was closed"))
+            .mark_processed(
+                &posted.id,
+                Some("FAILED: the loading dock was closed"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("mark_processed ok");
         assert_eq!(processed.state, MessageState::Processed);
@@ -2082,13 +2234,16 @@ pub mod contract {
         // …and it survives the round trip, which is the whole point of a link
         // nobody is going to re-derive from prose later.
         let seen = store
-            .read_message(&reply.id)
+            .read_message(&reply.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         assert_eq!(seen.message.in_reply_to.as_ref(), Some(&original.id));
 
         // The message it answers is untouched — a reply is not a delivery.
-        let original_now = store.read_message(&original.id).await.expect("read ok");
+        let original_now = store
+            .read_message(&original.id, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("read ok");
         assert_eq!(original_now.message.in_reply_to, None);
     }
 
@@ -2133,7 +2288,7 @@ pub mod contract {
         );
 
         let seen = store
-            .read_message(&report.id)
+            .read_message(&report.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         assert_eq!(seen.message.in_reply_to.as_ref(), Some(&handoff.id));
@@ -2205,7 +2360,11 @@ pub mod contract {
 
         let long = "counted the crates and reconciled them against the manifest ".repeat(200);
         let processed = store
-            .mark_processed(&posted.id, Some(&long))
+            .mark_processed(
+                &posted.id,
+                Some(&long),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("a long outcome record must not fail the verb");
         assert_eq!(
@@ -2229,7 +2388,7 @@ pub mod contract {
         // Read back through the ordinary path: what the verb returned is what
         // the store holds, cut and all.
         let seen = store
-            .read_message(&posted.id)
+            .read_message(&posted.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message ok");
         assert_eq!(seen.message.notes.as_deref(), Some(kept));
@@ -2242,7 +2401,11 @@ pub mod contract {
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
         let notes = "x".repeat(NOTES_BUDGET);
         let processed = store
-            .mark_processed(&posted.id, Some(&notes))
+            .mark_processed(
+                &posted.id,
+                Some(&notes),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
         assert_eq!(
@@ -2256,7 +2419,10 @@ pub mod contract {
     pub async fn processing_without_notes_is_allowed(store: &dyn Mailboxes) {
         create(store, "inbox").await;
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
-        let processed = store.mark_processed(&posted.id, None).await.expect("ok");
+        let processed = store
+            .mark_processed(&posted.id, None, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("ok");
         assert_eq!(processed.notes, None);
         assert_eq!(processed.state, MessageState::Processed);
     }
@@ -2267,7 +2433,10 @@ pub mod contract {
     pub async fn a_new_message_can_be_processed_without_a_read(store: &dyn Mailboxes) {
         create(store, "inbox").await;
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
-        let processed = store.mark_processed(&posted.id, None).await.expect("ok");
+        let processed = store
+            .mark_processed(&posted.id, None, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("ok");
         assert_eq!(processed.state, MessageState::Processed);
         assert_eq!(counts(store, "inbox").await.expect("inbox").new, 0);
     }
@@ -2303,7 +2472,11 @@ pub mod contract {
             attempted,
             candidates,
         } = store
-            .read_mailbox(&name("inbx"), TakenBy::Reading)
+            .read_mailbox(
+                &name("inbx"),
+                TakenBy::Reading,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("a blocked read is a result, not a failure")
         else {
@@ -2328,7 +2501,7 @@ pub mod contract {
                 &target.id,
                 &name("inbox"),
                 "the count cannot be trusted",
-                at(5),
+                crate::mailbox::Acting::unnamed(at(5)),
             )
             .await
             .expect("quarantining your own mail should succeed");
@@ -2358,7 +2531,7 @@ pub mod contract {
         assert_eq!(delivery.messages[0].message.id, neighbor.id);
 
         let read_err = store
-            .read_message(&target.id)
+            .read_message(&target.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect_err("a quarantined message must not be readable by id");
         assert!(
@@ -2367,7 +2540,7 @@ pub mod contract {
         );
 
         let processed_err = store
-            .mark_processed(&target.id, None)
+            .mark_processed(&target.id, None, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect_err("a quarantined message must not be processable");
         assert!(
@@ -2383,7 +2556,12 @@ pub mod contract {
         let theirs = post(store, "errands", "alpha", "errands' own shipment", 0).await;
 
         let err = store
-            .quarantine(&theirs.id, &name("inbox"), "not mine to decide", at(0))
+            .quarantine(
+                &theirs.id,
+                &name("inbox"),
+                "not mine to decide",
+                crate::mailbox::Acting::unnamed(at(0)),
+            )
             .await
             .expect_err("a box must not quarantine mail sitting in another box");
         assert!(
@@ -2393,7 +2571,7 @@ pub mod contract {
 
         // Nothing was written: the message is exactly as readable as before.
         store
-            .read_message(&theirs.id)
+            .read_message(&theirs.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("the refused quarantine must not have touched the message");
     }
@@ -2403,7 +2581,11 @@ pub mod contract {
     pub async fn processing_an_unknown_message_is_a_miss(store: &dyn Mailboxes) {
         create(store, "inbox").await;
         let err = store
-            .mark_processed(&MessageId("999999".into()), None)
+            .mark_processed(
+                &MessageId("999999".into()),
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect_err("an unknown id must not report success");
         assert!(
@@ -2506,7 +2688,11 @@ pub mod contract {
 
         // Taken by posting — it came back with an answer nobody asked for.
         let taken = store
-            .read_mailbox(&name("takenby-post"), TakenBy::Posting)
+            .read_mailbox(
+                &name("takenby-post"),
+                TakenBy::Posting,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read_mailbox should succeed")
             .written()
@@ -2525,7 +2711,11 @@ pub mod contract {
         // by a later posting keeps how it was really taken; rewriting it would
         // destroy the signal every time the recipient posted anything.
         let again = store
-            .read_mailbox(&name("takenby-read"), TakenBy::Posting)
+            .read_mailbox(
+                &name("takenby-read"),
+                TakenBy::Posting,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read_mailbox should succeed")
             .written()
@@ -2546,7 +2736,7 @@ pub mod contract {
         let one = scanned(store, "takenby-id").await;
         assert_eq!(one[0].taken_by, None, "nothing has taken it yet: {one:?}",);
         let by_id = store
-            .read_message(&one[0].id)
+            .read_message(&one[0].id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message should succeed");
         assert_eq!(
@@ -2589,15 +2779,23 @@ pub mod contract {
         post(store, "inbox", "alpha", "owed first", 2).await;
         post(store, "inbox", "alpha", "owed second", 3).await;
         store
-            .read_message(&retired_read.id)
+            .read_message(&retired_read.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("the message is taken");
         store
-            .mark_processed(&retired_new.id, None)
+            .mark_processed(
+                &retired_new.id,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("retired");
         store
-            .mark_processed(&retired_read.id, None)
+            .mark_processed(
+                &retired_read.id,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("retired");
 
@@ -2781,7 +2979,10 @@ pub mod contract {
             .written()
             .expect("written");
 
-        let taken = store.read_message(&a.id).await.expect("read_message ok");
+        let taken = store
+            .read_message(&a.id, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("read_message ok");
         assert_eq!(taken.message.body, "ship it on friday");
         assert_eq!(taken.message.superseded_by.as_ref(), Some(&b.id));
         assert_eq!(taken.message.state, MessageState::Read);
@@ -2794,7 +2995,10 @@ pub mod contract {
             "the one taken by id and the new one"
         );
 
-        store.mark_processed(&a.id, None).await.expect("processed");
+        store
+            .mark_processed(&a.id, None, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("processed");
         let archived = store
             .message_by_id(&a.id)
             .await
@@ -2887,6 +3091,221 @@ pub mod contract {
         }
     }
 
+    /// **A message's history keeps each change of state, in order, naming the
+    /// run that made it.** One run reads the message, then two runs retire it
+    /// with two notes: the history is read, processed, processed, with the state
+    /// each change left and only the notes that call was given. **The current
+    /// read answers as it always did**, which is what keeps the history from
+    /// being a second copy of it.
+    pub async fn a_messages_history_keeps_each_change_of_state_in_order(store: &dyn Mailboxes) {
+        use crate::mailbox::{Acting, MessageEventKind};
+        create(store, "inbox").await;
+        let message = post(store, "inbox", "alpha", "the count on this one is wrong", 0).await;
+        assert_eq!(
+            store
+                .message_history(&message.id)
+                .await
+                .expect("a posted message has a history, and it is empty"),
+            Vec::new(),
+            "a message nobody has changed has no event"
+        );
+
+        store
+            .read_message(&message.id, Acting::by("run-a", at(10)))
+            .await
+            .expect("reading one message succeeds");
+        store
+            .mark_processed(&message.id, Some("first note"), Acting::by("run-a", at(11)))
+            .await
+            .expect("the first retirement succeeds");
+        store
+            .mark_processed(
+                &message.id,
+                Some("second note"),
+                Acting::by("run-b", at(12)),
+            )
+            .await
+            .expect("a second retirement succeeds");
+
+        let history = store
+            .message_history(&message.id)
+            .await
+            .expect("the history reads");
+        assert_eq!(
+            history.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            vec![
+                MessageEventKind::Read,
+                MessageEventKind::Processed,
+                MessageEventKind::Processed
+            ],
+            "{history:?}"
+        );
+        assert_eq!(
+            history.iter().map(|e| e.ordinal).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            history.iter().map(|e| e.at).collect::<Vec<_>>(),
+            vec![at(10), at(11), at(12)]
+        );
+        assert_eq!(
+            history
+                .iter()
+                .map(|e| e.by_session.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("run-a"), Some("run-a"), Some("run-b")],
+            "each change names the run that made it: {history:?}"
+        );
+        assert_eq!(
+            history.iter().map(|e| e.prior_state).collect::<Vec<_>>(),
+            vec![
+                MessageState::New,
+                MessageState::Read,
+                MessageState::Processed
+            ]
+        );
+        assert_eq!(
+            history
+                .iter()
+                .map(|e| e.notes.as_deref())
+                .collect::<Vec<_>>(),
+            vec![None, Some("first note"), Some("second note")],
+            "the second retirement overwrote the first's notes on the message, and the history keeps both: {history:?}"
+        );
+        assert!(
+            history.iter().all(|e| e.by_box == Some(name("inbox"))),
+            "{history:?}"
+        );
+
+        let current = store
+            .message_by_id(&message.id)
+            .await
+            .expect("the board reads")
+            .expect("the message is on the board");
+        assert_eq!(current.state, MessageState::Processed);
+        assert_eq!(current.notes.as_deref(), Some("second note"));
+    }
+
+    /// **A retirement that sends no notes records none**, though the message
+    /// carries the earlier call's notes forward. The history says only what each
+    /// call was given.
+    pub async fn a_retirement_with_no_notes_is_recorded_with_none(store: &dyn Mailboxes) {
+        use crate::mailbox::Acting;
+        create(store, "inbox").await;
+        let message = post(store, "inbox", "alpha", "handled twice", 0).await;
+        store
+            .mark_processed(&message.id, Some("done"), Acting::by("run-a", at(1)))
+            .await
+            .expect("the first retirement succeeds");
+        let carried = store
+            .mark_processed(&message.id, None, Acting::by("run-b", at(2)))
+            .await
+            .expect("a second retirement succeeds");
+        assert_eq!(
+            carried.notes.as_deref(),
+            Some("done"),
+            "the message keeps the notes it had"
+        );
+        let history = store
+            .message_history(&message.id)
+            .await
+            .expect("the history reads");
+        assert_eq!(
+            history
+                .iter()
+                .map(|e| e.notes.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("done"), None],
+            "the second call sent no notes, and the history does not say it did: {history:?}"
+        );
+    }
+
+    /// **A delivery of a box is one event per message it moved, naming the box.**
+    /// A leftover handed over again moved nothing and records nothing.
+    pub async fn a_delivery_records_one_read_per_message_it_moved(store: &dyn Mailboxes) {
+        use crate::mailbox::{Acting, MessageEventKind};
+        create(store, "inbox").await;
+        let first = post(store, "inbox", "alpha", "one", 0).await;
+        let second = post(store, "inbox", "alpha", "two", 1).await;
+        let delivery = store
+            .read_mailbox(&name("inbox"), TakenBy::Reading, Acting::by("run-a", at(5)))
+            .await
+            .expect("the box reads")
+            .written()
+            .expect("the guard waves it through");
+        assert_eq!(delivery.messages.len(), 2);
+        store
+            .read_mailbox(&name("inbox"), TakenBy::Reading, Acting::by("run-b", at(6)))
+            .await
+            .expect("the box reads again");
+        for id in [&first.id, &second.id] {
+            let history = store.message_history(id).await.expect("the history reads");
+            assert_eq!(
+                history.len(),
+                1,
+                "one move to read, and the second delivery moved nothing: {history:?}"
+            );
+            assert_eq!(history[0].kind, MessageEventKind::Read);
+            assert_eq!(history[0].by_session.as_deref(), Some("run-a"));
+            assert_eq!(history[0].by_box, Some(name("inbox")));
+            assert_eq!(history[0].at, at(5));
+        }
+    }
+
+    /// **A quarantine keeps the state the message was set aside from**, which the
+    /// message no longer says, and the reason and the run that decided. The
+    /// history of a quarantined message is answered, though a delivery of it is
+    /// refused.
+    pub async fn a_quarantine_keeps_the_state_the_message_was_set_aside_from(
+        store: &dyn Mailboxes,
+    ) {
+        use crate::mailbox::{Acting, MessageEventKind};
+        create(store, "inbox").await;
+        let message = post(store, "inbox", "alpha", "the count cannot be trusted", 0).await;
+        read(store, "inbox").await;
+        store
+            .quarantine(
+                &message.id,
+                &name("inbox"),
+                "the count cannot be trusted",
+                Acting::by("run-a", at(7)),
+            )
+            .await
+            .expect("quarantining your own mail succeeds");
+
+        let history = store
+            .message_history(&message.id)
+            .await
+            .expect("a quarantined message still has a history");
+        assert_eq!(
+            history.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            vec![MessageEventKind::Read, MessageEventKind::Quarantined],
+            "{history:?}"
+        );
+        let set_aside = &history[1];
+        assert_eq!(set_aside.prior_state, MessageState::Read);
+        assert_eq!(
+            set_aside.reason.as_deref(),
+            Some("the count cannot be trusted")
+        );
+        assert_eq!(set_aside.by_session.as_deref(), Some("run-a"));
+        assert_eq!(set_aside.by_box, Some(name("inbox")));
+        assert_eq!(set_aside.at, at(7));
+        assert_eq!(set_aside.notes, None);
+    }
+
+    /// An id that names nothing has no history, and says so.
+    pub async fn the_history_of_an_unknown_message_is_a_miss(store: &dyn Mailboxes) {
+        let unknown = store
+            .message_history(&MessageId("9999999".into()))
+            .await
+            .expect_err("a message that is not there has no history to read");
+        assert!(
+            matches!(unknown, MailboxError::UnknownMessage { .. }),
+            "got {unknown:?}"
+        );
+    }
+
     pub async fn run_all<S, F, Fut>(fresh: F) -> ()
     where
         S: Mailboxes,
@@ -2942,5 +3361,10 @@ pub mod contract {
         a_replaced_message_the_reader_already_has_is_still_delivered(&fresh().await).await;
         a_replaced_message_is_readable_by_id_on_request(&fresh().await).await;
         a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(&fresh().await).await;
+        a_messages_history_keeps_each_change_of_state_in_order(&fresh().await).await;
+        a_retirement_with_no_notes_is_recorded_with_none(&fresh().await).await;
+        a_delivery_records_one_read_per_message_it_moved(&fresh().await).await;
+        a_quarantine_keeps_the_state_the_message_was_set_aside_from(&fresh().await).await;
+        the_history_of_an_unknown_message_is_a_miss(&fresh().await).await;
     }
 }

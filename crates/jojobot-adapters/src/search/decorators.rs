@@ -1169,9 +1169,10 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         name: &jojobot_domain::mailbox::MailboxName,
         taken_by: jojobot_domain::mailbox::TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
-        let delivered = self.inner.read_mailbox(name, taken_by).await?;
+        let delivered = self.inner.read_mailbox(name, taken_by, acting).await?;
         if let jojobot_domain::mailbox::Guarded::Written(delivery) = &delivered {
             let delivered: Vec<&Message> = delivery.messages.iter().map(|d| &d.message).collect();
             self.reindex(&delivered).await?;
@@ -1182,8 +1183,9 @@ impl Mailboxes for IndexedMailboxes {
     async fn read_message(
         &self,
         id: &jojobot_domain::mailbox::MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-        let delivered = self.inner.read_message(id).await?;
+        let delivered = self.inner.read_message(id, acting).await?;
         self.reindex(&[&delivered.message]).await?;
         Ok(delivered)
     }
@@ -1192,8 +1194,9 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         id: &jojobot_domain::mailbox::MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        let processed = self.inner.mark_processed(id, notes).await?;
+        let processed = self.inner.mark_processed(id, notes, acting).await?;
         self.reindex(&[&processed]).await?;
         Ok(processed)
     }
@@ -1209,8 +1212,16 @@ impl Mailboxes for IndexedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
         by: &jojobot_domain::mailbox::MailboxName,
         reason: &str,
-        at: jiff::Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        self.inner.quarantine(id, by, reason, at).await
+        self.inner.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }

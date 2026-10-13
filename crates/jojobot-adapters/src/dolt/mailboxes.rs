@@ -29,11 +29,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use jojobot_domain::mailbox::{
-    Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, QUARANTINE_STATE_TOKEN,
-    Quarantined, StateCounts, SupersedeRefusal, Superseded, TakenBy, guard, normalize_body,
-    normalize_notes, normalize_subject, validate_body, validate_mailbox_name, validate_message_id,
-    validate_notes, validate_sender, validate_subject,
+    Acting, Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
+    MessageEvent, MessageEventKind, MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup,
+    QUARANTINE_STATE_TOKEN, Quarantined, StateCounts, SupersedeRefusal, Superseded, TakenBy, guard,
+    normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
+    validate_message_id, validate_notes, validate_sender, validate_subject,
 };
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::push::{Outbox, Push, PushError};
@@ -678,6 +678,65 @@ impl DoltMailboxes {
     }
 }
 
+/// **Keep one change of state, in the transaction that made it.** The change and
+/// its record land together or not at all, for the reason `message_delivery` is
+/// written that way: a state with no account of how it came about, or the
+/// reverse, is a record that says two things.
+///
+/// The number is the next for the message, asked optionally and counted from
+/// zero: this store answers an aggregate over no row with no row. The number on
+/// `event` is replaced.
+async fn append_message_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    id: &MessageId,
+    event: &MessageEvent,
+) -> Result<(), MailboxError> {
+    let highest: Option<Option<i64>> =
+        sqlx::query_scalar("SELECT MAX(ordinal) FROM message_event WHERE message_id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+    sqlx::query(
+        "INSERT INTO message_event
+           (message_id, ordinal, kind, at, by_session, by_box, prior_state, notes, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id.as_str())
+    .bind(highest.flatten().unwrap_or(0) + 1)
+    .bind(event.kind.as_token())
+    .bind(event.at.to_string())
+    .bind(event.by_session.as_deref())
+    .bind(event.by_box.as_ref().map(MailboxName::as_str))
+    .bind(event.prior_state.as_token())
+    .bind(event.notes.as_deref())
+    .bind(event.reason.as_deref())
+    .execute(&mut **tx)
+    .await
+    .map_err(store)?;
+    Ok(())
+}
+
+/// The event a change of `kind` made at `acting` through `by_box` leaves, before
+/// it is numbered.
+fn event(
+    kind: MessageEventKind,
+    acting: Acting<'_>,
+    by_box: &MailboxName,
+    prior_state: MessageState,
+) -> MessageEvent {
+    MessageEvent {
+        ordinal: 0,
+        kind,
+        at: acting.at,
+        by_session: acting.session.map(str::to_string),
+        by_box: Some(by_box.clone()),
+        prior_state,
+        notes: None,
+        reason: None,
+    }
+}
+
 fn store(e: sqlx::Error) -> MailboxError {
     if e.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
@@ -1086,6 +1145,7 @@ impl Mailboxes for DoltMailboxes {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
         validate_mailbox_name(name)?;
         let names = self.names().await?;
@@ -1135,6 +1195,12 @@ impl Mailboxes for DoltMailboxes {
                     .execute(&mut *tx)
                     .await
                     .map_err(store)?;
+                append_message_event(
+                    &mut tx,
+                    &message.id,
+                    &event(MessageEventKind::Read, acting, name, MessageState::New),
+                )
+                .await?;
             }
             delivered.push(Delivered {
                 message: Message {
@@ -1186,7 +1252,11 @@ impl Mailboxes for DoltMailboxes {
             .collect())
     }
 
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
         validate_message_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Message(id)).await?;
@@ -1219,6 +1289,17 @@ impl Mailboxes for DoltMailboxes {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
+            append_message_event(
+                &mut tx,
+                id,
+                &event(
+                    MessageEventKind::Read,
+                    acting,
+                    &message.mailbox,
+                    MessageState::New,
+                ),
+            )
+            .await?;
         }
         let state = if seen_before {
             message.state
@@ -1245,6 +1326,7 @@ impl Mailboxes for DoltMailboxes {
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         validate_message_id(id)?;
         validate_notes(notes)?;
@@ -1259,7 +1341,8 @@ impl Mailboxes for DoltMailboxes {
                 })?;
         let message = refuse(card)?;
 
-        let notes = normalize_notes(notes).or_else(|| message.notes.clone());
+        let given = normalize_notes(notes);
+        let notes = given.clone().or_else(|| message.notes.clone());
         sqlx::query("UPDATE message SET state = ?, notes = ? WHERE id = ?")
             .bind(MessageState::Processed.as_token())
             .bind(notes.as_deref())
@@ -1267,6 +1350,20 @@ impl Mailboxes for DoltMailboxes {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        append_message_event(
+            &mut tx,
+            id,
+            &MessageEvent {
+                notes: given,
+                ..event(
+                    MessageEventKind::Processed,
+                    acting,
+                    &message.mailbox,
+                    message.state,
+                )
+            },
+        )
+        .await?;
         let message = Message {
             state: MessageState::Processed,
             notes,
@@ -1281,7 +1378,7 @@ impl Mailboxes for DoltMailboxes {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
         validate_message_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -1303,6 +1400,7 @@ impl Mailboxes for DoltMailboxes {
         }
         let mailbox = message.mailbox.clone();
         let reason = reason.trim().to_string();
+        let at = acting.at;
         sqlx::query(
             "UPDATE message SET state = ?, quarantined_by = ?, quarantined_at = ?, \
              quarantine_reason = ? WHERE id = ?",
@@ -1315,6 +1413,15 @@ impl Mailboxes for DoltMailboxes {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
+        append_message_event(
+            &mut tx,
+            id,
+            &MessageEvent {
+                reason: Some(reason.clone()),
+                ..event(MessageEventKind::Quarantined, acting, by, message.state)
+            },
+        )
+        .await?;
         tx.commit().await.map_err(store)?;
         Ok(Quarantined {
             id: id.clone(),
@@ -1323,6 +1430,55 @@ impl Mailboxes for DoltMailboxes {
             reason,
             at,
         })
+    }
+
+    async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError> {
+        validate_message_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // **Found as a card, not as a readable message**: a quarantined message
+        // is answered, since its events are the account of why it left the board.
+        let cards = self.cards(&mut tx, Scope::Message(id)).await?;
+        if !cards.iter().any(|c| c.id() == id) {
+            return Err(MailboxError::UnknownMessage {
+                attempted: id.to_string(),
+            });
+        }
+        let rows = sqlx::query(
+            "SELECT ordinal, kind, at, by_session, by_box, prior_state, notes, reason
+             FROM message_event WHERE message_id = ? ORDER BY ordinal",
+        )
+        .bind(id.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        let damaged = |what: &str| {
+            MailboxError::Store(format!("a stored message event could not be read: {what}"))
+        };
+        let mut history = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let kind: String = row.try_get("kind").map_err(store)?;
+            let at: String = row.try_get("at").map_err(store)?;
+            let prior: String = row.try_get("prior_state").map_err(store)?;
+            history.push(MessageEvent {
+                ordinal: row.try_get::<i32, _>("ordinal").map_err(store)?.max(0) as usize,
+                kind: MessageEventKind::from_token(&kind)
+                    .ok_or_else(|| damaged("its kind is not one this build knows"))?,
+                at: at
+                    .parse()
+                    .map_err(|_| damaged("its moment is not an instant"))?,
+                by_session: row.try_get("by_session").map_err(store)?,
+                by_box: row
+                    .try_get::<Option<String>, _>("by_box")
+                    .map_err(store)?
+                    .map(MailboxName),
+                prior_state: MessageState::from_token(&prior)
+                    .ok_or_else(|| damaged("its prior state is not one this build knows"))?,
+                notes: row.try_get("notes").map_err(store)?,
+                reason: row.try_get("reason").map_err(store)?,
+            });
+        }
+        Ok(history)
     }
 }
 
@@ -1453,9 +1609,13 @@ mod tests {
         let others = with_a_second_box(&mail).await;
         took(&mail);
 
-        mail.read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
-            .await
-            .expect("read ok");
+        mail.read_mailbox(
+            &MailboxName("inbox".into()),
+            TakenBy::Reading,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
+        .await
+        .expect("read ok");
         assert_eq!(
             took(&mail).0,
             1,
@@ -1476,19 +1636,30 @@ mod tests {
             "listing one sender's mail loaded other senders' mail"
         );
 
-        mail.read_message(&others[0]).await.expect("read ok");
+        mail.read_message(
+            &others[0],
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
+        .await
+        .expect("read ok");
         assert_eq!(took(&mail).0, 1, "taking one message loaded other messages");
 
-        mail.mark_processed(&others[1], None)
-            .await
-            .expect("processed");
+        mail.mark_processed(
+            &others[1],
+            None,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
+        .await
+        .expect("processed");
         assert_eq!(took(&mail).0, 1, "retiring one message loaded others");
 
         mail.quarantine(
             &first,
             &MailboxName("inbox".into()),
             "a reason",
-            "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+            jojobot_domain::mailbox::Acting::unnamed(
+                "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+            ),
         )
         .await
         .expect("quarantined");
@@ -1533,7 +1704,9 @@ mod tests {
             &first,
             &MailboxName("inbox".into()),
             "a reason",
-            "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+            jojobot_domain::mailbox::Acting::unnamed(
+                "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+            ),
         )
         .await
         .expect("quarantined");
@@ -1651,12 +1824,18 @@ mod tests {
         }
         post_into_inbox(&mail, "still waiting", 6).await;
         for id in &done {
-            mail.mark_processed(id, None).await.expect("processed");
+            mail.mark_processed(id, None, jojobot_domain::mailbox::Acting::anyone_anytime())
+                .await
+                .expect("processed");
         }
         took(&mail);
 
         let delivery = mail
-            .read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
+            .read_mailbox(
+                &MailboxName("inbox".into()),
+                TakenBy::Reading,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read ok")
             .written()
@@ -1694,7 +1873,13 @@ mod tests {
     async fn a_delivery_hands_over_what_a_read_of_the_whole_box_would() {
         let (_scratch, mut store, mail, first) = board("delivery-oracle").await;
         let done = post_into_inbox(&mail, "finished", 2).await;
-        mail.mark_processed(&done, None).await.expect("processed");
+        mail.mark_processed(
+            &done,
+            None,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
+        .await
+        .expect("processed");
         for (id, state, sent_at) in [
             ("leapno", "new", "2026-02-29T00:00:00Z"),
             ("upperstate", "NEW", "2026-03-01T00:00:00Z"),
@@ -1710,7 +1895,9 @@ mod tests {
             &first,
             &MailboxName("inbox".into()),
             "a reason",
-            "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+            jojobot_domain::mailbox::Acting::unnamed(
+                "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+            ),
         )
         .await
         .expect("quarantined");
@@ -1730,7 +1917,11 @@ mod tests {
         drop(tx);
 
         let delivery = mail
-            .read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
+            .read_mailbox(
+                &MailboxName("inbox".into()),
+                TakenBy::Reading,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read ok")
             .written()
@@ -2073,7 +2264,11 @@ mod tests {
         // A delivery hands over what a consumer can act on. Handing over a card
         // nobody can parse would make it owed work that cannot be done.
         let jojobot_domain::mailbox::Guarded::Written(delivery) = mail
-            .read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
+            .read_mailbox(
+                &MailboxName("inbox".into()),
+                TakenBy::Reading,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("read ok")
         else {
@@ -2096,14 +2291,20 @@ mod tests {
             let id = MessageId(id.to_string());
             assert!(
                 matches!(
-                    mail.read_message(&id).await,
+                    mail.read_message(&id, jojobot_domain::mailbox::Acting::anyone_anytime())
+                        .await,
                     Err(MailboxError::Quarantined { .. })
                 ),
                 "reading {id} must say it cannot be read, not that it is missing"
             );
             assert!(
                 matches!(
-                    mail.mark_processed(&id, Some("tried")).await,
+                    mail.mark_processed(
+                        &id,
+                        Some("tried"),
+                        jojobot_domain::mailbox::Acting::anyone_anytime()
+                    )
+                    .await,
                     Err(MailboxError::Quarantined { .. })
                 ),
                 "processing {id} must say it cannot be read, not that it is missing"
@@ -2115,7 +2316,11 @@ mod tests {
         // store that answers Quarantined for every id it is handed.
         assert!(
             matches!(
-                mail.read_message(&MessageId("nobody".into())).await,
+                mail.read_message(
+                    &MessageId("nobody".into()),
+                    jojobot_domain::mailbox::Acting::anyone_anytime()
+                )
+                .await,
                 Err(MailboxError::UnknownMessage { .. })
             ),
             "an id that names nothing is a miss"
@@ -2188,6 +2393,7 @@ mod tests {
         mail.mark_processed(
             &posted.id,
             Some("handled, see @thing:contract-migrate-mentions-was"),
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
         )
         .await
         .expect("mark_processed should succeed");

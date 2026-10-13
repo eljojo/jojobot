@@ -3107,6 +3107,7 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
         &self,
         _: &MailboxName,
         _: jojobot_domain::mailbox::TakenBy,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
         unimplemented!("this double only scans messages")
@@ -3115,6 +3116,7 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
     async fn read_message(
         &self,
         _: &MessageId,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
         unimplemented!("this double only scans messages")
     }
@@ -3123,6 +3125,7 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
         &self,
         _: &MessageId,
         _: Option<&str>,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         unimplemented!("this double only scans messages")
     }
@@ -3132,8 +3135,16 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
         _: &MessageId,
         _: &MailboxName,
         _: &str,
-        _: jiff::Timestamp,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
+        unimplemented!("this double only scans messages")
+    }
+
+    async fn message_history(
+        &self,
+        _id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
         unimplemented!("this double only scans messages")
     }
 }
@@ -7456,7 +7467,11 @@ async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
     );
 
     store
-        .mark_processed(&posted.id, Some("filed"))
+        .mark_processed(
+            &posted.id,
+            Some("filed"),
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
         .await
         .expect("mark_processed ok");
     assert_eq!(
@@ -7542,31 +7557,42 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
         &self,
         name: &MailboxName,
         taken_by: jojobot_domain::mailbox::TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
-        self.inner.read_mailbox(name, taken_by).await
+        self.inner.read_mailbox(name, taken_by, acting).await
     }
     async fn read_message(
         &self,
         id: &MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-        self.inner.read_message(id).await
+        self.inner.read_message(id, acting).await
     }
     async fn mark_processed(
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        self.inner.mark_processed(id, notes).await
+        self.inner.mark_processed(id, notes, acting).await
     }
     async fn quarantine(
         &self,
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: jiff::Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        self.inner.quarantine(id, by, reason, at).await
+        self.inner.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }
 
@@ -7602,6 +7628,7 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
         .read_mailbox(
             &MailboxName("pm".into()),
             jojobot_domain::mailbox::TakenBy::Reading,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
         )
         .await
         .expect("delivery ok")
@@ -7631,9 +7658,13 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
     }
 
     let before = metered.listings();
-    mail.mark_processed(&ids[0], Some("filed"))
-        .await
-        .expect("retire ok");
+    mail.mark_processed(
+        &ids[0],
+        Some("filed"),
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("retire ok");
     assert_eq!(
         metered.listings() - before,
         1,
@@ -7979,11 +8010,20 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
 
     // The verbs that change a message afterwards re-index it, and this one
     // must stay out through each.
-    mail.read_message(&posted.id).await.expect("read ok");
+    mail.read_message(
+        &posted.id,
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("read ok");
     assert_eq!(hits("giraffe").await, 0, "a read does not index it");
-    mail.mark_processed(&posted.id, Some("filed"))
-        .await
-        .expect("retire ok");
+    mail.mark_processed(
+        &posted.id,
+        Some("filed"),
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("retire ok");
     assert_eq!(hits("giraffe").await, 0, "a retirement does not index it");
     assert_eq!(hits("zebra").await, 0, "…and the first one is still out");
     assert_eq!(hits("kiln").await, 1, "…while the public ones are served");
@@ -8171,7 +8211,7 @@ async fn a_deliberately_quarantined_card_stops_being_served_too() {
         &MessageId("1".into()),
         &MailboxName("pm".into()),
         "pm decided to quarantine it",
-        jiff::Timestamp::now(),
+        jojobot_domain::mailbox::Acting::unnamed(jiff::Timestamp::now()),
     )
     .await
     .expect("quarantine ok");

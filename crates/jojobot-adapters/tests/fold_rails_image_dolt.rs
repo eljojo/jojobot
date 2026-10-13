@@ -219,7 +219,11 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
         .written()
         .expect("not blocked");
     let delivery = folded
-        .read_mailbox(&inbox, TakenBy::Posting)
+        .read_mailbox(
+            &inbox,
+            TakenBy::Posting,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
         .await
         .expect("read_mailbox")
         .written()
@@ -237,7 +241,11 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
     // A delivery of a box with nothing new says how THIS delivery happened for
     // the message nobody recorded a way for, and still writes nothing.
     let again = folded
-        .read_mailbox(&inbox, TakenBy::Reading)
+        .read_mailbox(
+            &inbox,
+            TakenBy::Reading,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
         .await
         .expect("read_mailbox again");
     assert_eq!(
@@ -245,7 +253,11 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
         format!(
             "{:?}",
             store
-                .read_mailbox(&inbox, TakenBy::Reading)
+                .read_mailbox(
+                    &inbox,
+                    TakenBy::Reading,
+                    jojobot_domain::mailbox::Acting::anyone_anytime()
+                )
                 .await
                 .expect("the store reads")
         ),

@@ -246,6 +246,7 @@ impl Jojobot {
         bot: &EntityId,
         posted_into: &mailbox::MailboxName,
         viewer: Option<&SessionId>,
+        run: &str,
     ) -> Option<(serde_json::Value, Delivery)> {
         let OwnBox::The(own) = self.own_box(bot).await else {
             return None;
@@ -266,7 +267,11 @@ impl Jojobot {
         }
         let taken = self
             .mailboxes
-            .read_mailbox(&own, mailbox::TakenBy::Posting)
+            .read_mailbox(
+                &own,
+                mailbox::TakenBy::Posting,
+                jojobot_domain::mailbox::Acting::by(run, self.clock().now()),
+            )
             .await
             .ok()?;
         let mailbox::Guarded::Written(delivery) = taken else {
@@ -501,7 +506,12 @@ impl Jojobot {
                 // are two agents talking past each other, with nothing blocked
                 // and nothing to notice.
                 let delivered = self
-                    .delivered_with_the_post(&caller.bot, &message.mailbox, caller.card.as_ref())
+                    .delivered_with_the_post(
+                        &caller.bot,
+                        &message.mailbox,
+                        caller.card.as_ref(),
+                        caller.sid.as_str(),
+                    )
                     .await;
                 // **The count of messages TAKEN, read before the delivery is
                 // fitted**: fitting changes how many are shown, and the line
@@ -965,6 +975,7 @@ mod tests {
             let read = json_of(
                 &jojobot
                     .read_message(Parameters(ReadMessageArgs {
+                        history: None,
                         message_id: id.clone(),
                         sid: Some(as_bot(&jojobot, "otto")),
                     }))
@@ -1515,6 +1526,7 @@ mod tests {
         let delivered = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: reply["id"].as_str().expect("an id").to_string(),
                     // Read by the box's own drainer: taking delivery is the
                     // owner's move now, and this reply landed in pm's box.
@@ -2112,6 +2124,7 @@ mod tests {
         let asked = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: a.clone(),
                     sid: Some(as_bot(&jojobot, "delta")),
                 }))

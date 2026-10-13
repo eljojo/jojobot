@@ -146,7 +146,15 @@ pub async fn open(
         Ok(operator) => operator,
         Err(refusal) => return refusal,
     };
-    if let Err(err) = state.mailboxes.read_message(&id).await {
+    if let Err(err) = state
+        .mailboxes
+        .read_message(
+            &id,
+            // The operator is a person and has no run to name.
+            jojobot_domain::mailbox::Acting::unnamed(state.clock.now()),
+        )
+        .await
+    {
         tracing::warn!(error = %err, "opening the operator's message failed");
         return refuse(
             StatusCode::BAD_GATEWAY,
@@ -173,7 +181,15 @@ pub async fn processed(
         .as_deref()
         .map(str::trim)
         .filter(|note| !note.is_empty());
-    if let Err(err) = state.mailboxes.mark_processed(&id, note).await {
+    if let Err(err) = state
+        .mailboxes
+        .mark_processed(
+            &id,
+            note,
+            jojobot_domain::mailbox::Acting::unnamed(state.clock.now()),
+        )
+        .await
+    {
         tracing::warn!(error = %err, "marking the operator's message processed failed");
         return refuse(
             StatusCode::BAD_GATEWAY,

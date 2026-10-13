@@ -372,6 +372,7 @@ impl mailbox::Mailboxes for DownMailboxes {
         &self,
         _: &mailbox::MailboxName,
         _: mailbox::TakenBy,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
@@ -398,6 +399,7 @@ impl mailbox::Mailboxes for DownMailboxes {
     async fn read_message(
         &self,
         _: &mailbox::MessageId,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
@@ -407,6 +409,7 @@ impl mailbox::Mailboxes for DownMailboxes {
         &self,
         _: &mailbox::MessageId,
         _: Option<&str>,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
@@ -417,9 +420,19 @@ impl mailbox::Mailboxes for DownMailboxes {
         _: &mailbox::MessageId,
         _: &mailbox::MailboxName,
         _: &str,
-        _: jiff::Timestamp,
+        _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
+
+    async fn message_history(
+        &self,
+        _id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        Err(jojobot_domain::mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
@@ -457,8 +470,9 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
         &self,
         name: &mailbox::MailboxName,
         taken_by: mailbox::TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-        self.0.read_mailbox(name, taken_by).await
+        self.0.read_mailbox(name, taken_by, acting).await
     }
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.0.scan_messages().await
@@ -478,24 +492,34 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     async fn read_message(
         &self,
         id: &mailbox::MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
-        self.0.read_message(id).await
+        self.0.read_message(id, acting).await
     }
     async fn mark_processed(
         &self,
         id: &mailbox::MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        self.0.mark_processed(id, notes).await
+        self.0.mark_processed(id, notes, acting).await
     }
     async fn quarantine(
         &self,
         id: &mailbox::MessageId,
         by: &mailbox::MailboxName,
         reason: &str,
-        at: jiff::Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
-        self.0.quarantine(id, by, reason, at).await
+        self.0.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.0.message_history(id).await
     }
 }
 
@@ -531,8 +555,9 @@ impl mailbox::Mailboxes for CountingMailboxes {
         &self,
         name: &mailbox::MailboxName,
         taken_by: mailbox::TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-        self.inner.read_mailbox(name, taken_by).await
+        self.inner.read_mailbox(name, taken_by, acting).await
     }
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.inner.scan_messages().await
@@ -552,24 +577,34 @@ impl mailbox::Mailboxes for CountingMailboxes {
     async fn read_message(
         &self,
         id: &mailbox::MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
-        self.inner.read_message(id).await
+        self.inner.read_message(id, acting).await
     }
     async fn mark_processed(
         &self,
         id: &mailbox::MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        self.inner.mark_processed(id, notes).await
+        self.inner.mark_processed(id, notes, acting).await
     }
     async fn quarantine(
         &self,
         id: &mailbox::MessageId,
         by: &mailbox::MailboxName,
         reason: &str,
-        at: jiff::Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
-        self.inner.quarantine(id, by, reason, at).await
+        self.inner.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }
 
@@ -603,8 +638,9 @@ impl mailbox::Mailboxes for RenamingMailboxes {
         &self,
         name: &mailbox::MailboxName,
         taken_by: mailbox::TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-        self.inner.read_mailbox(name, taken_by).await
+        self.inner.read_mailbox(name, taken_by, acting).await
     }
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.inner.scan_messages().await
@@ -628,23 +664,33 @@ impl mailbox::Mailboxes for RenamingMailboxes {
     async fn read_message(
         &self,
         id: &mailbox::MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
-        self.inner.read_message(id).await
+        self.inner.read_message(id, acting).await
     }
     async fn mark_processed(
         &self,
         id: &mailbox::MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        self.inner.mark_processed(id, notes).await
+        self.inner.mark_processed(id, notes, acting).await
     }
     async fn quarantine(
         &self,
         id: &mailbox::MessageId,
         by: &mailbox::MailboxName,
         reason: &str,
-        at: jiff::Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
-        self.inner.quarantine(id, by, reason, at).await
+        self.inner.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }

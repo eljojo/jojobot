@@ -392,6 +392,15 @@ impl Jojobot {
         }
     }
 
+    /// **The run to record a change under**, by its public name, or `None` for a
+    /// caller with no run yet. A read is attributed too, so a run that has only
+    /// read is named here as long as the handle opens a session.
+    pub(crate) fn acting_run(&self, sid: Option<&str>) -> Result<Option<String>, CallToolResult> {
+        Ok(self
+            .caller(sid)?
+            .map(|caller| caller.sid.as_str().to_string()))
+    }
+
     /// **Who is calling.** `None` is an anonymous caller, which is a legitimate
     /// thing to be: a reader, or a poster who has not booted.
     pub(crate) fn caller(&self, sid: Option<&str>) -> Result<Option<Caller>, CallToolResult> {

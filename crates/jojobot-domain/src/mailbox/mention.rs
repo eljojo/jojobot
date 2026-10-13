@@ -22,11 +22,9 @@ use crate::memory::{
     Entity, EntityId, FormerHandle, Memory, entity_wearing, mention, resolve_handle,
 };
 
-use jiff::Timestamp;
-
 use super::{
-    Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
-    NewMessage, Quarantined, TakenBy,
+    Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageEvent,
+    MessageId, NewMessage, Quarantined, TakenBy,
 };
 
 /// **The refusal a message's text gets when it carries the stored mark** (see
@@ -274,8 +272,9 @@ impl Mailboxes for Mentioning {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<super::Guarded<Delivery>, MailboxError> {
-        let delivery = self.inner.read_mailbox(name, taken_by).await?;
+        let delivery = self.inner.read_mailbox(name, taken_by, acting).await?;
         Ok(match delivery {
             super::Guarded::Written(mut delivery) => {
                 if !delivery.messages.is_empty() {
@@ -290,8 +289,12 @@ impl Mailboxes for Mentioning {
         })
     }
 
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
-        let mut delivered = match self.inner.read_message(id).await {
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: crate::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
+        let mut delivered = match self.inner.read_message(id, acting).await {
             Ok(delivered) => delivered,
             Err(e) => return Err(self.rendered_error(e).await),
         };
@@ -305,6 +308,7 @@ impl Mailboxes for Mentioning {
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         refuse_forged(&[notes.unwrap_or("")])?;
         let known = self.known().await?;
@@ -314,7 +318,7 @@ impl Mailboxes for Mentioning {
             .map_err(|_| MailboxError::KindsNeverLoaded)?;
         let mut message = match self
             .inner
-            .mark_processed(id, resolved_notes.as_deref())
+            .mark_processed(id, resolved_notes.as_deref(), acting)
             .await
         {
             Ok(message) => message,
@@ -329,7 +333,7 @@ impl Mailboxes for Mentioning {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: crate::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
         // **Resolved on the way in and rendered on the way out, exactly as
         // `mark_processed`'s notes are.** The reason is free text a caller
@@ -339,12 +343,34 @@ impl Mailboxes for Mentioning {
         let known = self.known().await?;
         let resolved =
             mention::resolved(reason, &known).map_err(|_| MailboxError::KindsNeverLoaded)?;
-        let mut done = match self.inner.quarantine(id, by, &resolved, at).await {
+        let mut done = match self.inner.quarantine(id, by, &resolved, acting).await {
             Ok(done) => done,
             Err(e) => return Err(self.rendered_error(e).await),
         };
         done.reason = mention::rendered(&done.reason, &known);
         Ok(done)
+    }
+
+    /// **Rendered on the way out, as the message's own notes are.** An event keeps
+    /// the notes or the reason its change was given, resolved to permanent ids on
+    /// the way in, so a rename reaches them here too.
+    async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError> {
+        let mut events = self.inner.message_history(id).await?;
+        if events
+            .iter()
+            .all(|e| e.notes.is_none() && e.reason.is_none())
+        {
+            return Ok(events);
+        }
+        let known = self.known().await?;
+        for event in &mut events {
+            event.notes = event.notes.as_deref().map(|n| mention::rendered(n, &known));
+            event.reason = event
+                .reason
+                .as_deref()
+                .map(|r| mention::rendered(r, &known));
+        }
+        Ok(events)
     }
 }
 
@@ -416,7 +442,11 @@ mod tests {
         );
 
         mailboxes
-            .mark_processed(&posted.id, Some(&format!("handled, see @{was}")))
+            .mark_processed(
+                &posted.id,
+                Some(&format!("handled, see @{was}")),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("mark_processed should succeed");
 
@@ -428,7 +458,7 @@ mod tests {
             .expect("the guard must not block the rename");
 
         let delivered = mailboxes
-            .read_message(&posted.id)
+            .read_message(&posted.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message should succeed");
         assert_eq!(delivered.message.body, format!("about @{now}"));
@@ -510,7 +540,7 @@ mod tests {
             .expect("the guard must not block the rename");
 
         let delivered = mailboxes
-            .read_message(&posted.id)
+            .read_message(&posted.id, crate::mailbox::Acting::anyone_anytime())
             .await
             .expect("read_message should succeed");
         assert_eq!(
@@ -639,7 +669,11 @@ mod tests {
         refused(
             "processing notes",
             mailboxes
-                .mark_processed(&posted.id, Some("done, see @#k7h2mn"))
+                .mark_processed(
+                    &posted.id,
+                    Some("done, see @#k7h2mn"),
+                    crate::mailbox::Acting::anyone_anytime(),
+                )
                 .await
                 .map(|_| ()),
         );

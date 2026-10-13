@@ -4913,3 +4913,146 @@ async fn deploy_4_fact_write_rows_read_as_null_and_a_new_write_keeps_its_referen
     )
     .await;
 }
+
+/// **A message an older build changed has no event, reads cleanly, and a change
+/// the current binary makes is kept.** The store is restored from a recording, an
+/// archived message of a bot's box is picked out before the binary touches it, and
+/// the current binary is booted over it, which creates `message_event`. The old
+/// message answers its history with no event and a note saying what that means,
+/// and answers a plain read as it did. A message posted, read and retired by the
+/// current binary then carries the two events, each naming the run: the positive
+/// that makes the empty history a fact about the old message and not about a table
+/// that is never written.
+async fn old_messages_read_cleanly_and_a_new_change_is_kept(fixture_dir: &str, label: &str) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let archived: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM message WHERE state = 'processed' AND mailbox NOT LIKE 'person-%' \
+         ORDER BY id LIMIT 1",
+    )
+    .fetch_optional(store.pool())
+    .await
+    .expect("an archived message is findable");
+    store.stop().await;
+    let archived = archived.unwrap_or_else(|| {
+        panic!("recorded at {git_ref}: the recording holds no archived message")
+    });
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let boot: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    )
+    .expect("the boot answers in JSON");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to read: {boot}"))
+        .to_string();
+    let run = boot["session"]["run"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: the boot names its run: {boot}"))
+        .to_string();
+
+    let old: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "read_message",
+                json!({"message_id": archived, "history": true, "sid": sid}),
+            )
+            .await,
+    )
+    .expect("the history of an old message answers in JSON");
+    assert_eq!(
+        old["history"]["count"], 0,
+        "recorded at {git_ref}: an old message has no event: {old}"
+    );
+    assert!(
+        old["history"]["note"].is_string(),
+        "recorded at {git_ref}: an empty history says what empty means: {old}"
+    );
+    let plain: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("read_message", json!({"message_id": archived, "sid": sid}))
+            .await,
+    )
+    .expect("a plain read of an old message answers in JSON");
+    assert_eq!(
+        plain["state"], "processed",
+        "recorded at {git_ref}: an old message reads as it did: {plain}"
+    );
+
+    let posted: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "post_message",
+                json!({"to": "assistant", "subject": "a kept change",
+                       "body": "read and retired by the current binary", "sid": sid}),
+            )
+            .await,
+    )
+    .expect("the post answers in JSON");
+    let id = posted["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: posting: {posted}"))
+        .to_string();
+    surface
+        .call("read_message", json!({"message_id": id, "sid": sid}))
+        .await;
+    surface
+        .call(
+            "mark_processed",
+            json!({"message_id": id, "notes": "kept", "sid": sid}),
+        )
+        .await;
+    let kept: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "read_message",
+                json!({"message_id": id, "history": true, "sid": sid}),
+            )
+            .await,
+    )
+    .expect("the history answers in JSON");
+    surface.finish().await;
+    booted.stop().await;
+    drop(scratch);
+
+    assert_eq!(
+        kept["history"]["count"], 2,
+        "recorded at {git_ref}: the current binary kept both changes: {kept}"
+    );
+    let events = &kept["history"]["events"];
+    assert_eq!(events[0]["kind"], "read", "{kept}");
+    assert_eq!(events[1]["kind"], "processed", "{kept}");
+    assert_eq!(events[1]["notes"], "kept", "{kept}");
+    assert_eq!(
+        events[1]["run"],
+        run.as_str(),
+        "recorded at {git_ref}: each event names the run that made it: {kept}"
+    );
+}
+
+#[tokio::test]
+async fn deploy_3_old_messages_read_cleanly_and_a_new_change_is_kept() {
+    old_messages_read_cleanly_and_a_new_change_is_kept(DEPLOY_3_FIXTURE_DIR, "message-event-3")
+        .await;
+}
+
+#[tokio::test]
+async fn deploy_4_old_messages_read_cleanly_and_a_new_change_is_kept() {
+    old_messages_read_cleanly_and_a_new_change_is_kept(DEPLOY_4_FIXTURE_DIR, "message-event-4")
+        .await;
+}

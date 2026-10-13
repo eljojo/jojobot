@@ -107,6 +107,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0080_merge_event",
     "0081_fact_write_refs",
     "0082_fact_write_stands_for",
+    "0083_message_event",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

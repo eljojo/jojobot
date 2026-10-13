@@ -1336,6 +1336,7 @@ mod tests {
         let after = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id.clone(),
                     sid: Some(writer.clone()),
                 }))
@@ -1371,6 +1372,7 @@ mod tests {
         let still = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
+                    history: None,
                     message_id: id,
                     sid: Some(writer),
                 }))

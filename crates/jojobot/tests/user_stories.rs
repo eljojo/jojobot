@@ -118,6 +118,9 @@ mod keeping_up;
 /// What a record pointed at and stood for at each write of it.
 #[path = "user_stories/kept_marks.rs"]
 mod kept_marks;
+/// Each change of state a message went through, and the run that made it.
+#[path = "user_stories/message_history.rs"]
+mod message_history;
 /// A run taken over by its name is taught and shown afresh; a wrap code is not.
 #[path = "user_stories/picked_up_by_name.rs"]
 mod picked_up_by_name;

@@ -28,7 +28,6 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
-use jiff::Timestamp;
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageId, MessageState, NewMessage, Quarantined, StateCounts, Superseded, TakenBy,
@@ -393,6 +392,7 @@ impl Mailboxes for FoldedMailboxes {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
         // **A box with nothing new in it has nothing to move**, so the delivery is
         // a read: the messages already taken, and the replaced ones by name.
@@ -400,7 +400,7 @@ impl Mailboxes for FoldedMailboxes {
             return Ok(Guarded::Written(delivery));
         }
         let _gate = self.writing.lock().await;
-        let delivery = self.inner.read_mailbox(name, taken_by).await?;
+        let delivery = self.inner.read_mailbox(name, taken_by, acting).await?;
         if let Guarded::Written(delivery) = &delivery {
             self.follow("read_mailbox", |image| {
                 // **Only the messages this delivery took.** A leftover is handed
@@ -418,9 +418,13 @@ impl Mailboxes for FoldedMailboxes {
         Ok(delivery)
     }
 
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
         let _gate = self.writing.lock().await;
-        let delivered = self.inner.read_message(id).await?;
+        let delivered = self.inner.read_message(id, acting).await?;
         self.follow("read_message", |image| image.put(delivered.message.clone()))
             .await;
         Ok(delivered)
@@ -430,9 +434,10 @@ impl Mailboxes for FoldedMailboxes {
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         let _gate = self.writing.lock().await;
-        let processed = self.inner.mark_processed(id, notes).await?;
+        let processed = self.inner.mark_processed(id, notes, acting).await?;
         self.follow("mark_processed", |image| image.put(processed.clone()))
             .await;
         Ok(processed)
@@ -443,11 +448,19 @@ impl Mailboxes for FoldedMailboxes {
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
         let _gate = self.writing.lock().await;
-        let quarantined = self.inner.quarantine(id, by, reason, at).await?;
+        let quarantined = self.inner.quarantine(id, by, reason, acting).await?;
         self.refill("quarantine").await;
         Ok(quarantined)
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }

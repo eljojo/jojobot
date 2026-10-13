@@ -969,7 +969,11 @@ impl Story {
     pub async fn retire_in_the_store(&self, id: &str) {
         use jojobot_domain::mailbox::Mailboxes;
         self.mail_image
-            .mark_processed(&jojobot_domain::mailbox::MessageId(id.to_string()), None)
+            .mark_processed(
+                &jojobot_domain::mailbox::MessageId(id.to_string()),
+                None,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("the store retires it");
     }

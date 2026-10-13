@@ -293,31 +293,45 @@ impl Mailboxes for CountedMailboxes {
         &self,
         name: &MailboxName,
         taken_by: TakenBy,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
         self.calls.hit("read_mailbox", Kind::Write);
-        self.inner.read_mailbox(name, taken_by).await
+        self.inner.read_mailbox(name, taken_by, acting).await
     }
-    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+    async fn read_message(
+        &self,
+        id: &MessageId,
+        acting: jojobot_domain::mailbox::Acting<'_>,
+    ) -> Result<Delivered, MailboxError> {
         self.calls.hit("read_message", Kind::Write);
-        self.inner.read_message(id).await
+        self.inner.read_message(id, acting).await
     }
     async fn mark_processed(
         &self,
         id: &MessageId,
         notes: Option<&str>,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         self.calls.hit("mark_processed", Kind::Write);
-        self.inner.mark_processed(id, notes).await
+        self.inner.mark_processed(id, notes, acting).await
     }
     async fn quarantine(
         &self,
         id: &MessageId,
         by: &MailboxName,
         reason: &str,
-        at: Timestamp,
+        acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
         self.calls.hit("quarantine", Kind::Write);
-        self.inner.quarantine(id, by, reason, at).await
+        self.inner.quarantine(id, by, reason, acting).await
+    }
+
+    async fn message_history(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
+    {
+        self.inner.message_history(id).await
     }
 }
 
