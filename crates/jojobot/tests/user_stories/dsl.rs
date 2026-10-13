@@ -35,6 +35,11 @@ pub struct Story {
     store: Arc<dyn jojobot_domain::memory::Memory>,
     mail: Arc<InMemoryMailboxes>,
     runs: Arc<InMemorySessions>,
+    /// **The images of the board and of the runs this server answers from**
+    /// (decision log 292). A change made to `mail` or `runs` past them is not
+    /// seen until [`Story::the_store_changed_underneath`], as a restart would.
+    mail_image: Arc<jojobot_adapters::fold::mail::FoldedMailboxes>,
+    runs_image: Arc<jojobot_adapters::fold::sessions::FoldedSessions>,
     /// **The task that pushes the operator's mail**, when this server was set
     /// up to push. Kept so a story can stop it, as stopping the process would.
     runner: Option<Arc<jojobot::push::Runner>>,
@@ -531,6 +536,15 @@ impl Story {
         self.store.clone()
     }
 
+    /// **Read the stores again, as a restart would.** A story that wrote to the
+    /// raw stores past the server (`sessions_store`, `mail_store`) changed
+    /// something this server holds in memory and did not see; this is the one
+    /// way to say that happened.
+    pub async fn the_store_changed_underneath(&self) {
+        self.runs_image.rebuild().await.expect("the runs load");
+        self.mail_image.rebuild().await.expect("the board loads");
+    }
+
     /// The mailbox store under this story's server, for the same reason.
     pub fn mail_store(&self) -> Arc<InMemoryMailboxes> {
         self.mail.clone()
@@ -711,6 +725,12 @@ impl Story {
         let indexed_for_seed = indexed.clone();
         let wired =
             jojobot::wiring::assemble_ports(indexed.clone(), mail_store.clone(), runs.clone());
+        // **Mail and runs are held in memory here exactly as the binary holds
+        // them**, filled before anything is served, so a story reads through the
+        // image and not past it.
+        wired.sessions_image.rebuild().await.expect("the runs load");
+        wired.mail_image.rebuild().await.expect("the board loads");
+        let (mail_image, runs_image) = (wired.mail_image.clone(), wired.sessions_image.clone());
         let sessions_mentioned = wired.sessions.clone();
         let search = wired.search;
         let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = wired.mailboxes;
@@ -760,7 +780,13 @@ impl Story {
             search,
             mailboxes: boxes,
             sessions: sessions_mentioned,
-            teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            teachings: {
+                let ledger = Arc::new(jojobot_adapters::fold::teachings::FoldedTeachings::new(
+                    Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                ));
+                ledger.rebuild().await.expect("the ledger loads");
+                ledger
+            },
             registry,
             ui: Some(Arc::new(ui)),
             // The shape a story runs against is the one a fresh instance
@@ -800,6 +826,8 @@ impl Story {
             store: store_for_restart,
             mail: mail_store,
             runs,
+            mail_image,
+            runs_image,
             runner,
         }
     }
@@ -917,7 +945,7 @@ impl Story {
     pub async fn plant_a_second_box(&self, bot: &str, name: &str) {
         use jojobot_domain::mailbox::Mailboxes;
         let written = self
-            .mail
+            .mail_image
             .create_mailbox(
                 &jojobot_domain::mailbox::MailboxName(name.to_string()),
                 &jojobot_domain::memory::EntityId(bot.to_string()),
@@ -936,7 +964,7 @@ impl Story {
     /// message in a person's box, so the story reaches past it.
     pub async fn retire_in_the_store(&self, id: &str) {
         use jojobot_domain::mailbox::Mailboxes;
-        self.mail
+        self.mail_image
             .mark_processed(&jojobot_domain::mailbox::MessageId(id.to_string()), None)
             .await
             .expect("the store retires it");

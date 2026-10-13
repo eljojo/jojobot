@@ -710,6 +710,7 @@ async fn a_keyless_run_swept_after_the_boot_is_not_exchanged_by_its_old_name() {
         .close(&card, SessionState::Abandoned)
         .await
         .expect("the sweep ended the run");
+    deployed.the_store_changed_underneath().await;
 
     let refused = holder
         .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))

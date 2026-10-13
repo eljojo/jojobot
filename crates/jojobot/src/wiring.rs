@@ -42,6 +42,9 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
+use jojobot_adapters::fold::mail::FoldedMailboxes;
+use jojobot_adapters::fold::sessions::FoldedSessions;
+use jojobot_adapters::fold::teachings::FoldedTeachings;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
@@ -170,6 +173,12 @@ pub struct Wired {
     /// The one port over all three halves, refreshed from its own store on
     /// every answer.
     pub search: Arc<dyn Search>,
+    /// The image of the board that `mailboxes` reads from, under the change
+    /// count. A caller fills it with `rebuild` before anything reads.
+    pub mail_image: Arc<FoldedMailboxes>,
+    /// The image of the runs that `sessions` reads from, under the change
+    /// count. A caller fills it with `rebuild` before anything reads.
+    pub sessions_image: Arc<FoldedSessions>,
 }
 
 /// **Stage two: wrap mail and sessions, and open `search` over all three.**
@@ -188,10 +197,17 @@ pub fn assemble_ports(
     // **Both stores are counted underneath that**, so search can tell that
     // nothing changed without asking the store: every write to mail and to a
     // run goes through these ports.
-    let bare_mail: Arc<dyn Mailboxes> =
-        Arc::new(jojobot_adapters::changes::MailChanges::new(bare_mail));
+    //
+    // **And both are held in memory underneath that, closest to the store**
+    // (decision log 292): the image answers every read once its `rebuild` has
+    // run, and the count above it sees every write on its way to the store.
+    let mail_image = Arc::new(FoldedMailboxes::new(bare_mail));
+    let sessions_image = Arc::new(FoldedSessions::new(bare_sessions));
+    let bare_mail: Arc<dyn Mailboxes> = Arc::new(jojobot_adapters::changes::MailChanges::new(
+        mail_image.clone(),
+    ));
     let bare_sessions: Arc<dyn Sessions> = Arc::new(
-        jojobot_adapters::changes::SessionChanges::new(bare_sessions),
+        jojobot_adapters::changes::SessionChanges::new(sessions_image.clone()),
     );
     let mail_mentioned: Arc<dyn Mailboxes> =
         Arc::new(mailbox_mention::Mentioning::new(bare_mail, indexed.clone()));
@@ -225,6 +241,8 @@ pub fn assemble_ports(
         sessions: sessions_mentioned,
         sessions_indexed,
         search,
+        mail_image,
+        sessions_image,
     }
 }
 
@@ -743,12 +761,61 @@ pub async fn boot_store_pushing(
         ),
     }
 
-    let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
+    let folded_teachings = Arc::new(FoldedTeachings::new(Arc::new(DoltTeachings::open(
+        store.pool().clone(),
+    ))));
+    let teachings: Arc<dyn Teachings> = folded_teachings.clone();
 
     // **Wrapped in the same decorators the story harness shares** — see this
     // module's own doc.
     let wired = assemble_ports(indexed.clone(), bare_mail_store, bare_sessions);
     let sessions = wired.sessions.clone();
+
+    // **Mail, runs and the teaching ledger are held in memory too, before
+    // anything reads them** (decision log 292). Each fill is a full read of its
+    // own store, once; a failed fill is not fatal, because the store is the
+    // truth and every read answers from it until a write fills the image again.
+    let filling = std::time::Instant::now();
+    match wired.sessions_image.rebuild().await {
+        Ok(runs) => tracing::info!(
+            runs,
+            elapsed_ms = filling.elapsed().as_millis() as u64,
+            "fold: every run is held in memory, from a full read"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "RUNS NOT HELD IN MEMORY — the boot read failed, so every read of a run goes to the \
+             store until a write through this process fills the image again. Nothing is wrong; \
+             every read stays correct and only slower until then."
+        ),
+    }
+    let filling = std::time::Instant::now();
+    match wired.mail_image.rebuild().await {
+        Ok(messages) => tracing::info!(
+            messages,
+            elapsed_ms = filling.elapsed().as_millis() as u64,
+            "fold: every box and message is held in memory, from a full read"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "MAIL NOT HELD IN MEMORY — the boot read failed, so every read of the board goes \
+             to the store until a write through this process fills the image again. Nothing is \
+             wrong; every read stays correct and only slower until then."
+        ),
+    }
+    let filling = std::time::Instant::now();
+    match folded_teachings.rebuild().await {
+        Ok(taught) => tracing::info!(
+            taught,
+            elapsed_ms = filling.elapsed().as_millis() as u64,
+            "fold: the teaching ledger is held in memory, from a full read"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "TEACHING LEDGER NOT HELD IN MEMORY — the boot read failed, so every first contact \
+             goes to the store. Nothing is wrong; every answer stays correct and only slower."
+        ),
+    }
 
     // Mail goes into the SAME index — one front door, one ranked list — so the
     // mailbox store gets the same decorator treatment Memory's does: every verb
