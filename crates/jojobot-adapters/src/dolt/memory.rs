@@ -4440,6 +4440,110 @@ impl Memory for DoltMemory {
         Ok(moved)
     }
 
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
+        use jojobot_domain::memory::{EntitySnapshot, EntityVersion};
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((key, handle)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        // **`entity_write` is filed under the handle the row was written under**,
+        // so a thing renamed since holds versions under every handle it wore. A
+        // version that names a badge belongs to that badge only: a handle freed
+        // by a rename and taken by a new thing does not lend its versions to
+        // either. A version from before the snapshot names none, and is read as
+        // belonging to whichever thing wears the handle it was filed under.
+        let rows = sqlx::query(
+            "SELECT written_at, kind, name, source, crm, parent, boot, archived_reason, \
+             archived_at, merged_into, aliases, prose, session, badge FROM entity_write \
+             WHERE (entity = ? OR entity = ? OR entity IN \
+                    (SELECT former_handle FROM entity_former_handle WHERE badge = ?)) \
+               AND (badge IS NULL OR badge = ?)",
+        )
+        .bind(handle.as_str())
+        .bind(key.as_str())
+        .bind(key.as_str())
+        .bind(key.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let mut kept: Vec<(Option<jiff::Timestamp>, EntityVersion)> = Vec::new();
+        for row in &rows {
+            let stamp: String = row.try_get("written_at").map_err(store)?;
+            let written_at = parse_stamp(Some(stamp), key.as_str());
+            let name: Option<String> = row.try_get("name").map_err(store)?;
+            let snapshot = match name {
+                // **A row an older build appended holds no name**, and no other
+                // column either: it says that a write happened and when.
+                None => None,
+                Some(name) => {
+                    let text = |column: &str| -> Result<Option<String>, MemoryError> {
+                        row.try_get(column).map_err(store)
+                    };
+                    let aliases: Vec<String> = match text("aliases")? {
+                        None => Vec::new(),
+                        Some(raw) => serde_json::from_str(&raw).map_err(|e| {
+                            MemoryError::Store(format!("a stored alias set is not readable: {e}"))
+                        })?,
+                    };
+                    let mut pointed = Vec::new();
+                    for column in ["parent", "merged_into"] {
+                        pointed.push(match text(column)? {
+                            None => None,
+                            Some(stored) => {
+                                Some(self.current_handle(&mut tx, &EntityId(stored)).await?)
+                            }
+                        });
+                    }
+                    let merged_into = pointed.pop().flatten();
+                    let parent = pointed.pop().flatten();
+                    Some(EntitySnapshot {
+                        kind: text("kind")?.unwrap_or_default(),
+                        name,
+                        source: text("source")?.unwrap_or_default(),
+                        crm: text("crm")?,
+                        parent,
+                        boot: text("boot")?.unwrap_or_default(),
+                        archived_reason: text("archived_reason")?,
+                        archived_at: text("archived_at")?,
+                        merged_into,
+                        aliases,
+                        prose: text("prose")?.unwrap_or_default(),
+                    })
+                }
+            };
+            kept.push((
+                written_at,
+                EntityVersion {
+                    ordinal: 0,
+                    written_at,
+                    session: row.try_get("session").map_err(store)?,
+                    snapshot,
+                },
+            ));
+        }
+        tx.commit().await.map_err(store)?;
+        // **In the order they happened**, compared as moments because a stamp's
+        // fractional digits vary in length and text order is not time order. A
+        // version nobody stamped sorts first, where an older build left it. The
+        // ordinal is this list's own count, since each handle counted from one.
+        kept.sort_by_key(|(at, _)| *at);
+        Ok(kept
+            .into_iter()
+            .enumerate()
+            .map(|(at, (_, mut version))| {
+                version.ordinal = at + 1;
+                version
+            })
+            .collect())
+    }
+
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let moved = self.moved_in(&mut tx, address).await?;

@@ -1474,6 +1474,15 @@ async fn an_entity_edited_with_a_claim_is_whole_against_the_fake() {
         .await;
 }
 
+/// An entity's history, in milliseconds against the fake.
+#[tokio::test]
+async fn an_entity_history_is_whole_against_the_fake() {
+    contract::an_entity_history_returns_each_earlier_value_in_order_naming_its_session(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
 /// The full behavioural contract holds for the fake — the same suite the
 /// real-store test runs against the real adapter.
 #[tokio::test]

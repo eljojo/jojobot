@@ -441,6 +441,14 @@ pub struct RecallArgs {
     /// things is a mistake worth hearing about rather than one jojobot picks
     /// between.
     ///
+    /// **Or a thing's own handle**, `kind:slug`, with no `#`: then the object
+    /// comes back carrying every write of the THING itself — the name, aliases,
+    /// prose and archive state it held before somebody changed them, and the run
+    /// that changed them. Each version holds what the thing held after that write;
+    /// a key it held nothing for is left out. A write kept before jojobot kept
+    /// versions carries only its place in the order and its moment, and the
+    /// answer says the earlier values were not kept.
+    ///
     /// Omit it and no chain comes back, which is the normal read.
     #[serde(default)]
     pub(crate) history_record: Option<String>,
@@ -1001,6 +1009,89 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
             )
             .into(),
         );
+    }
+    body
+}
+
+/// **The versions of one thing's own row**, oldest first.
+///
+/// One version carries its place in the order, when it happened and the run that
+/// made it (the run's public name, never a key), then each key the row held
+/// after that write. A key the row held nothing for is left out, so a version
+/// that never had a parent does not say `null`. A version kept before jojobot
+/// kept them carries no keys, and the answer says what that means.
+fn entity_history_json(history: &graph::EntityHistory) -> serde_json::Value {
+    let versions: Vec<serde_json::Value> = history
+        .versions
+        .iter()
+        .map(|version| {
+            let mut rendered = serde_json::json!({
+                "nth": version.ordinal,
+                "written_at": version.written_at.map(|at| at.to_string()),
+            });
+            if let Some(fields) = rendered.as_object_mut() {
+                if let Some(run) = &version.session {
+                    fields.insert("run".into(), run.as_str().into());
+                }
+                if let Some(held) = &version.snapshot {
+                    fields.insert("kind".into(), held.kind.as_str().into());
+                    fields.insert("name".into(), held.name.as_str().into());
+                    fields.insert("source".into(), held.source.as_str().into());
+                    fields.insert("boot".into(), held.boot.as_str().into());
+                    fields.insert("aliases".into(), held.aliases.clone().into());
+                    fields.insert("prose".into(), held.prose.as_str().into());
+                    for (key, value) in [
+                        ("crm", held.crm.clone()),
+                        ("parent", held.parent.as_ref().map(ToString::to_string)),
+                        ("archived_reason", held.archived_reason.clone()),
+                        ("archived_at", held.archived_at.clone()),
+                        (
+                            "merged_into",
+                            held.merged_into.as_ref().map(ToString::to_string),
+                        ),
+                    ] {
+                        if let Some(value) = value {
+                            fields.insert(key.into(), value.into());
+                        }
+                    }
+                }
+            }
+            rendered
+        })
+        .collect();
+    let unkept = history
+        .versions
+        .iter()
+        .filter(|version| version.snapshot.is_none())
+        .count();
+    let mut body = serde_json::json!({
+        "entity": history.entity.to_string(),
+        "count": history.total,
+        "shown": history.versions.len(),
+        "versions": versions,
+    });
+    if let Some(fields) = body.as_object_mut() {
+        if unkept > 0 {
+            fields.insert(
+                "values_not_kept".into(),
+                format!(
+                    "{unkept} versions were written before jojobot kept what the thing held, so \
+                     they say that a write happened and when, and the earlier values are gone"
+                )
+                .into(),
+            );
+        }
+        if history.elided() > 0 {
+            fields.insert(
+                "older".into(),
+                format!(
+                    "{} older versions are not here — ask again with a bigger history_most to \
+                     reach them",
+                    history.elided()
+                )
+                .into(),
+            );
+        }
     }
     body
 }
@@ -1699,6 +1790,10 @@ fn object_json(
     if let Some(history) = object.record_history.as_ref() {
         fields.insert("record_history".into(), record_history_json(history));
     }
+    // **The writes behind the thing the call named**, on the one object it names.
+    if let Some(history) = object.entity_history.as_ref() {
+        fields.insert("entity_history".into(), entity_history_json(history));
+    }
     // How the walk got here. Absent on a root, which nothing reached.
     //
     // An edge names its shape and a relation names itself, under different
@@ -2143,6 +2238,12 @@ impl Jojobot {
                 of: graph::Trace::Key(key.trim().to_string()),
                 most: history_most,
             }),
+            // **A thing's own handle has no `#`**, and names the thing rather
+            // than one of its records.
+            (None, Some(handle)) if !handle.contains('#') => Some(graph::History {
+                of: graph::Trace::Entity(EntityId::person(handle.trim())),
+                most: history_most,
+            }),
             (None, Some(address)) => Some(graph::History {
                 of: graph::Trace::Record(match FactAddress::parse(address) {
                     Ok(parsed) => parsed,
@@ -2162,9 +2263,31 @@ impl Jojobot {
                 Err(refused) => return memory_declined("recall", refused),
             },
         };
+        // **A thing named for its history is the subject**, as an address is: a
+        // `subject` beside it has to be the same thing.
+        let entity_traced = match trace.as_ref().map(|history| &history.of) {
+            Some(graph::Trace::Entity(named)) => Some(named.clone()),
+            _ => None,
+        };
+        if let Some(named) = &entity_traced
+            && let Some(asked) = args.subject.as_deref().map(EntityId::person)
+            && &asked != named
+        {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(format!(
+                    "history_record names {named}, a thing, and asks for {asked}. Drop the \
+                     subject — the handle names its own — or name the thing you meant"
+                )),
+            );
+        }
         let query = graph::GraphQuery {
             select: graph::Selection {
-                subject: args.subject.as_deref().map(EntityId::person),
+                subject: args
+                    .subject
+                    .as_deref()
+                    .map(EntityId::person)
+                    .or_else(|| entity_traced.clone()),
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
                 parent: args.parent.as_deref().map(EntityId::person),
                 answers_type,
@@ -2216,7 +2339,7 @@ impl Jojobot {
         let selecting_addresses = [
             query.history.as_ref().and_then(|h| match &h.of {
                 graph::Trace::Record(address) => Some(("history_record", address.clone())),
-                graph::Trace::Key(_) => None,
+                graph::Trace::Key(_) | graph::Trace::Entity(_) => None,
             }),
             built_on_address
                 .clone()

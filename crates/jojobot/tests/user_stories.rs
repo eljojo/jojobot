@@ -86,6 +86,9 @@ mod dsl;
 mod duplicates;
 #[path = "user_stories/entitlements.rs"]
 mod entitlements;
+/// A thing's own writes: what it was called before, and which run changed it.
+#[path = "user_stories/entity_history.rs"]
+mod entity_history;
 #[path = "user_stories/first_post.rs"]
 mod first_post;
 /// A call that left a required argument off, and what it is told to send.

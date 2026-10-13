@@ -1313,6 +1313,25 @@ impl super::Memory for Mentioning {
         }
         Ok(chain)
     }
+    /// **The page of every version renders like the page does**, or a version is
+    /// the one place a permanent id leaks to a caller. Names and aliases are
+    /// text a caller wrote as is, and stay.
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<super::EntityVersion>, super::MemoryError> {
+        let mut versions = self.inner.entity_history(entity).await?.open();
+        if versions.is_empty() {
+            return Ok(versions);
+        }
+        let known = self.known().await?;
+        for version in &mut versions {
+            if let Some(snapshot) = &mut version.snapshot {
+                snapshot.prose = rendered(&snapshot.prose, &known);
+            }
+        }
+        Ok(versions)
+    }
     /// **Straight through**: the keys of a record are names, and no mention is
     /// rendered in one.
     async fn keys_kept_off_the_thing(

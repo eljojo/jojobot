@@ -80,6 +80,9 @@ pub struct InMemoryMemory {
     /// **Every merge made, as the real store appends it**: the two storage
     /// keys, the moment, the run, and each folded claim's old and new local id.
     merges: Mutex<Vec<StoredMerge>>,
+    /// **What each of those writes left the row holding**, and the session that
+    /// made it, keyed the same way: the fake's `entity_write` snapshot.
+    entity_versions: Mutex<Vec<(EntityId, super::super::EntityVersion)>>,
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
@@ -222,7 +225,7 @@ impl InMemoryMemory {
 
     /// **Leave the moment a thing's own row was written**, under the key the
     /// real store keeps it: the badge the row wears, else its handle.
-    fn touched(&self, entity: &Entity) {
+    fn touched(&self, entity: &Entity, session: Option<&str>) {
         let key = match &entity.badge {
             Some(badge) => EntityId(badge.clone()),
             None => entity.id.clone(),
@@ -231,7 +234,37 @@ impl InMemoryMemory {
         self.entity_writes
             .lock()
             .expect("fake mutex poisoned")
-            .push((key, now));
+            .push((key.clone(), now));
+        let prose = self
+            .prose
+            .lock()
+            .expect("fake mutex poisoned")
+            .get(&entity.id)
+            .cloned()
+            .unwrap_or_default();
+        let mut versions = self.entity_versions.lock().expect("fake mutex poisoned");
+        let ordinal = versions.iter().filter(|(home, _)| home == &key).count() + 1;
+        versions.push((
+            key,
+            super::super::EntityVersion {
+                ordinal,
+                written_at: Some(now),
+                session: session.map(str::to_string),
+                snapshot: Some(super::super::EntitySnapshot {
+                    kind: entity.kind.as_token().to_string(),
+                    name: entity.name.clone(),
+                    source: entity.source.clone(),
+                    crm: entity.crm.clone(),
+                    parent: entity.parent.clone(),
+                    boot: entity.boot.as_token().to_string(),
+                    archived_reason: entity.archived.as_ref().map(|a| a.reason.clone()),
+                    archived_at: entity.archived.as_ref().map(|a| a.at.to_string()),
+                    merged_into: entity.merged_into.clone(),
+                    aliases: entity.aliases.clone(),
+                    prose,
+                }),
+            },
+        ));
     }
 
     /// **This store with own fields reaching their thing.** See the field.
@@ -1394,6 +1427,7 @@ impl Resolution<'_> {
 #[async_trait::async_trait]
 impl Memory for InMemoryMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        let session = new.session.clone();
         validate_entity(
             &new.id,
             &new.name,
@@ -1461,7 +1495,7 @@ impl Memory for InMemoryMemory {
             entity.id.clone(),
             entity.badge.clone().expect("a row minted here wears one"),
         );
-        self.touched(&entity);
+        self.touched(&entity, session.as_deref());
         Ok(Guarded::Written(entity))
     }
 
@@ -1635,6 +1669,7 @@ impl Memory for InMemoryMemory {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        let session = patch.session.clone();
         validate_write_subject(handle)?;
         // Taken before the lock: known() locks too.
         let index = self.known();
@@ -1656,7 +1691,7 @@ impl Memory for InMemoryMemory {
             });
         }
         apply_entity_patch(entity, &patch)?;
-        self.touched(entity);
+        self.touched(entity, session.as_deref());
         // **Served under the handle, stored under the badge** — `parent`
         // names a different row and never moved under this edit, so what it
         // carries here is whatever was stored, resolved for the reader.
@@ -1677,7 +1712,7 @@ impl Memory for InMemoryMemory {
         &self,
         id: &EntityId,
         reason: &str,
-        _session: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
         validate_write_subject(id)?;
         validate_field("reason", reason)?;
@@ -1714,14 +1749,14 @@ impl Memory for InMemoryMemory {
             reason: reason.trim().to_string(),
             at: self.clock().now(),
         });
-        self.touched(entity);
+        self.touched(entity, session);
         Ok(entity.clone())
     }
 
     async fn restore_entity(
         &self,
         id: &EntityId,
-        _session: Option<&str>,
+        session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
         validate_write_subject(id)?;
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
@@ -1753,7 +1788,7 @@ impl Memory for InMemoryMemory {
                 attempted: id.to_string(),
             });
         };
-        self.touched(entity);
+        self.touched(entity, session);
         Ok((entity.clone(), was))
     }
 
@@ -1764,7 +1799,7 @@ impl Memory for InMemoryMemory {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
-        _session: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
         // **A row, never a supplied record** — the same exception
@@ -1920,7 +1955,7 @@ impl Memory for InMemoryMemory {
             }
         }
         drop(entities);
-        self.touched(&entity);
+        self.touched(&entity, session);
         // **A same-handle reparent is not a former handle of itself.** The
         // handle never moved, so there is nothing here for a later resolve
         // to walk back through.
@@ -2463,6 +2498,31 @@ impl Memory for InMemoryMemory {
         Ok(self.moved(address))
     }
 
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<super::super::EntityVersion>, MemoryError> {
+        let index = self.index();
+        let Some(row) = index.iter().find(|e| &e.id == entity) else {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        let key = match &row.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => row.id.clone(),
+        };
+        Ok(self
+            .entity_versions
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .filter(|(home, _)| home == &key)
+            .map(|(_, version)| version.clone())
+            .collect())
+    }
+
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let moved = self.moved(address);
         let address = moved.as_ref().unwrap_or(address);
@@ -2749,7 +2809,7 @@ impl Memory for InMemoryMemory {
         {
             // The signal the real store files so that the thing reads as written
             // although no claim write was added.
-            self.touched(entity);
+            self.touched(entity, patch.session.as_deref());
             return Ok(Guarded::Written(self.served(self.projected(fact), &handle)));
         }
         // **The patch is applied to the record as it reads now**, so a set that
@@ -3605,7 +3665,7 @@ impl Memory for InMemoryMemory {
         &self,
         entity: &EntityId,
         prose: &str,
-        _session: Option<&str>,
+        session: Option<&str>,
     ) -> Result<String, MemoryError> {
         validate_write_subject(entity)?;
         validate_prose(prose)?;
@@ -3626,7 +3686,7 @@ impl Memory for InMemoryMemory {
             .expect("fake mutex poisoned")
             .insert(entity.clone(), stored.clone());
         if let Some(row) = index.iter().find(|e| &e.id == entity) {
-            self.touched(row);
+            self.touched(row, session);
         }
         Ok(stored)
     }

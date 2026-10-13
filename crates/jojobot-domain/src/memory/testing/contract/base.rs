@@ -9663,6 +9663,140 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     );
 }
 
+/// **An entity's history returns every earlier value, in order, each naming the
+/// session that made it.** A display name, an alias set, a page, an archive and a
+/// restore each leave a version, and the version before it is not touched. The
+/// current read at the end answers as it always did.
+///
+/// **The pair of every assertion is the one beside it**: a store that kept only
+/// the latest row would pass the last version and fail the first, and one that
+/// kept the order wrongly would fail the sequence of sessions.
+pub async fn an_entity_history_returns_each_earlier_value_in_order_naming_its_session<M: Memory>(
+    store: &M,
+) {
+    let marge = EntityId("person:teddy".into());
+    store
+        .add_entity(NewEntity {
+            session: Some("s001".into()),
+            ..NewEntity::new(marge.clone(), "Teddy", "contract-fixture")
+        })
+        .await
+        .expect("add_entity should succeed")
+        .written()
+        .expect("nothing collides");
+    store
+        .update_entity(
+            &marge,
+            EntityPatch {
+                name: Some("Theodore".into()),
+                session: Some("s002".into()),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .expect("a rename of the display name")
+        .written()
+        .expect("nothing collides");
+    store
+        .update_entity(
+            &marge,
+            EntityPatch {
+                aliases: Some(vec!["Ted".into()]),
+                session: Some("s003".into()),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .expect("an alias change")
+        .written()
+        .expect("nothing collides");
+    store
+        .set_prose(&marge, "Keeps the blue hair tidy.", Some("s004"))
+        .await
+        .expect("a prose write");
+    store
+        .archive_entity(&marge, "entered twice", Some("s005"))
+        .await
+        .expect("an archive");
+    store
+        .restore_entity(&marge, Some("s006"))
+        .await
+        .expect("a restore");
+
+    let versions = store
+        .entity_history(&marge)
+        .await
+        .expect("entity_history should succeed");
+
+    let held = |at: usize| {
+        versions[at]
+            .snapshot
+            .clone()
+            .unwrap_or_else(|| panic!("version {} kept no row", at + 1))
+    };
+    assert_eq!(versions.len(), 6, "one version per write: {versions:?}");
+    assert_eq!(
+        versions.iter().map(|v| v.ordinal).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5, 6],
+        "counted from one, in the order they happened"
+    );
+    assert_eq!(
+        versions
+            .iter()
+            .map(|v| v.session.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec!["s001", "s002", "s003", "s004", "s005", "s006"],
+        "each version names the session that made it"
+    );
+    assert!(
+        versions.iter().all(|v| v.written_at.is_some()),
+        "each version says when it happened"
+    );
+    assert_eq!(
+        versions
+            .iter()
+            .enumerate()
+            .map(|(at, _)| held(at).name)
+            .collect::<Vec<_>>(),
+        vec![
+            "Teddy", "Theodore", "Theodore", "Theodore", "Theodore", "Theodore"
+        ],
+        "the name each version held; the first one is not overwritten"
+    );
+    assert_eq!(held(1).aliases, Vec::<String>::new());
+    assert_eq!(held(2).aliases, vec!["Ted".to_string()]);
+    assert_eq!(held(2).prose, "");
+    assert_eq!(held(3).prose, "Keeps the blue hair tidy.");
+    assert_eq!(held(3).archived_reason, None);
+    assert_eq!(held(4).archived_reason.as_deref(), Some("entered twice"));
+    assert!(held(4).archived_at.is_some());
+    assert_eq!(
+        held(5).archived_reason,
+        None,
+        "a restore leaves a version with no archive state"
+    );
+
+    // The projection answers as it always did.
+    let current = store
+        .list_entities(None)
+        .await
+        .expect("a current read")
+        .into_iter()
+        .find(|entity| entity.id == marge)
+        .expect("the entity is there");
+    assert_eq!(current.name, "Theodore");
+    assert_eq!(current.aliases, vec!["Ted".to_string()]);
+    assert!(current.archived.is_none());
+
+    // A handle that names nothing is a miss, not an empty history.
+    assert!(matches!(
+        store
+            .entity_history(&EntityId("person:contract-never-made".into()))
+            .await,
+        Err(MemoryError::UnknownEntity { .. })
+    ));
+}
+
 /// **Archiving persists the reason and the moment, and survives a read taken
 /// after the write** — the storage half of the caller-facing bar, which
 /// proves the same thing behaviourally through the served surface. Both the
@@ -17264,6 +17398,9 @@ macro_rules! all_cases {
         $m!(claim_histories_agrees_with_claim_history_per_fact($store));
 
         $m!(archive_entity_persists_the_reason_and_the_moment($store));
+        $m!(an_entity_history_returns_each_earlier_value_in_order_naming_its_session(
+            $store
+        ));
         $m!(a_second_archive_is_refused_not_overwritten($store));
 
         $m!(add_entity_refuses_a_session_kind_handle($store));

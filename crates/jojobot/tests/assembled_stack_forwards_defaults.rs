@@ -358,6 +358,40 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the batched read renders exactly what the single read does"
     );
 
+    // ── entity_history: the port's default refuses, so a decorator that left it
+    //    would answer the refusal for every thing ───────────────────────────────
+    //
+    // Asked of the outermost port. The page of the mention layer renders a
+    // mention like the page does, and the store's versions pass through every
+    // layer between.
+    indexed
+        .set_prose(
+            &piano,
+            &format!("tuned by {}", gamma.as_str().replace("bot:", "@bot:")),
+            Some("hst1"),
+        )
+        .await
+        .expect("a prose write");
+    let versions = indexed
+        .entity_history(&piano)
+        .await
+        .expect("entity_history reached the store, not the port's default");
+    assert_eq!(
+        versions.len(),
+        2,
+        "creation and the prose write: {versions:?}"
+    );
+    assert_eq!(versions[1].session.as_deref(), Some("hst1"));
+    let page = &versions[1]
+        .snapshot
+        .as_ref()
+        .expect("the version kept its row")
+        .prose;
+    assert!(
+        page.contains("@bot:gamma") && !page.contains("@#"),
+        "a mention in a kept page reads as the handle, never as the stored mark: {page:?}"
+    );
+
     // ── a merge: the store's version marker is a count of the thing's own
     //    writes, and a merge moves them to the survivor ───────────────────────
     //

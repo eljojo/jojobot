@@ -1955,6 +1955,166 @@ async fn recall_answers_with_the_writes_behind_a_record_when_asked() {
     );
 }
 
+/// 🚨 **A thing's own history comes back on the same read, named by its handle
+/// alone**, and each version names the run that made it.
+///
+/// Every verb that changes a thing's own row is run through the served surface:
+/// creation, a rename of the display name, a new alias set, a page, an archive
+/// and its restore, and a move of the handle. The history asked of the handle,
+/// with no `#`, holds one version per write, oldest first, each with the values
+/// the row held then. **The run is the run's public name, never the key the
+/// caller sent**, and the plain read of the same thing is not charged for any of
+/// it.
+#[tokio::test]
+async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_history_record() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    let run = TEST_RUN;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            sid: Some(sid.clone()),
+            ..add_args("person", "teddy", "Teddy")
+        }))
+        .await
+        .expect("add ok");
+    jojobot
+        .update_entity(Parameters(UpdateEntityArgs {
+            handle: "person:teddy".into(),
+            name: Some("Theodore".into()),
+            aliases: Some(vec!["Ted".into()]),
+            source: None,
+            crm: None,
+            override_token: None,
+            sets: None,
+            sid: Some(sid.clone()),
+        }))
+        .await
+        .expect("update ok");
+    jojobot
+        .archive_entity(Parameters(ArchiveEntityArgs {
+            handle: "person:teddy".into(),
+            reason: "entered twice".into(),
+            restore: None,
+            sid: Some(sid.clone()),
+        }))
+        .await
+        .expect("archive ok");
+    jojobot
+        .archive_entity(Parameters(ArchiveEntityArgs {
+            handle: "person:teddy".into(),
+            reason: "it was real".into(),
+            restore: Some(true),
+            sid: Some(sid.clone()),
+        }))
+        .await
+        .expect("restore ok");
+
+    jojobot
+        .rename_entity(Parameters(RenameEntityArgs {
+            handle: "person:teddy".into(),
+            to: "person:lisa".into(),
+            parent: None,
+            recorded_at: None,
+            override_token: None,
+            sid: Some(sid.clone()),
+        }))
+        .await
+        .expect("rename ok");
+
+    // Asked by the handle it wears now; the thing was made as person:teddy.
+    let asked = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                history_record: Some("person:lisa".into()),
+                facts: Some(false),
+                subject: None,
+                ..of("person:lisa")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let chain = &asked["objects"][0]["entity_history"];
+    assert_eq!(chain["entity"], "person:lisa");
+    assert_eq!(chain["count"], 5, "one version per write: {chain}");
+    let versions = chain["versions"].as_array().expect("a list of versions");
+    assert_eq!(
+        versions
+            .iter()
+            .map(|v| v["nth"].as_u64())
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2), Some(3), Some(4), Some(5)],
+        "oldest first: {chain}"
+    );
+    assert!(
+        versions.iter().all(|v| v["run"] == run),
+        "each version names the run that made it, by its public name: {chain}"
+    );
+    assert!(
+        !chain.to_string().contains(TEST_SID),
+        "the key the caller sent is nowhere in the answer: {chain}"
+    );
+    assert_eq!(versions[0]["name"], "Teddy");
+    assert_eq!(versions[1]["name"], "Theodore");
+    assert_eq!(versions[1]["aliases"], serde_json::json!(["Ted"]));
+    assert_eq!(versions[2]["archived_reason"], "entered twice");
+    assert!(
+        versions[3].get("archived_reason").is_none(),
+        "a key the row held nothing for is left out, not null: {chain}"
+    );
+    assert_eq!(versions[4]["name"], "Theodore");
+    assert!(versions[0]["written_at"].is_string());
+    assert!(
+        chain.get("values_not_kept").is_none() && chain.get("older").is_none(),
+        "a history that came back whole carries no elision noise: {chain}"
+    );
+
+    // **A window cuts from the old end and says so.**
+    let cut = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                history_record: Some("person:lisa".into()),
+                history_most: Some(2),
+                facts: Some(false),
+                subject: None,
+                ..of("person:lisa")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let newest = &cut["objects"][0]["entity_history"];
+    assert_eq!(newest["shown"], 2);
+    assert_eq!(newest["versions"][0]["nth"], 4, "the newest two: {newest}");
+    assert!(newest["older"].is_string(), "a cut says so: {newest}");
+
+    // **A subject beside the handle has to be the same thing.**
+    let refused = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                history_record: Some("person:lisa".into()),
+                ..of("person:alpha")
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    assert!(
+        refused
+            .to_string()
+            .contains("history_record names person:lisa"),
+        "two arguments pointing at two things is refused: {refused}"
+    );
+
+    let plain = json_of(
+        &jojobot
+            .recall(Parameters(of("person:lisa")))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        plain["objects"][0].get("entity_history").is_none(),
+        "a call that asked for no history is not charged for one: {plain}"
+    );
+}
+
 /// 🚨 **An ordinary read of a claim says it has been written more than
 /// once — without a caller having to already hold its address and ask for
 /// `history_record`.**

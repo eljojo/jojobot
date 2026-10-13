@@ -131,7 +131,7 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
         .expect("a restore");
 
     // A rename moves the handle and files its version under the new one.
-    let moved = EntityId("thing:wagon".into());
+    let moved = EntityId("thing:shelf".into());
     memory
         .rename_entity(
             &handcart,
@@ -177,4 +177,82 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
     assert_eq!(current.name, "The Cart");
     assert_eq!(current.aliases, vec!["wagon".to_string()]);
     assert!(current.archived.is_none());
+}
+
+/// **The history read, against the real store**: the shared case every store
+/// answers, then the real store's own shape. A rename moves the handle, and a
+/// history asked by either the old or the new handle holds every version; a row
+/// an older build appended reads as a version with no values.
+#[tokio::test]
+async fn the_history_of_an_entity_follows_its_handle_and_marks_what_an_older_build_did_not_keep() {
+    use jojobot_domain::memory::testing::contract;
+
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("jojobot-entity-history-{}", std::process::id())),
+    );
+    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "entity_history")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    kinds::seed(&memory).await.expect("the kinds are seeded");
+
+    contract::an_entity_history_returns_each_earlier_value_in_order_naming_its_session(&memory)
+        .await;
+
+    let lisa = EntityId("person:lisa".into());
+    memory
+        .add_entity(NewEntity::new(lisa.clone(), "Lisa", "test"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides");
+    // The version an older build would have left first: a write and a moment,
+    // and none of the values.
+    sqlx::query("UPDATE entity_write SET name = NULL, kind = NULL, source = NULL, boot = NULL, aliases = NULL, prose = NULL, badge = NULL, session = NULL WHERE entity = 'person:lisa'")
+        .execute(&pool)
+        .await
+        .expect("the version is stripped to the old shape");
+    let renamed = EntityId("person:homer".into());
+    memory
+        .rename_entity(
+            &lisa,
+            &renamed,
+            None,
+            jiff::civil::date(2026, 6, 1),
+            None,
+            Some("rn01"),
+        )
+        .await
+        .expect("a rename of the handle")
+        .written()
+        .expect("nothing collides");
+
+    let by_new = memory.entity_history(&renamed).await.expect("history");
+    let by_old = memory
+        .entity_history(&lisa)
+        .await
+        .expect("history by the former handle");
+    store.stop().await;
+
+    assert_eq!(by_new.len(), 2, "both handles' versions: {by_new:?}");
+    assert_eq!(by_old, by_new, "the former handle asks the same thing");
+    assert_eq!(
+        by_new.iter().map(|v| v.ordinal).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert!(
+        by_new[0].snapshot.is_none() && by_new[0].written_at.is_some(),
+        "the old version says that a write happened and when, and nothing else"
+    );
+    assert_eq!(by_new[1].session.as_deref(), Some("rn01"));
+    assert_eq!(
+        by_new[1].snapshot.as_ref().map(|held| held.name.as_str()),
+        Some("Lisa"),
+        "the version after the rename holds the row"
+    );
 }

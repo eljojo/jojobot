@@ -3278,6 +3278,14 @@ same thing, or the call is refused: two arguments pointing at two
 things is a mistake worth hearing about rather than one jojobot picks
 between.
 
+**Or a thing's own handle**, `kind:slug`, with no `#`: then the object
+comes back carrying every write of the THING itself — the name, aliases,
+prose and archive state it held before somebody changed them, and the run
+that changed them. Each version holds what the thing held after that write;
+a key it held nothing for is left out. A write kept before jojobot kept
+versions carries only its place in the order and its moment, and the
+answer says the earlier values were not kept.
+
 Omit it and no chain comes back, which is the normal read.
 ```
 

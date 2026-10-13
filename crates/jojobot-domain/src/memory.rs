@@ -5093,6 +5093,62 @@ pub struct FieldWrite {
     pub note: Option<String>,
 }
 
+/// **What an entity's own row held after one write of it** — the keys the
+/// `entity` row carries, as that write left them. Aliases are the whole set in
+/// order, and `prose` the whole page.
+///
+/// `parent` and `merged_into` name the thing as it is called now, not as the
+/// write held it, because everything that points at a thing stores its
+/// permanent id and a rename must not leave an old version naming a handle
+/// nothing answers to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntitySnapshot {
+    /// The kind, as a token.
+    pub kind: String,
+    /// The display name.
+    pub name: String,
+    /// Where the entity came from.
+    pub source: String,
+    /// The cross-link to the task layer, when there was one.
+    pub crm: Option<String>,
+    /// The entity this one sat under.
+    pub parent: Option<EntityId>,
+    /// The boot tier, as a token.
+    pub boot: String,
+    /// Why it was archived, while it was.
+    pub archived_reason: Option<String>,
+    /// When it was archived, while it was.
+    pub archived_at: Option<String>,
+    /// The entity it was folded into, once it was.
+    pub merged_into: Option<EntityId>,
+    /// Every other name it answered to.
+    pub aliases: Vec<String>,
+    /// The page: everything neither metadata nor claims.
+    pub prose: String,
+}
+
+/// **One write of an entity's own row**, as the store kept it.
+///
+/// Mirrors [`ClaimWrite`]: the same ordinal counted from one, the moment the
+/// write happened, the session that made it. The entity row stays the
+/// projection and answers every current read; this is what that projection
+/// leaves out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityVersion {
+    /// **Which write this is, counting from one.**
+    pub ordinal: usize,
+    /// **When this write happened.**
+    pub written_at: Option<jiff::Timestamp>,
+    /// **The session that made this write**, when one did and the store kept
+    /// it. `None` for a write no session made, and for one kept before the
+    /// column existed.
+    pub session: Option<String>,
+    /// **What the row held after this write.** `None` for a write kept before
+    /// the snapshot existed: the earlier values are gone, and nothing fills
+    /// them in.
+    pub snapshot: Option<EntitySnapshot>,
+}
+
 /// **One write of one claim — the substrate a claim read projects from.**
 ///
 /// A claim's own row is a projection: every write of it is kept, and the claim
@@ -6652,6 +6708,25 @@ pub trait Memory: Send + Sync {
     /// exactly as every other addressed verb answers them: "there is no such
     /// record" and "the record says nothing" are different answers.
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError>;
+
+    /// **Every write of one ENTITY's own row, oldest first** — what the
+    /// ordinary read projects away: the name, aliases, prose and archive state
+    /// it held before somebody changed them, and the session that changed them.
+    ///
+    /// Asked of a thing by handle, where [`claim_history`](Memory::claim_history)
+    /// is asked of a record. A handle that names nothing is
+    /// [`MemoryError::UnknownEntity`].
+    ///
+    /// **A store that cannot answer refuses loudly**, for the reason
+    /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim)
+    /// does: a wrapper that forgot to forward this would otherwise answer "no
+    /// writes" for every thing.
+    async fn entity_history(&self, entity: &EntityId) -> Result<Vec<EntityVersion>, MemoryError> {
+        let _ = entity;
+        Err(MemoryError::InvalidQuery(
+            "this store keeps no history of an entity".into(),
+        ))
+    }
 
     /// **The keys of one record that stay on it**: each key whose newest write on
     /// the record was made under a class that does not reach the thing

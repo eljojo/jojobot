@@ -473,6 +473,12 @@ impl Memory for IndexedMemory {
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         self.inner.claim_history(address).await
     }
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
+        self.inner.entity_history(entity).await
+    }
     async fn keys_kept_off_the_thing(
         &self,
         address: &FactAddress,

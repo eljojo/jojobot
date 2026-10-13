@@ -414,6 +414,16 @@ impl Memory for Folded {
         }
     }
 
+    /// **Straight through.** The fold's image holds the fields and the claims;
+    /// the versions of an entity's own row are the store's record, and the image
+    /// keeps no copy of them to disagree with.
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
+        self.inner.entity_history(entity).await
+    }
+
     async fn keys_kept_off_the_thing(
         &self,
         address: &FactAddress,

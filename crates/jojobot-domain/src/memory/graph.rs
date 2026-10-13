@@ -1203,6 +1203,13 @@ pub struct Object {
     /// `None` when the query named no record, and `None` on the other objects
     /// of a walk that did.
     pub record_history: Option<ClaimHistory>,
+    /// **The writes behind the THING the query named**, oldest first — what
+    /// its name, aliases, prose and archive state used to be.
+    ///
+    /// On the object whose handle the query named and on no other, for the
+    /// reason [`Object::record_history`] is. `None` when the query named no
+    /// thing to trace.
+    pub entity_history: Option<EntityHistory>,
     /// **When the store took in what this object holds** — the moment of its
     /// newest write of any kind, and for each key the moment of the write
     /// holding its value. Filled by the store, not by this pure walk, for every
@@ -1271,6 +1278,28 @@ impl ClaimHistory {
     /// How many writes the window left out. Zero when the chain fits.
     pub fn elided(&self) -> usize {
         self.total.saturating_sub(self.writes.len())
+    }
+}
+
+/// **Every write of one entity's own row, capped, and how many there are.**
+///
+/// The same shape [`ClaimHistory`] has, for the same reason: a chain longer than
+/// the window comes back cut, and the total is what makes the cut honest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityHistory {
+    /// The thing asked for.
+    pub entity: EntityId,
+    /// The versions that came back, oldest first: **the newest ones**, when
+    /// there were more than the window.
+    pub versions: Vec<super::EntityVersion>,
+    /// **How many versions exist**, whatever came back.
+    pub total: usize,
+}
+
+impl EntityHistory {
+    /// How many versions the window left out. Zero when the chain fits.
+    pub fn elided(&self) -> usize {
+        self.total.saturating_sub(self.versions.len())
     }
 }
 
@@ -1345,6 +1374,8 @@ pub enum Trace {
     Key(String),
     /// Every write of this one claim, on the object it is filed under.
     Record(FactAddress),
+    /// Every write of this one thing's own row, on the object it names.
+    Entity(EntityId),
 }
 
 /// **How many of a key's writes come back when the caller does not say.**
@@ -2416,6 +2447,7 @@ impl<'a> Ctx<'a> {
             // [`walk`].
             history: None,
             record_history: None,
+            entity_history: None,
             fact_revisions: std::collections::HashMap::new(),
             ages: None,
             standing_for: None,
@@ -3182,6 +3214,19 @@ where
                 });
             }
             Trace::Record(_) => {}
+            Trace::Entity(id) if *id == object.entity.id => {
+                let mut versions = store.entity_history(id).await?;
+                let total = versions.len();
+                if total > wanted.most {
+                    versions.drain(..total - wanted.most);
+                }
+                object.entity_history = Some(EntityHistory {
+                    entity: id.clone(),
+                    versions,
+                    total,
+                });
+            }
+            Trace::Entity(_) => {}
         }
         for reached in &mut object.connected {
             fill_history(store, reached, wanted).await?;

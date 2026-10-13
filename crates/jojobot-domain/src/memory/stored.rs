@@ -143,6 +143,10 @@ pub trait StoredMemory: Send + Sync {
         &self,
         address: &super::FactAddress,
     ) -> Result<Stored<Vec<super::ClaimWrite>>, super::MemoryError>;
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Stored<Vec<super::EntityVersion>>, super::MemoryError>;
     async fn keys_kept_off_the_thing(
         &self,
         address: &super::FactAddress,
@@ -354,6 +358,12 @@ impl StoredMemory for Unrendered {
         address: &super::FactAddress,
     ) -> Result<Stored<Vec<super::ClaimWrite>>, super::MemoryError> {
         self.0.claim_history(address).await.map(Stored::new)
+    }
+    async fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Stored<Vec<super::EntityVersion>>, super::MemoryError> {
+        self.0.entity_history(entity).await.map(Stored::new)
     }
     async fn keys_kept_off_the_thing(
         &self,
