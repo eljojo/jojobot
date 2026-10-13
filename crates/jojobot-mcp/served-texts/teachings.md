@@ -85,6 +85,19 @@ Quotation marks you type yourself are left alone and prove nothing.
 A record's content is a claim, not a transcript, so a quote by address does not prove verbatim speech.
 ```
 
+### Teaching `DEPENDS_ON_READ_TEACHING`
+
+```text
+This write sets `depends_on`.
+Three reads answer from it.
+`recall` with view: "ready" and `parent` set to the project lists the work not finished, whose dependencies are all finished and that waits on no one.
+It does not check `status`, so narrow it with `where`.
+The same view with `subject` set to one piece of work answers ready: false and `blocked_by`, a list of what stops it.
+`recall` with `subject` and follow: {"relation": "depends_on", "direction": "in"} lists the work that waits on it.
+A `waiting_on` handle also keeps work out of ready.
+start_here with skill: "projects" has the examples.
+```
+
 ### Teaching `session_id_teaching` (with a sample sid and session)
 
 ```text

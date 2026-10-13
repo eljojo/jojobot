@@ -317,6 +317,7 @@ fn teachings(doc: &mut Doc) {
         ("RHYTHM_ARCHIVE_TEACHING", RHYTHM_ARCHIVE_TEACHING),
         ("CHECK_IN_DATE_TEACHING", CHECK_IN_DATE_TEACHING),
         ("OPERATOR_QUOTE_TEACHING", OPERATOR_QUOTE_TEACHING),
+        ("DEPENDS_ON_READ_TEACHING", DEPENDS_ON_READ_TEACHING),
     ];
     for (name, text) in fixed {
         doc.text(

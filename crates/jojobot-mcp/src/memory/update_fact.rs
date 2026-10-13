@@ -882,6 +882,7 @@ impl Jojobot {
                 }
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_status_word(&fact, &mut body).await;
+                self.note_depends_on_read(&fact, &caller, &mut body).await;
                 let unstarred_this_write =
                     was_starred && fact.fields.get("starred").is_none_or(|v| v != "true");
                 self.note_unstarred(&fact, was_starred, caller.sid.as_str());

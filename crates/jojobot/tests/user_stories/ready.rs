@@ -195,3 +195,65 @@ async fn an_archived_piece_of_work_is_not_ready_when_named_and_says_why() {
     );
     story.finish().await;
 }
+
+/// "What can I start on this project?" The ready view takes the project as
+/// `parent` and lists that project's ready work only, and the inbound walk of
+/// `depends_on` lists what a piece of work holds up. These are the two calls the
+/// projects skill teaches beside the named read.
+#[tokio::test]
+async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add("project:visa", "The App").await;
+    let work = |slug: &'static str, parent: &'static str, sets: serde_json::Value| {
+        json!({"kind": "work", "handle": slug, "name": slug, "parent": parent,
+               "source": "user-named", "sets": sets})
+    };
+    s.call(
+        "add_entity",
+        work("phi", "project:atlas", json!({"status": "next"})),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work(
+            "sigma",
+            "project:atlas",
+            json!({"status": "next", "depends_on": "work:phi"}),
+        ),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work("tau", "project:visa", json!({"status": "next"})),
+    )
+    .await;
+
+    // The whole board lists both projects' ready work; the project narrows it.
+    let board = s.call("recall", json!({"view": "ready"})).await;
+    assert_eq!(listed(&board), ["work:phi", "work:tau"], "{}", board.raw());
+    let one = s
+        .call(
+            "recall",
+            json!({"view": "ready", "parent": "project:atlas"}),
+        )
+        .await;
+    assert_eq!(listed(&one), ["work:phi"], "{}", one.raw());
+
+    // What finishing phi unblocks: the work that names it in depends_on.
+    let unblocks = s
+        .call(
+            "recall",
+            json!({"subject": "work:phi",
+                   "follow": {"relation": "depends_on", "direction": "in"}}),
+        )
+        .await;
+    let connected = unblocks.json()["objects"][0]["connected"].to_string();
+    assert!(
+        connected.contains("work:sigma") && !connected.contains("work:tau"),
+        "{}",
+        unblocks.raw()
+    );
+    story.finish().await;
+}

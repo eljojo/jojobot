@@ -232,7 +232,7 @@ A **view** is a question somebody already worked out, asked for by name. Ask
 
     recall  view: "colleagues"     the identities here, what each is for, and whom each reports to
     recall  view: "loops"          the recurring things, and what each last recorded
-    recall  view: "ready"          the work that can be started now, and how many it left out
+    recall  view: "ready"          the work not finished, unblocked and waiting on no one, and how many it left out
 
 The colleagues view says whom each bot reports to and nothing inward. Who
 reports to a bot is a second call, a walk along `reports_to` the other way:
@@ -456,6 +456,10 @@ status (`next` on the shipped words):
 
     recall  view: "ready"  where: "status = next"
 
+Name a project as `parent` to see the ready work of that project only:
+
+    recall  view: "ready"  parent: "project:atlas"  where: "status = next"
+
 Ask why one piece of work is not on that list by naming it:
 
     recall  view: "ready"  subject: "work:first-mix"
@@ -464,6 +468,9 @@ The answer says `ready: false` and `blocked_by`, a list of what stops it. A
 blocker is a `dependency` that is `unfinished`, `archived` or `dangling` (its
 handle names nothing), a `waiting_on` handle, or the work itself being
 `finished` or `archived`. Archived work is never ready, however it is named.
+A `waiting_on` handle keeps work out of the view for as long as the key holds it.
+To wait on an event, which is not a handle, name in `waiting_on` the person who
+owns that move, and change the key when the move is made.
 
 Or ask what waits on one person:
 
@@ -485,8 +492,8 @@ word, says what one of your own words means.
     capture  subject: "project:atlas"  sets: {"columns": "inbox, someday, next, now, waiting, done"}
 
 Each question is then a read of one key. The first read lists what is next. The
-second lists what waits on someone, and on whom. The third lists what stands on
-the work named in `subject`.
+second lists what waits on someone, and on whom. The third lists the work that
+waits on the work named in `subject`, which is what finishing it unblocks.
 
     recall  kind: "work"  fields: [{"key": "status", "value": "next"}]
     recall  kind: "work"  fields: [{"key": "waiting_on"}]

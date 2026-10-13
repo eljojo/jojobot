@@ -131,6 +131,114 @@ async fn the_first_write_about_a_project_names_the_skill_once_per_session() {
     story.finish().await;
 }
 
+/// Whether an answer carries a teaching that names the read which says why work
+/// is blocked. `blocked_by` is the identifier that read answers in, so a
+/// rewording of the line does not move the needle.
+fn names_the_ready_read(answer: &super::dsl::Answer) -> bool {
+    answer.json()["teaching"].as_array().is_some_and(|lines| {
+        lines
+            .iter()
+            .any(|l| l.as_str().is_some_and(|l| l.contains("blocked_by")))
+    })
+}
+
+/// **The first write of `depends_on` in a session names the ready read, once.**
+///
+/// A write that sets other keys does not spend it. The line rides whichever
+/// verb carries the first dependency, and the second dependency write in the
+/// same session is silent whatever verb carries it. A second session is told
+/// again, because the ledger is per session.
+#[tokio::test]
+async fn the_first_dependency_write_names_the_ready_read_once_per_session() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add("work:phi", "Payment provider").await;
+    s.add("work:sigma", "Checkout").await;
+
+    // A write on work that sets no dependency does not spend the line.
+    let status_only = s
+        .call(
+            "capture",
+            json!({"subject": "work:sigma", "content": "not started",
+                   "provenance": "testimony", "sets": {"status": "next"}}),
+        )
+        .await;
+    assert!(
+        !names_the_ready_read(&status_only),
+        "a write with no dependency named the ready read: {}",
+        status_only.raw(),
+    );
+
+    // A claim the session worked out, which another session may rewrite later.
+    let worked_out = s
+        .call(
+            "capture",
+            json!({"subject": "work:sigma", "content": "may need a second provider"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("the claim's address")
+        .to_string();
+    let first = s
+        .call(
+            "capture",
+            json!({"subject": "work:sigma", "content": "needs the provider",
+                   "provenance": "testimony", "sets": {"depends_on": "work:phi"}}),
+        )
+        .await;
+    assert!(
+        names_the_ready_read(&first),
+        "the first dependency write did not name the ready read: {}",
+        first.raw(),
+    );
+
+    // Silent on the second, on another verb too: one line per session.
+    let again = s
+        .call(
+            "update_entity",
+            json!({"handle": "work:sigma", "sets": {"depends_on": "work:phi"}}),
+        )
+        .await;
+    assert!(
+        !names_the_ready_read(&again),
+        "the ready read was named a second time in one session: {}",
+        again.raw(),
+    );
+
+    // A second session is told again, on a creation this time.
+    let later = story.session_in("UTC", Some("new")).await;
+    let created = later
+        .call(
+            "add_entity",
+            json!({"kind": "work", "handle": "tau", "name": "Launch", "source": "user-named",
+                   "sets": {"depends_on": "work:sigma"}}),
+        )
+        .await;
+    assert!(names_the_ready_read(&created), "{}", created.raw());
+
+    // Each verb that takes `sets` carries it for the session that meets it
+    // first: an edit of the thing, and an edit of a claim by its address.
+    let edit = story.session_in("UTC", Some("new")).await;
+    let edited = edit
+        .call(
+            "update_entity",
+            json!({"handle": "work:tau", "sets": {"depends_on": "work:phi"}}),
+        )
+        .await;
+    assert!(names_the_ready_read(&edited), "{}", edited.raw());
+    let amend = story.session_in("UTC", Some("new")).await;
+    let amended = amend
+        .call(
+            "update_fact",
+            json!({"address": worked_out, "sets": {"depends_on": "work:phi, work:tau"}}),
+        )
+        .await;
+    assert!(names_the_ready_read(&amended), "{}", amended.raw());
+    story.finish().await;
+}
+
 /// **A slip is a new due day, and how many times it moved is a history read.**
 #[tokio::test]
 async fn how_many_times_a_milestone_moved_is_read_from_the_keys_history() {

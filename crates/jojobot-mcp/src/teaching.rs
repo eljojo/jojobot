@@ -142,6 +142,23 @@ pub(crate) const PROJECTS_SKILL_TEACHING: &str = "You are writing about a projec
     open question and what you worked out from what was said. It also holds the keys that say \
     where a piece of work stands (`status`) and whose it is (`owner`).";
 
+/// **The domain of the line that names the reads a dependency makes useful.**
+/// Spent by the first write in a session that sets `depends_on`, whichever verb
+/// carries it: a session that writes dependencies and was never shown the reads
+/// has nothing to ask them with.
+pub(crate) const DEPENDS_ON_READ_DOMAIN: &str = "depends-on-read";
+
+/// **Ships in the binary, exactly as the other teachings do.** It names the
+/// three reads and what `ready` checks; the procedure stays in the skill.
+pub(crate) const DEPENDS_ON_READ_TEACHING: &str = "This write sets `depends_on`. Three reads \
+    answer from it. `recall` with view: \"ready\" and `parent` set to the project lists \
+    the work not finished, whose dependencies are all finished and that waits on no one. It does \
+    not check `status`, so narrow it with `where`. The same view with \
+    `subject` set to one piece of work answers ready: false and `blocked_by`, a list of what \
+    stops it. `recall` with `subject` and follow: {\"relation\": \"depends_on\", \"direction\": \
+    \"in\"} lists the work that waits on it. A `waiting_on` handle also keeps work out of ready. \
+    start_here with skill: \"projects\" has the examples.";
+
 /// **Quoting the operator — taught once, on a session's first post into their
 /// box.** The one moment a bot is about to say what the operator said.
 pub(crate) const OPERATOR_QUOTE_DOMAIN: &str = "operator-quote";
@@ -359,6 +376,32 @@ impl Jojobot {
         }
         if self.first_contact(EMPTY_SHIPPED_TYPE_DOMAIN, caller).await {
             crate::answer::note_teaching(body, &empty_shipped_type_teaching(&declared.name));
+        }
+    }
+
+    /// **Name the reads a dependency makes useful, on the first write in a
+    /// session that sets `depends_on`.** Gated on the write setting the key on a
+    /// project's work, never on the verb: a write that sets other keys spends
+    /// nothing, and the four verbs that take `sets` share one ledger row.
+    pub(crate) async fn note_depends_on_read(
+        &self,
+        fact: &Fact,
+        caller: &Caller,
+        body: &mut serde_json::Value,
+    ) {
+        let key = jojobot_domain::memory::readiness::DEPENDS_ON;
+        let sets_dependencies = fact.sets.contains(key)
+            && fact
+                .fields
+                .get(key)
+                .is_some_and(|held| !held.trim().is_empty());
+        if is_project_work(fact.subject.kind())
+            && sets_dependencies
+            && self
+                .first_contact(DEPENDS_ON_READ_DOMAIN, Some(caller))
+                .await
+        {
+            crate::answer::note_teaching(body, DEPENDS_ON_READ_TEACHING);
         }
     }
 

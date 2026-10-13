@@ -500,6 +500,7 @@ impl Jojobot {
                 }
                 if let Some(fact) = &first_claim {
                     self.note_status_word(fact, &mut body).await;
+                    self.note_depends_on_read(fact, &caller, &mut body).await;
                 }
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
