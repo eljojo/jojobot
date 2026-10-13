@@ -22,6 +22,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::testing::free_port;
+use jojobot_domain::mailbox::{MailboxName, Mailboxes};
 use jojobot_domain::memory::owned::Provision;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
@@ -96,6 +97,46 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
 
     let gamma = created(indexed.as_ref(), "bot:gamma", "Gamma").await;
     let piano = created(indexed.as_ref(), "thing:piano", "Piano").await;
+
+    // ── changes: implemented by the counting layer under mention and index ──
+    //
+    // Search reads the count to skip a board read, so a layer between the
+    // index and the counting one that left the default would answer "no count"
+    // and send every refresh to the board. A write through the outermost port
+    // moves the count, and a read does not.
+    let boxes_before = wired
+        .mailboxes
+        .changes()
+        .expect("the assembled mail port keeps a count of its writes");
+    wired
+        .mailboxes
+        .create_mailbox(&MailboxName("gamma".into()), &gamma, None)
+        .await
+        .expect("the box opens");
+    let boxes_after = wired.mailboxes.changes().expect("a count");
+    assert!(
+        boxes_after > boxes_before,
+        "a write through the outermost mail port moves the count beneath it"
+    );
+    wired
+        .mailboxes
+        .list_mailboxes()
+        .await
+        .expect("the boxes list");
+    assert_eq!(
+        wired.mailboxes.changes(),
+        Some(boxes_after),
+        "a read moves nothing"
+    );
+    assert!(
+        wired
+            .sessions
+            .write_summary()
+            .await
+            .expect("the signal reads")
+            .is_some(),
+        "the assembled session port offers a change signal"
+    );
 
     // ── echoed_defaults: implemented by `Provisioned` alone ─────────────────
     //

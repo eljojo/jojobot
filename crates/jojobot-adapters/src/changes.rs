@@ -1,0 +1,299 @@
+//! **A count of the writes that pass through a port**, so the search index can
+//! tell that nothing changed without asking the store (decision log 292).
+//!
+//! Search keeps three halves current — memory, mail and sessions — and refreshes
+//! each on every answer. Memory answers the question from its image. Mail and
+//! sessions have no image of their own; what they have is that jojobot is the
+//! only writer, so every change to what the index holds goes through the port,
+//! and a port that counts its writes knows whether anything changed. The count
+//! moves AFTER the write has landed in the store, so a reader that sees a number
+//! reads at least the state it counts.
+//!
+//! ⚠️ **Only right with exactly one writer in the process**, for the reason the
+//! image is. A row changed past this process is seen after a restart.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use async_trait::async_trait;
+use jiff::Timestamp;
+use jiff::civil::Date;
+use jojobot_domain::mailbox::{
+    Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
+    MessageId, NewMessage, Quarantined, TakenBy,
+};
+use jojobot_domain::memory::EntityId;
+use jojobot_domain::session::{
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
+    SessionState, SessionSummary, Sessions, WrapWindow,
+};
+
+/// A [`Mailboxes`] that counts every call that can change what the index holds
+/// about mail: a box made or repointed, a message posted, delivered, read,
+/// retired or quarantined. A call counts whatever it answers, because a write
+/// that failed partway may have changed something, and one refresh too many
+/// costs a board read where one too few costs a wrong hit.
+pub struct MailChanges {
+    inner: Arc<dyn Mailboxes>,
+    changes: AtomicU64,
+}
+
+impl MailChanges {
+    pub fn new(inner: Arc<dyn Mailboxes>) -> Self {
+        MailChanges {
+            inner,
+            changes: AtomicU64::new(0),
+        }
+    }
+
+    fn changed(&self) {
+        self.changes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl Mailboxes for MailChanges {
+    fn changes(&self) -> Option<u64> {
+        Some(self.changes.load(Ordering::SeqCst))
+    }
+
+    async fn create_mailbox(
+        &self,
+        name: &MailboxName,
+        owner: &EntityId,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Mailbox>, MailboxError> {
+        let made = self.inner.create_mailbox(name, owner, override_token).await;
+        self.changed();
+        made
+    }
+
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<Mailbox>, MailboxError> {
+        let moved = self.inner.repoint_owner(from, to).await;
+        self.changed();
+        moved
+    }
+
+    async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
+        self.inner.list_mailboxes().await
+    }
+
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        self.inner.scan_messages().await
+    }
+
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        self.inner.message_by_id(id).await
+    }
+
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        self.inner.sent_by(senders).await
+    }
+
+    async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
+        let posted = self.inner.post_message(message).await;
+        self.changed();
+        posted
+    }
+
+    async fn read_mailbox(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Guarded<Delivery>, MailboxError> {
+        let delivered = self.inner.read_mailbox(name, taken_by).await;
+        self.changed();
+        delivered
+    }
+
+    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+        let read = self.inner.read_message(id).await;
+        self.changed();
+        read
+    }
+
+    async fn mark_processed(
+        &self,
+        id: &MessageId,
+        notes: Option<&str>,
+    ) -> Result<Message, MailboxError> {
+        let retired = self.inner.mark_processed(id, notes).await;
+        self.changed();
+        retired
+    }
+
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: Timestamp,
+    ) -> Result<Quarantined, MailboxError> {
+        let held = self.inner.quarantine(id, by, reason, at).await;
+        self.changed();
+        held
+    }
+}
+
+/// A [`Sessions`] that answers `write_summary` with a count of its own writes.
+///
+/// **The store counts a row appended to `session_write`, and writes one for a
+/// run begun, an entry appended or amended, and a focus set — and for nothing
+/// else.** A run's state, zone, stated day, wrap window, served count, key hash
+/// and charter marks are never indexed, so changing one leaves the index
+/// current. This counts exactly those five calls: counting more would send the
+/// index back to read every run after each answer, which is what the signal
+/// exists to avoid.
+pub struct SessionChanges {
+    inner: Arc<dyn Sessions>,
+    changes: AtomicU64,
+}
+
+impl SessionChanges {
+    pub fn new(inner: Arc<dyn Sessions>) -> Self {
+        SessionChanges {
+            inner,
+            changes: AtomicU64::new(0),
+        }
+    }
+
+    fn changed(&self) {
+        self.changes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl Sessions for SessionChanges {
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.inner.sessions_of(bot).await
+    }
+
+    async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
+        self.inner.summaries_of(bot).await
+    }
+
+    async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
+        self.inner.all_summaries().await
+    }
+
+    async fn summary_of(&self, id: &SessionId) -> Result<Option<SessionSummary>, SessionError> {
+        self.inner.summary_of(id).await
+    }
+
+    async fn run_counts(
+        &self,
+    ) -> Result<std::collections::BTreeMap<EntityId, usize>, SessionError> {
+        self.inner.run_counts().await
+    }
+
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.inner.all_sessions().await
+    }
+
+    async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
+        Ok(Some((self.changes.load(Ordering::SeqCst) as i64, None)))
+    }
+
+    async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.inner.read_session(id).await
+    }
+
+    async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        let begun = self.inner.begin(new).await;
+        self.changed();
+        begun
+    }
+
+    async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        let appended = self.inner.append(id, entry).await;
+        self.changed();
+        appended
+    }
+
+    async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        let amended = self.inner.amend_last(id, text).await;
+        self.changed();
+        amended
+    }
+
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        at: Timestamp,
+    ) -> Result<JournalEntry, SessionError> {
+        let amended = self.inner.amend_beat(id, entry, text, at).await;
+        self.changed();
+        amended
+    }
+
+    async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        let set = self.inner.set_focus(id, focus).await;
+        self.changed();
+        set
+    }
+
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_timezone(id, timezone).await
+    }
+
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<Date>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_stated_day(id, day).await
+    }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_wrap_window(id, window).await
+    }
+
+    async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+        self.inner.close(id, to).await
+    }
+
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars).await
+    }
+
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.inner.reopen(id).await
+    }
+
+    async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
+        self.inner.set_charter_told(id, at).await
+    }
+
+    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.inner.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.inner.charter_change_of(bot).await
+    }
+}

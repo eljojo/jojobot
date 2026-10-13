@@ -7589,6 +7589,69 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
     );
 }
 
+/// **A refresh with no write since the last one reads nothing from the board.**
+/// Every change to mail goes through the port, and a port that counts its writes
+/// says whether anything changed. Paired with the positive it depends on: a
+/// message that lands past the index, through the counted port, makes the next
+/// refresh read the board and findable.
+#[tokio::test]
+async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_makes_it_read() {
+    jojobot_domain::memory::kinds::load_shipped();
+    let metered = Metered::new(InMemoryMailboxes::new());
+    let counted = Arc::new(crate::changes::MailChanges::new(metered.clone()));
+    mail_contract::create(counted.as_ref(), "pm").await;
+    mail_contract::post(counted.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
+
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = IndexedMailboxes::new(counted.clone(), index.clone());
+    mail.rebuild().await.expect("rebuild");
+
+    let before = metered.listings();
+    for _ in 0..3 {
+        mail.refresh().await;
+    }
+    assert_eq!(
+        metered.listings() - before,
+        0,
+        "three refreshes with no write between them listed the boxes"
+    );
+
+    // A message arrives past the index: written to the counted port directly.
+    mail_contract::post(counted.as_ref(), "pm", "dev", "the glaze is mixed", 1).await;
+    let before = metered.listings();
+    mail.refresh().await;
+    assert!(
+        metered.listings() - before >= 1,
+        "a write through the port did not send the refresh to the board"
+    );
+    assert_eq!(
+        index
+            .search(&asking_for_mail("glaze"))
+            .expect("search ok")
+            .len(),
+        1,
+        "the message that arrived past the index is findable after the refresh"
+    );
+
+    let before = metered.listings();
+    mail.refresh().await;
+    assert_eq!(
+        metered.listings() - before,
+        0,
+        "the refresh after that one, with no write between, read the board again"
+    );
+
+    // A rename rewrites the text a mention is served as without a write to
+    // mail, so it sends the refresh to the board as well.
+    index.names_changed();
+    let before = metered.listings();
+    mail.refresh().await;
+    assert!(
+        metered.listings() - before >= 1,
+        "a rename did not send the refresh to the board"
+    );
+}
+
 /// **A reindex that cannot list the boxes says so and leaves the mail half
 /// stale.** The message is written and the verb succeeds, but the index could
 /// not learn whether its box is a person's, so it holds an older board than the

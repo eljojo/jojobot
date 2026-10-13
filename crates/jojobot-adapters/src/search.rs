@@ -683,6 +683,13 @@ impl FullTextIndex {
     /// is on record would leave it stuck — every later answer reporting the
     /// memory half stale even after the store is reachable again and nothing
     /// has changed on it.
+    pub(crate) fn mail_refresh_pending(&self) -> bool {
+        self.mail_refresh_failed_at
+            .load(std::sync::atomic::Ordering::Acquire)
+            != 0
+    }
+
+    /// The same, for the whole-corpus refresh of the memory half.
     pub(crate) fn memory_refresh_pending(&self) -> bool {
         self.memory_refresh_failed_at
             .load(std::sync::atomic::Ordering::Acquire)

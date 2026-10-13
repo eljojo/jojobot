@@ -756,13 +756,29 @@ impl Refresh for IndexedMemory {
 pub struct IndexedMailboxes {
     inner: Arc<dyn Mailboxes>,
     index: Arc<FullTextIndex>,
+    /// **The port's change count when the index last took in the whole board**,
+    /// or `NOT_SEEN`. A refresh that finds the same count and no failure on
+    /// record has nothing to read: every change to mail goes through the port.
+    board_seen_at: std::sync::atomic::AtomicU64,
+    /// **The naming epoch at that read.** A mention in a message is served as the
+    /// handle a thing wears now, so a rename changes the text the index should
+    /// hold without a single write to mail.
+    board_seen_epoch: std::sync::atomic::AtomicU64,
 }
+
+/// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
+const NOT_SEEN: u64 = u64::MAX;
 
 impl IndexedMailboxes {
     /// Wrap a store, writing into the index the Memory half already uses. **One
     /// index, not two** — that is what makes one ranked list possible at all.
     pub fn new(inner: Arc<dyn Mailboxes>, index: Arc<FullTextIndex>) -> Self {
-        IndexedMailboxes { inner, index }
+        IndexedMailboxes {
+            inner,
+            index,
+            board_seen_at: std::sync::atomic::AtomicU64::new(NOT_SEEN),
+            board_seen_epoch: std::sync::atomic::AtomicU64::new(NOT_SEEN),
+        }
     }
 
     /// Load the mail half from a full board read — the boot path. Returns how
@@ -771,10 +787,18 @@ impl IndexedMailboxes {
         // Before the read, never after — the point has to predate the board
         // read it will be handed back with.
         let began = self.index.reading_begins();
+        let changes = self.inner.changes();
+        let epoch = self.index.names_epoch();
         let messages = self.indexable_board().await?;
         self.index
             .ingest_mail_changes(&messages, began)
             .map_err(indexing)?;
+        self.board_seen_epoch
+            .store(epoch, std::sync::atomic::Ordering::SeqCst);
+        self.board_seen_at.store(
+            changes.unwrap_or(NOT_SEEN),
+            std::sync::atomic::Ordering::SeqCst,
+        );
         Ok(messages.len())
     }
 
@@ -1004,11 +1028,32 @@ impl Refresh for IndexedMailboxes {
     /// touched vanished from search after an unrelated commit), green with
     /// it.
     async fn refresh(&self) {
+        // **Read before the board, never after**: a write that lands while the
+        // board is read leaves the next refresh to read again.
+        let changes = self.inner.changes();
+        let epoch = self.index.names_epoch();
+        if let Some(changes) = changes
+            && !self.index.mail_refresh_pending()
+            && self.board_seen_at.load(std::sync::atomic::Ordering::SeqCst) == changes
+            && self
+                .board_seen_epoch
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == epoch
+        {
+            return;
+        }
         let began = self.index.reading_begins();
         match self.indexable_board().await {
             Ok(messages) => {
                 if self.index.ingest_mail_changes(&messages, began).is_err() {
                     self.index.mail_refresh_failed();
+                } else {
+                    self.board_seen_epoch
+                        .store(epoch, std::sync::atomic::Ordering::SeqCst);
+                    self.board_seen_at.store(
+                        changes.unwrap_or(NOT_SEEN),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
                 }
             }
             Err(_) => self.index.mail_refresh_failed(),
@@ -1024,6 +1069,11 @@ fn indexing(e: MemoryError) -> MailboxError {
 
 #[async_trait]
 impl Mailboxes for IndexedMailboxes {
+    /// **Forwarded**: the count of the port beneath is the one that matters.
+    fn changes(&self) -> Option<u64> {
+        self.inner.changes()
+    }
+
     async fn create_mailbox(
         &self,
         name: &jojobot_domain::mailbox::MailboxName,

@@ -157,6 +157,11 @@ impl Mentioning {
 
 #[async_trait::async_trait]
 impl Mailboxes for Mentioning {
+    /// **Forwarded**: the count of the port beneath is the one that matters.
+    fn changes(&self) -> Option<u64> {
+        self.inner.changes()
+    }
+
     async fn create_mailbox(
         &self,
         name: &MailboxName,

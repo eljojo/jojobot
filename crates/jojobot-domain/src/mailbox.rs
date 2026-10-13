@@ -961,6 +961,16 @@ impl std::fmt::Display for SupersedeRefusal {
 ///   posted where nobody is listening.
 #[async_trait::async_trait]
 pub trait Mailboxes: Send + Sync {
+    /// **How many times this port has been written through, when it counts.**
+    /// A reader that keeps something current from the board asks it instead of
+    /// reading the board: the same number twice means nothing changed in
+    /// between. `None` — the default — says this port keeps no count, so a
+    /// reader must read the board to know. ⚠️ **A wrapper must forward it**:
+    /// one that leaves the default hides the count of the port beneath.
+    fn changes(&self) -> Option<u64> {
+        None
+    }
+
     /// Create a mailbox. Screened against the existing names, so one that looks
     /// like a box already there comes back [`Guarded::Blocked`] with candidates.
     /// `override_token` is the token THIS refusal minted, handed back: it

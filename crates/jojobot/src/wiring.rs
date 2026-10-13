@@ -184,6 +184,15 @@ pub fn assemble_ports(
 ) -> Wired {
     // **Mentions resolve above the raw store and below the index here too**
     // — the same placement as memory's own `Mentioning`.
+    //
+    // **Both stores are counted underneath that**, so search can tell that
+    // nothing changed without asking the store: every write to mail and to a
+    // run goes through these ports.
+    let bare_mail: Arc<dyn Mailboxes> =
+        Arc::new(jojobot_adapters::changes::MailChanges::new(bare_mail));
+    let bare_sessions: Arc<dyn Sessions> = Arc::new(
+        jojobot_adapters::changes::SessionChanges::new(bare_sessions),
+    );
     let mail_mentioned: Arc<dyn Mailboxes> =
         Arc::new(mailbox_mention::Mentioning::new(bare_mail, indexed.clone()));
     let sessions_mentioned: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
