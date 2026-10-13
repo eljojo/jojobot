@@ -30,7 +30,7 @@ use jojobot_domain::memory::EntityId;
 
 /// The session reads the image serves. Each is added in the commit that
 /// switches it.
-const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of", "summaries_of", "all_summaries", "summary_of"];
+const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of", "summaries_of", "all_summaries", "summary_of", "run_counts"];
 
 /// The mail reads the image serves.
 const SWITCHED_MAIL: &[&str] = &[];

@@ -238,7 +238,16 @@ impl Sessions for FoldedSessions {
     }
 
     async fn run_counts(&self) -> Result<BTreeMap<EntityId, usize>, SessionError> {
-        self.inner.run_counts().await
+        match self.held(|image| {
+            let mut counts = BTreeMap::new();
+            for run in &image.runs {
+                *counts.entry(run.bot.clone()).or_insert(0) += 1;
+            }
+            counts
+        }) {
+            Some(counts) => Ok(counts),
+            None => self.inner.run_counts().await,
+        }
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
