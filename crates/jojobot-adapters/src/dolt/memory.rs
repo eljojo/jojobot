@@ -1372,36 +1372,42 @@ impl DoltMemory {
         Ok(found.is_some())
     }
 
-    /// **The keys folded into a survivor, read from the merge events**: every
-    /// thing a merge folded into it, and everything folded into those earlier,
-    /// each with the id its stored claims are served under on the survivor.
-    /// A claim a merge moved is stored under the survivor already and is in no
-    /// list here; one it left under the folded key is in `served`. A merge made
-    /// before events were kept has no event and adds nothing.
-    async fn keys_folded_into(
+    /// **The merges that folded things into a survivor, read from the merge
+    /// events, in the order they were made**: every thing folded into it, and
+    /// everything folded into those earlier. Each step names the two keys and,
+    /// for each claim the merge gave a new id, the id it had and the id it was
+    /// given. A merge made before events were kept has no event and no step.
+    async fn merges_into(
         tx: &mut Transaction<'_, MySql>,
         survivor: &EntityId,
-    ) -> Result<Vec<FoldedKey>, MemoryError> {
-        let mut keys: Vec<String> = Vec::new();
-        let mut frontier = vec![survivor.as_str().to_string()];
+    ) -> Result<Vec<MergeStep>, MemoryError> {
+        let mut into: Vec<String> = vec![survivor.as_str().to_string()];
+        let mut steps: Vec<(i64, String, String)> = Vec::new();
         // A merge cannot fold a thing into itself, so the chain ends; the bound
         // is for a store that has been edited by hand.
+        let mut frontier = into.clone();
         for _ in 0..64 {
             let mut next = Vec::new();
-            for into in &frontier {
-                let folded: Vec<String> = sqlx::query_scalar(
-                    "SELECT folded FROM merge_event WHERE ordinal = 0 AND survivor = ?
-                     ORDER BY merge_no",
+            for key in &frontier {
+                let rows = sqlx::query(
+                    "SELECT merge_no, folded FROM merge_event WHERE ordinal = 0 AND survivor = ?",
                 )
-                .bind(into)
+                .bind(key)
                 .fetch_all(&mut **tx)
                 .await
                 .map_err(store)?;
-                for key in folded {
-                    if key != survivor.as_str() && !keys.contains(&key) {
-                        keys.push(key.clone());
-                        next.push(key);
+                for row in &rows {
+                    let folded: String = row.try_get("folded").map_err(store)?;
+                    if into.contains(&folded) {
+                        continue;
                     }
+                    steps.push((
+                        row.try_get("merge_no").map_err(store)?,
+                        folded.clone(),
+                        key.clone(),
+                    ));
+                    into.push(folded.clone());
+                    next.push(folded);
                 }
             }
             if next.is_empty() {
@@ -1409,46 +1415,87 @@ impl DoltMemory {
             }
             frontier = next;
         }
-        let mut hops: std::collections::HashMap<(String, String), (String, String)> =
-            std::collections::HashMap::new();
-        for key in &keys {
+        steps.sort();
+        let mut out = Vec::with_capacity(steps.len());
+        for (merge_no, folded, survivor) in steps {
             let rows = sqlx::query(
-                "SELECT folded_id, survivor, survivor_id FROM merge_event
-                 WHERE ordinal > 0 AND folded = ? ORDER BY merge_no",
+                "SELECT folded_id, survivor_id FROM merge_event
+                 WHERE merge_no = ? AND ordinal > 0",
             )
-            .bind(key)
+            .bind(merge_no)
             .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
+            let mut claims = std::collections::HashMap::with_capacity(rows.len());
             for row in &rows {
-                hops.insert(
-                    (
-                        key.clone(),
-                        row.try_get::<String, _>("folded_id").map_err(store)?,
-                    ),
-                    (
-                        row.try_get::<String, _>("survivor").map_err(store)?,
-                        row.try_get::<String, _>("survivor_id").map_err(store)?,
-                    ),
+                claims.insert(
+                    row.try_get::<String, _>("folded_id").map_err(store)?,
+                    row.try_get::<String, _>("survivor_id").map_err(store)?,
                 );
             }
+            out.push(MergeStep {
+                folded,
+                survivor,
+                claims,
+            });
         }
-        let mut out = Vec::with_capacity(keys.len());
-        for key in &keys {
+        Ok(out)
+    }
+
+    /// **The storage keys whose rows make up one thing**: its own and those of
+    /// everything folded into it. A key that was folded away holds none.
+    async fn keys_holding(
+        tx: &mut Transaction<'_, MySql>,
+        key: &EntityId,
+    ) -> Result<Vec<String>, MemoryError> {
+        if Self::is_folded_key(tx, key).await? {
+            return Ok(Vec::new());
+        }
+        Ok(std::iter::once(key.as_str().to_string())
+            .chain(
+                Self::merges_into(tx, key)
+                    .await?
+                    .into_iter()
+                    .map(|step| step.folded),
+            )
+            .collect())
+    }
+
+    /// **The keys folded into a survivor, and the id each of their stored claims
+    /// is served under on it.** A claim a merge moved is stored under the
+    /// survivor already and is in no list here; one it left under the folded key
+    /// is in `served`.
+    async fn keys_folded_into(
+        tx: &mut Transaction<'_, MySql>,
+        survivor: &EntityId,
+    ) -> Result<Vec<FoldedKey>, MemoryError> {
+        let steps = Self::merges_into(tx, survivor).await?;
+        let mut out: Vec<FoldedKey> = Vec::with_capacity(steps.len());
+        for step in &steps {
             let mut served = std::collections::HashMap::new();
-            for ((folded, id), _) in hops.iter().filter(|((folded, _), _)| folded == key) {
-                let mut at = (folded.clone(), id.clone());
+            for id in step.claims.keys() {
+                let mut at = (step.folded.as_str(), id.as_str());
+                let mut now = None;
                 for _ in 0..64 {
-                    let Some(next) = hops.get(&at) else { break };
-                    at = next.clone();
-                    if at.0 == survivor.as_str() {
-                        served.insert(id.clone(), at.1.clone());
+                    let Some(next) = steps
+                        .iter()
+                        .find(|s| s.folded == at.0)
+                        .and_then(|s| s.claims.get(at.1).map(|id| (s.survivor.as_str(), id)))
+                    else {
+                        break;
+                    };
+                    if next.0 == survivor.as_str() {
+                        now = Some(next.1.clone());
                         break;
                     }
+                    at = (next.0, next.1.as_str());
+                }
+                if let Some(now) = now {
+                    served.insert(id.clone(), now);
                 }
             }
             out.push(FoldedKey {
-                key: EntityId(key.clone()),
+                key: EntityId(step.folded.clone()),
                 served,
             });
         }
@@ -2664,7 +2711,79 @@ impl DoltMemory {
     /// write about to change a record's standing has to be weighed against. The
     /// status is joined in rather than assumed: a write inside a record
     /// somebody took back still happened and no longer counts.
+    ///
+    /// **A merge that left the folded thing's writes where they were made reads
+    /// as one that moved them**: they are placed among the survivor's as the
+    /// merge would have placed them. A key that was folded away holds none.
     async fn writes_on(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+    ) -> Result<Vec<KeyWrite>, MemoryError> {
+        if Self::is_folded_key(tx, entity).await? {
+            return Ok(Vec::new());
+        }
+        let steps = Self::merges_into(tx, entity).await?;
+        let mut held = std::collections::HashMap::new();
+        held.insert(
+            entity.as_str().to_string(),
+            Self::writes_stored_at(tx, entity).await?,
+        );
+        for step in &steps {
+            held.insert(
+                step.folded.clone(),
+                Self::writes_stored_at(tx, &EntityId(step.folded.clone())).await?,
+            );
+        }
+        Ok(apply_merges(held, &steps, entity))
+    }
+
+    /// **Every field write on this thing as the table keeps it**, any class, in
+    /// the order a merge that moved the folded thing's writes would have put
+    /// them. The substrate under [`Self::history`] and [`Self::key_trails`].
+    async fn raw_writes_on(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+    ) -> Result<Vec<RawWrite>, MemoryError> {
+        if Self::is_folded_key(tx, entity).await? {
+            return Ok(Vec::new());
+        }
+        let steps = Self::merges_into(tx, entity).await?;
+        let mut held = std::collections::HashMap::new();
+        for key in std::iter::once(entity.as_str().to_string())
+            .chain(steps.iter().map(|step| step.folded.clone()))
+        {
+            let rows = sqlx::query(
+                "SELECT `key`, ordinal, value, fact_id, write_class, written_at FROM field_write
+                 WHERE entity = ? ORDER BY ordinal",
+            )
+            .bind(&key)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            let mut writes = Vec::with_capacity(rows.len());
+            for row in &rows {
+                writes.push(RawWrite {
+                    key: row.try_get("key").map_err(store)?,
+                    ordinal: row.try_get("ordinal").map_err(store)?,
+                    value: row.try_get("value").map_err(store)?,
+                    fact: row.try_get("fact_id").map_err(store)?,
+                    class: jojobot_domain::memory::WriteClass::from_token(
+                        &row.try_get::<String, _>("write_class").map_err(store)?,
+                    ),
+                    written_at: parse_stamp(
+                        row.try_get::<Option<String>, _>("written_at")
+                            .map_err(store)?,
+                        &key,
+                    ),
+                });
+            }
+            held.insert(key, writes);
+        }
+        Ok(apply_merges(held, &steps, entity))
+    }
+
+    /// The writes stored under one key, as they are stored.
+    async fn writes_stored_at(
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
@@ -3678,6 +3797,164 @@ struct FoldedKey {
     served: std::collections::HashMap<String, String>,
 }
 
+/// **One merge, as the merge events keep it.**
+struct MergeStep {
+    folded: String,
+    survivor: String,
+    /// For each claim the merge gave a new id: the id it had, to the id it was given.
+    claims: std::collections::HashMap<String, String>,
+}
+
+/// **A field write a read can place among another thing's writes.**
+trait ServedWrite: Clone {
+    fn key(&self) -> &str;
+    fn ordinal(&self) -> i64;
+    fn written_at(&self) -> Option<jiff::Timestamp>;
+    fn fact(&self) -> &str;
+    /// Give the write its place in the key's order and, when it came from a
+    /// folded thing, the id its claim wears on the survivor.
+    fn place(&mut self, ordinal: i64, fact: Option<&str>);
+}
+
+impl ServedWrite for KeyWrite {
+    fn key(&self) -> &str {
+        &self.key
+    }
+    fn ordinal(&self) -> i64 {
+        self.ordinal as i64
+    }
+    fn written_at(&self) -> Option<jiff::Timestamp> {
+        self.written_at
+    }
+    fn fact(&self) -> &str {
+        self.fact.as_str()
+    }
+    fn place(&mut self, ordinal: i64, fact: Option<&str>) {
+        self.ordinal = ordinal as u64;
+        if let Some(fact) = fact {
+            self.fact = FactId(fact.to_string());
+        }
+    }
+}
+
+/// **A field write as the table keeps it**, for the reads that want every
+/// class of write and not only the ones that reach the thing.
+#[derive(Clone)]
+struct RawWrite {
+    key: String,
+    ordinal: i64,
+    value: Option<String>,
+    fact: String,
+    class: jojobot_domain::memory::WriteClass,
+    written_at: Option<jiff::Timestamp>,
+}
+
+impl ServedWrite for RawWrite {
+    fn key(&self) -> &str {
+        &self.key
+    }
+    fn ordinal(&self) -> i64 {
+        self.ordinal
+    }
+    fn written_at(&self) -> Option<jiff::Timestamp> {
+        self.written_at
+    }
+    fn fact(&self) -> &str {
+        &self.fact
+    }
+    fn place(&mut self, ordinal: i64, fact: Option<&str>) {
+        self.ordinal = ordinal;
+        if let Some(fact) = fact {
+            self.fact = fact.to_string();
+        }
+    }
+}
+
+/// **The writes of a survivor after each merge into it, in the order the
+/// merges were made.** `held` has the stored writes of the survivor and of
+/// every key folded into it, directly or through another.
+fn apply_merges<T: ServedWrite>(
+    mut held: std::collections::HashMap<String, Vec<T>>,
+    steps: &[MergeStep],
+    survivor: &EntityId,
+) -> Vec<T> {
+    for step in steps {
+        let theirs = held.remove(&step.folded).unwrap_or_default();
+        let ours = held.remove(&step.survivor).unwrap_or_default();
+        held.insert(step.survivor.clone(), merge_in(ours, theirs, &step.claims));
+    }
+    held.remove(survivor.as_str()).unwrap_or_default()
+}
+
+/// **A merge's writes read as the merge puts them**: the folded thing's writes
+/// of each key interleaved with the survivor's by the moment each was made
+/// ([`interleave`], the one rule the merge moves rows by), numbered from one,
+/// each carrying the id its claim wears on the survivor. A write of a claim the
+/// merge did not map is left out, as the claim is.
+fn merge_in<T: ServedWrite>(
+    ours: Vec<T>,
+    theirs: Vec<T>,
+    claims: &std::collections::HashMap<String, String>,
+) -> Vec<T> {
+    let mut by_key: std::collections::BTreeMap<String, (Vec<T>, Vec<T>)> =
+        std::collections::BTreeMap::new();
+    for write in theirs {
+        if claims.contains_key(write.fact()) {
+            by_key
+                .entry(write.key().to_string())
+                .or_default()
+                .0
+                .push(write);
+        }
+    }
+    for write in ours {
+        by_key
+            .entry(write.key().to_string())
+            .or_default()
+            .1
+            .push(write);
+    }
+    let mut merged = Vec::new();
+    for (key, (mut theirs, mut ours)) in by_key {
+        theirs.sort_by_key(ServedWrite::ordinal);
+        ours.sort_by_key(ServedWrite::ordinal);
+        if theirs.is_empty() {
+            merged.extend(ours);
+            continue;
+        }
+        let stamped = |writes: &[T]| -> Vec<StampedWrite> {
+            writes
+                .iter()
+                .enumerate()
+                .map(|(place, write)| StampedWrite {
+                    key: key.clone(),
+                    ordinal: place as i64,
+                    fact_id: String::new(),
+                    written_at: write.written_at(),
+                })
+                .collect()
+        };
+        let (their_stamps, our_stamps) = (stamped(&theirs), stamped(&ours));
+        for (place, (side, at)) in interleave(&their_stamps, &our_stamps)
+            .into_iter()
+            .enumerate()
+        {
+            let mut write = match side {
+                Side::Folded => theirs[at.ordinal as usize].clone(),
+                Side::Survivor => ours[at.ordinal as usize].clone(),
+            };
+            let fact = match side {
+                Side::Folded => claims.get(write.fact()).map(String::as_str),
+                Side::Survivor => None,
+            };
+            let fact = fact.map(str::to_string);
+            write.place(place as i64 + 1, fact.as_deref());
+            merged.push(write);
+        }
+    }
+    merged
+}
+
 /// One field write as a merge orders it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StampedWrite {
@@ -4543,11 +4820,17 @@ impl Memory for DoltMemory {
         };
         let mut held = Self::held_by(&mut tx, &key).await?;
         self.compose_reference_fields(&mut tx, &mut held).await?;
-        let written: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
-            .bind(key.as_str())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(store)?;
+        // **Every claim write of the thing, whether a merge moved the folded
+        // thing's or left them under the key they were made under.**
+        let mut written: i64 = 0;
+        for stored_at in Self::keys_holding(&mut tx, &key).await? {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
+                .bind(stored_at)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(store)?;
+            written += count;
+        }
         // **A renewal of a lease adds no claim write**, only a signal row filed
         // under the entity's handle (see [`Self::overwrite_lease_moment`]), so
         // the claim writes alone would leave the version where it was while the
@@ -4593,11 +4876,16 @@ impl Memory for DoltMemory {
         // **`entity_write` is kept under the handle the row was written under**,
         // where the other two tables key on the badge, so each is asked by the
         // name it holds.
-        for (table, name) in [
-            ("field_write", key.as_str()),
-            ("fact_write", key.as_str()),
-            ("entity_write", handle.as_str()),
-        ] {
+        // **A merge that left the folded thing's writes under its key still
+        // counts them as this thing's**, as one that moved them does.
+        let stored_at = Self::keys_holding(&mut tx, &key).await?;
+        let mut asked: Vec<(&str, &str)> = Vec::new();
+        for name in &stored_at {
+            asked.push(("field_write", name));
+            asked.push(("fact_write", name));
+        }
+        asked.push(("entity_write", handle.as_str()));
+        for (table, name) in asked {
             let stamps: Vec<Option<String>> =
                 sqlx::query_scalar(&format!("SELECT written_at FROM {table} WHERE entity = ?"))
                     .bind(name)
@@ -4998,14 +5286,8 @@ impl Memory for DoltMemory {
                 nearest: guard::screen(entity, &[], &index),
             });
         };
-        let rows = sqlx::query(
-            "SELECT `key`, value, fact_id, write_class FROM field_write
-             WHERE entity = ? ORDER BY ordinal",
-        )
-        .bind(storage_key.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+        let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
+        rows.sort_by_key(|write| write.ordinal);
         let facts = self.facts_of(&mut tx, &storage_key).await?;
         tx.commit().await.map_err(store)?;
 
@@ -5017,12 +5299,10 @@ impl Memory for DoltMemory {
             jojobot_domain::memory::WriteClass,
         > = std::collections::BTreeMap::new();
         for row in &rows {
-            let key: String = row.try_get("key").map_err(store)?;
-            let value = row.try_get::<Option<String>, _>("value").map_err(store)?;
-            let carried = FactId(row.try_get::<String, _>("fact_id").map_err(store)?);
-            let class = jojobot_domain::memory::WriteClass::from_token(
-                &row.try_get::<String, _>("write_class").map_err(store)?,
-            );
+            let key = row.key.clone();
+            let value = row.value.clone();
+            let carried = FactId(row.fact.clone());
+            let class = row.class;
             match &value {
                 Some(_) => {
                     held.insert((carried.clone(), key.clone()), class);
@@ -5071,15 +5351,9 @@ impl Memory for DoltMemory {
                 nearest: guard::screen(entity, &[], &index),
             });
         };
-        let rows = sqlx::query(
-            "SELECT value, fact_id, write_class FROM field_write
-             WHERE entity = ? AND `key` = ? ORDER BY ordinal",
-        )
-        .bind(storage_key.as_str())
-        .bind(key)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+        let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
+        rows.retain(|write| write.key == key);
+        rows.sort_by_key(|write| write.ordinal);
         // The record a write arrived in says when it happened and what became
         // of it, so the claims are read alongside.
         let facts = self.facts_of(&mut tx, &storage_key).await?;
@@ -5089,18 +5363,15 @@ impl Memory for DoltMemory {
         for row in &rows {
             // The history of a key ON A THING is the writes that reach it, read
             // through the same function the fold reads through.
-            let class = jojobot_domain::memory::WriteClass::from_token(
-                &row.try_get::<String, _>("write_class").map_err(store)?,
-            );
-            if !jojobot_domain::memory::reaches_the_thing(class) {
+            if !jojobot_domain::memory::reaches_the_thing(row.class) {
                 continue;
             }
-            let carried = FactId(row.try_get::<String, _>("fact_id").map_err(store)?);
+            let carried = FactId(row.fact.clone());
             let Some(fact) = facts.iter().find(|f| f.id == carried) else {
                 continue;
             };
             history.push(FieldWrite {
-                value: row.try_get::<Option<String>, _>("value").map_err(store)?,
+                value: row.value.clone(),
                 fact: fact.address(),
                 recorded_at: fact.recorded_at,
                 status: fact.status,
