@@ -102,9 +102,19 @@ fn damaged(unreachable: &[&Entity], by_id: &HashMap<&EntityId, &Entity>) -> Stri
 /// second answer to where a thing lives, and the two would disagree the first
 /// time a record was damaged.
 fn row(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>) -> String {
+    row_with(entity, by_id, &[])
+}
+
+/// A row with a cell after the two every listing carries for each of `cells`,
+/// already escaped. A view's `shows_keys` are those cells.
+fn row_with(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>, cells: &[String]) -> String {
     let handle = escape(entity.id.as_str());
+    let extra: String = cells
+        .iter()
+        .map(|cell| format!("<td>{cell}</td>"))
+        .collect();
     format!(
-        "<tr><td><a href=\"{}\">{handle}/</a></td><td>{}</td></tr>\n",
+        "<tr><td><a href=\"{}\">{handle}/</a></td><td>{}</td>{extra}</tr>\n",
         escape(&tree::canonical_path(entity, by_id)),
         escape(&entity.name)
     )
@@ -735,6 +745,11 @@ async fn view_section(
         // would be a second account of one refusal.
         Err(why) => return cannot_run(&escape(&why.to_string())),
     };
+    // **Readiness is a question about work, and only work answers it** — the
+    // refusal the verb gives a view that asks it of another kind.
+    if asked.ready && kind != EntityKind::WORK {
+        return cannot_run("it asks what is ready, which only work answers.");
+    }
     // **The server's own day, in the instance's zone.** A browser states no
     // timezone, so the page takes the frame every unzoned read takes: the zone
     // the instance's record holds, and UTC only when it holds none.
@@ -775,9 +790,10 @@ async fn view_section(
             );
         }
     };
-    // **The one narrowing a selection cannot express.** A page that ran the
-    // selection alone would answer with more than the view asked for, which is
-    // the page telling a reader something the view does not say.
+    // **The narrowings a selection cannot express, run by the functions the verb
+    // runs** (rule 444). A page that ran the selection alone would answer with
+    // more than the view asked for, which is the page telling a reader something
+    // the view does not say.
     if asked.overdue {
         let carriers = attention::shipped();
         let carriers: Vec<&dyn attention::Carrier> =
@@ -786,26 +802,17 @@ async fn view_section(
         // finishes a thing exactly as it does in the verbs.
         let instance =
             jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await;
-        found.retain(|object| {
-            attention::owed_as(
-                object.entity.kind.as_token(),
-                &carriers,
-                &object.fields,
-                &instance,
-            )
-            .owed_on(today)
-        });
-        // Oldest due first — see the identical line in recall.rs's own owed
-        // read, the other caller of this same domain function.
-        found.sort_by_key(|object| {
-            attention::owed_as(
-                object.entity.kind.as_token(),
-                &carriers,
-                &object.fields,
-                &instance,
-            )
-            .staleness()
-        });
+        jojobot_mcp::memory::view_run::keep_owed(&mut found, &carriers, &instance, today);
+    }
+    if asked.ready
+        && let Err(err) =
+            jojobot_mcp::memory::view_run::keep_ready(&*state.memory, &mut found, None).await
+    {
+        return blind(
+            "What this view answers",
+            "the work it depends on",
+            &err.to_string(),
+        );
     }
     if found.is_empty() {
         return "<h2>What this view answers</h2>\n\
@@ -813,12 +820,23 @@ async fn view_section(
                 nothing here answers it.</p>\n"
             .to_string();
     }
+    // **The keys the view says it shows**, a column each, as `recall` narrows an
+    // object's fields to them. A key an object does not hold is an empty cell.
+    let shown: &[String] = asked.keys.as_deref().unwrap_or(&[]);
     let mut out = String::from(
         "<h2>What this view answers</h2>\n<table id=\"answer\">\n\
-         <tr><th>Name</th><th>Called</th></tr>\n",
+         <tr><th>Name</th><th>Called</th>",
     );
+    for key in shown {
+        out.push_str(&format!("<th>{}</th>", escape(key)));
+    }
+    out.push_str("</tr>\n");
     for object in &found {
-        out.push_str(&row(&object.entity, by_id));
+        let cells: Vec<String> = shown
+            .iter()
+            .map(|key| escape(object.fields.get(key).map_or("", String::as_str)))
+            .collect();
+        out.push_str(&row_with(&object.entity, by_id, &cells));
     }
     out.push_str("</table>\n");
     out

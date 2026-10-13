@@ -661,21 +661,6 @@ fn hit_candidate_ceiling(hit_count: usize, limit: usize) -> bool {
 }
 
 /// Which clock a neighbourhood read compares.
-/// **What an object owes, asked of its kind too**: a finished work item or
-/// project owes nothing — see [`attention::owed_as`].
-fn owed_by(
-    carriers: &[&dyn attention::Carrier],
-    object: &graph::Object,
-    instance: &std::collections::BTreeMap<String, String>,
-) -> attention::Due {
-    attention::owed_as(
-        object.entity.kind.as_token(),
-        carriers,
-        &object.fields,
-        instance,
-    )
-}
-
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
         None | Some("") | Some("recorded_on") => Ok(graph::Clock::RecordedOn),
@@ -2622,35 +2607,11 @@ impl Jojobot {
             // **What the operator mapped their status words to**, read once: a
             // word mapped to `done` finishes a work item or project here too.
             let instance = self.instance_fields().await;
-            let before = found.len();
-            found.retain(|object| owed_by(&asked, object, &instance).owed_on(as_of));
-            overdue_excluded = Some(before - found.len());
-            // **Oldest due first — which has gone quiet longest, answered by
-            // the order rather than left for a caller to re-derive from dates
-            // it was never given.** Ordering an already-found, already-filtered
-            // set costs nothing extra to find.
-            found.sort_by_key(|object| owed_by(&asked, object, &instance).staleness());
-            // **Read off the same `Due` the order already came from**, so the
-            // number on the wire cannot disagree with the position it is in.
-            overdue_by_days = Some(
-                found
-                    .iter()
-                    .map(|object| owed_by(&asked, object, &instance).days_overdue(as_of))
-                    .collect(),
-            );
-            unreadable_because = Some(
-                found
-                    .iter()
-                    .map(|object| {
-                        matches!(
-                            owed_by(&asked, object, &instance),
-                            attention::Due::Unreadable
-                        )
-                        .then(|| attention::unreadable_because(&asked, &object.fields))
-                        .flatten()
-                    })
-                    .collect(),
-            );
+            // **The page of a view runs this same pass** (rule 444).
+            let pass = crate::memory::view_run::keep_owed(&mut found, &asked, &instance, as_of);
+            overdue_excluded = Some(pass.excluded);
+            overdue_by_days = Some(pass.by_days);
+            unreadable_because = Some(pass.unreadable_because);
         }
         // **What can be started, when the view asked.** Asked of the work the
         // selection found, against the things its `depends_on` names, and of
@@ -2661,35 +2622,16 @@ impl Jojobot {
         let mut readiness: Option<Vec<crate::memory::ready::Verdict>> = None;
         let mut ready_left_out: Option<usize> = None;
         if asks_ready {
-            let verdicts = {
-                let asked: Vec<crate::memory::ready::Asked<'_>> = found
-                    .iter()
-                    .map(|object| crate::memory::ready::Asked {
-                        kind: object.entity.kind.as_token(),
-                        fields: &object.fields,
-                        archived: object.entity.archived.is_some(),
-                    })
-                    .collect();
-                match crate::memory::ready::verdicts_of(&*self.memory, &asked).await {
-                    Ok(verdicts) => verdicts,
-                    Err(e) => return memory_declined("recall", e),
-                }
-            };
             let named = query.select.subject.clone();
-            let mut kept = Vec::with_capacity(found.len());
-            let mut kept_blockers = Vec::with_capacity(found.len());
-            let mut left_out = 0usize;
-            for (object, verdict) in found.drain(..).zip(verdicts) {
-                if verdict.ready || named.as_ref() == Some(&object.entity.id) {
-                    kept.push(object);
-                    kept_blockers.push(verdict);
-                } else {
-                    left_out += 1;
+            match crate::memory::view_run::keep_ready(&*self.memory, &mut found, named.as_ref())
+                .await
+            {
+                Ok(pass) => {
+                    readiness = Some(pass.verdicts);
+                    ready_left_out = Some(pass.left_out);
                 }
+                Err(e) => return memory_declined("recall", e),
             }
-            found = kept;
-            readiness = Some(kept_blockers);
-            ready_left_out = Some(left_out);
         }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that

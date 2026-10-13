@@ -3304,6 +3304,71 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .await
         .expect("the expression is written");
 
+    // **Work in three conditions, for the ready view**: one that can start, one
+    // that is finished, and one that waits on work that is not. The fourth is
+    // what the third waits on, and it can start too.
+    for (handle, name, fields) in [
+        ("work:delta", "Wash the car", vec![("status", "next")]),
+        ("work:epsilon", "File the taxes", vec![("status", "done")]),
+        ("work:phi", "Buy the paint", vec![("status", "next")]),
+        (
+            "work:gamma",
+            "Paint the fence",
+            vec![("status", "next"), ("depends_on", "work:phi")],
+        ),
+    ] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the work is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(set_on(NewFact {
+                fields: fields
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "where the work stands",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the work's state is written");
+    }
+    // **Two colleagues, one reporting to the other**, for the directory view.
+    for (handle, name) in [("bot:lisa", "Lisa"), ("bot:marge", "Marge")] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the colleague is written")
+            .written()
+            .expect("nothing on this board collides with it");
+    }
+    memory
+        .capture(set_on(NewFact {
+            fields: [("reports_to".to_string(), "bot:lisa".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("bot:marge".into()),
+                "who marge reports to",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the reporting line is written");
+
     memory
 }
 
@@ -3450,6 +3515,92 @@ async fn a_views_page_runs_the_views_expression_and_order() {
     assert!(
         worming.is_some() && abseiling.is_some() && worming < abseiling,
         "both later loops are there, latest first: {answer}"
+    );
+    ct.cancel();
+}
+
+/// **The rows of the page's answer table**, one string each.
+fn answer_rows(page: &str) -> Vec<&str> {
+    let answer = page
+        .split_once("id=\"answer\"")
+        .unwrap_or_else(|| panic!("the page carries the view's answer: {page}"))
+        .1;
+    answer
+        .split_once("</table>")
+        .expect("…and it closes")
+        .0
+        .split("<tr>")
+        .skip(1)
+        .collect()
+}
+
+/// **A view's page answers the question `recall` answers.** The ready view asks
+/// which work can start: the page lists the work that can, and not the work that
+/// is finished or waits on work that is not. Paired in one read, because a page
+/// that listed every piece of work would pass the positives alone.
+#[tokio::test]
+async fn the_ready_views_page_lists_the_work_that_can_start_and_no_other() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:ready/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let rows = answer_rows(&page);
+    let listed = |handle: &str| rows.iter().any(|row| row.contains(&format!("{handle}/")));
+    assert!(
+        listed("work:delta") && listed("work:phi"),
+        "work that can start is listed: {rows:?}"
+    );
+    assert!(
+        !listed("work:epsilon"),
+        "finished work is not listed: {rows:?}"
+    );
+    assert!(
+        !listed("work:gamma"),
+        "work waiting on unfinished work is not listed: {rows:?}"
+    );
+    ct.cancel();
+}
+
+/// **A view's page shows the keys the view says it shows.** The directory view
+/// shows each colleague's one-liner and who they report to; the page carries a
+/// column for each and the value in the colleague's own row, not in another's.
+#[tokio::test]
+async fn the_colleagues_views_page_shows_who_each_bot_reports_to() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:colleagues/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let rows = answer_rows(&page);
+    let row_of = |handle: &str| {
+        rows.iter()
+            .find(|row| row.contains(&format!("{handle}/")))
+            .unwrap_or_else(|| panic!("{handle} is a colleague: {rows:?}"))
+    };
+    assert!(
+        rows[0].contains("reports_to"),
+        "the header names the key: {rows:?}"
+    );
+    assert!(
+        row_of("bot:marge").contains("bot:lisa"),
+        "the row of the bot that reports to another says so: {rows:?}"
+    );
+    assert!(
+        !row_of("bot:lisa").contains("bot:marge"),
+        "…and the other row does not: {rows:?}"
     );
     ct.cancel();
 }

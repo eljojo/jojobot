@@ -39,6 +39,7 @@ pub mod status_words;
 pub mod testing;
 pub mod update_entity;
 pub mod update_fact;
+pub mod view_run;
 pub mod wire;
 
 // **Re-exported for the verb files, which reach them through `use super::*`.**
