@@ -7327,13 +7327,18 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
             .await
             .expect("the old link row is written");
     }
-    assert!(
-        memory
-            .referring_to(&beta)
-            .await
-            .expect("answers")
-            .iter()
-            .any(|f| f.address() == written[0].address()),
+    // The stale links are asked of the link table itself: the reads serve a
+    // field naming a folded thing as the thing it became, so they no longer
+    // show where the row stores it.
+    let stale: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM field_link WHERE target = ? AND `key` LIKE 'forwarded_%'",
+    )
+    .bind(&beta_badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the link table reads");
+    assert_eq!(
+        stale, 2,
         "the fixture left no link on the forwarding row, so the pass below proves nothing",
     );
 
@@ -7363,6 +7368,18 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
         held(&steady_holder).await.get("forwarded_points_at"),
         Some(&bystander.to_string()),
         "a link at some other thing did not move",
+    );
+    let declared_badge = badge_of(&pool, declared_holder.as_str()).await;
+    let stored: String = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE entity = ? AND `key` = 'forwarded_points_at'",
+    )
+    .bind(&declared_badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the stored value reads");
+    assert_eq!(
+        stored, gamma_badge,
+        "the row itself names the end of the chain"
     );
     let to_gamma: Vec<String> = sqlx::query_scalar(
         "SELECT entity FROM field_link WHERE target = ? AND `key` LIKE 'forwarded_%' ORDER BY entity",
