@@ -2,52 +2,64 @@
 
 > **jojobot** · kind: feature-brief · boot: on-demand
 
-**A directory listing over the graph, the way a web server indexes a directory.** An entity path is a URL path. A page lists what is at that node and links onward.
+**The operator's window on their own instance: server-rendered pages over the graph, one per node, with a front page that shows what every bot is doing right now.** It is how a person checks that jojobot is right, sees what the bots did, and looks things up.
 
-## One index page per node
+## Pages, not an application
 
-**The surface reads, and there is one page per node. It writes in one place, the operator's own mail, and nowhere else.** You walk the graph by walking the URLs. The path grammar and the entity tree are the same thing. This is what makes the whole surface navigable without anybody designing screens.
+**Every page is rendered on the server and is plain HTML with links.** An entity path is a URL path, so walking the graph is walking the URLs. **There is no application**: client-side state, a framework or a component tree is the tell that somebody left the brief. A new page is a new rendering of something the graph already answers, never a new place where state lives.
 
-**There is no application.** Client-side state, a framework or a component tree is the tell that somebody left the brief. A page renders what is at a node and links to its neighbours. There is nothing else to build.
+**The operator reads it on a laptop, and the measure is what they can take in at a glance.** Long text is folded, bookkeeping stays out of the way, and a page leads with what a person came for. Breadcrumbs say where a page sits; a search box calls the search the bots already use.
 
-## What a page shows
+## The front page: who is doing what, right now
 
-**A thing's page shows the fold first.** One value per key: what the thing is now.
+**The front page is the running-now view.** Each live run, its bot, the bot's own focus line in its own words, and its last activity with how long ago. jojobot never composes a summary of what a bot is doing; the bot's focus is the summary. **The root index is one click away.**
 
-**A key opens to the events behind it**, oldest first. The projection is what the operator reads. The history is one click away.
+## A thing's page
 
-**A page states how the thing stands against its kind.** It names which declared keys the thing holds and which it lacks.
+**A thing's page shows the fold first: one value per key, what the thing is now.** Beside each value: who wrote it, when, and whether it was said, read or worked out, because a value without its provenance cannot be checked. **A key opens to the writes behind it**, oldest first.
 
-🚨 **A key held badly is not a key held.** When a value does not hold what its key declared, the page says so and names the key. A thing that holds every declared key with one wrong value **must not read as complete**. The operator cannot work this out from anywhere else on the page, so the page is the only place it can go wrong unseen.
+**A page states how the thing stands against its kind.** It names the declared keys the thing holds and the ones it lacks. 🚨 **A key held badly is not a key held:** when a value does not hold what its key declared, the page says so and names the key, and a thing with one wrong value never reads as complete. The operator cannot work this out from anywhere else. **A page says whether strictness is on for that thing**, so the operator can tell a thing jojobot guards from one it does not.
 
-**A page says whether strictness is on for that thing.** Otherwise the operator cannot tell a thing jojobot guards from one it does not.
+**Around the thing**: its parent, its children, what points at it and what it points at, within the answer budget.
 
-## A view's page answers its own question
+**Who is working on it.** A thing a bot has said it is working on shows that bot's live session at the top, and the sessions that worked on it before as a dated list, each linking to the session's page. Work on a task shows on every level above it, up to the project. It comes from the graph, as an inbound walk from the sessions that named the thing; nothing keeps a list by hand, and a write alone never counts as working on something.
 
-**A view is a question somebody already worked out, so its page RUNS it and lists the answer** — in the same directory shape every other page uses, each result linking onward. **Its definition stays above the answer**, because a reader should see the question they just asked.
+## Built-in kinds look like what they are
 
-⭐ **This is the one kind whose page would otherwise be correct and useless.** Every other kind's page answers *what is this thing* by showing its fields. **For a view, those same fields are the query rather than the content, so showing them alone answers a question nobody asked and hides the one they did.**
+**A shipped view of a built-in kind renders by what it means, and is placed where it applies.** A piece of work reads as a task. A project reads as a board, its work in its own status columns. A rhythm reads as a loop with its next due day. **A view the operator declares renders by the shape of its answer**: writes over time as a timeline, objects as a table, a tree as a tree. So a view declared tomorrow renders well with no change to the UI, and no list of view names lives in the UI.
 
-**A view that cannot be run says which key it is short of**, rather than rendering as an empty list — the two are indistinguishable to a reader otherwise, and only one of them means *there is nothing here*.
+**A view's page runs it and lists the answer**, its question shown above. A view that cannot run says which key it is short of, rather than rendering as an empty list. **A view can be bound to the thing being looked at**, so one question serves every page of its kind.
 
-⚠️ **Running a stored query is not summarising.** **It computes nothing the query does not compute**, takes no delivery, opens no session and writes nothing.
+**One executor answers a view for the page and for recall alike.** A bot asking by name and the operator looking get the same answer, which is what makes the page a check on what the bots see.
+
+## Sessions and bots
+
+**A session's page tells what that run did, in time order, and stays readable.** Its journal leads, tallies stay tallies, and a long entry is folded; the page shows the story of the run, not every row behind it. What it wrote, sent and took is reachable from there, one level down.
+
+**A bot's page lists its past sessions**, newest first, each linking to its page. It shows the bot's charter and rules, and **where the bot sits in the org chart**: the chain of whom it reports to, up to the head, and who reports to it.
+
+## Mail as threads
+
+**Mail reads as conversations, not as boxes.** A thread follows replies across the boxes they landed in, so the operator reads what bots tell each other in the order it was said. The noise a person does not read (ids, state words, machine timestamps, per-row notes) stays out of the way. **The operator's own box is theirs to read and finish**, with Open and Mark processed: the one place the window acts.
+
+**A numbered collection reads by its numbers.** A rule is reached as its collection and its number, in a URL as much as in a call.
 
 ## It is the operator's window, not a bot's
 
-**No bot reads this surface.** The rules that shape what an agent may be told do not govern what it shows. It shows every record the operator has: entities, events, mailboxes, messages, sessions and journals. It is their instance and their data.
+**No bot reads this surface.** The rules that shape what an agent may be told do not govern what it shows. It shows every record the operator has: entities, events, mailboxes, messages, sessions and journals.
 
-**The constraint that replaces those rules is stronger: the window must not affect bot behaviour.** Looking takes no delivery. It marks nothing read. It opens no session. It writes nothing; the one thing the page does besides look is the operator's own Open and Mark processed on their mail, which are their act and not a look. A window that changed what it looked at would be worse than no window, because everything seen through it would then be suspect.
+**The constraint that replaces those rules is stronger: the window must not affect bot behaviour.** Looking takes no delivery. It marks nothing read. It opens no session. It writes nothing, except the operator's own Open and Mark processed on their mail, which are their act and not a look. A window that changed what it looked at would make everything seen through it suspect.
 
 ## Login
 
 **The operator logs in through the issuer jojobot already verifies against.** Authorization code with PKCE, then a session of its own.
 
-**Two audiences, one check.** The agent surface accepts a token minted for jojobot itself. The page accepts an ID token minted for its own client, because an ID token is addressed to the client that asked for it. Both come from the same issuer, are verified with the same keys, and pass the same allowlist of who may enter.
-
-**No second door, and no development bypass that could ship.** One module checks both audiences. That is what keeps them from becoming two ways in.
+**Two audiences, one check.** The agent surface accepts a token minted for jojobot itself. The page accepts an ID token minted for its own client, because an ID token is addressed to the client that asked for it. Both come from the same issuer, are verified with the same keys, and pass the same allowlist of who may enter. **No second door, and no development bypass that could ship.**
 
 ## What it is not
 
 **Not an editor.** Beyond the operator's own mail, it changes nothing. A change goes through the surface, where the guards are.
 
-**Not a dashboard.** jojobot summarises nothing here, scores nothing and ranks nothing. The page shows what is there. ⚠️ **A view's page is not the exception it looks like:** a view's content IS its answer, so running the query is showing what is there rather than summarising it.
+**Not a dashboard.** jojobot summarises nothing here, scores nothing and ranks nothing; a "possible duplicates" page or a health score is an AI-built summary, and those are out. ⚠️ **A view's page is not the exception it looks like:** a view's content is its answer, so running it is showing what is there.
+
+**Not a second store of state.** Every page is a reading of the graph at the moment it is asked.
