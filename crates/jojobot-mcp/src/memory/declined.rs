@@ -837,7 +837,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing changed: {e}. Sending this again will not change the answer — \
                  '{attempted}' is part of the software rather than something stored that \
-                 {verb} could move."
+                 {verb} could move. Facts and settings written to this record with capture \
+                 are kept on top of what the build ships; only renaming, archiving or \
+                 merging the record itself is refused."
             ),
         )),
         // **Two of `merge`'s own misses**, answered here for the same reason
@@ -2468,5 +2470,113 @@ pub(crate) mod tests {
         for (label, answered) in rows {
             assert_fix_by(label, &answered, "change");
         }
+    }
+
+    /// **A refusal for a record the build supplies points at the write that
+    /// does work**, for every verb that gives it: the rename, the archive and
+    /// either side of a fold.
+    ///
+    /// Each is driven through the shipped stack, where `view:loops` is a
+    /// supplied record. A record the build supplies is extended in place, so the
+    /// refusal must not send the caller to a record of their own. The write it
+    /// points at is then made on the same record, and answered: a way forward
+    /// the engine refused would be worse than none.
+    #[tokio::test]
+    async fn a_supplied_records_refusal_points_at_the_write_that_extends_it() {
+        use crate::memory::archive_entity::ArchiveEntityArgs;
+        use crate::memory::merge_entities::MergeArgs;
+        use crate::memory::rename_entity::RenameEntityArgs;
+
+        let jojobot = handler_shipped();
+        let sid = writing_as(&jojobot);
+
+        let renamed = jojobot
+            .rename_entity(Parameters(RenameEntityArgs {
+                handle: "view:loops".into(),
+                to: "view:my-bikes".into(),
+                parent: None,
+                recorded_at: None,
+                override_token: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("a supplied record's rename is an answer");
+        let archived = jojobot
+            .archive_entity(Parameters(ArchiveEntityArgs {
+                handle: "view:loops".into(),
+                reason: "a test".into(),
+                restore: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("a supplied record's archive is an answer");
+        let folded_away = jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "view:loops".into(),
+                survivor: "view:colleagues".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("a supplied record folded away is an answer");
+        let survivor = jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "view:colleagues".into(),
+                survivor: "view:loops".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("a supplied record kept as the survivor is an answer");
+
+        for (label, answered) in [
+            ("rename", &renamed),
+            ("archive", &archived),
+            ("fold away", &folded_away),
+            ("survivor", &survivor),
+        ] {
+            let body = blocked(answered);
+            let way = body["how_to_proceed"].as_str().unwrap_or_default();
+            assert!(
+                way.contains("capture"),
+                "{label}: the refusal names the write that extends the record: {body}",
+            );
+            assert!(
+                !way.contains("add_entity"),
+                "{label}: the refusal sends the caller to a record of their own: {body}",
+            );
+        }
+
+        // The write it names, made on the same supplied record: it lands and
+        // reads back on top of what the build ships.
+        let wrote = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(sid.clone()),
+                    sets: Some([("note".to_string(), "kept on top".to_string())].into()),
+                    ..capture_args("view:loops", "A caller's own note on the loops view")
+                }))
+                .await
+                .expect("a write to a supplied record answers"),
+        );
+        assert_ne!(wrote["status"], "blocked", "{wrote}");
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid),
+                    ..recall_args("view:loops")
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        let loops = &read["objects"][0];
+        assert_eq!(loops["id"], "view:loops", "{read}");
+        assert_eq!(loops["fields"]["note"], "kept on top", "{read}");
+        assert!(
+            loops["fields"]["selects"].is_string(),
+            "what the build ships is still there under the overlay: {read}",
+        );
     }
 }

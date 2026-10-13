@@ -663,7 +663,7 @@ answer: {
   "attempted": "view:colleagues",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing changed: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move.",
+  "how_to_proceed": "Nothing changed: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move. Facts and settings written to this record with capture are kept on top of what the build ships; only renaming, archiving or merging the record itself is refused.",
   "status": "blocked",
   "wrote": false
 }
