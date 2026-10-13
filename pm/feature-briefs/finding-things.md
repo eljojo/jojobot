@@ -67,7 +67,9 @@ A graph gets asked all of the following. A query that stops short of any of it s
 
 ## Views
 
-**A view is a named query, exposed as a high-level object.** A caller asks for the thing, not for the query that produces it. The query is jojobot's business. The answer is the caller's.
+**A view is a saved recall: a question stored under a name, with typed inputs.** A caller asks for the thing, not for the query that produces it. ⭐ **A session that never learns the query language gets what it needs by naming a view and filling its inputs**: the work that can start under one project, what falls due in a window. The query is jojobot's business. The answer is the caller's.
+
+**An input is declared with its type and checked like any write.** A view names each input, what it holds (a thing of a named kind, a date, a number, text) and whether it may be left out. A handle is bound to its permanent id, so a rename never breaks a saved question, and a date takes the same relative days the filter string does. A view asked without a required input, or with one of the wrong type, is refused, naming every input and its type: the refusal is how a session meeting the view cold learns its shape. Listing the views shows each one's question and inputs.
 
 **A view is not a shortcut beside a query builder.** The surface *is* views over one graph. That is the stronger form and the intended one.
 
