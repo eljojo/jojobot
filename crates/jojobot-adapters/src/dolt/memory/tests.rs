@@ -752,13 +752,26 @@ impl Merged {
         let folded = EntityId::person("person:apu");
         let pointing = EntityId("bot:moe".into());
         for (handle, name) in [(&survivor, "Homer"), (&folded, "Apu"), (&pointing, "Moe")] {
+            let mut entity = NewEntity::new(handle.clone(), name, "fixture");
+            if handle == &folded {
+                entity.aliases = vec!["Squishee Man".into()];
+            }
             memory
-                .add_entity(NewEntity::new(handle.clone(), name, "fixture"))
+                .add_entity(entity)
                 .await
                 .expect("add_entity ok")
                 .written()
                 .expect("the guard waves it through");
         }
+        // A thing under the folded one, which the merge re-points at the survivor.
+        let mut child = NewEntity::new(EntityId("place:leftorium".into()), "Leftorium", "fixture");
+        child.parent = Some(folded.clone());
+        memory
+            .add_entity(child)
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
         // Fields written in an order that tells a merge that put the folded
         // thing's writes first, or last, from one that places them by the moment
         // each was made: `mood` is written by the survivor, the folded thing and
@@ -919,6 +932,7 @@ impl Merged {
     /// Put the folded thing's claims back under the key and the ids they were
     /// made under, leaving the event and the survivor's own claims as they are.
     async fn leave_in_place(&self) {
+        self.leave_names_in_place().await;
         self.leave_pointers_in_place().await;
         self.leave_fields_in_place().await;
         for (was, now) in &self.moved {
@@ -939,6 +953,31 @@ impl Merged {
                 );
             }
         }
+    }
+
+    /// Put the child back under the folded thing, and the folded thing's own
+    /// alias back on it, as they were before the merge moved them. The merge
+    /// carried its display name as an alias too, which it never had.
+    async fn leave_names_in_place(&self) {
+        sqlx::query("UPDATE entity SET parent = ? WHERE id = ?")
+            .bind(self.folded_key.as_str())
+            .bind("place:leftorium")
+            .execute(&self.pool)
+            .await
+            .expect("the child goes back");
+        sqlx::query("UPDATE entity_alias SET entity = ? WHERE entity = ? AND alias = ?")
+            .bind(self.folded_key.as_str())
+            .bind(self.survivor_key.as_str())
+            .bind("Squishee Man")
+            .execute(&self.pool)
+            .await
+            .expect("the alias goes back");
+        sqlx::query("DELETE FROM entity_alias WHERE entity = ? AND alias = ?")
+            .bind(self.survivor_key.as_str())
+            .bind("Apu")
+            .execute(&self.pool)
+            .await
+            .expect("the carried display name goes");
     }
 
     /// Put the pointers of the third thing's claim back at the folded thing and
@@ -1578,5 +1617,59 @@ async fn the_chart_reads_the_same_whether_a_merge_moved_the_writes_or_left_them(
     merged.leave_in_place().await;
 
     assert_eq!(answers().await, moved);
+    store.stop().await;
+}
+
+/// **A merge that left the folded thing's names and its children alone reads,
+/// as to those, exactly like a merge that moved them** — the survivor answers to
+/// the folded thing's names, the folded thing to none, the child is the
+/// survivor's, and the document the search index is built from says the same.
+#[tokio::test]
+async fn names_and_children_left_by_a_merge_read_like_ones_it_moved() {
+    let scratch = Scratch::new("merged-names");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_names")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let answers = || async {
+        let mut said = vec![
+            format!("{:?}", merged.memory.list_entities(None).await),
+            format!("{:?}", merged.memory.children(&merged.survivor).await),
+            format!("{:?}", merged.memory.children(&merged.folded).await),
+        ];
+        let child = EntityId("place:leftorium".into());
+        for handle in [&merged.survivor, &merged.folded, &child] {
+            said.push(format!("{:?}", merged.memory.scan_entity(handle).await));
+        }
+        said.push(format!("{:?}", merged.memory.scan().await));
+        said
+    };
+    let moved = answers().await;
+    assert!(
+        moved[1].contains("place:leftorium") && moved[2] == "Ok([])",
+        "the child is the survivor's: {moved:?}"
+    );
+    assert!(
+        moved[0].contains("Squishee Man"),
+        "the survivor answers to the folded thing's alias: {moved:?}"
+    );
+
+    merged.leave_in_place().await;
+
+    let parent: Option<String> = sqlx::query_scalar("SELECT parent FROM entity WHERE id = ?")
+        .bind("place:leftorium")
+        .fetch_one(&pool)
+        .await
+        .expect("the parent reads");
+    assert_eq!(parent.as_deref(), Some(merged.folded_key.as_str()));
+    let left = answers().await;
+    for (moved, left) in moved.iter().zip(&left) {
+        assert_eq!(left, moved);
+    }
     store.stop().await;
 }

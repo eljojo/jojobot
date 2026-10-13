@@ -1908,13 +1908,61 @@ impl DoltMemory {
         // reads every entity and filters in memory. Resolved against a
         // snapshot taken before the loop mutates, since a row cannot lend
         // itself out while it is being written.
+        //
+        // **A parent a merge left naming the folded thing is served as the
+        // survivor, and the survivor answers to the names the folded thing
+        // had**, as it does when the merge rewrote the pointer and moved the
+        // names. The merge events say which things were folded into which.
+        let merges: Vec<(String, String)> = sqlx::query(
+            "SELECT folded, survivor FROM merge_event WHERE ordinal = 0 ORDER BY merge_no",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?
+        .iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("folded").map_err(store)?,
+                row.try_get::<String, _>("survivor").map_err(store)?,
+            ))
+        })
+        .collect::<Result<_, MemoryError>>()?;
+        for (folded, survivor) in &merges {
+            let at = |key: &str| {
+                entities
+                    .iter()
+                    .position(|entity| entity.badge.as_deref() == Some(key))
+            };
+            let (Some(from), Some(into)) = (at(folded), at(survivor)) else {
+                continue;
+            };
+            let carried = jojobot_domain::memory::names_to_carry(
+                &entities[into].name,
+                &entities[into].aliases,
+                &entities[from].name,
+                &entities[from].aliases,
+            );
+            entities[into].aliases.extend(carried);
+            entities[from].aliases.clear();
+        }
         let snapshot = entities.clone();
         for entity in &mut entities {
             if let Some(parent) = &entity.parent {
+                let mut parent = parent.clone();
+                for _ in 0..64 {
+                    let Some((_, survivor)) = merges
+                        .iter()
+                        .rev()
+                        .find(|(folded, _)| folded == parent.as_str())
+                    else {
+                        break;
+                    };
+                    parent = EntityId(survivor.clone());
+                }
                 entity.parent = Some(
                     jojobot_domain::memory::entity_wearing(parent.as_str(), &snapshot)
                         .map(|found| found.id.clone())
-                        .unwrap_or_else(|| parent.clone()),
+                        .unwrap_or(parent),
                 );
             }
         }
@@ -6966,6 +7014,7 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
         let mut resolved = entity_from(&row, aliases)?;
         if let Some(parent) = &resolved.parent {
+            let parent = Self::forward_key(&mut tx, parent).await?;
             let wearing: Option<String> =
                 sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
                     .bind(parent.as_str())
@@ -6975,6 +7024,22 @@ impl Memory for DoltMemory {
             if let Some(current) = wearing {
                 resolved.parent = Some(EntityId(current));
             }
+        }
+        // **A thing a merge folded into another, or into which another was
+        // folded, is named as the whole index names it**: the survivor answers
+        // to the folded thing's names and the folded thing to none.
+        if let Some(badge) = &resolved.badge
+            && (Self::is_folded_key(&mut tx, &EntityId(badge.clone())).await?
+                || !Self::merges_into(&mut tx, &EntityId(badge.clone()))
+                    .await?
+                    .is_empty())
+            && let Some(named) = self
+                .index(&mut tx)
+                .await?
+                .into_iter()
+                .find(|known| known.id == resolved.id)
+        {
+            resolved.aliases = named.aliases;
         }
         let Some(badge) = resolved.badge.clone() else {
             return Err(MemoryError::Store(format!(
