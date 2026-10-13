@@ -493,6 +493,93 @@ async fn a_keyless_run_exchanges_its_old_name_once_and_a_second_bare_name_is_ref
     deployed.finish().await;
 }
 
+/// **The last moment a refusal names**, read as a timestamp rather than as
+/// words: the refusal says when the run can be taken by its name, and that is
+/// the last time it writes.
+fn last_moment_named(refusal: &str) -> jiff::Timestamp {
+    refusal
+        .split(|c: char| c.is_whitespace() || c == '"')
+        .filter_map(|word| {
+            word.trim_end_matches(['.', ','])
+                .parse::<jiff::Timestamp>()
+                .ok()
+        })
+        .next_back()
+        .unwrap_or_else(|| panic!("the refusal names a moment: {refusal}"))
+}
+
+/// **The exchange of a keyless run's name counts as a pick-up.** A run quiet
+/// for longer than the lease is exchanged by its holder's first call, which
+/// writes no chronology entry; without a mark at the exchange a third party that
+/// sends the old name straight after is handed the run the holder was just given
+/// a key for. The refusal to the third party and to a holder who lost the answer
+/// both name the moment the name takes the run, and after the lease it does.
+#[tokio::test]
+async fn a_name_cannot_take_a_run_inside_the_lease_after_its_exchange_and_can_after() {
+    let lease = std::time::Duration::from_secs(3);
+    let story = Story::begin_on_a_lease_of("bot:otto", lease).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    story
+        .sessions_store()
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid("jm7z".into()),
+            id: None,
+            key_hash: None,
+            focus: "a run the older build began".into(),
+            started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("the older build's run is on the board");
+    let deployed = story.restarted_on_a_lease_of(lease).await;
+    let holder = deployed.as_bot("bot:gamma").await;
+
+    let before = jiff::Timestamp::now();
+    holder
+        .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
+        .await
+        .says("\"exchanged\":true");
+    let after = jiff::Timestamp::now();
+    let window = |at: jiff::Timestamp| {
+        let lease = jiff::SignedDuration::try_from(lease).expect("a lease is a duration");
+        assert!(
+            before + lease <= at && at <= after + lease,
+            "the name takes the run one lease after the exchange, {before}..{after} + {lease}: {at}"
+        );
+    };
+
+    // ── a third party sending the old name is turned away, with the moment ───
+    let third = deployed
+        .refused_at_the_door(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": "jm7z"}),
+        )
+        .await;
+    window(last_moment_named(third.raw()));
+    // ── and so is a holder who lost the answer and sends the name again ─────
+    let lost = holder
+        .refused("journal", json!({"entry": "again", "sid": "jm7z"}))
+        .await;
+    lost.never_says("\"exchanged\":true");
+    window(last_moment_named(lost.raw()));
+
+    // ── after the lease the same name takes the run, once ───────────────────
+    tokio::time::sleep(lease + std::time::Duration::from_millis(500)).await;
+    let (_, taker) = deployed
+        .call(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": "jm7z"}),
+        )
+        .await;
+    taker.expect("the name takes a run that has been quiet for the lease");
+
+    deployed.finish().await;
+    story.finish().await;
+}
+
 /// **The older build's run, put on the board the way it left it**: a name and no
 /// hash. Returns the card's id.
 async fn keyless_run(story: &Story, name: &str) -> jojobot_domain::session::SessionId {

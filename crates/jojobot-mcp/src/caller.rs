@@ -409,11 +409,17 @@ impl Jojobot {
                 .lookup_name(raw)
                 .and_then(|held| held.exchanged_at)
             {
+                // **The exchange counts as a write**, so the name takes the run one
+                // lease after it, unless the run writes again first.
+                let free_at = at + self.quiet_after;
                 return Err(handle_declined(
                     "",
                     format!(
                         "{NOTHING_RAN}. That run's old name was exchanged for a key at {at}, \
-                         so the name opens nothing now. {ROUTE_TO_A_SID}"
+                         so the name opens nothing now. A run quiet for {} can be picked up by \
+                         its name: if this one writes nothing more, from {free_at}. \
+                         {ROUTE_TO_A_SID}",
+                        crate::windows::lease(),
                     ),
                 ));
             }

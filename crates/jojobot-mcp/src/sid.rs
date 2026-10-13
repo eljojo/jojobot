@@ -582,6 +582,10 @@ impl SessionRegistry {
         }
         handle.key = KeyState::Held(hash.clone());
         handle.exchanged_at = Some(at);
+        // **The exchange counts as a pick-up**: it writes a key and no entry, so
+        // without this mark the run still reads as quiet and a third party that
+        // sends the old name is handed the run its holder was just given.
+        handle.taken_at = Some(at);
         let taken = handle.clone();
         held.by_hash.insert(hash, name.to_string());
         Some(taken)
@@ -594,6 +598,7 @@ impl SessionRegistry {
         if let Some(handle) = held.by_name.get_mut(name) {
             handle.key = KeyState::Legacy;
             handle.exchanged_at = None;
+            handle.taken_at = None;
         }
         held.by_hash.remove(hash);
     }

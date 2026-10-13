@@ -592,6 +592,28 @@ impl Story {
         .await
     }
 
+    /// **The same world served again on a lease of its own length**, on the real
+    /// clock: a restart that rebuilds the registry from the board, so a run an
+    /// older build left keyless is known by its name, and a lease short enough
+    /// to wait out.
+    pub async fn restarted_on_a_lease_of(&self, lease: std::time::Duration) -> Self {
+        Self::spawn_with(
+            &self.bot,
+            self.store.clone(),
+            self.mail.clone(),
+            self.runs.clone(),
+            Timing {
+                clock: jojobot_domain::clock::Clock::default(),
+                quiet_after: Some(
+                    jiff::SignedDuration::try_from(lease).expect("a lease is a duration"),
+                ),
+            },
+            true,
+            None,
+        )
+        .await
+    }
+
     async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {
         Self::serve_on_clock(bot, store, jojobot_domain::clock::Clock::default()).await
     }
