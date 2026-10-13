@@ -31,7 +31,8 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, Quarantined, StateCounts, TakenBy,
+    MessageId, MessageState, NewMessage, Quarantined, StateCounts, Superseded, TakenBy,
+    validate_mailbox_name,
 };
 use jojobot_domain::memory::EntityId;
 
@@ -127,6 +128,47 @@ impl Image {
         self.messages.insert(place, message);
         self.reindex();
         true
+    }
+
+    /// **The delivery of a box that holds nothing new**, or `None` when a
+    /// delivery would move a message, the box is unknown, or its name could
+    /// never be a box's: the store answers those, and writes the first.
+    fn leftovers_of(&self, name: &MailboxName, taken_by: TakenBy) -> Option<Delivery> {
+        if validate_mailbox_name(name).is_err() || !self.boxes.iter().any(|b| &b.name == name) {
+            return None;
+        }
+        let mut messages = Vec::new();
+        let mut superseded = Vec::new();
+        for message in self
+            .messages
+            .iter()
+            .filter(|m| &m.mailbox == name && m.state.is_unprocessed())
+        {
+            if message.state == MessageState::New {
+                // A message nobody has taken that a later one replaced is withheld
+                // and named; one nobody has taken and nothing replaced is mail.
+                let by = message.superseded_by.clone()?;
+                superseded.push(Superseded {
+                    id: message.id.clone(),
+                    by,
+                });
+                continue;
+            }
+            messages.push(Delivered {
+                message: Message {
+                    // The first delivery is the one recorded, so a leftover keeps
+                    // the way it was taken the first time.
+                    taken_by: message.taken_by.or(Some(taken_by)),
+                    ..message.clone()
+                },
+                seen_before: true,
+            });
+        }
+        Some(Delivery {
+            mailbox: name.clone(),
+            messages,
+            superseded,
+        })
     }
 
     fn reindex(&mut self) {
@@ -352,6 +394,11 @@ impl Mailboxes for FoldedMailboxes {
         name: &MailboxName,
         taken_by: TakenBy,
     ) -> Result<Guarded<Delivery>, MailboxError> {
+        // **A box with nothing new in it has nothing to move**, so the delivery is
+        // a read: the messages already taken, and the replaced ones by name.
+        if let Some(Some(delivery)) = self.held(|image| image.leftovers_of(name, taken_by)) {
+            return Ok(Guarded::Written(delivery));
+        }
         let _gate = self.writing.lock().await;
         let delivery = self.inner.read_mailbox(name, taken_by).await?;
         if let Guarded::Written(delivery) = &delivery {

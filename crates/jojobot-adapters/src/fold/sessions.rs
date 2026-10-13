@@ -220,7 +220,13 @@ impl Sessions for FoldedSessions {
     }
 
     async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
-        match self.held(|image| image.runs.iter().map(SessionSummary::of).collect::<Vec<_>>()) {
+        match self.held(|image| {
+            image
+                .runs
+                .iter()
+                .map(SessionSummary::of)
+                .collect::<Vec<_>>()
+        }) {
             Some(summaries) => Ok(summaries),
             None => self.inner.all_summaries().await,
         }

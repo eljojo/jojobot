@@ -23,10 +23,26 @@ use crate::fold_rails_battery::{
 
 /// The session reads served from memory once the image has loaded. Each read is
 /// added here in the commit that switches it.
-const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of", "summaries_of", "all_summaries", "summary_of", "run_counts", "all_sessions", "charter_change_of"];
+const SWITCHED_SESSIONS: &[&str] = &[
+    "read_session",
+    "sessions_of",
+    "summaries_of",
+    "all_summaries",
+    "summary_of",
+    "run_counts",
+    "all_sessions",
+    "charter_change_of",
+];
 
 /// The mail reads served from memory once the image has loaded.
-const SWITCHED_MAIL: &[&str] = &["list_mailboxes", "scan_messages", "message_by_id", "sent_by"];
+const SWITCHED_MAIL: &[&str] = &[
+    "list_mailboxes",
+    "scan_messages",
+    "message_by_id",
+    "sent_by",
+    "read_mailbox",
+    "read_mailbox",
+];
 
 /// The teaching calls served from memory once the ledger has loaded.
 const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];

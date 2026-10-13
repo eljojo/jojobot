@@ -499,6 +499,47 @@ fn post(to: &str, sender: &str, body: &str, second: i64) -> NewMessage {
     }
 }
 
+impl MailRails<'_> {
+    /// **A delivery in a box with nothing new in it moves nothing**, so it is a
+    /// read, and both ledgers must give it the same answer: the messages already
+    /// taken, handed over again, and the replaced ones withheld by name. A box
+    /// that does not exist is a refusal the store alone can word, so it reaches
+    /// the store.
+    async fn nothing_new_in(&self, when: &str, boxes: &[&str]) {
+        let board = self.direct.scan_messages().await.expect("the store scans");
+        for n in boxes {
+            let which = name(n);
+            assert!(
+                !board.iter().any(|m| m.mailbox == which
+                    && m.state == jojobot_domain::mailbox::MessageState::New
+                    && m.superseded_by.is_none()),
+                "{when}: box {n} holds mail nobody has taken, so a delivery would move it"
+            );
+            check(
+                when,
+                "read_mailbox",
+                n,
+                &self.counted.calls,
+                self.switched,
+                self.folded.read_mailbox(&which, TakenBy::Posting),
+                self.direct.read_mailbox(&which, TakenBy::Posting),
+            )
+            .await;
+        }
+        let unknown = name("nonesuch");
+        check(
+            when,
+            "read_mailbox of no box",
+            "nonesuch",
+            &self.counted.calls,
+            &[],
+            self.folded.read_mailbox(&unknown, TakenBy::Posting),
+            self.direct.read_mailbox(&unknown, TakenBy::Posting),
+        )
+        .await;
+    }
+}
+
 /// **Every kind of write on the board, each followed by the whole battery.**
 /// The owners `bot:gamma`, `bot:delta` and `person:milhouse` must resolve in the
 /// store under test.
@@ -609,6 +650,15 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .expect("not blocked");
     p.agree("after a second delivery that also hands over a leftover")
         .await;
+    for n in ["delta", "milhouse"] {
+        w.read_mailbox(&name(n), TakenBy::Reading)
+            .await
+            .expect("read_mailbox")
+            .written()
+            .expect("not blocked");
+    }
+    p.nothing_new_in("after the deliveries", &["gamma", "delta", "milhouse"])
+        .await;
 
     calls.reset();
     w.read_message(&three.id).await.expect("read_message");
@@ -630,6 +680,8 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .await
         .expect("mark a message processed from new");
     p.agree("after a second processing and one straight from new")
+        .await;
+    p.nothing_new_in("after a message is processed", &["gamma"])
         .await;
     assert!(
         w.mark_processed(&MessageId("zzzzzz".into()), None)
