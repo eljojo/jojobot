@@ -33,7 +33,7 @@ use jojobot_domain::memory::EntityId;
 const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of", "summaries_of", "all_summaries", "summary_of", "run_counts", "all_sessions", "charter_change_of"];
 
 /// The mail reads the image serves.
-const SWITCHED_MAIL: &[&str] = &[];
+const SWITCHED_MAIL: &[&str] = &["list_mailboxes", "scan_messages", "message_by_id", "sent_by"];
 
 /// The teaching calls the image serves.
 const SWITCHED_TEACHINGS: &[&str] = &[];

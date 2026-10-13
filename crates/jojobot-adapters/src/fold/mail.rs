@@ -275,19 +275,52 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
-        self.inner.list_mailboxes().await
+        match self.held(|image| {
+            image
+                .boxes
+                .iter()
+                .map(|b| Mailbox {
+                    name: b.name.clone(),
+                    owner: b.owner.clone(),
+                    counts: b.counts,
+                    quarantined: b.quarantined.clone(),
+                })
+                .collect::<Vec<_>>()
+        }) {
+            Some(boxes) => Ok(boxes),
+            None => self.inner.list_mailboxes().await,
+        }
     }
 
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
-        self.inner.scan_messages().await
+        match self.held(|image| image.messages.clone()) {
+            Some(messages) => Ok(messages),
+            None => self.inner.scan_messages().await,
+        }
     }
 
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
-        self.inner.message_by_id(id).await
+        match self.held(|image| image.at.get(id).map(|place| image.messages[*place].clone())) {
+            Some(message) => Ok(message),
+            None => self.inner.message_by_id(id).await,
+        }
     }
 
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
-        self.inner.sent_by(senders).await
+        if senders.is_empty() {
+            return Ok(Vec::new());
+        }
+        match self.held(|image| {
+            image
+                .messages
+                .iter()
+                .filter(|m| senders.contains(&m.sender.trim()))
+                .cloned()
+                .collect::<Vec<_>>()
+        }) {
+            Some(messages) => Ok(messages),
+            None => self.inner.sent_by(senders).await,
+        }
     }
 
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
