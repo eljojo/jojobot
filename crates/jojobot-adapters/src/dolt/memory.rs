@@ -4460,6 +4460,83 @@ impl Memory for DoltMemory {
         Ok(histories)
     }
 
+    /// **Every write of the thing in one query**, folded by the same two rules
+    /// [`history`](Self::history) and
+    /// [`keys_kept_off_the_thing`](Self::keys_kept_off_the_thing) apply to the
+    /// rows they ask for: a key's trail is its writes that reach the thing, and a
+    /// record's key is kept off the thing when its newest write of that key,
+    /// unless a later one took the key off, was made under a class that does not
+    /// reach it. Rows are read in write order, so each key's trail is oldest
+    /// first without a sort.
+    async fn key_trails(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((storage_key, _)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        let rows = sqlx::query(
+            "SELECT `key`, value, fact_id, write_class FROM field_write
+             WHERE entity = ? ORDER BY ordinal",
+        )
+        .bind(storage_key.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let facts = self.facts_of(&mut tx, &storage_key).await?;
+        tx.commit().await.map_err(store)?;
+
+        let by_id: std::collections::HashMap<&FactId, &Fact> =
+            facts.iter().map(|f| (&f.id, f)).collect();
+        let mut trails = jojobot_domain::memory::KeyTrails::default();
+        let mut held: std::collections::BTreeMap<
+            (FactId, String),
+            jojobot_domain::memory::WriteClass,
+        > = std::collections::BTreeMap::new();
+        for row in &rows {
+            let key: String = row.try_get("key").map_err(store)?;
+            let value = row.try_get::<Option<String>, _>("value").map_err(store)?;
+            let carried = FactId(row.try_get::<String, _>("fact_id").map_err(store)?);
+            let class = jojobot_domain::memory::WriteClass::from_token(
+                &row.try_get::<String, _>("write_class").map_err(store)?,
+            );
+            match &value {
+                Some(_) => {
+                    held.insert((carried.clone(), key.clone()), class);
+                }
+                None => {
+                    held.remove(&(carried.clone(), key.clone()));
+                }
+            }
+            if !jojobot_domain::memory::reaches_the_thing(class) {
+                continue;
+            }
+            let Some(fact) = by_id.get(&carried) else {
+                continue;
+            };
+            trails.history.entry(key).or_default().push(FieldWrite {
+                value,
+                fact: fact.address(),
+                recorded_at: fact.recorded_at,
+                status: fact.status,
+                provenance: fact.provenance,
+                standing: fact.standing,
+                note: fact.details.clone(),
+            });
+        }
+        for ((fact, key), class) in held {
+            if !jojobot_domain::memory::reaches_the_thing(class) {
+                trails.kept_off.entry(fact).or_default().insert(key);
+            }
+        }
+        Ok(trails)
+    }
+
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // An unknown entity is a miss with its near candidates, exactly as a

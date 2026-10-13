@@ -2452,6 +2452,46 @@ impl Memory for InMemoryMemory {
             .collect())
     }
 
+    /// **Every key any write on the thing named**, read off the writes
+    /// themselves, so a key that was set and then taken off is asked about as
+    /// well — the case a read of the records' current keys would miss.
+    async fn key_trails(&self, entity: &EntityId) -> Result<crate::memory::KeyTrails, MemoryError> {
+        let index = self.known();
+        let former = self.former();
+        let Some(resolved) = super::resolve_handle(entity, &index, &former) else {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        let storage_key = match &resolved.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => resolved.id.clone(),
+        };
+        let keys: std::collections::BTreeSet<String> = self
+            .writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .filter(|w| w.entity == storage_key)
+            .map(|w| w.key.clone())
+            .collect();
+        let mut trails = crate::memory::KeyTrails::default();
+        for key in keys {
+            let writes = self.history(entity, &key).await?;
+            if !writes.is_empty() {
+                trails.history.insert(key, writes);
+            }
+        }
+        for fact in self.recall(entity).await? {
+            let kept = self.keys_kept_off_the_thing(&fact.address()).await?;
+            if !kept.is_empty() {
+                trails.kept_off.insert(fact.id.clone(), kept);
+            }
+        }
+        Ok(trails)
+    }
+
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let index = self.known();
         let former = self.former();

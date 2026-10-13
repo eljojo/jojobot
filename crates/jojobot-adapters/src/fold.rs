@@ -1,31 +1,43 @@
-//! [`Folded`] — a live cache of what every thing holds, kept above the store
-//! rather than inside it (decision log 292).
+//! [`Folded`] — everything the memory verbs read, held in RAM above the store
+//! (decision log 292).
 //!
-//! `Memory::fields` folds a thing's field writes down to one value per key —
-//! the newest write wins, an older one stands back up when the write that
-//! beat it is retracted. The fold is correct wherever it runs; the cost is
-//! calling it once per thing a candidate-picking read has to consider, and
-//! against the real store that is a transaction per call. [`Folded`] holds
-//! the same answer in RAM instead, built once from a full read at boot and
-//! kept current by re-reading the one thing a write just touched — so a
-//! caller who already has a `Folded` in hand pays no store round trip for a
-//! question the cache already answers, while every other verb, and every
-//! store this does not wrap, is untouched.
+//! jojobot is one server instance and the only writer, so it holds the whole
+//! store in memory and answers a read from there. [`Folded`] wraps a
+//! [`Memory`] and, once [`rebuild`](Folded::rebuild) has run, serves the reads
+//! named below from an [`Image`](image::Image) filled by the store's own reads:
+//! the listing and the rename history, the declared types and kinds, and for
+//! every thing its records, fields, ages and claim histories. Every write goes
+//! to the store first and then re-reads what it touched into the image under
+//! the same lock, so a caller who writes and reads sees the write.
 //!
-//! ⚠️ **This is only correct with exactly one writer in the process.** The
-//! cache is filled from writes THIS `Folded` observed; a row changed by
-//! anything else — another worker, a restored backup, a migration tool, a
-//! person running SQL by hand — leaves the cached copy silently wrong, and
-//! nothing here would notice. jojobot runs one application worker against
-//! its store today, which is the whole reason this is authoritative rather
-//! than a guess. Add a second writer and this assumption breaks first.
+//! **The image is filled from the store's answers, never from arithmetic of its
+//! own.** `Memory::fields` folds a thing's field writes down to one value per
+//! key — the newest write wins, an older one stands back up when the write that
+//! beat it is retracted — and the fold is correct wherever it runs. A held copy
+//! of that answer is the answer; a second copy of the fold would be one more
+//! thing to disagree with the first.
+//!
+//! Before the first `rebuild`, and after a refresh that failed, no image is
+//! held and every read goes to the store underneath: slower and still correct.
+//!
+//! ⚠️ **This is only correct with exactly one writer in the process.** The image
+//! is filled from writes THIS `Folded` observed; a row changed by anything else
+//! — another worker, a restored backup, a migration tool, a person running SQL
+//! by hand — leaves it silently wrong, and nothing here would notice. jojobot
+//! runs one application worker against its store today, which is the whole
+//! reason this is authoritative rather than a guess. Add a second writer and
+//! this assumption breaks first.
+
+mod image;
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use jiff::civil::Date;
 
+use image::{Doc, Image};
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FieldAges, FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory,
@@ -34,126 +46,141 @@ use jojobot_domain::memory::{
     types::{self, DeclaredType},
 };
 
-/// A [`Memory`] wrapped in a RAM copy of every thing's folded fields.
+/// A [`Memory`] wrapped in a RAM image of everything its reads answer.
 ///
-/// Every verb but the four below (`capture`, `update_fact`, `retract`,
-/// `merge` — the only ones that can move a field, see [`Memory::fields`]'s
-/// own doc) forwards straight to the store underneath and touches nothing
-/// here.
-/// One entity's folded fields, beside the version
-/// [`Memory::fields_versioned`] read them under.
-type VersionedFields = (u64, BTreeMap<String, String>);
-
+/// Every write verb forwards to the store underneath, then brings the image up
+/// to date. Reads the image does not hold yet (`history`, `backing`,
+/// `referring_to` and the rest) forward to the store.
 pub struct Folded {
     inner: Arc<dyn Memory>,
-    /// **Each entry carries the version [`Memory::fields_versioned`] read it
-    /// under, beside the fields themselves.** The version is what
-    /// [`refresh`](Folded::refresh) compares against before installing a new
-    /// read, so two concurrent refreshes for the same entity cannot have the
-    /// slower one — carrying an earlier version — land after the faster one
-    /// and overwrite what it correctly installed.
-    cache: RwLock<HashMap<EntityId, VersionedFields>>,
-    /// **When the store took in what each thing holds**, read from the store the
-    /// first time it is asked for and dropped whole when any write passes
-    /// through. The fold's version marker advances on a claim write only, and a
-    /// thing's own row is written without one, so there is no marker to hold an
-    /// age against; a cache that outlived a write would date a value by a write
-    /// that is no longer the newest.
-    ages: RwLock<HashMap<EntityId, FieldAges>>,
-    /// **The version marker of `ages`.** The store's own marker advances on a
-    /// claim write only, so it cannot date a read against a write to a thing's
-    /// row; this one advances on every write verb that passes through, under
-    /// the lock that clears the map. A reader notes it before it reads the store
-    /// and installs what it read only if it is still the same: a read taken
-    /// before a write must not be installed after that write cleared the map.
-    ages_version: std::sync::atomic::AtomicU64,
-}
-
-/// **Drops the cached ages when a write verb is finished**, on whichever path it
-/// leaves by: dropped after the verb's own work, so a read that cached an age
-/// while the write was landing is cleared too.
-struct ForgetAges<'a>(&'a Folded);
-
-impl Drop for ForgetAges<'_> {
-    fn drop(&mut self) {
-        let mut ages = self.0.ages.write().expect("fold lock");
-        self.0
-            .ages_version
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        ages.clear();
-    }
+    /// The image, once a [`rebuild`](Folded::rebuild) has filled it; `None`
+    /// sends every read to the store.
+    image: RwLock<Option<Image>>,
+    /// **Held across a write and the re-read that follows it.** Two writes then
+    /// reach the image in the order they reached the store, so a slower re-read
+    /// of an earlier state cannot land after a faster one of a later state.
+    writing: tokio::sync::Mutex<()>,
+    /// Set by the first successful `rebuild`. A write after a refresh failed
+    /// drops the image, and this is what tells the next write to fill it again.
+    wanted: AtomicBool,
 }
 
 impl Folded {
-    /// Wrap a store with an **empty** fold. Nothing is read yet — the cache
-    /// is filled by [`rebuild`](Folded::rebuild), separately, so a store
-    /// that is not reachable yet cannot stop the wrap itself from
-    /// succeeding. `fields` answers correctly even before a rebuild: a miss
-    /// falls through to the store underneath.
+    /// Wrap a store with **no image**. Nothing is read yet — the image is
+    /// filled by [`rebuild`](Folded::rebuild), separately, so a store that is
+    /// not reachable yet cannot stop the wrap itself from succeeding. Every
+    /// read answers correctly before a rebuild: it goes to the store.
     pub fn new(inner: Arc<dyn Memory>) -> Self {
         Folded {
             inner,
-            cache: RwLock::new(HashMap::new()),
-            ages: RwLock::new(HashMap::new()),
-            ages_version: std::sync::atomic::AtomicU64::new(0),
+            image: RwLock::new(None),
+            writing: tokio::sync::Mutex::new(()),
+            wanted: AtomicBool::new(false),
         }
     }
 
-    /// Held by a write verb for as long as it runs; see [`ForgetAges`].
-    fn forgetting_ages(&self) -> ForgetAges<'_> {
-        ForgetAges(self)
-    }
-
-    /// Fill the fold from a full read of the store — the boot path. Returns
-    /// how many things were folded.
+    /// Fill the image from a full read of the store — the boot path. Returns
+    /// how many things were held.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
-        let entities = self.inner.list_entities(None).await?;
-        let mut fresh = HashMap::with_capacity(entities.len());
-        for entity in &entities {
-            let (fields, version) = self.inner.fields_versioned(&entity.id).await?;
-            fresh.insert(entity.id.clone(), (version, fields));
-        }
-        let folded = fresh.len();
-        *self.cache.write().expect("fold lock") = fresh;
-        Ok(folded)
+        let _gate = self.writing.lock().await;
+        self.fill().await
     }
 
-    /// [`rebuild`](Folded::rebuild), for a caller that already knows what it
-    /// wrote and only needs the fold to catch up — never silently. A rebuild
-    /// that fails here is reported rather than swallowed: the write already
-    /// landed in the store, so this is the one thing left that can still go
-    /// wrong.
-    async fn rebuild_or_explain(&self, verb: &str) -> Result<(), MemoryError> {
-        self.rebuild().await.map(|_| ()).map_err(|source| {
-            MemoryError::Store(format!(
-                "{verb} landed, but the fold could not rebuild to reflect it: {source}"
-            ))
-        })
+    /// The read behind [`rebuild`](Folded::rebuild), for a caller that already
+    /// holds the write gate. A failure leaves no image rather than a half one.
+    async fn fill(&self) -> Result<usize, MemoryError> {
+        match Image::load(&self.inner).await {
+            Ok(image) => {
+                let held = image.len();
+                *self.image.write().expect("fold lock") = Some(image);
+                self.wanted.store(true, Ordering::SeqCst);
+                Ok(held)
+            }
+            Err(e) => {
+                *self.image.write().expect("fold lock") = None;
+                Err(e)
+            }
+        }
     }
 
-    /// Re-read one thing's fields from the store underneath and replace what
-    /// the cache holds for it — the write-side half of the same mechanism
-    /// [`rebuild`](Folded::rebuild) runs at boot. **Re-reading rather than
-    /// computing the new value from the write just made**: `fields` is where
-    /// [`Memory::fields`]'s newest-write-wins, per-key, retraction-aware fold
-    /// already lives, so this asks it again instead of a second copy of the
-    /// same arithmetic learning to disagree with it.
-    ///
-    /// **The read happens before the lock is ever taken**, so a slow read for
-    /// one entity blocks nobody's read of another and nobody's read of this
-    /// one either — only the two lines below, deciding whether to install,
-    /// hold it. A read carrying a version behind what is already installed
-    /// is refused rather than applied: the write it reflects still happened,
-    /// exactly as fresh a moment ago as the one that beat it here, but a
-    /// cache can hold only one answer and the newer one is that answer.
-    async fn refresh(&self, entity: &EntityId) -> Result<(), MemoryError> {
-        let (fields, version) = self.inner.fields_versioned(entity).await?;
-        let mut cache = self.cache.write().expect("fold lock");
-        let current = cache.get(entity).map(|(v, _)| *v).unwrap_or(0);
-        if version >= current {
-            cache.insert(entity.clone(), (version, fields));
+    /// Answer from the image when one is held; `None` sends the read to the
+    /// store.
+    fn held<T>(&self, read: impl FnOnce(&Image) -> T) -> Option<T> {
+        self.image.read().expect("fold lock").as_ref().map(read)
+    }
+
+    /// Bring the image up to date with a write that touched only `handle`:
+    /// the listing, which an entity's own row is part of, and that thing's
+    /// document are read again. **Re-reading rather than computing the new value
+    /// from the write just made**, so the image holds what the store answers.
+    async fn refresh(&self, handle: &EntityId) -> Result<(), MemoryError> {
+        self.refresh_listing(handle, true).await
+    }
+
+    /// [`refresh`](Self::refresh) for a write that cannot have changed any
+    /// thing's own row: a claim written, edited or taken back. The listing is
+    /// not read again, so the cost of such a write does not grow with the number
+    /// of things.
+    async fn refresh_claims(&self, handle: &EntityId) -> Result<(), MemoryError> {
+        self.refresh_listing(handle, false).await
+    }
+
+    async fn refresh_listing(&self, handle: &EntityId, relist: bool) -> Result<(), MemoryError> {
+        if !self.wanted.load(Ordering::SeqCst) {
+            return Ok(());
         }
-        Ok(())
+        if self.held(|_| ()).is_none() {
+            return self.fill().await.map(|_| ());
+        }
+        let read = async {
+            let entities = if relist {
+                Some(self.inner.list_entities(None).await?)
+            } else {
+                None
+            };
+            let doc = Doc::load(&*self.inner, handle).await?;
+            let names = self
+                .held(|image| image.names_touched_by(&doc))
+                .unwrap_or_default();
+            let referring = image::ask_referring(&self.inner, names).await?;
+            Ok::<_, MemoryError>((entities, doc, referring))
+        }
+        .await;
+        match read {
+            Ok((entities, doc, referring)) => {
+                if let Some(image) = self.image.write().expect("fold lock").as_mut() {
+                    image.install(entities, doc, referring);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                *self.image.write().expect("fold lock") = None;
+                Err(e)
+            }
+        }
+    }
+
+    /// Bring the image up to date with a write that may have touched any thing:
+    /// a rename, a merge, a declaration. The whole image is read again.
+    async fn reload(&self) -> Result<(), MemoryError> {
+        if !self.wanted.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.fill().await.map(|_| ())
+    }
+
+    /// A write that has no [`Landed`] to carry its own answer, whose image could
+    /// not follow it. The write stands; the image is gone, so every read goes to
+    /// the store until the next write fills it again.
+    fn follow(verb: &str, followed: Result<(), MemoryError>) {
+        if let Err(error) = followed {
+            tracing::warn!(
+                verb,
+                %error,
+                "the in-memory image could not follow a write, so reads go to the store until \
+                 the next write fills it again"
+            );
+        }
     }
 }
 
@@ -173,11 +200,15 @@ fn fold_behind(landed: Landed, source: MemoryError) -> MemoryError {
 #[async_trait]
 impl Memory for Folded {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        let _forget = self.forgetting_ages();
-        self.inner.add_entity(new).await
+        let _gate = self.writing.lock().await;
+        let made = self.inner.add_entity(new).await?;
+        if let Guarded::Written(entity) = &made {
+            Folded::follow("add_entity", self.refresh(&entity.id).await);
+        }
+        Ok(made)
     }
 
-    /// **A creation that writes its first claim refreshes the fold for the new
+    /// **A creation that writes its first claim refreshes the image for the new
     /// thing, as a capture does.** Forwarded and not left to the port's default,
     /// which refuses.
     async fn add_entity_with_first_claim(
@@ -185,7 +216,7 @@ impl Memory for Folded {
         new: NewEntity,
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         match self.inner.add_entity_with_first_claim(new, first).await? {
             Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written((entity, fact))),
@@ -198,7 +229,7 @@ impl Memory for Folded {
         }
     }
 
-    /// **An edit that writes a claim refreshes the fold for the thing, as a
+    /// **An edit that writes a claim refreshes the image for the thing, as a
     /// capture does.** Forwarded and not left to the port's default, which
     /// refuses.
     async fn update_entity_with_claim(
@@ -207,7 +238,7 @@ impl Memory for Folded {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         match self
             .inner
             .update_entity_with_claim(handle, patch, claim)
@@ -225,11 +256,17 @@ impl Memory for Folded {
     }
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        self.inner.list_entities(kind).await
+        match self.held(|image| image.list(kind)) {
+            Some(listing) => Ok(listing),
+            None => self.inner.list_entities(kind).await,
+        }
     }
 
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        self.inner.former_handles().await
+        match self.held(Image::former) {
+            Some(former) => Ok(former),
+            None => self.inner.former_handles().await,
+        }
     }
 
     async fn update_entity(
@@ -237,20 +274,19 @@ impl Memory for Folded {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        let _forget = self.forgetting_ages();
-        self.inner.update_entity(handle, patch).await
+        let _gate = self.writing.lock().await;
+        let edited = self.inner.update_entity(handle, patch).await?;
+        if let Guarded::Written(entity) = &edited {
+            Folded::follow("update_entity", self.refresh(&entity.id).await);
+        }
+        Ok(edited)
     }
 
-    /// **The cache is keyed by the literal handle, and `fields` checks no
-    /// freshness on a hit.** The store's own `fields` resolves a stale
-    /// handle through its rename history and answers current data (see
-    /// [`Memory::fields`]'s own adapters); this cache would go on answering
-    /// whatever it held under the OLD handle at the moment of the rename,
-    /// for ever, since nothing ever writes a field under that handle again
-    /// to trigger an ordinary refresh. So a successful rename drops the old
-    /// handle's entry: the next read under it is a cache miss, which falls
-    /// through to the store and gets the current answer, exactly as a miss
-    /// always has.
+    /// **A rename reads the whole image again.** The handle a thing answers to,
+    /// the parent of each thing under it, and every record, field and mention
+    /// that names it are all served under the handle it wears now, so a copy
+    /// held before the rename carries the old spelling in more places than one
+    /// re-read could name.
     async fn rename_entity(
         &self,
         from: &EntityId,
@@ -259,38 +295,35 @@ impl Memory for Folded {
         date: Date,
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         let renamed = self
             .inner
             .rename_entity(from, to, parent, date, override_token)
             .await?;
         if matches!(renamed, Guarded::Written(_)) {
-            // **Every thing whose fields say the old handle is stale too.** A
-            // field naming the renamed thing is served under the handle it
-            // answers to now, so a copy cached before the rename still holds
-            // the old spelling.
-            let old = from.as_str();
-            let mut cache = self.cache.write().expect("fold lock");
-            cache.remove(from);
-            cache.retain(|_, (_, fields)| !fields.values().any(|value| value.contains(old)));
+            Folded::follow("rename_entity", self.reload().await);
         }
         Ok(renamed)
     }
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        let _forget = self.forgetting_ages();
-        self.inner.archive_entity(id, reason).await
+        let _gate = self.writing.lock().await;
+        let archived = self.inner.archive_entity(id, reason).await?;
+        Folded::follow("archive_entity", self.refresh(&archived.id).await);
+        Ok(archived)
     }
 
     async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-        let _forget = self.forgetting_ages();
-        self.inner.restore_entity(id).await
+        let _gate = self.writing.lock().await;
+        let restored = self.inner.restore_entity(id).await?;
+        Folded::follow("restore_entity", self.refresh(&restored.0.id).await);
+        Ok(restored)
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         match self.inner.capture(fact).await? {
-            Guarded::Written(fact) => match self.refresh(&fact.home).await {
+            Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written(fact)),
                 Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
             },
@@ -299,31 +332,54 @@ impl Memory for Folded {
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.recall(subject).await
+        match self.held(|image| image.doc(subject).map(|doc| doc.facts.clone())) {
+            Some(answer) => answer,
+            None => self.inner.recall(subject).await,
+        }
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
-        self.inner.history(entity, key).await
+        match self.held(|image| image.history(entity, key)) {
+            Some(answer) => answer,
+            None => self.inner.history(entity, key).await,
+        }
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
-        self.inner.claim_history(address).await
+        match self.held(|image| image.claim_history(address)) {
+            Some(answer) => answer,
+            None => self.inner.claim_history(address).await,
+        }
     }
+
     async fn keys_kept_off_the_thing(
         &self,
         address: &FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
-        self.inner.keys_kept_off_the_thing(address).await
+        match self.held(|image| image.kept_off(address)) {
+            Some(answer) => answer,
+            None => self.inner.keys_kept_off_the_thing(address).await,
+        }
     }
 
-    /// **Straight through**, for the reason [`backing`](Self::backing) is: the
-    /// default walks `recall` and `claim_history` one claim at a time over a
-    /// store that reads the whole entity in one query.
+    async fn key_trails(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
+        match self.held(|image| image.trails(entity)) {
+            Some(answer) => answer,
+            None => self.inner.key_trails(entity).await,
+        }
+    }
+
     async fn claim_histories(
         &self,
         entity: &EntityId,
     ) -> Result<HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
-        self.inner.claim_histories(entity).await
+        match self.held(|image| image.doc(entity).map(|doc| doc.histories.clone())) {
+            Some(answer) => answer,
+            None => self.inner.claim_histories(entity).await,
+        }
     }
 
     async fn update_fact(
@@ -332,9 +388,9 @@ impl Memory for Folded {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         match self.inner.update_fact(address, patch, caller).await? {
-            Guarded::Written(fact) => match self.refresh(&fact.home).await {
+            Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written(fact)),
                 Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
             },
@@ -342,32 +398,32 @@ impl Memory for Folded {
         }
     }
 
-    /// **The one method this wrapper exists for.** A thing the fold has
-    /// answered before is served from RAM; a miss — nothing has been written
-    /// through this `Folded` for it, and no `rebuild` has run since it was
-    /// created — falls through to the store, exactly what an unwrapped
-    /// `Memory` would answer.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        if let Some((_, fields)) = self.cache.read().expect("fold lock").get(entity) {
-            return Ok(fields.clone());
+        match self.held(|image| image.doc(entity).map(|doc| doc.fields.clone())) {
+            Some(answer) => answer,
+            None => self.inner.fields(entity).await,
         }
-        self.inner.fields(entity).await
     }
 
-    /// **Served from RAM once read, and dropped by any write.** See
-    /// [`Folded::ages`]. A miss reads the store, which answers a thing that does
-    /// not exist as the miss it is.
+    async fn fields_versioned(
+        &self,
+        entity: &EntityId,
+    ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
+        match self.held(|image| {
+            image
+                .doc(entity)
+                .map(|doc| (doc.fields.clone(), doc.version))
+        }) {
+            Some(answer) => answer,
+            None => self.inner.fields_versioned(entity).await,
+        }
+    }
+
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
-        if let Some(ages) = self.ages.read().expect("fold lock").get(entity) {
-            return Ok(ages.clone());
+        match self.held(|image| image.doc(entity).map(|doc| doc.ages.clone())) {
+            Some(answer) => answer,
+            None => self.inner.field_ages(entity).await,
         }
-        let version = self.ages_version.load(std::sync::atomic::Ordering::SeqCst);
-        let ages = self.inner.field_ages(entity).await?;
-        let mut cached = self.ages.write().expect("fold lock");
-        if self.ages_version.load(std::sync::atomic::Ordering::SeqCst) == version {
-            cached.insert(entity.clone(), ages.clone());
-        }
-        Ok(ages)
     }
 
     async fn retract(
@@ -378,12 +434,12 @@ impl Memory for Folded {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         let taken_back = self
             .inner
             .retract(address, reason, date, caller, session)
             .await?;
-        match self.refresh(&taken_back.retracted.home).await {
+        match self.refresh_claims(&taken_back.retracted.home).await {
             Ok(()) => Ok(taken_back),
             Err(source) => Err(fold_behind(
                 Landed::Retraction(Box::new(taken_back)),
@@ -392,10 +448,10 @@ impl Memory for Folded {
         }
     }
 
-    /// **Both sides refreshed.** The folded thing's writes moved to the
-    /// survivor (see [`Memory::merge`]), so its own cached fields may have
-    /// shrunk and the survivor's may have grown; serving either from a stale
-    /// entry would answer with a thing that is no longer whole.
+    /// **The whole image is read again.** The folded thing's writes moved to the
+    /// survivor (see [`Memory::merge`]), and every record that named the folded
+    /// thing now names the survivor, so a re-read of the two ends would leave
+    /// the holders in between serving a thing that is no longer whole.
     async fn merge(
         &self,
         folded: &EntityId,
@@ -405,59 +461,36 @@ impl Memory for Folded {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
-        let _forget = self.forgetting_ages();
-        // **Who points at the folded side, read before the fold** — after it
-        // their links name the survivor and the question has no answer. Each
-        // holder's cached fields name the folded handle until it is read again.
-        let mut holders: Vec<EntityId> = Vec::new();
-        for fact in self.inner.referring_to(folded).await? {
-            if !holders.contains(&fact.subject) {
-                holders.push(fact.subject);
-            }
-        }
+        let _gate = self.writing.lock().await;
         let done = self
             .inner
             .merge(folded, survivor, reason, date, caller, session)
             .await?;
-        // **The merged-away handle's entry is dropped, never refreshed.** A
-        // merge moves its writes to the survivor, so the store's version
-        // marker for it falls below what this cache installed, and
-        // [`refresh`](Self::refresh) refuses a read that is behind what it
-        // holds: the old fields would be served until a restart. A dropped
-        // entry sends the next read to the store, which is the answer, the
-        // way a rename does it.
-        self.cache.write().expect("fold lock").remove(folded);
-        for holder in holders.iter().filter(|h| *h != folded) {
-            if let Err(source) = self.refresh(holder).await {
-                return Err(fold_behind(Landed::Merge(Box::new(done)), source));
-            }
-        }
-        match self.refresh(survivor).await {
+        match self.reload().await {
             Ok(()) => Ok(done),
             Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),
         }
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        let _forget = self.forgetting_ages();
-        self.inner.set_prose(entity, prose).await
+        let _gate = self.writing.lock().await;
+        let stored = self.inner.set_prose(entity, prose).await?;
+        Folded::follow("set_prose", self.refresh(entity).await);
+        Ok(stored)
     }
 
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
-        self.inner.scan().await
+        match self.held(Image::scan) {
+            Some(scanned) => Ok(scanned),
+            None => self.inner.scan().await,
+        }
     }
 
-    /// **Forwarded, not defaulted.** Left to [`Memory::scan_entity`]'s own
-    /// default, this fold would answer a one-entity question by reading
-    /// every entity's every fact through [`scan`](Self::scan) and throwing
-    /// away all but one row — a cost that grows with the whole store on
-    /// every write, paid by [`IndexedMemory`](crate::search::IndexedMemory)'s
-    /// per-write refresh regardless of which entity was touched. The fold
-    /// caches no document of its own to consult instead, so forwarding is
-    /// the whole fix: whatever the store underneath can do better, this
-    /// stops hiding from it.
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
-        self.inner.scan_entity(entity).await
+        match self.held(|image| image.scan_one(entity)) {
+            Some(doc) => Ok(doc),
+            None => self.inner.scan_entity(entity).await,
+        }
     }
 
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
@@ -479,79 +512,104 @@ impl Memory for Folded {
         self.inner.echoed_defaults(entity, fields).await
     }
 
-    /// **Straight through.** The cache holds folded values only; which claim
-    /// backs a key is read off the writes, which the store keeps. A default
-    /// body here would be served in production over the store's own read.
+    /// **Held as the store answered it.** A left-over default here would be
+    /// served in production over the store's own read.
     async fn backing(
         &self,
         entity: &EntityId,
     ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
-        self.inner.backing(entity).await
+        match self.held(|image| image.backing(entity)) {
+            Some(answer) => answer,
+            None => self.inner.backing(entity).await,
+        }
     }
 
-    /// **Straight through**, for the reason [`backing`](Self::backing) is.
+    /// **Selected on the pointer in memory**, not by reading every record.
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.built_on(source).await
+        match self.held(|image| image.built_on(source)) {
+            Some(answer) => answer,
+            None => self.inner.built_on(source).await,
+        }
     }
 
-    /// **Straight through**, for the reason [`backing`](Self::backing) is.
+    /// **Selected on what a record's fields name, in memory**, not by reading
+    /// every record.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.referring_to(target).await
+        match self.held(|image| image.referring_to(target)) {
+            Some(answer) => answer,
+            None => self.inner.referring_to(target).await,
+        }
     }
 
-    /// **Straight through**, for the reason [`backing`](Self::backing) is: the
-    /// default lists every bot and recalls each one, and the store beneath
-    /// answers in one read.
+    /// **Straight through**: asked by a write, inside the transaction that
+    /// decides it, so it is the store's own answer that matters there.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.thought_writers(thread).await
     }
 
     /// **A declaration can change how EVERY entity's existing writes fold**
     /// — `newest` against a counter — so there is no one handle to refresh
-    /// the way a capture refreshes its own home. The whole cache is rebuilt
-    /// from the store instead, the same read [`rebuild`](Folded::rebuild)
-    /// runs at boot. The write already landed; only the rebuild is what
-    /// this can fail to report.
+    /// the way a capture refreshes its own home. The whole image is read
+    /// again. The write already landed; only the re-read is what this can
+    /// fail to report.
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         let written = self.inner.declare_type(declared).await?;
-        self.rebuild_or_explain("declare_type").await?;
+        self.reload().await.map_err(|source| {
+            MemoryError::Store(format!(
+                "declare_type landed, but the fold could not rebuild to reflect it: {source}"
+            ))
+        })?;
         Ok(written)
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
-        self.inner.declared_types().await
+        match self.held(Image::types) {
+            Some(declared) => Ok(declared),
+            None => self.inner.declared_types().await,
+        }
     }
 
     async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {
         self.inner.displaced_type(name).await
     }
 
-    /// **The same reason [`declare_type`](Self::declare_type) rebuilds
-    /// rather than refreshes**: a kind's keys fold exactly like a declared
-    /// type's, over every entity that answers to it.
+    /// **The same reason [`declare_type`](Self::declare_type) reloads rather than
+    /// refreshes**: a kind's keys fold exactly like a declared type's, over
+    /// every entity that answers to it.
     async fn declare_kind(
         &self,
         token: &str,
         origin: types::Origin,
         fields: Vec<types::Field>,
     ) -> Result<(), MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         self.inner.declare_kind(token, origin, fields).await?;
-        self.rebuild_or_explain("declare_kind").await
+        self.reload().await.map_err(|source| {
+            MemoryError::Store(format!(
+                "declare_kind landed, but the fold could not rebuild to reflect it: {source}"
+            ))
+        })
     }
 
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
-        self.inner.declared_kinds().await
+        match self.held(Image::kinds) {
+            Some(kinds) => Ok(kinds),
+            None => self.inner.declared_kinds().await,
+        }
     }
 
     /// **Taking a kind back changes folding too**: a key that summed while
     /// the kind held it falls back to newest-write-wins once reclaimed, for
     /// every entity that answered to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        let _forget = self.forgetting_ages();
+        let _gate = self.writing.lock().await;
         self.inner.reclaim_kind(token).await?;
-        self.rebuild_or_explain("reclaim_kind").await
+        self.reload().await.map_err(|source| {
+            MemoryError::Store(format!(
+                "reclaim_kind landed, but the fold could not rebuild to reflect it: {source}"
+            ))
+        })
     }
 }
 
@@ -792,6 +850,7 @@ mod tests {
     async fn fields_are_served_from_the_cache_not_rederived_on_every_call() {
         let inner = Arc::new(InMemoryMemory::booted());
         let folded = Folded::new(inner);
+        folded.rebuild().await.expect("an empty store fills");
         seeded(&folded, &alpha(), "Alpha").await;
         folded
             .capture(jojobot_domain::memory::testing::contract::state(NewFact {
@@ -843,6 +902,32 @@ mod tests {
     /// suite is the regression test for that claim — a decorator that changed
     /// what any of it answers would fail here, with no case written for the
     /// fold itself.
+    /// **The same contract, read through a loaded image.** Every case writes
+    /// through the fold from an empty store, so each read it makes is one the
+    /// image answers. Dealt into parts that run side by side, because a read
+    /// through the fake costs as much as the store is large and a single store
+    /// holding every case's rows would take minutes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn fake_satisfies_the_contract_when_folded_and_loaded() {
+        let mut parts = Vec::new();
+        for part in 0..contract::PARTS {
+            parts.push(tokio::spawn(async move {
+                let folded = Folded::new(Arc::new(InMemoryMemory::booted()));
+                folded.rebuild().await.expect("an empty store fills");
+                contract::run_part(&folded, part, contract::PARTS).await
+            }));
+        }
+        let mut ran = 0;
+        for part in parts {
+            ran += part.await.expect("a part of the contract held");
+        }
+        assert_eq!(
+            ran,
+            contract::case_count(),
+            "a case was dropped between parts"
+        );
+    }
+
     #[tokio::test]
     async fn fake_satisfies_the_contract_when_folded() {
         contract::run_all(&Folded::new(Arc::new(InMemoryMemory::booted()))).await;
@@ -1000,6 +1085,7 @@ mod tests {
         let inner = Arc::new(InMemoryMemory::booted());
         let flaky = Arc::new(WritesThenFailsToReadFields(inner.clone()));
         let folded = Folded::new(flaky);
+        folded.rebuild().await.expect("an empty store fills");
         seeded(&folded, &alpha(), "Alpha").await;
 
         let err = folded
@@ -1649,21 +1735,16 @@ mod tests {
         }
     }
 
-    /// **The race itself, driven rather than merely asserted possible.**
+    /// **Two writes reach the image in the order they reached the store.**
     ///
-    /// A writes `due_on = A`; its refresh takes an early snapshot (version 1,
-    /// `due_on = A`) and stalls. While it is stalled, B writes `due_on = B`
-    /// end to end — its own refresh is not the first call, so it runs
-    /// straight through, installing version 2. Only then is A's stalled
-    /// snapshot released to attempt its own install, carrying version 1.
-    ///
-    /// Without the version guard, A's install runs unconditionally and the
-    /// fold ends up serving `due_on = A` — the earlier value — even though
-    /// the store itself has moved on to `B` and nothing will touch this
-    /// entity again to correct it. Both writes succeeded; only which one the
-    /// CACHE remembers is what a version compares.
+    /// A writes `due_on = A`; its re-read stalls. While it is stalled, B tries
+    /// to write `due_on = B`. B must wait for A's write and A's re-read to
+    /// finish: if it ran through, A's older snapshot could land after B's and
+    /// the image would serve the earlier value for ever, with the store
+    /// holding the later one. Only after A is released does B write, so the
+    /// store and the image both end at `B`.
     #[tokio::test]
-    async fn a_slower_refresh_carrying_an_earlier_version_does_not_undo_a_faster_ones_install() {
+    async fn a_second_write_waits_for_the_first_ones_reread_so_the_image_ends_at_the_later_value() {
         let inner = Arc::new(InMemoryMemory::booted());
         inner
             .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
@@ -1675,13 +1756,17 @@ mod tests {
         let stalled = Arc::new(tokio::sync::Notify::new());
         let released = Arc::new(tokio::sync::Notify::new());
         let double = Arc::new(StallFirstVersionedRead {
-            inner,
+            inner: inner.clone(),
             written: std::sync::atomic::AtomicU64::new(0),
             stalled: stalled.clone(),
             released: released.clone(),
-            first: std::sync::atomic::AtomicBool::new(true),
+            first: std::sync::atomic::AtomicBool::new(false),
         });
-        let folded = Arc::new(Folded::new(double));
+        let folded = Arc::new(Folded::new(double.clone()));
+        folded.rebuild().await.expect("the image fills");
+        double
+            .first
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         let a_folded = folded.clone();
         let a_task = tokio::spawn(async move {
@@ -1693,36 +1778,47 @@ mod tests {
                 .await
         });
 
-        // A's write has landed and its refresh is holding an early snapshot
-        // open — exactly the window the bug lived in.
+        // A's write has landed and its re-read is holding a snapshot open.
         stalled.notified().await;
 
-        folded
-            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
-                fields: BTreeMap::from([("due_on".to_string(), "B".to_string())]),
-                ..NewFact::about(
-                    alpha(),
-                    "B writes second, while A is stalled",
-                    date(2026, 9, 2),
-                )
-            }))
-            .await
-            .expect("capture ok")
-            .written()
-            .expect("not blocked");
+        let b_folded = folded.clone();
+        let b_task = tokio::spawn(async move {
+            b_folded
+                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                    fields: BTreeMap::from([("due_on".to_string(), "B".to_string())]),
+                    ..NewFact::about(
+                        alpha(),
+                        "B writes second, while A is stalled",
+                        date(2026, 9, 2),
+                    )
+                }))
+                .await
+        });
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !b_task.is_finished(),
+            "B ran through while A's re-read was still open"
+        );
         assert_eq!(
-            folded
+            inner
                 .fields(&alpha())
                 .await
                 .expect("fields ok")
                 .get("due_on"),
-            Some(&"B".to_string()),
-            "B's install lands correctly while A is still stalled"
+            Some(&"A".to_string()),
+            "B has not reached the store while A holds the gate"
         );
 
-        // Release A's stalled, now-stale snapshot to attempt its install.
         released.notify_one();
         a_task
+            .await
+            .expect("the task did not panic")
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        b_task
             .await
             .expect("the task did not panic")
             .expect("capture ok")
@@ -1736,7 +1832,16 @@ mod tests {
                 .expect("fields ok")
                 .get("due_on"),
             Some(&"B".to_string()),
-            "a slower refresh carrying an earlier version must not undo a fresher install"
+            "the image ends at the later write"
+        );
+        assert_eq!(
+            inner
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"B".to_string()),
+            "and so does the store"
         );
     }
 

@@ -22,7 +22,16 @@ pub mod search;
 // domain's fake and its contract do: test support that ships is test support
 // in the product.
 #[cfg(any(test, feature = "testing"))]
+pub mod counted;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod fold_battery;
+
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 #[cfg(any(test, feature = "testing"))]
 mod log_capture;
+
+#[cfg(test)]
+mod fold_image_tests;

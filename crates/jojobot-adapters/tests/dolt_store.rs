@@ -2275,6 +2275,7 @@ async fn dolt_satisfies_the_memory_contract_when_folded() {
         memory::case_count(),
         |pool, part| async move {
             let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+            folded.rebuild().await.expect("the image fills");
             memory::run_part(&folded, part, memory::PARTS).await
         },
     )

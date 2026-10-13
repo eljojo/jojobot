@@ -578,13 +578,18 @@ pub async fn boot_store_pushing(
     // because a projection couldn't be built is worse than a thin `search`.
     // It says so loudly instead.
     let (folded, indexed) = assemble_memory(resolved)?;
+    let filling = std::time::Instant::now();
     match folded.rebuild().await {
-        Ok(things) => tracing::info!(things, "fold: candidate fields built from a full read"),
+        Ok(things) => tracing::info!(
+            things,
+            elapsed_ms = filling.elapsed().as_millis() as u64,
+            "fold: everything the memory verbs read is held in memory, from a full read"
+        ),
         Err(e) => tracing::warn!(
             error = %e,
-            "FOLD EMPTY — the boot read failed, so a fields read falls through to the store \
-             until a write through this process fills the cache entry it touches. Nothing is \
-             wrong; every read stays correct and only slower until then."
+            "FOLD EMPTY — the boot read failed, so every memory read goes to the store until a \
+             write through this process fills it again. Nothing is wrong; every read stays \
+             correct and only slower until then."
         ),
     }
     match indexed.rebuild_scanned().await {
@@ -963,7 +968,7 @@ mod tests {
 
     /// **`Folded` genuinely sits inside the whole assembled stack — it is not
     /// merely forwarding to a store that happens to hold the right answer
-    /// anyway.** `fields` falls through to the store on a cache miss (see
+    /// anyway.** `fields` falls through to the store when no image is held (see
     /// `Folded::fields`), so a value-only check here would pass even if
     /// `assemble_memory` dropped `Folded` from the chain entirely: the store
     /// underneath still has the right data either way. What actually proves
@@ -976,6 +981,9 @@ mod tests {
         let bare = Arc::new(InMemoryMemory::booted());
         let resolved: Arc<dyn Memory> = bare.clone();
         let (folded, indexed) = assemble_memory(resolved).expect("index opens");
+        // The boot fills the image; a fold nobody filled sends every read to
+        // the store, and the staleness below would prove nothing.
+        folded.rebuild().await.expect("the image fills");
 
         let alpha = EntityId::person("person:alpha");
         indexed

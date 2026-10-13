@@ -536,6 +536,14 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         self.inner.claim_histories(entity).await
     }
+    /// **Straight through**: a left-over default here would answer from this
+    /// layer's own `history` and walk the store one key at a time.
+    async fn key_trails(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
+        self.inner.key_trails(entity).await
+    }
     async fn retract(
         &self,
         address: &FactAddress,

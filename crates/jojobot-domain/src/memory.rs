@@ -359,7 +359,7 @@ impl std::fmt::Display for EntityId {
 /// A fact's light, local id — unique within its home doc. Facts stay
 /// light/local until something must point at one directly (supersede/merge);
 /// only then do they earn a global typed id. The store mints it on capture.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FactId(pub String);
 
 impl FactId {
@@ -3903,16 +3903,32 @@ pub fn fields_name_target(
     declared: &[types::DeclaredType],
     target: &EntityId,
 ) -> bool {
+    names_in_fields(fields, declared)
+        .iter()
+        .any(|named| named == target.as_str())
+}
+
+/// **Every name a record's fields point at**, as [`fields_name_target`] reads
+/// them: the items of a declared reference key, and the handles
+/// [`handles_in_value`] reads out of any other key's value. The one definition
+/// of what a field names, so a reader that holds the records by what they name
+/// and a reader that asks one record cannot come to disagree.
+pub fn names_in_fields(
+    fields: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Vec<String> {
     let referenced = reference_field_values(fields, declared);
-    fields.iter().any(|(key, value)| {
+    let mut names = Vec::new();
+    for (key, value) in fields {
         match referenced
             .iter()
             .find(|(referenced_key, _)| referenced_key == key)
         {
-            Some((_, items)) => items.iter().any(|item| item == target.as_str()),
-            None => handles_in_value(value).iter().any(|named| named == target),
+            Some((_, items)) => names.extend(items.iter().cloned()),
+            None => names.extend(handles_in_value(value).into_iter().map(|named| named.0)),
         }
-    })
+    }
+    names
 }
 
 /// **A write may not drop a thing below its kind's required keys, and may not
@@ -5026,6 +5042,21 @@ impl Fact {
 /// sittings that each record one donut are a hundred records, so a history
 /// hanging off a record's id would be a hundred histories of length one and
 /// could count nothing.
+/// **Everything the key-trail reads answer for one thing, read at once.**
+///
+/// [`Memory::history`] is asked of a thing and a key, and
+/// [`Memory::keys_kept_off_the_thing`] of a record. A reader that holds the
+/// whole store in memory asks both of every thing and every record, so this is
+/// the same two answers in one round trip.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyTrails {
+    /// `history(thing, key)` for every key any write on the thing ever named.
+    pub history: BTreeMap<String, Vec<FieldWrite>>,
+    /// `keys_kept_off_the_thing` for every record on the thing, by its local id.
+    /// A record with nothing kept off it has no entry.
+    pub kept_off: BTreeMap<FactId, std::collections::BTreeSet<String>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldWrite {
     /// **What this write put there, and `None` says it took the key off.**
@@ -6622,6 +6653,39 @@ pub trait Memory: Send + Sync {
             histories.insert(fact.id, chain);
         }
         Ok(histories)
+    }
+
+    /// **The answers of [`history`](Memory::history) and
+    /// [`keys_kept_off_the_thing`](Memory::keys_kept_off_the_thing) for one
+    /// thing, in one read.** See [`KeyTrails`].
+    ///
+    /// Defaulted off those two reads, over the keys the thing holds and the keys
+    /// its records carry: right for a store whose writes never take a key off a
+    /// record. An adapter that can read every write of the thing in one query
+    /// overrides it and so also answers a key that was written and then cleared.
+    /// ⚠️ **A decorator must forward it:** one that leaves it to the default
+    /// answers from its own `history`, which is correct and as slow as that is.
+    async fn key_trails(&self, entity: &EntityId) -> Result<KeyTrails, MemoryError> {
+        let mut keys: std::collections::BTreeSet<String> =
+            self.fields(entity).await?.into_keys().collect();
+        let facts = self.recall(entity).await?;
+        for fact in &facts {
+            keys.extend(fact.fields.keys().cloned());
+        }
+        let mut trails = KeyTrails::default();
+        for key in keys {
+            let writes = self.history(entity, &key).await?;
+            if !writes.is_empty() {
+                trails.history.insert(key, writes);
+            }
+        }
+        for fact in &facts {
+            let kept = self.keys_kept_off_the_thing(&fact.address()).await?;
+            if !kept.is_empty() {
+                trails.kept_off.insert(fact.id.clone(), kept);
+            }
+        }
+        Ok(trails)
     }
 
     /// **What the thing HOLDS: one value per key, the newest write winning.**
