@@ -435,6 +435,7 @@ impl Jojobot {
             today,
             carried,
             claim,
+            sid: args.sid.as_deref(),
         })
         .await
     }
@@ -1234,6 +1235,94 @@ mod tests {
             "{booted}"
         );
         assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+    }
+
+    /// **A running session that holds no lease claims its role with its own
+    /// sid.** The boot that gave it the sid claimed nothing; naming the role on
+    /// a later call, with the live sid, answers the claim for that session and
+    /// offers no resume-or-new. Paired with the refusal: the same call from a
+    /// second running session of the bot, while the first holds a fresh lease,
+    /// is refused naming the holder.
+    #[tokio::test]
+    async fn a_running_session_claims_its_role_with_its_own_sid() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let args = |sid: Option<String>, claim: Option<&str>, resume: Option<&str>| OrientArgs {
+            claim: claim.map(str::to_string),
+            timezone: None,
+            bot: Some("gamma".into()),
+            brief: Some(true),
+            skill: None,
+            section: None,
+            resume: resume.map(str::to_string),
+            sid,
+            today: None,
+            ask_for_code: None,
+            challenge: None,
+            code: None,
+        };
+
+        // The boot claims nothing and hands the session its sid.
+        let first = json_of(
+            &jojobot
+                .start_here(Parameters(args(None, None, None)))
+                .await
+                .expect("start_here ok"),
+        );
+        let first_sid = sid_of(&first).expect("the first boot hands a sid");
+        assert!(first["session"].get("claim").is_none(), "{first}");
+
+        // The same session names the role, carrying its sid.
+        let claimed = json_of(
+            &jojobot
+                .start_here(Parameters(args(
+                    Some(first_sid.clone()),
+                    Some("dev-dispatch"),
+                    None,
+                )))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            sid_of(&claimed).as_deref(),
+            Some(first_sid.as_str()),
+            "the claim is answered for the session that carried the sid, with no new one: {claimed}"
+        );
+        assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+        assert!(
+            claimed["session"].get("choices").is_none(),
+            "no resume-or-new is offered to a session that is running: {claimed}"
+        );
+
+        // A second running session of the bot, naming the same role while the
+        // lease is fresh, is refused naming the first.
+        let second = json_of(
+            &jojobot
+                .start_here(Parameters(args(None, None, Some("new"))))
+                .await
+                .expect("start_here ok"),
+        );
+        let second_sid = sid_of(&second).expect("the second session's handle");
+        assert_ne!(second_sid, first_sid);
+        let refused = json_of(
+            &jojobot
+                .start_here(Parameters(args(
+                    Some(second_sid.clone()),
+                    Some("dev-dispatch"),
+                    None,
+                )))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            refused["session"]["claim"]["status"], "refused",
+            "{refused}"
+        );
+        assert_eq!(
+            refused["session"]["claim"]["holder"],
+            run_name(&jojobot, &first_sid),
+            "the refusal names the session that holds the role: {refused}"
+        );
     }
 
     /// **A second claimant is refused while the first claim is fresh, and told

@@ -369,6 +369,9 @@ pub(crate) struct OrientRequest<'a> {
     /// ordinary boot, unchanged. Decided only once this call's own sid is
     /// known — see where `session` is built below.
     pub(crate) claim: Option<&'a str>,
+    /// **The handle the caller arrived with**, as sent. A boot that names a role
+    /// with a live handle of the named bot claims the role for THAT session.
+    pub(crate) sid: Option<&'a str>,
     /// **A code that was checked and matched**, spent once this call's own sid is
     /// known: the voucher goes to the session that booted. `None` is the
     /// ordinary boot, unchanged.
@@ -390,6 +393,7 @@ impl Jojobot {
             today,
             carried,
             claim,
+            sid: arrived_with,
             redeem,
         } = req;
         // **The zone this call resolves days in:** the one the session sent,
@@ -500,8 +504,37 @@ impl Jojobot {
         // nothing, so it starts no session and sweeps nothing either — binding
         // a connection to an identity jojobot just refused would be a session
         // belonging to nobody.
+        //
+        // **A running session that names a role is answered as itself.** The
+        // boot that handed it its handle claimed nothing, and a later call that
+        // carries the handle and names the role asks for the lease for THAT
+        // session: attaching again would offer it a choice between itself and a
+        // new one, and no claim would be answered. Only a live handle of the
+        // named bot counts, and only when no answer to an offer comes with it.
+        let running_as = match (bot, claim, resume, arrived_with) {
+            (Some(bot), Some(_), None, Some(raw)) if carried == "held" => {
+                match self.caller(Some(raw)) {
+                    Ok(Some(caller)) if &caller.bot == bot => {
+                        Some((raw.trim().to_string(), caller.sid.as_str().to_string()))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let mut session = match bot {
             None => serde_json::Value::Null,
+            Some(_) if running_as.is_some() => {
+                let (sid, run) = running_as.clone().unwrap_or_default();
+                serde_json::json!({
+                    "available": true,
+                    "sid": sid,
+                    "run": run,
+                    "resumed": false,
+                    "note": "this is the session you are already running: the handle you sent \
+                             still addresses it, so nothing was started, resumed or offered.",
+                })
+            }
             Some(bot) => match self.attach(bot, resume, timezone, today).await {
                 Ok(session) => session,
                 // A handle that addresses nothing stops the whole answer.
