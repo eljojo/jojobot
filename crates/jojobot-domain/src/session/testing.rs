@@ -359,6 +359,18 @@ impl Sessions for InMemorySessions {
         Ok(())
     }
 
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
+                attempted: id.to_string(),
+            }
+        })?;
+        sessions[at].served_chars = 0;
+        Ok(())
+    }
+
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");

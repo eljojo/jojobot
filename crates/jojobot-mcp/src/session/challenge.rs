@@ -637,6 +637,7 @@ mod tests {
 
     fn boot_with_code(bot: &str, challenge: &str, code: &str) -> OrientArgs {
         OrientArgs {
+            compacted: None,
             claim: None,
             timezone: None,
             bot: Some(bot.into()),
@@ -710,6 +711,7 @@ mod tests {
         let ordinary = tokio::time::timeout(
             Duration::from_secs(5),
             jojobot.start_here(Parameters(OrientArgs {
+                compacted: None,
                 bot: Some("gamma".into()),
                 resume: Some("new".into()),
                 ..boot_with_code("gamma", "", "")

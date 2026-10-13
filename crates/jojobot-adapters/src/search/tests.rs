@@ -3410,6 +3410,12 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
     ) -> Result<(), jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
+    async fn reset_served(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
     async fn reopen(
         &self,
         _: &jojobot_domain::session::SessionId,

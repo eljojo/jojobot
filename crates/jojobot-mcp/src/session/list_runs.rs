@@ -141,8 +141,10 @@ impl Jojobot {
                 "runs": [],
             })
         };
+        // **The block is counted under its key**, as it rides the answer: the
+        // key is characters the answer spends too.
         let rest = envelope(page.len()).to_string().chars().count()
-            + crate::answer::not_shown(held, held, "runs")
+            + serde_json::json!({ "not_shown": crate::answer::not_shown(held, held, "runs") })
                 .to_string()
                 .chars()
                 .count()

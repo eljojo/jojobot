@@ -431,6 +431,7 @@ pub(crate) async fn a_claimed_role(jojobot: &Jojobot) -> String {
     let booted = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                compacted: None,
                 claim: Some("dev-dispatch".into()),
                 timezone: None,
                 bot: Some("gamma".into()),

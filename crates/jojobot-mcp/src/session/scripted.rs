@@ -483,6 +483,12 @@ impl jojobot_domain::session::Sessions for UnreachableRuns {
     ) -> Result<(), jojobot_domain::session::SessionError> {
         self.0.add_served(id, chars).await
     }
+    async fn reset_served(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.reset_served(id).await
+    }
     async fn reopen(
         &self,
         id: &jojobot_domain::session::SessionId,

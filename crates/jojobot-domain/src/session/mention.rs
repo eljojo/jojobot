@@ -376,6 +376,9 @@ impl Sessions for Mentioning {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.inner.reset_served(id).await
+    }
 
     // **A plain forward, no rendering**: a moment on a card, no text and no `bot`.
     async fn set_charter_told(

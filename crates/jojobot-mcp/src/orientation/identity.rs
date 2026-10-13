@@ -741,6 +741,7 @@ mod tests {
         let baseline = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -770,6 +771,7 @@ mod tests {
         for _ in 0..3 {
             jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -790,6 +792,7 @@ mod tests {
         let after = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -966,6 +969,7 @@ mod tests {
             let booted = json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        compacted: None,
                         claim: None,
                         bot: Some("otto".into()),
                         today: today.map(str::to_string),
@@ -1196,6 +1200,7 @@ mod tests {
         // reached with one…
         let err = jojobot
             .start_here(Parameters(OrientArgs {
+                compacted: None,
                 claim: None,
                 timezone: None,
                 bot: Some("person:milhouse".into()),

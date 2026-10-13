@@ -269,6 +269,9 @@ impl Sessions for SessionChanges {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.inner.reset_served(id).await
+    }
 
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await

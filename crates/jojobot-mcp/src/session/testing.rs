@@ -258,6 +258,9 @@ impl Sessions for CommitsThenFails {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.inner.reset_served(id).await
+    }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await
     }
@@ -381,6 +384,9 @@ impl Sessions for RefusingFocus {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.0.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.0.reset_served(id).await
+    }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.0.reopen(id).await
     }
@@ -480,6 +486,9 @@ impl Sessions for RefusingWindowClear {
     }
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.0.add_served(id, chars).await
+    }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.0.reset_served(id).await
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.0.reopen(id).await
@@ -628,6 +637,9 @@ impl Sessions for Refusing {
     }
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
+    }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.inner.reset_served(id).await
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         if self.reopen_fails.load(std::sync::atomic::Ordering::SeqCst) {
@@ -799,6 +811,9 @@ impl Sessions for CountingSessions {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.inner.reset_served(id).await
+    }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await
     }
@@ -895,6 +910,9 @@ impl Sessions for RefusingAppend {
     }
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.0.add_served(id, chars).await
+    }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.0.reset_served(id).await
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.0.reopen(id).await
@@ -1055,6 +1073,9 @@ impl Sessions for RefusingClose {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.inner.reset_served(id).await
+    }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await
     }
@@ -1170,6 +1191,10 @@ impl Sessions for Yielding {
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.pause().await;
         self.0.add_served(id, chars).await
+    }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.pause().await;
+        self.0.reset_served(id).await
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.pause().await;

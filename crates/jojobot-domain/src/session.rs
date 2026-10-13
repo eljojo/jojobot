@@ -1381,6 +1381,16 @@ pub trait Sessions: Send + Sync {
     /// exactly as every other addressed verb here.
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError>;
 
+    /// **Start the running total of what this session has been handed over
+    /// again.** The one verb that lowers it: a run that reports its context was
+    /// compacted holds nothing of what it was handed, so what it has been handed
+    /// is counted from here.
+    ///
+    /// Refused exactly as [`Sessions::add_served`] is: never on a closed
+    /// session, and [`SessionError::UnknownSession`] on a card that does not
+    /// exist.
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError>;
+
     /// Take an `abandoned` session back to `active`, so the run continues where
     /// it stopped rather than starting again beside it.
     ///
@@ -2524,6 +2534,9 @@ mod tests {
             }
             async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
                 self.0.add_served(id, chars).await
+            }
+            async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+                self.0.reset_served(id).await
             }
             async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
                 self.0.reopen(id).await

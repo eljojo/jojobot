@@ -112,7 +112,7 @@ jojobot also writes **its own beats** into your chronology: one per class of WRI
 
 **WRAP when the work is over, or must move to another agent now.** The story is the handover: the wrap frees your role at once, and the next agent boots fresh and reads it. Never pass your `sid` on; it is your session's secret.
 
-**CLEAR AND RESUME when the run may go quiet without a wrap** — a crash, a compaction, a quota wall. **Journal a resume note as you go**: once the run has been quiet for the lease, the next boot of this identity is offered it by name and by what it says it is working on, and whoever picks it up reads your chronology.
+**CLEAR AND RESUME when the run may go quiet without a wrap** — a crash, a quota wall. **Journal a resume note as you go**: once the run has been quiet for the lease, the next boot of this identity is offered it by name and by what it says it is working on, and whoever picks it up reads your chronology. **A compaction is not a quiet run**: it is the same run without what it was taught and shown. Call `start_here` with `compacted: true` and your `sid`, and jojobot forgets what it believes you hold. The run, its key and its chronology stay.
 
 The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
 
@@ -220,7 +220,7 @@ jojobot also writes **its own beats** into your chronology: one per class of WRI
 
 **WRAP when the work is over, or must move to another agent now.** The story is the handover: the wrap frees your role at once, and the next agent boots fresh and reads it. Never pass your `sid` on; it is your session's secret.
 
-**CLEAR AND RESUME when the run may go quiet without a wrap** — a crash, a compaction, a quota wall. **Journal a resume note as you go**: once the run has been quiet for the lease, the next boot of this identity is offered it by name and by what it says it is working on, and whoever picks it up reads your chronology.
+**CLEAR AND RESUME when the run may go quiet without a wrap** — a crash, a quota wall. **Journal a resume note as you go**: once the run has been quiet for the lease, the next boot of this identity is offered it by name and by what it says it is working on, and whoever picks it up reads your chronology. **A compaction is not a quiet run**: it is the same run without what it was taught and shown. Call `start_here` with `compacted: true` and your `sid`, and jojobot forgets what it believes you hold. The run, its key and its chronology stay.
 
 The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
 

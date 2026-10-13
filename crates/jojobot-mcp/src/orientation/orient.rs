@@ -376,6 +376,11 @@ pub(crate) struct OrientRequest<'a> {
     /// known: the voucher goes to the session that booted. `None` is the
     /// ordinary boot, unchanged.
     pub(crate) redeem: Option<&'a crate::session::challenge::Verified>,
+    /// **The caller reported that its context was compacted.** The run was
+    /// already resolved and made to forget by [`Jojobot::report_compaction`], so
+    /// this call answers as that running session rather than offering or
+    /// starting one.
+    pub(crate) compacted: bool,
 }
 
 impl Jojobot {
@@ -395,6 +400,7 @@ impl Jojobot {
             claim,
             sid: arrived_with,
             redeem,
+            compacted,
         } = req;
         // **The zone this call resolves days in:** the one the session sent,
         // else the zone a resumed run already holds, else the instance's, else
@@ -511,7 +517,7 @@ impl Jojobot {
         // session: attaching again would offer it a choice between itself and a
         // new one, and no claim would be answered. Only a live handle of the
         // named bot counts, and only when no answer to an offer comes with it.
-        let running_as = match (bot, claim, resume, arrived_with) {
+        let running_as = match (bot, claim.or(compacted.then_some("")), resume, arrived_with) {
             (Some(bot), Some(_), None, Some(raw)) if carried == "held" => {
                 match self.caller(Some(raw)) {
                     Ok(Some(caller)) if &caller.bot == bot => {
@@ -526,14 +532,25 @@ impl Jojobot {
             None => serde_json::Value::Null,
             Some(_) if running_as.is_some() => {
                 let (sid, run) = running_as.clone().unwrap_or_default();
-                serde_json::json!({
+                let mut running = serde_json::json!({
                     "available": true,
                     "sid": sid,
                     "run": run,
                     "resumed": false,
                     "note": "this is the session you are already running: the handle you sent \
                              still addresses it, so nothing was started, resumed or offered.",
-                })
+                });
+                if compacted && let Some(obj) = running.as_object_mut() {
+                    obj.insert(
+                        "shown_and_taught".into(),
+                        "Your context was reported compacted, so what this run was shown and \
+                         taught before is forgotten: your answers from here teach and show as \
+                         to a fresh session. The run, its key and its chronology are as they \
+                         were."
+                            .into(),
+                    );
+                }
+                running
             }
             Some(bot) => match self.attach(bot, resume, timezone, today).await {
                 Ok(session) => session,
@@ -1189,6 +1206,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -1235,6 +1253,7 @@ mod tests {
         let booted = json_of(
             &blind
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -1275,6 +1294,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: Some(role.into()),
                     timezone: None,
                     bot: Some(bot.into()),
@@ -1388,6 +1408,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -1510,6 +1531,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -1606,6 +1628,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -1692,6 +1715,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -1815,6 +1839,7 @@ mod tests {
 
         let result = jojobot
             .start_here(Parameters(OrientArgs {
+                compacted: None,
                 claim: None,
                 timezone: None,
                 bot: Some("gamma".into()),
@@ -1877,6 +1902,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -1933,6 +1959,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -1984,6 +2011,7 @@ mod tests {
             let booted = json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        compacted: None,
                         claim: None,
                         timezone: None,
                         bot: None,
@@ -2090,6 +2118,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -2691,6 +2720,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -2766,6 +2796,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -2837,6 +2868,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -2902,6 +2934,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
@@ -3076,6 +3109,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -3186,6 +3220,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -3334,6 +3369,7 @@ mod skills_are_indexed_not_shipped {
         let booted = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -3396,6 +3432,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,
@@ -3436,6 +3473,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: Some("otto".into()),
@@ -3482,6 +3520,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    compacted: None,
                     claim: None,
                     timezone: None,
                     bot: None,

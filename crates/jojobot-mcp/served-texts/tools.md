@@ -4339,6 +4339,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "compacted": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "resume": {
         "default": null,
         "type": [
@@ -4471,6 +4478,22 @@ once.
 for its bot is given a voucher: the root when the bot is the assistant,
 that bot's ordinary voucher otherwise. The code is spent on first use,
 and the third wrong code voids the challenge.
+```
+
+#### `start_here` — argument `/inputSchema.compacted`
+
+```text
+**Send `true` with your live `sid` when your context was compacted.** A
+compaction takes away what jojobot taught you and showed you, and jojobot
+cannot tell. This call says so: jojobot forgets what it believed this run
+was taught and shown, restarts the running total of what the run has been
+handed, and writes a dated mark in the run's chronology.
+
+**The run stays the run.** Same `sid`, same chronology, same identity: no
+new key, no voucher moves, and no other run of the bot is touched. The
+answer is the full orientation, whatever `brief` says, because that is
+what the compaction took. A `sid` that opens no run is refused. Naming
+`bot` is optional; when you do, it has to be the bot the `sid` belongs to.
 ```
 
 #### `start_here` — argument `/inputSchema.resume`

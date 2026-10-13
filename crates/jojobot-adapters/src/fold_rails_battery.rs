@@ -316,6 +316,13 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
     wrote_without_reading("add_served", calls);
     p.agree("after the served total grows").await;
     calls.reset();
+    w.reset_served(&homer.id).await.expect("reset_served");
+    wrote_without_reading("reset_served", calls);
+    p.agree("after the served total restarts").await;
+    calls.reset();
+    w.add_served(&homer.id, 40).await.expect("add_served");
+    p.agree("after the served total grows again").await;
+    calls.reset();
     w.set_key_hash(&homer.id, "another-hash")
         .await
         .expect("set_key_hash");
@@ -410,6 +417,11 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
         "a served total for no run is refused"
     );
     p.agree("after a refused add_served").await;
+    assert!(
+        w.reset_served(&SessionId("zzzzzz".into())).await.is_err(),
+        "a restarted total for no run is refused"
+    );
+    p.agree("after a refused reset_served").await;
 }
 
 // ── mail ─────────────────────────────────────────────────────────────────────

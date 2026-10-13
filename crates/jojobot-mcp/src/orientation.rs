@@ -15,6 +15,7 @@ use crate::*;
 
 pub mod attach;
 pub mod charter;
+pub mod compaction;
 pub mod essay;
 pub mod floor;
 pub mod identity;

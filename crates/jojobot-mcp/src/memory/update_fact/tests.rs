@@ -1668,6 +1668,7 @@ async fn the_update_receipt_names_a_recorded_at_that_differs_from_the_runs_day()
     let booted = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                compacted: None,
                 claim: None,
                 bot: Some("otto".into()),
                 today: Some("2026-03-15".into()),
@@ -2711,6 +2712,7 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
     let booted = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                compacted: None,
                 claim: Some("dev-dispatch".into()),
                 timezone: None,
                 bot: Some("gamma".into()),

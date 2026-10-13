@@ -381,6 +381,20 @@ impl Sessions for FoldedSessions {
         Ok(())
     }
 
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        let _gate = self.writing.lock().await;
+        self.inner.reset_served(id).await?;
+        self.follow("reset_served", |image| match image.run_mut(id) {
+            Some(run) => {
+                run.served_chars = 0;
+                true
+            }
+            None => false,
+        })
+        .await;
+        Ok(())
+    }
+
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         let _gate = self.writing.lock().await;
         let run = self.inner.reopen(id).await?;

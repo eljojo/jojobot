@@ -470,6 +470,7 @@ mod tests {
 
     fn boot(bot: &str, claim: Option<&str>) -> OrientArgs {
         OrientArgs {
+            compacted: None,
             claim: claim.map(str::to_string),
             timezone: None,
             bot: Some(bot.into()),

@@ -193,6 +193,10 @@ impl Sessions for CountedSessions {
         self.calls.hit("add_served", Kind::Write);
         self.inner.add_served(id, chars).await
     }
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        self.calls.hit("reset_served", Kind::Write);
+        self.inner.reset_served(id).await
+    }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.calls.hit("reopen", Kind::Write);
         self.inner.reopen(id).await

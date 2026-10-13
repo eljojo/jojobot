@@ -12,10 +12,14 @@
 //! whichever verb somebody wrote in a hurry** — which is the verb whose caller
 //! most needs telling.
 //!
-//! # Two entrants, and the list is the failure mode
+//! # Three entrants, and the list is the failure mode
 //!
-//! It ships carrying waiting mail (`mail_waiting`) and a charter another
-//! identity rewrote (`charter_changed`, with the call that reads it).
+//! It ships carrying waiting mail (`mail_waiting`), a charter another
+//! identity rewrote (`charter_changed`, with the call that reads it) and, on
+//! every answer, the one line that tells a run whose context was compacted to
+//! report it (`if_compacted`). The first two are absent when there is nothing to
+//! say; the third is constant, because a line that came and went would be
+//! compacted away with the rest.
 //! "Information when relevant" is an open slot, and the way it goes wrong is a
 //! registry of reportable facts that grows because growing is what registries
 //! do. A third entrant earns its place on evidence that a caller acted wrongly
@@ -37,6 +41,17 @@ use super::*;
 /// asked for and finds this beside it rather than folded into it.
 const STATUS_BAR: &str = "status_bar";
 
+/// The key of the line every answer carries for a run whose context was
+/// compacted. **It rides every answer on purpose**: the instruction has to
+/// survive the compaction it is about, and an instruction delivered once is
+/// exactly the kind a compaction removes.
+const IF_COMPACTED: &str = "if_compacted";
+
+/// **The line itself**, one sentence, because it rides every answer and is paid
+/// for in [`crate::answer::STATUS_BAR_ROOM`].
+const IF_COMPACTED_LINE: &str =
+    "If your context was compacted, call start_here with compacted: true and your sid.";
+
 /// **What a bot has for a mailbox.** One box per bot is settled, so the other
 /// two answers are damage rather than variety — and they are apart from each
 /// other because a bot with no box and a bot with two are different repairs.
@@ -53,21 +68,20 @@ pub(crate) enum OwnBox {
 }
 
 impl Jojobot {
-    /// Attach the block to an answer, when there is anything to say.
+    /// Attach the block to an answer.
     ///
-    /// **Nothing to say means nothing added.** A block that appeared on every
-    /// answer carrying zeroes is a block a reader learns to skip, and the one
-    /// time it matters is the time it gets skipped.
+    /// **The mail and charter entries are absent when there is nothing to say**:
+    /// an entry that appeared carrying zeroes is one a reader learns to skip,
+    /// and the one time it matters is the time it gets skipped. The compaction
+    /// line is the exception, and constant on purpose.
     pub(crate) async fn add_status_bar(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         let mut bar = serde_json::Map::new();
+        bar.insert(IF_COMPACTED.into(), IF_COMPACTED_LINE.into());
         if let Some(waiting) = self.mail_waiting(sid).await {
             bar.insert("mail_waiting".into(), waiting.into());
         }
         if let Some(changed) = self.charter_changed(sid).await {
             bar.insert("charter_changed".into(), changed);
-        }
-        if bar.is_empty() {
-            return;
         }
         // Only a completed call has an answer to ride on. The other responses
         // are the protocol asking the client for something, and this surface

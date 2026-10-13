@@ -944,8 +944,9 @@ fn the_recall_description_names_the_room_block_and_when_it_appears() {
 
 /// **Three lines of the essay stay true to the briefs they summarise.** One
 /// bot ships with the software, so the essay may not say nothing about a bot is
-/// built in. A session that compacts is thrown away and a fresh one starts, so
-/// the essay does not send a resume note across "a context reset". And the
+/// built in. A session that compacts is the same run without its context, and
+/// the essay says to report it with `compacted: true` rather than to start a
+/// fresh one, so it does not send a resume note across "a context reset". And the
 /// journal records what happened, not what was decided, on the essay and on
 /// the verb's own description. A phrase absence is all a removal can pin, so
 /// each is paired with the surrounding line that proves the text was read.
@@ -958,8 +959,11 @@ fn the_essay_and_the_journal_verb_keep_to_their_briefs() {
         "the essay says no bot is built in, and one ships"
     );
     assert!(
-        essay.contains("CLEAR AND RESUME") && !essay.contains("context reset"),
-        "the essay sends a resume note across a context reset, which ends a session"
+        essay.contains("CLEAR AND RESUME")
+            && essay.contains("compacted: true")
+            && !essay.contains("context reset"),
+        "the essay sends a resume note across a context reset, or does not say how a \
+         compacted run reports it"
     );
     assert!(
         essay.contains("Record a beat") && !essay.contains("what you decided"),

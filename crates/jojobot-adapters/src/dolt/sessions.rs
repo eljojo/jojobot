@@ -1072,6 +1072,24 @@ impl Sessions for DoltSessions {
         Ok(())
     }
 
+    async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // Existence only, as `add_served` asks it. A total already at nothing
+        // changes no row, so an update that changed none asks whether the run is
+        // there.
+        let reset = sqlx::query("UPDATE session SET served_chars = 0 WHERE id = ?")
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        if reset.rows_affected() == 0 {
+            self.exists(&mut tx, id).await?;
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(())
+    }
+
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -2067,6 +2085,33 @@ mod tests {
             after_close.served_chars, 510,
             "accounting keeps running after the session closes: {after_close:?}"
         );
+
+        sessions
+            .reset_served(&handed.id)
+            .await
+            .expect("reset_served must not be refused on a closed session");
+        let after_reset = sessions.read_session(&handed.id).await.expect("read ok");
+        assert_eq!(
+            after_reset.served_chars, 0,
+            "the total restarts from nothing: {after_reset:?}"
+        );
+        sessions
+            .reset_served(&handed.id)
+            .await
+            .expect("a total already at nothing is a run that is there, not a missing one");
+        assert!(
+            matches!(
+                sessions.reset_served(&SessionId("zzzzzz".into())).await,
+                Err(SessionError::UnknownSession { .. })
+            ),
+            "a restart for no run is refused"
+        );
+        sessions
+            .add_served(&handed.id, 7)
+            .await
+            .expect("add_served ok");
+        let regrown = sessions.read_session(&handed.id).await.expect("read ok");
+        assert_eq!(regrown.served_chars, 7, "counting resumes from the restart");
 
         store.stop().await;
     }
