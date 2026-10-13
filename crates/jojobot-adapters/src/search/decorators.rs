@@ -75,15 +75,31 @@ impl IndexedMemory {
     /// read is the answer, unread again. A store with no signal (`None`) is
     /// scanned every time, exactly as before this existed.
     pub(crate) async fn rescan(&self) -> Result<Vec<DocScan>, MemoryError> {
+        match self.catch_up().await? {
+            Some(scan) => Ok(scan),
+            None => Ok(self
+                .last_scan
+                .read()
+                .expect("scan cache poisoned")
+                .as_ref()
+                .map(|(_, scan)| scan.clone())
+                .unwrap_or_default()),
+        }
+    }
+
+    /// Bring the index up to the store, and hand back the scan only when one
+    /// was taken. `None` says the cached scan is still the answer, so a caller
+    /// that only needs the index current — every `search` — copies nothing.
+    async fn catch_up(&self) -> Result<Option<Vec<DocScan>>, MemoryError> {
         let summary = self.inner.write_summary().await?;
         if !self.index.memory_refresh_pending()
             && let Some(summary) = &summary
         {
             let cached = self.last_scan.read().expect("scan cache poisoned");
-            if let Some((last_summary, scan)) = cached.as_ref()
+            if let Some((last_summary, _)) = cached.as_ref()
                 && last_summary == summary
             {
-                return Ok(scan.clone());
+                return Ok(None);
             }
         }
 
@@ -102,7 +118,7 @@ impl IndexedMemory {
         if let Some(summary) = summary {
             *self.last_scan.write().expect("scan cache poisoned") = Some((summary, scan.clone()));
         }
-        Ok(scan)
+        Ok(Some(scan))
     }
 
     /// The index, for handing to whatever serves the `search` verb.
@@ -714,7 +730,7 @@ pub trait Refresh: Send + Sync {
 #[async_trait]
 impl Refresh for IndexedMemory {
     async fn refresh(&self) {
-        if self.rescan().await.is_err() {
+        if self.catch_up().await.is_err() {
             self.index.refresh_failed();
         }
     }

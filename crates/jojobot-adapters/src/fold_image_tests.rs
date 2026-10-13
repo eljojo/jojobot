@@ -35,6 +35,7 @@ const SWITCHED: &[&str] = &[
     "built_on",
     "referring_to",
     "children",
+    "write_summary",
 ];
 
 /// **The instrument first.** With nothing switched the walk compares a fold
@@ -52,6 +53,7 @@ async fn the_battery_agrees_with_a_fold_that_serves_nothing_from_memory() {
         counted: &counted,
         switched: &[],
         kept_off_misses_are_empty: false,
+        last_signal: Default::default(),
     };
     walk_every_kind_of_write(&probe).await;
 }
@@ -70,6 +72,7 @@ async fn switched_reads_answer_from_memory_exactly_as_the_store_does() {
         counted: &counted,
         switched: SWITCHED,
         kept_off_misses_are_empty: false,
+        last_signal: Default::default(),
     };
     walk_every_kind_of_write(&probe).await;
 }

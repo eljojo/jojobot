@@ -36,6 +36,8 @@ pub struct Probe<'a> {
     /// not there as the real store does, with the empty set. The fake refuses it
     /// as an unknown record, and the image follows the real store.
     pub kept_off_misses_are_empty: bool,
+    /// The change signal at the last run, so each run can say it moved.
+    pub last_signal: std::sync::Mutex<Option<WriteSummary>>,
 }
 
 impl Probe<'_> {
@@ -129,14 +131,34 @@ impl Probe<'_> {
         )
         .await;
         self.check(when, "scan", "", f.scan(), d.scan()).await;
-        self.check(
-            when,
-            "write_summary",
-            "",
-            summary(f.write_summary()),
-            summary(d.write_summary()),
-        )
-        .await;
+        // **The fold's change signal is its own number, not the store's
+        // counts**, so it is not compared with the store's. What it owes is to
+        // stay put across reads, to move with every write, and to cost no call.
+        self.counted.reset();
+        let first = f.write_summary().await.expect("the signal is read");
+        let again = f.write_summary().await.expect("the signal is read");
+        let made = self.counted.calls();
+        assert!(first.is_some(), "{when}: the fold offers a change signal");
+        assert_eq!(
+            first, again,
+            "{when}: the change signal moved with no write"
+        );
+        if self.switched.contains(&"write_summary") {
+            assert_eq!(
+                made, 0,
+                "{when}: write_summary reached the store {made} time(s)"
+            );
+        }
+        {
+            let mut seen = self.last_signal.lock().expect("signal lock");
+            if seen.is_some() {
+                assert_ne!(
+                    *seen, first,
+                    "{when}: the change signal did not move although a write landed"
+                );
+            }
+            *seen = first;
+        }
 
         for h in &handles {
             let s = h.as_str();
@@ -278,13 +300,6 @@ where
         .into_iter()
         .map(|(id, chain)| (id.to_string(), format!("{chain:?}")))
         .collect())
-}
-
-async fn summary<F>(read: F) -> Result<Option<WriteSummary>, MemoryError>
-where
-    F: Future<Output = Result<Option<WriteSummary>, MemoryError>>,
-{
-    read.await
 }
 
 // ── the walk: every kind of write, each followed by the whole battery ────────

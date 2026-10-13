@@ -37,6 +37,7 @@ const SWITCHED: &[&str] = &[
     "built_on",
     "referring_to",
     "children",
+    "write_summary",
 ];
 
 struct Scratch(PathBuf);
@@ -91,6 +92,7 @@ async fn the_image_answers_as_the_real_store_does_after_every_kind_of_write() {
         counted: &counted,
         switched: SWITCHED,
         kept_off_misses_are_empty: true,
+        last_signal: Default::default(),
     };
     walk_every_kind_of_write(&probe).await;
     server.stop().await;

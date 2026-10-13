@@ -31,7 +31,7 @@
 mod image;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
@@ -63,6 +63,13 @@ pub struct Folded {
     /// Set by the first successful `rebuild`. A write after a refresh failed
     /// drops the image, and this is what tells the next write to fill it again.
     wanted: AtomicBool,
+    /// **How many times the image has changed**, bumped under the same lock
+    /// that installs the change, so a reader that sees a number sees at least the
+    /// state it counts. It is the change signal search reads ([`write_summary`]),
+    /// answered from memory.
+    ///
+    /// [`write_summary`]: Memory::write_summary
+    generation: AtomicU64,
 }
 
 impl Folded {
@@ -76,6 +83,7 @@ impl Folded {
             image: RwLock::new(None),
             writing: tokio::sync::Mutex::new(()),
             wanted: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -92,12 +100,18 @@ impl Folded {
         match Image::load(&self.inner).await {
             Ok(image) => {
                 let held = image.len();
-                *self.image.write().expect("fold lock") = Some(image);
+                {
+                    let mut slot = self.image.write().expect("fold lock");
+                    *slot = Some(image);
+                    self.generation.fetch_add(1, Ordering::SeqCst);
+                }
                 self.wanted.store(true, Ordering::SeqCst);
                 Ok(held)
             }
             Err(e) => {
-                *self.image.write().expect("fold lock") = None;
+                let mut slot = self.image.write().expect("fold lock");
+                *slot = None;
+                self.generation.fetch_add(1, Ordering::SeqCst);
                 Err(e)
             }
         }
@@ -150,11 +164,14 @@ impl Folded {
             Ok((entities, doc, referring)) => {
                 if let Some(image) = self.image.write().expect("fold lock").as_mut() {
                     image.install(entities, doc, referring);
+                    self.generation.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(())
             }
             Err(e) => {
-                *self.image.write().expect("fold lock") = None;
+                let mut slot = self.image.write().expect("fold lock");
+                *slot = None;
+                self.generation.fetch_add(1, Ordering::SeqCst);
                 Err(e)
             }
         }
@@ -497,8 +514,26 @@ impl Memory for Folded {
         self.inner.composed_prose(entity, own).await
     }
 
+    /// **The change signal, answered from memory.** The number of times the
+    /// image has changed stands in for the counts and the hashes of the tables:
+    /// jojobot is the only writer, so every change to what a read answers goes
+    /// through the image. A row changed past this process is seen after a
+    /// restart, as the image itself is. With no image held the store answers.
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
-        self.inner.write_summary().await
+        let held = {
+            let slot = self.image.read().expect("fold lock");
+            slot.as_ref()
+                .map(|_| self.generation.load(Ordering::SeqCst) as i64)
+        };
+        match held {
+            Some(changes) => Ok(Some(WriteSummary {
+                entities: (changes, None),
+                facts: (changes, None),
+                entity_hash: None,
+                fact_hash: None,
+            })),
+            None => self.inner.write_summary().await,
+        }
     }
 
     /// **Straight through.** Only `Provisioned` beneath this layer holds what
