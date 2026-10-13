@@ -94,6 +94,9 @@ mod first_post;
 /// A call that left a required argument off, and what it is told to send.
 #[path = "user_stories/forgotten_arguments.rs"]
 mod forgotten_arguments;
+/// A trace asked by a name the thing no longer wears.
+#[path = "user_stories/former_handle_history.rs"]
+mod former_handle_history;
 #[path = "user_stories/gigs.rs"]
 mod gigs;
 #[path = "user_stories/handover.rs"]

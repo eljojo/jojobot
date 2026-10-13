@@ -1599,6 +1599,81 @@ pub async fn a_stale_address_resolves_to_the_same_claim_after_a_rename<M: Memory
     );
 }
 
+/// 🚨 **What was built on a claim is found through an address written under a
+/// handle the thing no longer wears**, and it is the same answer the current
+/// handle's address gets.
+///
+/// The pointer from a derived claim names the source by the thing's badge, so
+/// a rename moves nothing. **The pair is the proof**: the current address
+/// finding the claim is what makes the stale one finding it mean something,
+/// and a handle that never held the local id still finds nothing.
+pub async fn built_on_through_a_stale_address_finds_what_was_built_on_the_claim<
+    M: Memory + ?Sized,
+>(
+    store: &M,
+    rehandles: &dyn Rehandles,
+) {
+    let was = EntityId("person:contract-built-on-was".into());
+    let now = EntityId("work:contract-built-on-now".into());
+    store
+        .add_entity(NewEntity::new(was.clone(), "The Source One", "the roster"))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+    let badge = store
+        .list_entities(None)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|e| e.id == was)
+        .expect("the fixture is there")
+        .badge
+        .expect("a written row wears a badge");
+    let source = capture(
+        store,
+        NewFact::about(was.clone(), "the claim others stand on", date(2026, 5, 1)),
+    )
+    .await;
+    let stale_address = source.address();
+    let built = capture(
+        store,
+        NewFact {
+            derived_from: Some(stale_address.clone()),
+            ..NewFact::about(was.clone(), "worked out from it", date(2026, 5, 2))
+        },
+    )
+    .await;
+
+    rehandles.rehandle(&was, &now).await;
+    rehandles
+        .note_former_handle(FormerHandle {
+            former: was.clone(),
+            badge,
+            changed_at: date(2026, 5, 3),
+        })
+        .await;
+
+    let ids = |facts: Vec<Fact>| facts.into_iter().map(|f| f.id).collect::<Vec<_>>();
+    let by_current = ids(store
+        .built_on(&FactAddress::new(now.clone(), source.id.clone()))
+        .await
+        .expect("the current address reads"));
+    let by_stale = ids(store
+        .built_on(&stale_address)
+        .await
+        .expect("an address written under a former handle reads"));
+    assert_eq!(
+        by_current,
+        vec![built.id.clone()],
+        "the current address does not find the claim built on it, so the pair proves nothing",
+    );
+    assert_eq!(
+        by_stale, by_current,
+        "an address written under a former handle finds a different lineage",
+    );
+}
+
 /// 🚨 **An edit through a stale address lands on the record it always
 /// named — it does not fork it onto a second key.**
 ///
@@ -2992,6 +3067,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_former_handle_reused_after_a_rename_resolves_to_the_newest_event(mentioning, bare).await;
     a_retype_and_a_reparent_are_each_a_rename(bare).await;
     a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
+    built_on_through_a_stale_address_finds_what_was_built_on_the_claim(bare, rehandles).await;
     an_edit_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
     a_retraction_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
 }

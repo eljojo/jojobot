@@ -2928,6 +2928,24 @@ where
     // the original `query` is still read for `follow`/`include`/`history`.
     let mut query = query.clone();
     query.select.subject = resolved_subject.clone();
+    // **A trace is asked of a thing, and a thing is the same thing under every
+    // handle it has worn.** The walk below matches a trace to an object by
+    // handle, so a trace still naming a former one would find the object and
+    // fill nothing. It is resolved here, by the same rule as the subject and
+    // for the same reason; the answer then names the thing by its current
+    // handle. A handle nothing ever answered to stays as sent and matches
+    // nothing, as before.
+    let traced_home = match query.history.as_mut().map(|history| &mut history.of) {
+        Some(Trace::Record(address)) => Some(&mut address.home),
+        Some(Trace::Entity(id)) => Some(id),
+        Some(Trace::Key(_)) | None => None,
+    };
+    if let Some(home) = traced_home {
+        let former = store.former_handles().await?;
+        if let Some(current) = super::resolve_handle(home, &entities, &former) {
+            *home = current.id.clone();
+        }
+    }
     let query = &query;
     let select = &query.select;
 

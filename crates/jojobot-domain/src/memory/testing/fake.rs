@@ -1635,6 +1635,11 @@ impl Memory for InMemoryMemory {
         let moved = self.moved(source);
         let source = moved.as_ref().unwrap_or(source);
         super::super::validate_subject(&source.home)?;
+        // A pointer names its source by the handle the thing wears now, so an
+        // address written under a former handle is compared as the current one.
+        let current = super::resolve_handle(&source.home, &self.known(), &self.former())
+            .map(|entity| FactAddress::new(entity.id.clone(), source.local.clone()));
+        let source = current.as_ref().unwrap_or(source);
         let mut standing_on = Vec::new();
         for entity in self.index() {
             for fact in self.recall(&entity.id).await? {
