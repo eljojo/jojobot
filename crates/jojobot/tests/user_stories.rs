@@ -37,6 +37,9 @@ mod backdated;
 mod bikes;
 #[path = "user_stories/boot.rs"]
 mod boot;
+/// A boot names the recovery read for mail delivered and never finished.
+#[path = "user_stories/boot_owed_mail.rs"]
+mod boot_owed_mail;
 #[path = "user_stories/carried_role.rs"]
 mod carried_role;
 #[path = "user_stories/catching_up.rs"]

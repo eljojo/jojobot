@@ -494,10 +494,14 @@ impl Jojobot {
                 if let Some(obj) = body.as_object_mut() {
                     obj.insert("available".into(), true.into());
                 }
+                crate::mailboxes::wire::note_owed_read(&mut body);
                 Ok(body)
             }
             0 => match self.box_under_a_former_handle(entity).await? {
-                Some(found) => Ok(found),
+                Some(mut found) => {
+                    crate::mailboxes::wire::note_owed_read(&mut found);
+                    Ok(found)
+                }
                 None => Ok(self.heal_missing_box(bot).await),
             },
             _ => {

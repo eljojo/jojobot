@@ -536,6 +536,23 @@ pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Deli
     });
 }
 
+/// **Say, on a box's counts, that delivered mail is still owed and which call
+/// returns it.** Added only when the box holds mail in the `read` state, which
+/// is mail a read delivered and nobody finished: a bot that lost what it was
+/// handed sees counts and nothing that tells it the bodies can be read again.
+/// One sentence, because the boot carries it whole.
+pub(crate) fn note_owed_read(body: &mut serde_json::Value) {
+    let owed = body["counts"]["read"].as_u64().unwrap_or(0);
+    if owed == 0 {
+        return;
+    }
+    body["owed"] = format!(
+        "{owed} delivered and not finished: still owed until processed. read_mailbox with \
+         new_only false returns their bodies, or read_message returns one by id"
+    )
+    .into();
+}
+
 /// **Fit a delivery's messages under the answer ceiling, and take none of them
 /// back.** Every message the delivery covers was taken before this runs, so this
 /// only decides how much of each the answer carries. In order, oldest first: the
