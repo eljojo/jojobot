@@ -13,7 +13,7 @@
 //! server is up and answering, which is what makes the absence mean something.
 
 use std::io::BufRead;
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +30,47 @@ impl Drop for Scratch {
     }
 }
 
+/// **Whether process `pid` holds the listening socket on loopback `port`.**
+///
+/// The kernel's table of listening sockets names each one by an inode, and a
+/// process's open descriptors name the inodes they hold. Only the process that
+/// bound the port holds the inode of its listener.
+#[cfg(target_os = "linux")]
+fn listens_on(pid: u32, port: u16) -> bool {
+    let Ok(table) = std::fs::read_to_string("/proc/net/tcp") else {
+        return false;
+    };
+    let wanted = format!("0100007F:{port:04X}");
+    let listening: Vec<String> = table
+        .lines()
+        .skip(1)
+        .filter_map(|row| {
+            let columns: Vec<&str> = row.split_whitespace().collect();
+            // Column 1 is the local address, 3 the state (0A is listening) and
+            // 9 the socket's inode.
+            (columns.get(1) == Some(&wanted.as_str()) && columns.get(3) == Some(&"0A"))
+                .then(|| format!("socket:[{}]", columns[9]))
+        })
+        .collect();
+    let Ok(held) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return false;
+    };
+    held.filter_map(Result::ok)
+        .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+        .any(|target| {
+            listening
+                .iter()
+                .any(|socket| target.to_string_lossy() == *socket)
+        })
+}
+
+/// Off Linux the table is not there to read, and a connection is taken as it
+/// was before.
+#[cfg(not(target_os = "linux"))]
+fn listens_on(_pid: u32, _port: u16) -> bool {
+    true
+}
+
 /// What a server printed and did while it ran under one `RUST_LOG`.
 struct Served {
     /// The server printed its `serving http://` line.
@@ -42,10 +83,14 @@ struct Served {
 /// inherited, until its address answers and a short grace has passed for the
 /// line that follows the bind.
 fn serve_under(filter: &str, name: &str) -> Served {
+    serve_under_on(filter, name, free_port())
+}
+
+/// [`serve_under`] on a port the caller chose.
+fn serve_under_on(filter: &str, name: &str, http_port: u16) -> Served {
     let state_dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
-    let http_port = free_port();
     let store_port = free_port();
 
     let mut server = Command::new(env!("CARGO_BIN_EXE_jojobot"))
@@ -84,7 +129,12 @@ fn serve_under(filter: &str, name: &str) -> Served {
         if server.try_wait().expect("checking the server").is_some() {
             break;
         }
-        if TcpStream::connect(("127.0.0.1", http_port)).is_ok() {
+        // A connection is the server's only when the server holds the listener:
+        // any process can take a port that was released before the server bound
+        // it, and it would answer too.
+        if TcpStream::connect(("127.0.0.1", http_port)).is_ok()
+            && listens_on(server.id(), http_port)
+        {
             answered = true;
             break;
         }
@@ -133,5 +183,21 @@ fn a_non_empty_log_filter_is_still_honoured() {
     assert!(
         !served.said_it_was_serving,
         "RUST_LOG=warn is a filter and the info line got through it"
+    );
+}
+
+/// Another process holds the port the server was told to bind. The server
+/// cannot bind it, and the connection that succeeds is the holder's. A case
+/// that counts a connection as the server answering is wrong here.
+#[test]
+fn a_listener_that_is_not_the_server_is_not_taken_for_it() {
+    let http_port = free_port();
+    let _holder = TcpListener::bind(("127.0.0.1", http_port)).expect("the port is ours to hold");
+
+    let served = serve_under_on("", "jojobot-foreign-listener", http_port);
+
+    assert!(
+        !served.answered,
+        "a listener the test holds itself was taken for the server"
     );
 }
