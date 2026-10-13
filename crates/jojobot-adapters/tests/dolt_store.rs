@@ -7392,7 +7392,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
         .await
         .expect("a second pass runs");
     assert!(again.settled && again.repointed == 0, "{again:?}");
-    sqlx::query("DELETE FROM store_pass WHERE name = 'field links on forwarding rows'")
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarded field links repaired'")
         .execute(&pool)
         .await
         .expect("the marker is dropped");
@@ -7574,7 +7574,7 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
         .execute(&pool)
         .await
         .expect("the forward is pointed at nothing");
-    sqlx::query("DELETE FROM store_pass WHERE name = 'field links on forwarding rows'")
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarded field links repaired'")
         .execute(&pool)
         .await
         .expect("the marker is dropped");
@@ -7595,6 +7595,157 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
         !after.settled,
         "a pass that skipped a forward is not marked finished: {after:?}"
     );
+
+    store.stop().await;
+}
+
+/// **A store where the pass the deployed build ran already finished, with a
+/// link skipped, is repaired by the next build.** The deployed build marked its
+/// pass finished whatever it skipped, under the name `field links on forwarding
+/// rows`. A build that kept that name would find the mark and never look again,
+/// so the link a survivor's rename left on a forwarding row would stay on it.
+/// The repair has a name of its own, and it is marked finished only when
+/// nothing was skipped.
+///
+/// The store is the shape the deployed build left: a fold, a later rename of the
+/// survivor, the old link on the forwarding row, and the deployed build's mark.
+/// The first run repairs the link. The second changes nothing.
+#[tokio::test]
+async fn dolt_repairs_a_link_the_deployed_pass_skipped_and_marked_finished() {
+    let scratch = Scratch::new("forwarded-deployed-mark");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forwarded_deployed_mark")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let first = EntityId("thing:contract-moved-first".into());
+    let second = EntityId("thing:contract-moved-second".into());
+    let third = EntityId("thing:contract-moved-third".into());
+    let holder = EntityId("person:contract-moved-holder".into());
+    for (id, name) in [
+        (&first, "Marked First"),
+        (&second, "Marked Second"),
+        (&holder, "Marked Holder"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    memory
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: [("marked_note_link".to_string(), second.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "points at a thing", date(2026, 9, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    memory
+        .merge(
+            &second,
+            &first,
+            None,
+            date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    memory
+        .rename_entity(&first, &third, None, date(2026, 9, 3), None, None)
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+
+    // **Written back to what the deployed build left**: the forwarding row names
+    // the handle the survivor wore at the fold, the holder's write and link row
+    // still name the forwarding row, and the deployed pass is marked finished.
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind(first.as_str())
+        .bind(second.as_str())
+        .execute(&pool)
+        .await
+        .expect("the old shape is written");
+    let second_badge = badge_of(&pool, second.as_str()).await;
+    let third_badge = badge_of(&pool, third.as_str()).await;
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ?")
+        .bind(jojobot_domain::memory::marked_stored_handle(&second_badge))
+        .bind(&holder_badge)
+        .bind("marked_note_link")
+        .execute(&pool)
+        .await
+        .expect("the old shape is written");
+    sqlx::query("DELETE FROM field_link WHERE entity = ? AND `key` = ?")
+        .bind(&holder_badge)
+        .bind("marked_note_link")
+        .execute(&pool)
+        .await
+        .expect("the link row is dropped");
+    sqlx::query("INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, 1, ?)")
+        .bind(&holder_badge)
+        .bind("marked_note_link")
+        .bind(&second_badge)
+        .execute(&pool)
+        .await
+        .expect("the old link row is written");
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarded field links repaired'")
+        .execute(&pool)
+        .await
+        .expect("the repair's own mark is dropped");
+    sqlx::query(
+        "INSERT INTO store_pass (name, finished_at) VALUES ('field links on forwarding rows', \
+         '2026-10-01')",
+    )
+    .execute(&pool)
+    .await
+    .expect("the deployed build's mark is written");
+
+    let report = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass runs");
+    assert_eq!(
+        report.repointed, 1,
+        "the link is repaired although the deployed pass is marked finished: {report:?}",
+    );
+    assert!(report.skipped.is_empty(), "{report:?}");
+    assert_eq!(
+        memory
+            .fields(&holder)
+            .await
+            .expect("fields read")
+            .get("marked_note_link"),
+        Some(&third.to_string()),
+        "the link follows the survivor to the handle it wears now",
+    );
+    let on_survivor: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM field_link WHERE target = ? AND `key` = ?")
+            .bind(&third_badge)
+            .bind("marked_note_link")
+            .fetch_one(&pool)
+            .await
+            .expect("the link table reads");
+    assert_eq!(on_survivor, 1, "the link row moved with its write");
+
+    // **The negative, paired with the positive above**: the next run finds
+    // nothing to repair and says the pass is finished.
+    let again = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("a second pass runs");
+    assert!(again.settled && again.repointed == 0, "{again:?}");
 
     store.stop().await;
 }

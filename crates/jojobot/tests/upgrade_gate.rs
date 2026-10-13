@@ -1101,8 +1101,8 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
     assert_eq!(
         finished,
         [
-            "field links on forwarding rows",
             "field value lowering",
+            "forwarded field links repaired",
             "forwarding rows name the current handle",
             "mail mentions",
             "message sender column",

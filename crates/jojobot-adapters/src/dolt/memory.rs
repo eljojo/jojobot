@@ -103,7 +103,13 @@ pub struct ForwardNameReport {
 const FORWARD_NAMES_PASS: &str = "forwarding rows name the current handle";
 
 /// **The name the repointing of links off forwarding rows is marked under.**
-const FORWARDED_LINKS_PASS: &str = "field links on forwarding rows";
+///
+/// **Not `field links on forwarding rows`**, the name the deployed build marked
+/// its pass under. That build marked the pass finished whatever it skipped, so a
+/// store it ran on holds the old mark with links still on forwarding rows. This
+/// pass is marked only when nothing was skipped, so it takes a name of its own
+/// and runs once on such a store.
+const FORWARDED_LINKS_PASS: &str = "forwarded field links repaired";
 
 /// **The name the lowering of plain handle text under undeclared keys is marked
 /// under** in `store_pass`. The link table's repair is not part of it: that is
