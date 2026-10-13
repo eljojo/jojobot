@@ -1148,6 +1148,28 @@ impl Sessions for DoltSessions {
         })
         .transpose()
     }
+
+    async fn charter_changes(
+        &self,
+    ) -> Result<Option<std::collections::BTreeMap<EntityId, CharterChange>>, SessionError> {
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT bot, changed_by, changed_at FROM charter_change")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        rows.into_iter()
+            .map(|(bot, by, at)| {
+                Ok((
+                    EntityId(bot),
+                    CharterChange {
+                        by: EntityId(by),
+                        at: instant(&at)?,
+                    },
+                ))
+            })
+            .collect::<Result<_, SessionError>>()
+            .map(Some)
+    }
 }
 
 /// One entry by id, or the miss that says the id names nothing here.

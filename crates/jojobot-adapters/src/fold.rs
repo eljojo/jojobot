@@ -29,6 +29,9 @@
 //! this assumption breaks first.
 
 mod image;
+pub mod mail;
+pub mod sessions;
+pub mod teachings;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

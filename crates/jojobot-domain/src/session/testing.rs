@@ -112,7 +112,14 @@ impl Sessions for InMemorySessions {
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
-        Ok(self.sessions.lock().expect("session lock").clone())
+        let mut all = self.sessions.lock().expect("session lock").clone();
+        // The real store's order: newest start first, the id breaking a tie.
+        all.sort_by(|a, b| {
+            b.started_at
+                .cmp(&a.started_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        Ok(all)
     }
 
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -399,6 +406,17 @@ impl Sessions for InMemorySessions {
             .expect("charter change lock")
             .get(bot)
             .cloned())
+    }
+
+    async fn charter_changes(
+        &self,
+    ) -> Result<Option<std::collections::BTreeMap<EntityId, CharterChange>>, SessionError> {
+        Ok(Some(
+            self.charter_changes
+                .lock()
+                .expect("charter change lock")
+                .clone(),
+        ))
     }
 
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {

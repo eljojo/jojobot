@@ -77,4 +77,17 @@ impl Teachings for DoltTeachings {
             .map_err(store)?;
         Ok(())
     }
+
+    async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT sid, domain FROM session_teaching ORDER BY sid, domain")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        Ok(Some(
+            rows.into_iter()
+                .map(|(sid, domain)| (Sid(sid), domain))
+                .collect(),
+        ))
+    }
 }

@@ -943,8 +943,9 @@ pub struct SessionSummary {
 impl SessionSummary {
     /// A summary derived from a whole [`Session`] already in hand — the
     /// fallback every store gets for free through
-    /// [`Sessions::summaries_of`]'s own default.
-    fn of(session: &Session) -> Self {
+    /// [`Sessions::summaries_of`]'s own default, and what a reader holding whole
+    /// runs in memory answers with.
+    pub fn of(session: &Session) -> Self {
         SessionSummary {
             id: session.id.clone(),
             sid: session.sid.clone(),
@@ -1435,6 +1436,16 @@ pub trait Sessions: Send + Sync {
         &self,
         bot: &EntityId,
     ) -> Result<Option<CharterChange>, SessionError>;
+
+    /// **Every charter change on record, by bot** — what a reader that holds the
+    /// whole ledger in memory fills itself from. `None`, the default, says this
+    /// port keeps no list it can hand over, so a reader must ask
+    /// [`charter_change_of`](Self::charter_change_of) bot by bot.
+    async fn charter_changes(
+        &self,
+    ) -> Result<Option<std::collections::BTreeMap<EntityId, CharterChange>>, SessionError> {
+        Ok(None)
+    }
 }
 
 /// **A charter rewritten by another identity**: who, and when.

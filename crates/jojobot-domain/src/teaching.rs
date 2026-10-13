@@ -66,6 +66,14 @@ pub trait Teachings: Send + Sync {
     /// Another session's rows are untouched. A session with no rows is not an
     /// error: there is nothing to forget.
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError>;
+
+    /// **Every `(sid, domain)` pair the ledger holds** — what a reader that keeps
+    /// the whole ledger in memory fills itself from. `None`, the default, says
+    /// this port keeps no list it can hand over, so a reader must ask
+    /// [`first_contact`](Self::first_contact) each time.
+    async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
+        Ok(None)
+    }
 }
 
 /// Why a teaching operation failed. Adapters map their transport errors into

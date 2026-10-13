@@ -40,6 +40,16 @@ impl Teachings for InMemoryTeachings {
         contacted.retain(|(held, _)| held != sid.as_str());
         Ok(())
     }
+
+    async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
+        let contacted = self.contacted.lock().expect("the ledger is poisoned");
+        let mut all: Vec<(Sid, String)> = contacted
+            .iter()
+            .map(|(sid, domain)| (Sid(sid.clone()), domain.clone()))
+            .collect();
+        all.sort();
+        Ok(Some(all))
+    }
 }
 
 /// The contract — run against the fake here and against the real store in

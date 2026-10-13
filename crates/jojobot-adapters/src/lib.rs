@@ -26,13 +26,22 @@ pub mod search;
 pub mod counted;
 
 #[cfg(any(test, feature = "testing"))]
+pub mod counted_rails;
+
+#[cfg(any(test, feature = "testing"))]
 pub mod fold_battery;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 #[cfg(any(test, feature = "testing"))]
+pub mod fold_rails_battery;
+
+#[cfg(any(test, feature = "testing"))]
 mod log_capture;
 
 #[cfg(test)]
 mod fold_image_tests;
+
+#[cfg(test)]
+mod fold_rails_image_tests;
