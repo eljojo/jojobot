@@ -3094,14 +3094,35 @@ impl DoltMemory {
         let Some((thread_key, _)) = self.resolve(tx, thread).await? else {
             return Ok(Vec::new());
         };
-        let holders: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT entity FROM fact WHERE edge_shape = ? AND edge_object = ?",
-        )
-        .bind(jojobot_domain::memory::EdgeShape::Connection.as_token())
-        .bind(thread_key.as_str())
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
+        if Self::is_folded_key(tx, &thread_key).await? {
+            return Ok(Vec::new());
+        }
+        // **An edge left naming a thing that was merged into the thread is an
+        // edge at the thread**, as one the merge rewrote is.
+        let mut names = vec![thread_key.as_str().to_string()];
+        names.extend(
+            Self::keys_folded_into(tx, &thread_key)
+                .await?
+                .into_iter()
+                .map(|folded| folded.key.as_str().to_string()),
+        );
+        let mut holders: Vec<String> = Vec::new();
+        for name in &names {
+            let found: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT entity FROM fact WHERE edge_shape = ? AND edge_object = ?",
+            )
+            .bind(jojobot_domain::memory::EdgeShape::Connection.as_token())
+            .bind(name)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            for holder in found {
+                let holder = Self::forward_key(tx, &EntityId(holder)).await?;
+                if !holders.contains(&holder.as_str().to_string()) {
+                    holders.push(holder.as_str().to_string());
+                }
+            }
+        }
         let mut writers = Vec::new();
         for holder in holders {
             let handle = self.current_handle(tx, &EntityId(holder)).await?;
@@ -6610,20 +6631,71 @@ impl Memory for DoltMemory {
             Some((key, _)) => key,
             None => source.home.clone(),
         };
-        let rows = sqlx::query(&format!(
-            "SELECT {FACT_COLUMNS} FROM fact WHERE derived_from = ? AND derived_from_id = ? \
-             ORDER BY entity, id"
-        ))
-        .bind(key.as_str())
-        .bind(source.local.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
-        // **Assembled by the one reader every other read here uses**, so a
-        // claim reached through its lineage is the same record a recall gives.
-        let standing_on = self.assemble(&mut tx, &rows).await?;
+        // **A claim is named by every address it has had.** A merge that left
+        // its pointers alone leaves a derived claim naming the address the
+        // source had before, so each is asked for.
+        let mut named_by = vec![FactAddress::new(key.clone(), source.local.clone())];
+        let mut origin = named_by[0].clone();
+        for _ in 0..64 {
+            let earlier = sqlx::query(
+                "SELECT folded, folded_id FROM merge_event
+                 WHERE survivor = ? AND survivor_id = ? AND ordinal > 0
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(origin.home.as_str())
+            .bind(origin.local.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(store)?;
+            let Some(earlier) = earlier else { break };
+            origin = FactAddress::new(
+                EntityId(earlier.try_get::<String, _>("folded").map_err(store)?),
+                FactId(earlier.try_get::<String, _>("folded_id").map_err(store)?),
+            );
+            named_by.push(origin.clone());
+        }
+        let mut standing_on: Vec<(FactAddress, Fact)> = Vec::new();
+        for named in &named_by {
+            let rows = sqlx::query(&format!(
+                "SELECT {FACT_COLUMNS} FROM fact WHERE derived_from = ? AND derived_from_id = ? \
+                 ORDER BY entity, id"
+            ))
+            .bind(named.home.as_str())
+            .bind(named.local.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+            // **Assembled by the one reader every other read here uses**, so a
+            // claim reached through its lineage is the same record a recall
+            // gives.
+            let found = self.assemble(&mut tx, &rows).await?;
+            for (row, mut fact) in rows.iter().zip(found) {
+                let held = FactAddress::new(
+                    EntityId(row.try_get::<String, _>("entity").map_err(store)?),
+                    FactId(row.try_get::<String, _>("id").map_err(store)?),
+                );
+                // **A holder a merge left under the folded key is served at the
+                // address the merge event gave it**, and one with no address
+                // there is left out, as the claims read are.
+                let served = Self::forward_address(&mut tx, &held).await?;
+                if served != held {
+                    let handle = self.current_handle(&mut tx, &served.home).await?;
+                    fact.id = served.local.clone();
+                    fact.home = handle.clone();
+                    fact.subject = handle;
+                } else if Self::is_folded_key(&mut tx, &held.home).await? {
+                    continue;
+                }
+                if !standing_on.iter().any(|(at, _)| at == &served) {
+                    standing_on.push((served, fact));
+                }
+            }
+        }
+        standing_on.sort_by(|a, b| {
+            (a.0.home.as_str(), a.0.local.as_str()).cmp(&(b.0.home.as_str(), b.0.local.as_str()))
+        });
         tx.commit().await.map_err(store)?;
-        Ok(standing_on)
+        Ok(standing_on.into_iter().map(|(_, fact)| fact).collect())
     }
 
     /// **An index seek, because the link table holds who points at what.** Each
@@ -6646,14 +6718,36 @@ impl Memory for DoltMemory {
             None => target.clone(),
         };
         let declared = Self::types_in(&mut tx).await?;
-        let rows = sqlx::query("SELECT DISTINCT entity FROM field_link WHERE target = ?")
-            .bind(key.as_str())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?;
+        // **A link left naming a thing that was merged into this one is a link
+        // to this one**, as one the merge rewrote is.
+        let mut names = vec![key.as_str().to_string()];
+        names.extend(
+            Self::keys_folded_into(&mut tx, &key)
+                .await?
+                .into_iter()
+                .map(|folded| folded.key.as_str().to_string()),
+        );
+        let mut holders: Vec<EntityId> = Vec::new();
+        for name in &names {
+            let rows = sqlx::query("SELECT DISTINCT entity FROM field_link WHERE target = ?")
+                .bind(name)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+            for row in rows {
+                // A holder that was merged away is read as the thing it became.
+                let holder = Self::forward_key(
+                    &mut tx,
+                    &EntityId(row.try_get::<String, _>("entity").map_err(store)?),
+                )
+                .await?;
+                if !holders.contains(&holder) {
+                    holders.push(holder);
+                }
+            }
+        }
         let mut pointing = Vec::new();
-        for row in rows {
-            let holder = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
+        for holder in holders {
             for fact in self.facts_of(&mut tx, &holder).await? {
                 if jojobot_domain::memory::fields_name_target(&fact.fields, &declared, target) {
                     pointing.push(fact);

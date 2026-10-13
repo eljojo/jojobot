@@ -830,9 +830,9 @@ impl Merged {
         // A third thing's claim that points at the folded thing in every way a
         // claim can: an edge, a reference, a field naming it, the claim it was
         // derived from, and a mark naming that claim.
-        let pointing = EntityId::person("person:marge");
+        let pointing = EntityId("bot:moe".into());
         memory
-            .add_entity(NewEntity::new(pointing.clone(), "Marge", "fixture"))
+            .add_entity(NewEntity::new(pointing.clone(), "Moe", "fixture"))
             .await
             .expect("add_entity ok")
             .written()
@@ -1494,5 +1494,51 @@ async fn pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrot
     for (moved, left) in moved.iter().zip(&left) {
         assert_eq!(left, moved);
     }
+    store.stop().await;
+}
+
+/// **What points at a merged thing is found at the survivor, whether the merge
+/// rewrote the pointers or left them** — the claims derived from one of its
+/// claims, by the address it is served at and by the one it had, the claims
+/// whose fields name it, and the bots that drew an edge at it. The folded thing
+/// is pointed at by nothing. The control is read to find the claim, so a case
+/// that found nothing on both sides cannot pass.
+#[tokio::test]
+async fn what_points_at_a_merged_thing_is_found_at_the_survivor_either_way() {
+    let scratch = Scratch::new("merged-inbound");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_inbound")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let answers = || async {
+        let (was, now) = &merged.moved[0];
+        let mut said = Vec::new();
+        for address in [
+            FactAddress::new(merged.survivor.clone(), FactId(now.clone())),
+            FactAddress::new(merged.folded.clone(), FactId(was.clone())),
+        ] {
+            said.push(format!("{:?}", merged.memory.built_on(&address).await));
+        }
+        for handle in [&merged.survivor, &merged.folded] {
+            said.push(format!("{:?}", merged.memory.referring_to(handle).await));
+            said.push(format!("{:?}", merged.memory.thought_writers(handle).await));
+        }
+        said
+    };
+    let moved = answers().await;
+    assert!(
+        moved[0].contains("knows the grocer") && moved[2].contains("knows the grocer"),
+        "the claim is found by what it was derived from and by its field: {moved:?}"
+    );
+    assert!(moved[3].contains("bot:moe"), "{moved:?}");
+
+    merged.leave_in_place().await;
+
+    assert_eq!(answers().await, moved);
     store.stop().await;
 }
