@@ -236,3 +236,108 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
     );
     server.stop().await;
 }
+
+/// **A card the store cannot read is named by its box, and stays named after the
+/// board moves.** The image is filled from what the store reads, so the damaged
+/// card is in the box's unreadable list and in no count, and a message filed
+/// beside it moves the counts and leaves the list as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_damaged_card_stays_named_by_its_box_while_the_board_moves() {
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes};
+    let scratch = Scratch::new("damaged-card");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database(&server, "damaged_card").await;
+    let store = Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)));
+    let inbox = MailboxName("gamma".into());
+    store
+        .create_mailbox(&inbox, &EntityId("bot:gamma".into()), None)
+        .await
+        .expect("create")
+        .written()
+        .expect("not blocked");
+    sqlx::query(
+        "INSERT INTO message
+           (id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to)
+         VALUES ('damaged1', 'gamma', 99, 'whatever this was', NULL, 'delta', 'not a time', 'new', NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .expect("the board takes the row");
+
+    let counted = Arc::new(CountedMailboxes::new(store.clone()));
+    let folded = FoldedMailboxes::new(counted.clone());
+    folded.rebuild().await.expect("the image loads");
+    let boxes = folded.list_mailboxes().await.expect("list");
+    assert_eq!(
+        boxes[0].quarantined.len(),
+        1,
+        "the damaged card is named by its box: {boxes:?}"
+    );
+    folded
+        .post_message(jojobot_domain::mailbox::NewMessage {
+            mailbox: inbox.clone(),
+            body: "filed beside it".into(),
+            subject: None,
+            sender: "delta".into(),
+            sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            in_reply_to: None,
+            supersedes: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        })
+        .await
+        .expect("post")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        format!("{:?}", folded.list_mailboxes().await),
+        format!("{:?}", store.list_mailboxes().await),
+        "the image names the same cards and counts the same messages as the store"
+    );
+    assert_eq!(
+        format!("{:?}", folded.scan_messages().await),
+        format!("{:?}", store.scan_messages().await),
+    );
+    server.stop().await;
+}
+
+/// **A run the store cannot read leaves no image, and the reads stay correct**
+/// because they go to the store, which refuses the way it always did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_run_the_store_cannot_read_leaves_no_image_and_the_reads_go_to_the_store() {
+    use jojobot_domain::session::Sessions;
+    let scratch = Scratch::new("damaged-run");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database(&server, "damaged_run").await;
+    sqlx::query(
+        "INSERT INTO session (id, sid, bot, focus, started_at, state)
+         VALUES ('damaged', NULL, 'bot:gamma', 'what it was doing', '2026-01-01T00:00:00Z', 'garbage')",
+    )
+    .execute(&pool)
+    .await
+    .expect("the board takes the row");
+    let store = Arc::new(DoltSessions::open(pool));
+    let counted = Arc::new(CountedSessions::new(store.clone()));
+    let folded = FoldedSessions::new(counted.clone());
+    assert!(
+        folded.rebuild().await.is_err(),
+        "a board with a run nobody can read does not fill an image"
+    );
+    counted.calls.reset();
+    assert_eq!(
+        format!("{:?}", folded.all_sessions().await),
+        format!("{:?}", store.all_sessions().await),
+        "the reads answer as the store does"
+    );
+    assert_eq!(
+        counted.calls.reads(),
+        1,
+        "with no image the read reaches the store: {:?}",
+        counted.calls.seen()
+    );
+    server.stop().await;
+}
