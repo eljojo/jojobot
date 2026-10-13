@@ -23,7 +23,7 @@ use crate::fold_rails_battery::{
 
 /// The session reads served from memory once the image has loaded. Each read is
 /// added here in the commit that switches it.
-const SWITCHED_SESSIONS: &[&str] = &["read_session"];
+const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of"];
 
 /// The mail reads served from memory once the image has loaded.
 const SWITCHED_MAIL: &[&str] = &[];
