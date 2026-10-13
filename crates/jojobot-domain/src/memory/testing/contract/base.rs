@@ -842,6 +842,61 @@ pub async fn multiple_facts_all_recallable<M: Memory>(store: &M) {
     );
 }
 
+/// **A store with no entity write and no claim write still answers its write
+/// summary, naming no latest moment, and the summary moves when a claim is
+/// written.**
+///
+/// The summary reads an aggregate over each log, and a store is free to answer
+/// an aggregate over a table with no row in it with no row at all. **That reads
+/// as an error to a caller that expects one row**, and the first read of a new
+/// store is the one a refresh makes. **It has to run before any case writes**,
+/// so the contract lists it first.
+///
+/// **The count is not pinned to zero here**: a layer that answers from memory
+/// counts the times its image changed, which is one after it is filled. A store
+/// whose summary counts its write log pins zero where it is built. **Paired in
+/// the same case with a write**: no moment above is only worth something beside
+/// a count that moves.
+pub async fn the_write_summary_of_a_store_with_no_writes_answers_and_names_no_moment<M: Memory>(
+    store: &M,
+) {
+    let Some(empty) = store
+        .write_summary()
+        .await
+        .expect("a store with nothing written answers its summary")
+    else {
+        // A store that offers no cheap signal has nothing to say here.
+        return;
+    };
+    assert_eq!(
+        empty.entities.1, None,
+        "a store that wrote no entity names no moment: {empty:?}"
+    );
+    assert_eq!(
+        empty.facts.1, None,
+        "a store that wrote no claim names no moment: {empty:?}"
+    );
+
+    capture(
+        store,
+        NewFact::about(
+            EntityId::person("person:contract-summary"),
+            "the summary moves",
+            date(2026, 7, 1),
+        ),
+    )
+    .await;
+    let written = store
+        .write_summary()
+        .await
+        .expect("the summary reads after a write")
+        .expect("a store that offered the signal still does");
+    assert!(
+        written.facts.0 > empty.facts.0,
+        "a claim was written and the summary counts no more than before: {empty:?} then {written:?}"
+    );
+}
+
 /// Facts about one entity never leak into another's recall — each subject's
 /// facts are isolated (a per-entity doc, in the real adapter).
 pub async fn subjects_are_isolated<M: Memory>(store: &M) {
@@ -17176,6 +17231,7 @@ pub async fn a_rewrite_of_testimony_details_belongs_to_the_session_that_wrote_it
 /// is the store the case is run against.
 macro_rules! all_cases {
     ($m:ident, $store:ident) => {
+        $m!(the_write_summary_of_a_store_with_no_writes_answers_and_names_no_moment($store));
         $m!(capture_reads_back($store));
         $m!(preserves_all_fields($store));
         $m!(a_claim_can_say_nothing_about_when_the_thing_happened($store));
