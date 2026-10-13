@@ -1150,3 +1150,82 @@ async fn fields_left_in_place_by_a_merge_read_like_fields_moved_by_it() {
     }
     store.stop().await;
 }
+
+/// **A merge whose claims were left in place reads, as to the history of its
+/// claims, exactly like a merge whose claims were moved** — one claim's writes
+/// by the address it is served at and by the address it had before the merge,
+/// every claim's writes at once, and the folded thing holding none. The folded
+/// claim written twice is read to have both writes, so a case that read an
+/// empty chain on both sides cannot pass.
+#[tokio::test]
+async fn claim_histories_left_in_place_by_a_merge_read_like_ones_moved_by_it() {
+    let scratch = Scratch::new("merged-histories");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_histories")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let answers = || async {
+        let mut said = Vec::new();
+        let mut addresses = vec![merged.own.clone()];
+        for (was, now) in &merged.moved {
+            addresses.push(FactAddress::new(
+                merged.survivor.clone(),
+                FactId(now.clone()),
+            ));
+            addresses.push(FactAddress::new(merged.folded.clone(), FactId(was.clone())));
+        }
+        for address in &addresses {
+            said.push(format!("{:?}", merged.memory.claim_history(address).await));
+        }
+        for handle in [&merged.survivor, &merged.folded] {
+            let histories = merged.memory.claim_histories(handle).await;
+            said.push(format!(
+                "{:?}",
+                histories.map(|all| {
+                    let mut all: Vec<_> = all.into_iter().collect();
+                    all.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                    all
+                })
+            ));
+        }
+        said
+    };
+    let moved = answers().await;
+
+    // The twice-written folded claim has both writes behind its new address.
+    let (_, now) = merged.moved.last().expect("a moved claim");
+    let chain = merged
+        .memory
+        .claim_history(&FactAddress::new(
+            merged.survivor.clone(),
+            FactId(now.clone()),
+        ))
+        .await
+        .expect("the history reads");
+    assert_eq!(
+        chain.iter().map(|w| w.content.as_str()).collect::<Vec<_>>(),
+        ["closes at night", "closes at midnight"]
+    );
+    assert!(
+        merged
+            .memory
+            .claim_histories(&merged.folded)
+            .await
+            .expect("the histories read")
+            .is_empty()
+    );
+
+    merged.leave_in_place().await;
+
+    let left = answers().await;
+    assert_eq!(left.len(), moved.len());
+    for (moved, left) in moved.iter().zip(&left) {
+        assert_eq!(left, moved);
+    }
+    store.stop().await;
+}

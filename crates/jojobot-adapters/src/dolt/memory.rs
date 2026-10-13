@@ -1947,16 +1947,48 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
+        let Some(at) = Self::stored_address_of(tx, address).await? else {
+            return Ok(None);
+        };
+        let Some(mut fact) = self.claim_stored_at(tx, &at).await? else {
+            return Ok(None);
+        };
+        if &at != address {
+            let handle = self.current_handle(tx, &address.home).await?;
+            fact.id = address.local.clone();
+            fact.home = handle.clone();
+            fact.subject = handle;
+        }
+        Ok(Some(fact))
+    }
+
+    /// **Where the writes of the claim at an address are stored.** The address
+    /// itself when the claim sits under the key it is addressed by. The key and
+    /// id a merge took it from when the merge left it there, found by walking
+    /// the merge events back to a claim that has writes. `None` for a key that
+    /// was merged away, which holds nothing of its own, and for an address
+    /// nothing stands at.
+    async fn stored_address_of(
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
         if Self::is_folded_key(tx, &address.home).await? {
             return Ok(None);
         }
-        if let Some(own) = self.claim_stored_at(tx, address).await? {
-            return Ok(Some(own));
-        }
-        // The address may name the claim by the id a merge gave it: walk the
-        // events back to where it is stored.
         let mut at = address.clone();
         for _ in 0..64 {
+            let held: Option<i64> = sqlx::query_scalar(
+                "SELECT ordinal FROM fact_write WHERE entity = ? AND fact_id = ? LIMIT 1",
+            )
+            .bind(at.home.as_str())
+            .bind(at.local.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            if held.is_some() {
+                return Ok(Some(at));
+            }
+            // The address may name the claim by the id a merge gave it.
             let origin = sqlx::query(
                 "SELECT folded, folded_id FROM merge_event
                  WHERE survivor = ? AND survivor_id = ? AND ordinal > 0
@@ -1974,13 +2006,6 @@ impl DoltMemory {
                 EntityId(origin.try_get::<String, _>("folded").map_err(store)?),
                 FactId(origin.try_get::<String, _>("folded_id").map_err(store)?),
             );
-            if let Some(mut fact) = self.claim_stored_at(tx, &at).await? {
-                let handle = self.current_handle(tx, &address.home).await?;
-                fact.id = address.local.clone();
-                fact.home = handle.clone();
-                fact.subject = handle;
-                return Ok(Some(fact));
-            }
         }
         Ok(None)
     }
@@ -5124,16 +5149,26 @@ impl Memory for DoltMemory {
         // **The whole chain, through the same assembler every other claim read
         // uses.** One row shape and one reader: a second would be a second
         // place for the columns to drift.
-        let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
+        // **Where the claim's writes are stored**, which is not the address it
+        // is served at when a merge left it under the key it was made under.
+        let stored = Self::stored_address_of(
+            &mut tx,
+            &FactAddress::new(key.clone(), address.local.clone()),
+        )
+        .await?;
+        let rows = match &stored {
+            Some(stored) => sqlx::query(&format!(
+                "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
                     w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
-             WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
-        ))
-        .bind(key.as_str())
-        .bind(address.local.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+                     WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
+            ))
+            .bind(stored.home.as_str())
+            .bind(stored.local.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?,
+            None => Vec::new(),
+        };
         if rows.is_empty() {
             // **No writes is no record.** A claim that stands has at least one
             // write, and a read of one answers from the substrate — so a claim
@@ -5219,20 +5254,45 @@ impl Memory for DoltMemory {
         // claim_history's per-record read: every write of every claim this
         // entity holds, ordered so each claim's own writes stay oldest-first
         // once grouped by id below.
-        let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
+        // **The claims a merge left under the key they were made under are this
+        // thing's too**, each served under the id the merge gave it. A key that
+        // was merged away holds none.
+        let mut stored_at: Vec<(EntityId, Option<std::collections::HashMap<String, String>>)> =
+            Vec::new();
+        if !Self::is_folded_key(&mut tx, &key).await? {
+            stored_at.push((key.clone(), None));
+            for folded in Self::keys_folded_into(&mut tx, &key).await? {
+                stored_at.push((folded.key, Some(folded.served)));
+            }
+        }
+        let mut rows = Vec::new();
+        for (at, served) in &stored_at {
+            for row in sqlx::query(&format!(
+                "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
                     w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
-             WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
-        ))
-        .bind(key.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+                 WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
+            ))
+            .bind(at.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?
+            {
+                let id: String = row.try_get("id").map_err(store)?;
+                match served {
+                    None => rows.push((id, row)),
+                    Some(served) => {
+                        if let Some(now) = served.get(&id) {
+                            rows.push((now.clone(), row));
+                        }
+                    }
+                }
+            }
+        }
 
         let mut histories: std::collections::HashMap<FactId, Vec<ClaimWrite>> =
             std::collections::HashMap::new();
-        for row in &rows {
-            let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
+        for (served_id, row) in &rows {
+            let id = FactId(served_id.clone());
             let ordinal: i64 = row.try_get("ordinal").map_err(store)?;
             let written_at = row
                 .try_get::<Option<String>, _>("written_at")
