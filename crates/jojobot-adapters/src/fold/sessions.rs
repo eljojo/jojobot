@@ -428,7 +428,10 @@ impl Sessions for FoldedSessions {
         &self,
         bot: &EntityId,
     ) -> Result<Option<CharterChange>, SessionError> {
-        self.inner.charter_change_of(bot).await
+        match self.held(|image| image.charter_changes.get(bot).cloned()) {
+            Some(change) => Ok(change),
+            None => self.inner.charter_change_of(bot).await,
+        }
     }
 
     async fn charter_changes(
