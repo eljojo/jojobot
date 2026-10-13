@@ -1442,6 +1442,85 @@ impl DoltMemory {
         Ok(out)
     }
 
+    /// **The key a pointer to a thing is served as**: the thing itself, or the
+    /// thing it was merged into when the merge events say so, through a survivor
+    /// that was merged later. A pointer a merge rewrote already names the
+    /// survivor and is returned as it is; one it left naming the folded thing is
+    /// followed.
+    async fn forward_key(
+        tx: &mut Transaction<'_, MySql>,
+        key: &EntityId,
+    ) -> Result<EntityId, MemoryError> {
+        let mut at = key.clone();
+        // A merge cannot fold a thing into itself, so the chain ends; the bound
+        // is for a store that has been edited by hand.
+        for _ in 0..64 {
+            let next: Option<String> = sqlx::query_scalar(
+                "SELECT survivor FROM merge_event WHERE ordinal = 0 AND folded = ?
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(at.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            match next {
+                Some(survivor) => at = EntityId(survivor),
+                None => break,
+            }
+        }
+        Ok(at)
+    }
+
+    /// **The stored address a pointer to a claim is served as**: the claim
+    /// itself, or where the merge events say it went, through a survivor that
+    /// was merged later.
+    async fn forward_address(
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<FactAddress, MemoryError> {
+        let mut at = address.clone();
+        for _ in 0..64 {
+            let next = sqlx::query(
+                "SELECT survivor, survivor_id FROM merge_event
+                 WHERE folded = ? AND folded_id = ? AND ordinal > 0
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(at.home.as_str())
+            .bind(at.local.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            let Some(next) = next else { break };
+            at = FactAddress::new(
+                EntityId(next.try_get::<String, _>("survivor").map_err(store)?),
+                FactId(next.try_get::<String, _>("survivor_id").map_err(store)?),
+            );
+        }
+        Ok(at)
+    }
+
+    /// **The handle a pointer's target answers to now**, following a merge that
+    /// left the pointer naming the folded thing.
+    async fn pointer_handle(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        stored: &EntityId,
+    ) -> Result<EntityId, MemoryError> {
+        let key = Self::forward_key(tx, stored).await?;
+        self.current_handle(tx, &key).await
+    }
+
+    /// **The address a pointer to a claim is served at**, home as a handle.
+    async fn pointer_address(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        stored: &FactAddress,
+    ) -> Result<FactAddress, MemoryError> {
+        let at = Self::forward_address(tx, stored).await?;
+        let home = self.pointer_handle(tx, &at.home).await?;
+        Ok(FactAddress::new(home, at.local))
+    }
+
     /// **The storage keys whose rows make up one thing**: its own and those of
     /// everything folded into it. A key that was folded away holds none.
     async fn keys_holding(
@@ -1698,7 +1777,7 @@ impl DoltMemory {
                 // as an undeclared one holds that value behind the mark.
                 let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
                 composed.push(
-                    self.current_handle(tx, &EntityId(stored.to_string()))
+                    self.pointer_handle(tx, &EntityId(stored.to_string()))
                         .await?
                         .to_string(),
                 );
@@ -1723,7 +1802,7 @@ impl DoltMemory {
                 for item in items {
                     if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
                         composed.push(
-                            self.current_handle(tx, &EntityId(id.to_string()))
+                            self.pointer_handle(tx, &EntityId(id.to_string()))
                                 .await?
                                 .to_string(),
                         );
@@ -2610,14 +2689,13 @@ impl DoltMemory {
             served.home = handle.clone();
             served.subject = handle;
             if let Some(source) = &served.derived_from {
-                let resolved = self.current_handle(tx, &source.home).await?;
-                served.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+                served.derived_from = Some(self.pointer_address(tx, source).await?);
             }
             // **An edge and a ref are badge-keyed exactly as `home` is**
             // (rule 268), resolved here the same way, once, rather than a
             // reader chasing a handle's rename history on every use.
             if let Some(edge) = &served.edge {
-                let resolved = self.current_handle(tx, &edge.object).await?;
+                let resolved = self.pointer_handle(tx, &edge.object).await?;
                 served.edge = Some(Edge {
                     shape: edge.shape,
                     object: resolved,
@@ -2625,17 +2703,14 @@ impl DoltMemory {
             }
             let mut resolved_refs = Vec::with_capacity(served.refs.len());
             for object in &served.refs {
-                resolved_refs.push(self.current_handle(tx, object).await?);
+                resolved_refs.push(self.pointer_handle(tx, object).await?);
             }
             served.refs = resolved_refs;
             // **A mark's addresses are badge-keyed exactly as `derived_from`
             // is**, resolved here the same way.
             let mut resolved_stands_for = Vec::with_capacity(served.stands_for.len());
             for named in &served.stands_for {
-                resolved_stands_for.push(FactAddress::new(
-                    self.current_handle(tx, &named.home).await?,
-                    named.local.clone(),
-                ));
+                resolved_stands_for.push(self.pointer_address(tx, named).await?);
             }
             served.stands_for = resolved_stands_for;
             // **A reference-typed field value is a pointer like any
@@ -5250,11 +5325,10 @@ impl Memory for DoltMemory {
             // other** — stored under its source's key, served under the
             // handle that key answers to today.
             if let Some(source) = &fact.derived_from {
-                let resolved = self.current_handle(&mut tx, &source.home).await?;
-                fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+                fact.derived_from = Some(self.pointer_address(&mut tx, source).await?);
             }
             if let Some(edge) = &fact.edge {
-                let resolved = self.current_handle(&mut tx, &edge.object).await?;
+                let resolved = self.pointer_handle(&mut tx, &edge.object).await?;
                 fact.edge = Some(Edge {
                     shape: edge.shape,
                     object: resolved,
@@ -5343,11 +5417,10 @@ impl Memory for DoltMemory {
                 Vec::new(),
             )?;
             if let Some(source) = &fact.derived_from {
-                let resolved = self.current_handle(&mut tx, &source.home).await?;
-                fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+                fact.derived_from = Some(self.pointer_address(&mut tx, source).await?);
             }
             if let Some(edge) = &fact.edge {
-                let resolved = self.current_handle(&mut tx, &edge.object).await?;
+                let resolved = self.pointer_handle(&mut tx, &edge.object).await?;
                 fact.edge = Some(Edge {
                     shape: edge.shape,
                     object: resolved,

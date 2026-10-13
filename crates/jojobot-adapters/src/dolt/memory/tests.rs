@@ -729,6 +729,11 @@ struct Merged {
     folded: EntityId,
     survivor_key: EntityId,
     folded_key: EntityId,
+    /// A third thing, and its one claim that points at the folded thing and at
+    /// the folded thing's first claim.
+    pointing: EntityId,
+    pointing_key: EntityId,
+    pointing_claim: FactAddress,
     /// The own claim of the survivor.
     own: FactAddress,
     /// For each claim the merge moved: the id it had and the id it was given.
@@ -784,7 +789,7 @@ impl Merged {
             .written()
             .expect("the guard waves it through")
             .address();
-        memory
+        let first = memory
             .capture(said(
                 &folded,
                 "runs the store",
@@ -793,7 +798,8 @@ impl Merged {
             .await
             .expect("capture ok")
             .written()
-            .expect("the guard waves it through");
+            .expect("the guard waves it through")
+            .address();
         let second = memory
             .capture(said(&folded, "closes at night", &[("own_shift", "night")]))
             .await
@@ -813,6 +819,40 @@ impl Merged {
                 FactPatch {
                     content: Some("closes at midnight".into()),
                     provenance: Some(Provenance::Inference),
+                    ..Default::default()
+                },
+                &EntityId("bot:sigma".into()),
+            )
+            .await
+            .expect("update_fact ok")
+            .written()
+            .expect("the guard waves it through");
+        // A third thing's claim that points at the folded thing in every way a
+        // claim can: an edge, a reference, a field naming it, the claim it was
+        // derived from, and a mark naming that claim.
+        let pointing = EntityId::person("person:marge");
+        memory
+            .add_entity(NewEntity::new(pointing.clone(), "Marge", "fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+        let mut pointer = said(&pointing, "knows the grocer", &[("friend", "person:apu")]);
+        pointer.edge = Some(Edge::new(EdgeShape::Connection, folded.clone()));
+        pointer.refs = vec![folded.clone()];
+        pointer.derived_from = Some(first.clone());
+        let pointing_claim = memory
+            .capture(pointer)
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through")
+            .address();
+        memory
+            .update_fact(
+                &pointing_claim,
+                FactPatch {
+                    stands_for: Some(vec![first.clone()]),
                     ..Default::default()
                 },
                 &EntityId("bot:sigma".into()),
@@ -843,6 +883,11 @@ impl Merged {
             .await
             .expect("resolve ok")
             .expect("the folded thing exists");
+        let (pointing_key, _) = memory
+            .resolve(&mut tx, &pointing)
+            .await
+            .expect("resolve ok")
+            .expect("the pointing thing exists");
         tx.commit().await.expect("the read commits");
         let event = memory
             .merge_events(Some(&survivor))
@@ -862,6 +907,9 @@ impl Merged {
             folded,
             survivor_key,
             folded_key,
+            pointing,
+            pointing_key,
+            pointing_claim,
             own,
             moved,
         }
@@ -870,6 +918,7 @@ impl Merged {
     /// Put the folded thing's claims back under the key and the ids they were
     /// made under, leaving the event and the survivor's own claims as they are.
     async fn leave_in_place(&self) {
+        self.leave_pointers_in_place().await;
         self.leave_fields_in_place().await;
         for (was, now) in &self.moved {
             for (table, id_column) in [("fact", "id"), ("fact_write", "fact_id")] {
@@ -889,6 +938,68 @@ impl Merged {
                 );
             }
         }
+    }
+
+    /// Put the pointers of the third thing's claim back at the folded thing and
+    /// its claims, as they were before the merge rewrote them.
+    async fn leave_pointers_in_place(&self) {
+        for table in ["fact", "fact_write"] {
+            sqlx::query(&format!(
+                "UPDATE {table} SET edge_object = ? WHERE entity = ? AND edge_object = ?"
+            ))
+            .bind(self.folded_key.as_str())
+            .bind(self.pointing_key.as_str())
+            .bind(self.survivor_key.as_str())
+            .execute(&self.pool)
+            .await
+            .expect("the edge goes back");
+            for (was, now) in &self.moved {
+                sqlx::query(&format!(
+                    "UPDATE {table} SET derived_from = ?, derived_from_id = ?
+                     WHERE entity = ? AND derived_from = ? AND derived_from_id = ?"
+                ))
+                .bind(self.folded_key.as_str())
+                .bind(was)
+                .bind(self.pointing_key.as_str())
+                .bind(self.survivor_key.as_str())
+                .bind(now)
+                .execute(&self.pool)
+                .await
+                .expect("the lineage goes back");
+            }
+        }
+        sqlx::query("UPDATE fact_event_ref SET entity = ? WHERE fact_home = ? AND entity = ?")
+            .bind(self.folded_key.as_str())
+            .bind(self.pointing_key.as_str())
+            .bind(self.survivor_key.as_str())
+            .execute(&self.pool)
+            .await
+            .expect("the reference goes back");
+        for (was, now) in &self.moved {
+            sqlx::query(
+                "UPDATE fact_stands_for SET source_home = ?, source_id = ?
+                 WHERE fact_home = ? AND source_home = ? AND source_id = ?",
+            )
+            .bind(self.folded_key.as_str())
+            .bind(was)
+            .bind(self.pointing_key.as_str())
+            .bind(self.survivor_key.as_str())
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .expect("the mark goes back");
+        }
+        let mut tx = self.pool.begin().await.expect("a transaction");
+        let declared = DoltMemory::types_in(&mut tx).await.expect("types read");
+        DoltMemory::repoint_field_links(
+            &mut tx,
+            &declared,
+            self.survivor_key.as_str(),
+            self.folded_key.as_str(),
+        )
+        .await
+        .expect("the field goes back");
+        tx.commit().await.expect("the pointers commit");
     }
 
     /// Put the folded thing's field writes back under its key and its claims'
@@ -1290,5 +1401,98 @@ async fn touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_move
     merged.leave_in_place().await;
 
     assert_eq!(answers().await, moved);
+    store.stop().await;
+}
+
+/// **A claim that points at a merged thing reads, as to those pointers, exactly
+/// as it does when the merge rewrote them** — the edge, the reference, the field
+/// naming the thing, the claim it was derived from and the mark naming that
+/// claim all read as the survivor and the id the merge event gave it. The
+/// control is read to say the survivor, so a case that read the folded thing
+/// on both sides cannot pass.
+#[tokio::test]
+async fn pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrote() {
+    let scratch = Scratch::new("merged-pointers");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_pointers")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let answers = || async {
+        vec![
+            format!("{:?}", merged.memory.recall(&merged.pointing).await),
+            format!("{:?}", merged.memory.fields(&merged.pointing).await),
+            format!(
+                "{:?}",
+                merged.memory.claim_history(&merged.pointing_claim).await
+            ),
+            format!(
+                "{:?}",
+                merged.memory.claim_histories(&merged.pointing).await
+            ),
+        ]
+    };
+    let moved = answers().await;
+    let claim = merged
+        .memory
+        .recall(&merged.pointing)
+        .await
+        .expect("recall reads")
+        .into_iter()
+        .next()
+        .expect("the pointing claim");
+    let (_, first_now) = &merged.moved[0];
+    assert_eq!(
+        claim.edge.map(|edge| edge.object),
+        Some(merged.survivor.clone())
+    );
+    assert_eq!(claim.refs, vec![merged.survivor.clone()]);
+    assert_eq!(
+        claim.derived_from,
+        Some(FactAddress::new(
+            merged.survivor.clone(),
+            FactId(first_now.clone())
+        ))
+    );
+    assert_eq!(
+        claim.stands_for,
+        [FactAddress::new(
+            merged.survivor.clone(),
+            FactId(first_now.clone())
+        )]
+    );
+    assert_eq!(
+        claim.fields.get("friend").map(String::as_str),
+        Some("person:homer")
+    );
+
+    merged.leave_in_place().await;
+
+    // The pointers name the folded thing again, in the rows themselves.
+    let edge: Option<String> = sqlx::query_scalar(
+        "SELECT edge_object FROM fact WHERE entity = ? AND edge_object IS NOT NULL",
+    )
+    .bind(merged.pointing_key.as_str())
+    .fetch_optional(&pool)
+    .await
+    .expect("the edge reads");
+    assert_eq!(edge.as_deref(), Some(merged.folded_key.as_str()));
+    let derived: Option<String> = sqlx::query_scalar(
+        "SELECT derived_from FROM fact WHERE entity = ? AND derived_from IS NOT NULL",
+    )
+    .bind(merged.pointing_key.as_str())
+    .fetch_optional(&pool)
+    .await
+    .expect("the lineage reads");
+    assert_eq!(derived.as_deref(), Some(merged.folded_key.as_str()));
+
+    let left = answers().await;
+    for (moved, left) in moved.iter().zip(&left) {
+        assert_eq!(left, moved);
+    }
     store.stop().await;
 }
