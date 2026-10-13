@@ -54,6 +54,11 @@ pub struct DoltSessions {
     /// this counts what each one cost — the number that scales with a run's
     /// own chronology, which a call count alone cannot show.
     entries_read: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// **How many times [`Self::exists`] asked the store whether a row is
+    /// there.** Test-only instrumentation for the one property a count of
+    /// full reads cannot show: whether a write that only needs the row to
+    /// exist asked a question of its own first.
+    existence_checks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl DoltSessions {
@@ -70,6 +75,7 @@ impl DoltSessions {
             draw: ids::drawing(),
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -78,6 +84,14 @@ impl DoltSessions {
     #[cfg(any(test, feature = "testing"))]
     pub fn full_reads(&self) -> usize {
         self.full_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times a write asked the store whether a session row exists
+    /// since this store opened. Test-only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn existence_checks(&self) -> usize {
+        self.existence_checks
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many `journal_entry` rows have been parsed by a full read since
@@ -214,6 +228,7 @@ impl DoltSessions {
             draw,
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -230,6 +245,7 @@ impl DoltSessions {
             snapshots,
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -284,6 +300,8 @@ impl DoltSessions {
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
     ) -> Result<(), SessionError> {
+        self.existence_checks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
             .bind(id.as_str())
             .fetch_optional(&mut **tx)
@@ -1028,13 +1046,20 @@ impl Sessions for DoltSessions {
         // Existence only, never refused on a closed session — see the
         // trait's own doc. Never a full read: this never touches the
         // chronology and has no state to check.
-        self.exists(&mut tx, id).await?;
-        sqlx::query("UPDATE session SET served_chars = served_chars + ? WHERE id = ?")
+        //
+        // **One statement.** The update matches the row by id, so a row that
+        // is there is changed and needs no question first. Only an update that
+        // changed no row asks: a total of nothing changes none, and an id no
+        // run wears matches none.
+        let added = sqlx::query("UPDATE session SET served_chars = served_chars + ? WHERE id = ?")
             .bind(chars as i64)
             .bind(id.as_str())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        if added.rows_affected() == 0 {
+            self.exists(&mut tx, id).await?;
+        }
         // **No `append_session_write` here.** That signal exists to tell the
         // search half of the index when to pay for a full re-read of every
         // session — see its own migration doc — and `served_chars` is never
@@ -2125,6 +2150,94 @@ mod tests {
         assert_eq!(
             read_back.served_chars, 120,
             "the accounting itself must still run: {read_back:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A served total is added to a row that is there, in one statement.**
+    /// The write adds to the column where the id matches; asking first whether
+    /// the row exists is a second statement for the answer the first gives. The
+    /// question is asked only when the update matched no row, and an id no run
+    /// wears is still refused. Each is paired with the total the write left.
+    #[tokio::test]
+    async fn add_served_adds_to_the_row_without_asking_first_whether_it_is_there() {
+        let scratch = Scratch::new("session-served-chars-one-statement");
+        let path = scratch.0.clone();
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+        let run = sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:epsilon".into()),
+                sid: Sid("sv02".into()),
+                focus: "a sitting".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin ok");
+
+        sessions
+            .add_served(&run.id, 120)
+            .await
+            .expect("add_served ok");
+        sessions
+            .add_served(&run.id, 30)
+            .await
+            .expect("add_served ok");
+        assert_eq!(
+            sessions
+                .read_session(&run.id)
+                .await
+                .expect("read ok")
+                .served_chars,
+            150,
+            "the totals must add up"
+        );
+        assert_eq!(
+            sessions.existence_checks(),
+            0,
+            "a total added to a row that is there asked whether it was there first"
+        );
+
+        // The store counts the rows an update matched, not the rows it changed,
+        // so a total of nothing needs no question either.
+        sessions
+            .add_served(&run.id, 0)
+            .await
+            .expect("a total of nothing is fine");
+        assert_eq!(
+            sessions.existence_checks(),
+            0,
+            "a total of nothing matches the row, so the row is not asked for"
+        );
+        let missing = sessions.add_served(&SessionId("zzzzzz".into()), 5).await;
+        assert!(
+            matches!(missing, Err(SessionError::UnknownSession { .. })),
+            "a total for no run is refused: {missing:?}"
+        );
+        assert_eq!(
+            sessions.existence_checks(),
+            1,
+            "an update that matched no row asks whether the row is there, to word the refusal"
+        );
+        assert_eq!(
+            sessions
+                .read_session(&run.id)
+                .await
+                .expect("read ok")
+                .served_chars,
+            150,
+            "a refused total moved nothing"
         );
 
         store.stop().await;
