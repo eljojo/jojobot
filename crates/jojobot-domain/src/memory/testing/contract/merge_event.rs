@@ -57,6 +57,30 @@ async fn fold_one_into_the_other<M: Memory>(
             .await,
         );
     }
+    // A claim on a third thing resting on the first folded claim, written before
+    // the merge: the merge points it at the new address, and a reader holding
+    // the old one still finds it.
+    let onlooker = EntityId::person(&format!(
+        "person:contract-watcher-{}",
+        folded.as_str().rsplit('-').next().unwrap_or("x")
+    ));
+    add(
+        store,
+        NewEntity::new(
+            onlooker.clone(),
+            onlooker.as_str().replace([':', '-'], " "),
+            "contract-fixture",
+        ),
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            derived_from: Some(moved[0].address()),
+            ..NewFact::about(onlooker, "so the school bus waits", date(2026, 6, 2))
+        },
+    )
+    .await;
     store
         .merge(
             &folded,
@@ -197,6 +221,27 @@ pub async fn an_address_from_before_a_merge_still_names_its_claim<M: Memory>(sto
             .expect("reads"),
         None,
         "an address under the survivor is already where it is"
+    );
+
+    // What rests on the claim is found through either address, and what rests on
+    // nothing is found through neither.
+    let resting_on_new = store
+        .built_on(&new_of(&moved[0]))
+        .await
+        .expect("built_on reads");
+    assert_eq!(resting_on_new.len(), 1, "{resting_on_new:?}");
+    assert_eq!(
+        store.built_on(&old_first).await.expect("built_on reads"),
+        resting_on_new,
+        "the old address finds what rests on the claim"
+    );
+    assert!(
+        store
+            .built_on(&old_second)
+            .await
+            .expect("built_on reads")
+            .is_empty(),
+        "nothing rests on the second claim, by either address"
     );
 
     // The history of the claim reads the same through either address.
