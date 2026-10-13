@@ -206,7 +206,17 @@ impl Sessions for FoldedSessions {
     }
 
     async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
-        self.inner.summaries_of(bot).await
+        match self.held(|image| {
+            image
+                .runs
+                .iter()
+                .filter(|run| &run.bot == bot)
+                .map(SessionSummary::of)
+                .collect::<Vec<_>>()
+        }) {
+            Some(summaries) => Ok(summaries),
+            None => self.inner.summaries_of(bot).await,
+        }
     }
 
     async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
