@@ -759,11 +759,10 @@ impl Jojobot {
         let page = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
         let ranked_len = ranked.len();
         let hits: Vec<Hit> = ranked.into_iter().skip(offset).take(page).collect();
-        // **Hits on sections of one document sit together**, under the best-ranked
-        // of them, and each says which document it is part of. Within the page
-        // only: grouping the whole ranking would move a hit across a page edge
-        // and the pages would no longer tile.
-        let hits = group_by_document(hits);
+        // **The page stays in rank order until the ceiling has cut it.** Hits on
+        // sections of one document are brought together below, over the hits that
+        // shipped, because a cut over the grouped order keeps hits from all over
+        // the page and the next page cannot start at a single offset.
         let documents = self.documents_of(&hits).await;
         // **The day this answer is read against**, in the zone of the run that
         // asked: whether a claim has passed the day it stays good is a question
@@ -986,10 +985,15 @@ impl Jojobot {
             + crate::answer::STATUS_BAR_ROOM
             + teaching_room;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
-        body["results"] = kept
-            .kept()
-            .iter()
-            .map(|(json, _)| json.clone())
+        // **Hits on sections of one document sit together**, under the best-ranked
+        // of them, and each says which document it is part of. Within what shipped
+        // only: grouping the whole ranking would move a hit across a page edge and
+        // the pages would no longer tile, and grouping before the cut would make
+        // the shipped hits no prefix of the page.
+        let shipped = &hits[..kept.kept().len()];
+        body["results"] = grouped_order(shipped)
+            .into_iter()
+            .map(|at| kept.kept()[at].0.clone())
             .collect::<Vec<_>>()
             .into();
         body["count"] = kept.kept().len().into();
@@ -1039,32 +1043,33 @@ fn section_document(hit: &Hit) -> Option<&EntityRef> {
     }
 }
 
-/// **The hits with the sections of one document brought together**, each group
-/// where its best-ranked hit stood and its other sections behind that one in
-/// their own rank order. Every other hit keeps its place.
-fn group_by_document(hits: Vec<Hit>) -> Vec<Hit> {
+/// **The order the hits are shown in, as positions in `hits`**: the sections of
+/// one document brought together, each group where its best-ranked hit stood and
+/// its other sections behind that one in their own rank order. Every other hit
+/// keeps its place.
+fn grouped_order(hits: &[Hit]) -> Vec<usize> {
     let keys: Vec<Option<String>> = hits
         .iter()
         .map(|hit| section_document(hit).map(|home| home.id.as_str().to_string()))
         .collect();
-    let mut slots: Vec<Option<Hit>> = hits.into_iter().map(Some).collect();
-    let mut grouped = Vec::with_capacity(slots.len());
-    for at in 0..slots.len() {
-        let Some(hit) = slots[at].take() else {
+    let mut placed = vec![false; hits.len()];
+    let mut order = Vec::with_capacity(hits.len());
+    for at in 0..hits.len() {
+        if placed[at] {
             continue;
-        };
-        grouped.push(hit);
+        }
+        placed[at] = true;
+        order.push(at);
         if let Some(key) = &keys[at] {
-            for later in at + 1..slots.len() {
-                if keys[later].as_ref() == Some(key)
-                    && let Some(hit) = slots[later].take()
-                {
-                    grouped.push(hit);
+            for later in at + 1..hits.len() {
+                if !placed[later] && keys[later].as_ref() == Some(key) {
+                    placed[later] = true;
+                    order.push(later);
                 }
             }
         }
     }
-    grouped
+    order
 }
 
 impl Jojobot {

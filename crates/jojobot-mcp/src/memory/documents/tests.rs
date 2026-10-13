@@ -1211,6 +1211,85 @@ async fn hits_on_sections_of_one_document_are_grouped_and_say_which_document() {
     );
 }
 
+/// **A walk by the offsets search returns yields every hit once**, though the
+/// answer ceiling cuts a page whose ranking interleaves the sections of two
+/// documents (A1 B1 A2 B2). Grouping brings A1 and A2 together, so a cut that
+/// counted kept hits as the first of the ranking named an offset that repeated
+/// A2 and lost B1.
+///
+/// **Paired in one read**: every hit is seen, which the loss breaks, and none
+/// twice, which the repeat breaks. The sections are long enough that the ceiling
+/// keeps two of the four, and the case first requires that, or it proves nothing
+/// about a cut.
+#[tokio::test]
+async fn a_walk_by_the_returned_offsets_yields_each_hit_once_across_a_cut_through_grouped_sections()
+{
+    let spy = Arc::new(SpySearch::default());
+    let jojobot = handler_with(spy.clone());
+    let section = |heading: &str| format!("# {heading}\n\n{}\n", "shop ".repeat(1_800));
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        &format!("{}\n{}", section("A1"), section("A2")),
+    )
+    .await;
+    put_ok(
+        &jojobot,
+        "document:beta",
+        &format!("{}\n{}", section("B1"), section("B2")),
+    )
+    .await;
+    spy.answer_with(vec![
+        hit_on(&jojobot, "document:alpha", "# A1").await,
+        hit_on(&jojobot, "document:beta", "# B1").await,
+        hit_on(&jojobot, "document:alpha", "# A2").await,
+        hit_on(&jojobot, "document:beta", "# B2").await,
+    ]);
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u32;
+    let mut pages = 0;
+    loop {
+        let body = json_of(
+            &jojobot
+                .search(Parameters(SearchArgs {
+                    limit: Some(4),
+                    offset: Some(offset),
+                    ..search_for_documents()
+                }))
+                .await
+                .expect("search answers"),
+        );
+        pages += 1;
+        let results = body["results"].as_array().expect("results");
+        if pages == 1 {
+            assert_eq!(
+                results.len(),
+                2,
+                "the ceiling must keep two of the four, or this proves nothing about a cut"
+            );
+        }
+        seen.extend(
+            results
+                .iter()
+                .map(|hit| hit["content"].as_str().expect("a fact hit").to_string()),
+        );
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next as u32,
+            None => break,
+        }
+        assert!(pages < 10, "the walk does not end: {seen:?}");
+    }
+
+    let mut sorted = seen.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        ["# A1", "# A2", "# B1", "# B2"],
+        "every hit once, none lost and none repeated: {seen:?}"
+    );
+}
+
 /// **An `order` field on a claim of any other kind makes no section.** A person
 /// who keeps an order of their own is not a document, and the hit is served as
 /// the ordinary claim it is.
