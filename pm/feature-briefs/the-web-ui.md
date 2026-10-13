@@ -8,7 +8,9 @@
 
 **Every page is rendered on the server and is plain HTML with links.** An entity path is a URL path, so walking the graph is walking the URLs. **There is no application**: client-side state, a framework or a component tree is the tell that somebody left the brief. A new page is a new rendering of something the graph already answers, never a new place where state lives.
 
-**The operator reads it on a laptop, and the measure is what they can take in at a glance.** Long text is folded, bookkeeping stays out of the way, and a page leads with what a person came for. Breadcrumbs say where a page sits; a search box calls the search the bots already use.
+**The operator reads it on a laptop, and a page must never overwhelm them.** Few words, room to breathe, one thing at a time, and detail behind a click that expands. A page leads with what a person came for and keeps bookkeeping out of sight. A page that reads as crammed or wordy is a defect, however correct it is. Breadcrumbs say where a page sits; a search box calls the search the bots already use.
+
+**jojobot views are the model, and the HTML is the view.** A page may have its own HTML whenever that serves the operator better: a board drawn as a board, mail as mail, a list as a list. It always reads through a jojobot view, the same model the bots ask, and never the events or the store directly. A view a bot builds for itself that proves useful can be shipped with the software and given HTML of its own. The model takes who is asking from the start, so a page and a bot asking the same view each get what is theirs to see.
 
 ## The front page: who is doing what, right now
 
