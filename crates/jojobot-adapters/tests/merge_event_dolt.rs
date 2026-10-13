@@ -75,8 +75,8 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
     // is in.
     let old_survivor = thing(&folded, "person:krusty", "Krusty").await;
     let old_folded = thing(&folded, "person:skinner", "Skinner").await;
-    let new_survivor = thing(&folded, "person:flanders", "Flanders").await;
-    let new_folded = thing(&folded, "person:willie", "Willie").await;
+    let new_survivor = thing(&folded, "person:homer", "Homer").await;
+    let new_folded = thing(&folded, "person:apu", "Apu").await;
     let old_claim = say(&folded, &old_folded, "plays the saxophone").await;
     let new_claim = say(&folded, &new_folded, "sucks a pacifier").await;
     for (gone, kept) in [(&old_folded, &old_survivor), (&new_folded, &new_survivor)] {
@@ -96,6 +96,10 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
         .execute(&pool)
         .await
         .expect("the old merge's event is taken out");
+
+    // The rows were changed past the fold, as a store from the older code is
+    // found at a start: the fold reads the store again, as a restart does.
+    folded.rebuild().await.expect("the fold loads again");
 
     // The merge made now: an event, and an address that resolves.
     assert_eq!(

@@ -630,15 +630,12 @@ impl InMemoryMemory {
         let merges = self.merges.lock().expect("fake mutex poisoned");
         let mut at = (key, address.local.clone());
         let mut moved = false;
-        loop {
-            let Some((survivor, now)) = merges.iter().find_map(|m| {
-                m.claims
-                    .iter()
-                    .find(|(was, _)| m.folded == at.0 && was == &at.1)
-                    .map(|(_, now)| (m.survivor.clone(), now.clone()))
-            }) else {
-                break;
-            };
+        while let Some((survivor, now)) = merges.iter().find_map(|m| {
+            m.claims
+                .iter()
+                .find(|(was, _)| m.folded == at.0 && was == &at.1)
+                .map(|(_, now)| (m.survivor.clone(), now.clone()))
+        }) {
             at = (survivor, now);
             moved = true;
         }

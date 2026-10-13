@@ -14392,20 +14392,21 @@ pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store:
     );
 }
 
-/// **A fact address minted before a fold still resolves its handle, and
-/// now says where the claim went** — never a bare miss indistinguishable
-/// from an address that never existed.
+/// **A fact address minted before a fold still names its claim, and an address
+/// that never was a claim says where the thing went.**
 ///
-/// The fold moves every claim off the folded row and renumbers it landing
-/// on the survivor, so the pre-fold local id answers nothing under the
-/// folded row anymore. The folded row is still real — `Entity::merged_into`
-/// says so — so the honest refusal is `AlreadyMerged`, naming the
-/// survivor, on every verb that resolves a `FactAddress` down to one claim.
+/// The fold moves every claim off the folded row and renumbers it landing on
+/// the survivor, and the merge event keeps the map from the old number to the
+/// new one, so the address a caller was holding acts on the claim where it is
+/// now: read, edited and taken back. The folded row is still real —
+/// `Entity::merged_into` says so — so an address that is NOT in the map,
+/// including every address into a merge made before events were kept, gets the
+/// honest refusal `AlreadyMerged`, naming the survivor, on every verb that
+/// resolves a `FactAddress` down to one claim.
 ///
-/// **Paired with a genuinely unknown address**, so this case cannot be
-/// told apart from a miss that was never anything else — those must read
-/// differently, or the new sentence is really the old one wearing new
-/// prose.
+/// **Paired with a genuinely unknown address**, so this case cannot be told
+/// apart from a miss that was never anything else — those must read
+/// differently, or the sentence is really the old one wearing new prose.
 pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &M) {
     let kept = EntityId::person("person:contract-relic-survivor");
     let spare = EntityId::person("person:contract-relic-forwarded");
@@ -14439,27 +14440,58 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
         .await
         .expect("the fold lands");
 
+    // The address the caller was holding names its claim, now under the survivor.
     let edit = store
         .update_fact(&stale, FactPatch::default(), &other_caller())
         .await
-        .expect_err("a stale address must not silently succeed or silently miss");
+        .expect("a stale address resolves through the merge event")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        edit.home, kept,
+        "the edit landed on the claim under the survivor: {edit:?}"
+    );
+    assert_eq!(
+        edit.content, "minted before the fold",
+        "and it is the claim the address named"
+    );
+    assert!(
+        store.claim_history(&stale).await.is_ok(),
+        "claim_history reads the claim through the old address"
+    );
+    store
+        .retract(&stale, None, date(2026, 5, 11), &other_caller(), None)
+        .await
+        .expect("the old address retracts the claim");
+
+    // **Paired: an address on the folded row that never was a claim** is still
+    // refused as merged, naming the survivor, on every verb.
+    let never_a_claim = FactAddress::new(spare.clone(), FactId("f999".into()));
+    let edit = store
+        .update_fact(&never_a_claim, FactPatch::default(), &other_caller())
+        .await
+        .expect_err("an address that was never a claim must not silently succeed");
     assert!(
         matches!(&edit, MemoryError::AlreadyMerged { attempted, into }
             if attempted == &spare.to_string() && into == &kept.to_string()),
         "update_fact's refusal must name the survivor: {edit:?}",
     );
-
     let history = store
-        .claim_history(&stale)
+        .claim_history(&never_a_claim)
         .await
         .expect_err("claim_history must answer the same way update_fact does");
     assert!(
         matches!(&history, MemoryError::AlreadyMerged { .. }),
         "claim_history did not recognise the same fold: {history:?}",
     );
-
     let retracted = store
-        .retract(&stale, None, date(2026, 5, 11), &other_caller(), None)
+        .retract(
+            &never_a_claim,
+            None,
+            date(2026, 5, 11),
+            &other_caller(),
+            None,
+        )
         .await
         .expect_err("retract must answer the same way");
     assert!(

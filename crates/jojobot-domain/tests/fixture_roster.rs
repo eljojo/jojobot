@@ -917,6 +917,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-relation-owner",
     "person:contract-relic-forwarded",
     "person:contract-relic-survivor",
+    "person:contract-merge-event-homer",
     "person:contract-renamed-onto",
     "person:contract-renamer",
     "person:contract-reopening",

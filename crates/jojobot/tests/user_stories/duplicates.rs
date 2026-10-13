@@ -117,23 +117,24 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
         .never_says("plays the bass")
         .never_says("reads the sleeve notes");
 
-    // ⭐ **The gap the NOTE above draws a line around does not include this.**
-    // A caller holding the stale ADDRESS itself — the second claim's own
-    // `person:nelson-2#…`, not just the spare handle — is told where it went,
-    // never left with an address that reads as a bare miss: the row behind it
-    // is real and stays real, so it is not "unknown," it is "moved."
+    // ⭐ **A caller holding the stale ADDRESS itself — the second claim's own
+    // `person:nelson-2#…`, not just the spare handle — still names the claim.**
+    // The merge kept an event with the map from the old number to the new one,
+    // so the address acts on the claim where it is now: the rule that a
+    // session's own earlier testimony is not rewritten in place applies to it
+    // there, under the survivor's address, and a retraction lands.
     s.refused(
         "update_fact",
         json!({"address": second, "content": "trying to correct a claim that already moved"}),
     )
     .await
-    .says("name 'person:nelson' instead");
-    s.refused(
+    .says("person:nelson#f");
+    s.call(
         "retract",
-        json!({"address": second, "reason": "trying to retract a claim that already moved"}),
+        json!({"address": second, "reason": "taking back a claim through the address it had"}),
     )
     .await
-    .says("name 'person:nelson' instead");
+    .says("person:nelson#f");
 
     s.wrap("one person again, and the repair is on the record")
         .await;

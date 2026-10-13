@@ -104,6 +104,10 @@ pub(super) struct Image {
     /// **What stands on what.** The claim each record was worked out from, to
     /// the records worked out from it.
     built_on: HashMap<(String, String), Vec<(EntityId, FactId)>>,
+    /// **Every merge made, as the store appended it**, with the handles as they
+    /// are served at the moment of the fill. A rename or a merge reads the whole
+    /// image again, so the handles are as current as the image.
+    events: Vec<jojobot_domain::memory::MergeEvent>,
 }
 
 impl Image {
@@ -146,6 +150,7 @@ impl Image {
         let mut image = Image::assembled(entities, former, types, kinds, docs);
         let names = image.names_in(&image.docs.values().collect::<Vec<_>>());
         image.referring = ask_referring(inner, names).await?.into_iter().collect();
+        image.events = inner.merge_events(None).await?;
         Ok(image)
     }
 
@@ -166,6 +171,7 @@ impl Image {
             by_badge: HashMap::new(),
             referring: HashMap::new(),
             built_on: HashMap::new(),
+            events: Vec::new(),
         };
         image.reindex();
         image.index_docs();
@@ -385,9 +391,44 @@ impl Image {
 
     /// `built_on`: the records worked out from one claim, in the order of the
     /// storage key each is filed under, then by id.
-    /// Whether this handle names a thing that was merged away.
-    pub fn is_merged_away(&self, handle: &EntityId) -> bool {
-        self.entity(handle).is_some_and(|e| e.merged_into.is_some())
+    /// Every merge made, oldest first, or only those that folded `entity` away or
+    /// took it in.
+    pub fn merge_events(
+        &self,
+        entity: Option<&EntityId>,
+    ) -> Vec<jojobot_domain::memory::MergeEvent> {
+        let Some(entity) = entity else {
+            return self.events.clone();
+        };
+        let Some(wanted) = self.entity(entity).map(|e| e.id.clone()) else {
+            return Vec::new();
+        };
+        self.events
+            .iter()
+            .filter(|e| e.folded == wanted || e.survivor == wanted)
+            .cloned()
+            .collect()
+    }
+
+    /// **Where an address went when its thing was merged away**, followed
+    /// through a survivor merged later; `None` when no event moved it.
+    pub fn moved(&self, address: &FactAddress) -> Option<FactAddress> {
+        let mut at = (
+            self.entity(&address.home)?.id.clone(),
+            address.local.clone(),
+        );
+        let mut moved = false;
+        while let Some((survivor, now)) = self.events.iter().find_map(|event| {
+            event
+                .claims
+                .iter()
+                .find(|(was, _)| event.folded == at.0 && was == &at.1)
+                .map(|(_, now)| (event.survivor.clone(), now.clone()))
+        }) {
+            at = (survivor, now);
+            moved = true;
+        }
+        moved.then(|| FactAddress::new(at.0, at.1))
     }
 
     pub fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {

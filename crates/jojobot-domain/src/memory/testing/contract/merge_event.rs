@@ -16,10 +16,11 @@ async fn fold_one_into_the_other<M: Memory>(
     store: &M,
     survivor: &str,
     folded: &str,
+    watcher: &str,
     session: Option<&str>,
 ) -> (EntityId, EntityId, Vec<Fact>) {
-    let survivor = EntityId::person(&format!("person:{survivor}"));
-    let folded = EntityId::person(&format!("person:{folded}"));
+    let survivor = EntityId::person(format!("person:{survivor}"));
+    let folded = EntityId::person(format!("person:{folded}"));
     add(
         store,
         NewEntity::new(
@@ -60,10 +61,7 @@ async fn fold_one_into_the_other<M: Memory>(
     // A claim on a third thing resting on the first folded claim, written before
     // the merge: the merge points it at the new address, and a reader holding
     // the old one still finds it.
-    let onlooker = EntityId::person(&format!(
-        "person:contract-watcher-{}",
-        folded.as_str().rsplit('-').next().unwrap_or("x")
-    ));
+    let onlooker = EntityId::person(format!("person:{watcher}"));
     add(
         store,
         NewEntity::new(
@@ -104,11 +102,12 @@ pub async fn a_merge_reads_back_as_an_event_with_its_session_and_the_claim_map<M
         store,
         "contract-merge-event-apu",
         "contract-merge-event-moe",
+        "contract-merge-event-carl",
         Some("contract-merge-run"),
     )
     .await;
     // A pair nobody merged, so an empty answer is not simply an empty store.
-    let loner = EntityId::person("person:contract-event-loner");
+    let loner = EntityId::person("person:contract-merge-event-homer");
     add(
         store,
         NewEntity::new(loner.clone(), "Contract Loner", "contract-fixture"),
@@ -182,6 +181,7 @@ pub async fn an_address_from_before_a_merge_still_names_its_claim<M: Memory>(sto
         store,
         "contract-merge-address-ned",
         "contract-merge-address-edna",
+        "contract-merge-address-lenny",
         None,
     )
     .await;
