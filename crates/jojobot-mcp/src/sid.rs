@@ -435,17 +435,14 @@ impl SessionRegistry {
     /// Ask, once, about the thing a creation sits beside. See [`crate::seen`].
     pub(crate) fn consult_creation(
         &self,
-        name: &str,
-        handle: &str,
-        kind: &str,
-        entity_name: &str,
-        aliases: &[String],
-        parent: Option<&str>,
+        sid: &str,
+        created: &crate::seen::Creation,
+        is_rare: &dyn Fn(&str) -> bool,
     ) -> Option<crate::seen::Noticed> {
         self.seen
             .lock()
             .expect("the seen ledger is poisoned")
-            .consult(name, handle, kind, entity_name, aliases, parent)
+            .consult(sid, created, is_rare)
     }
 
     /// **The lock a caller takes before resolving and writing a session**, keyed

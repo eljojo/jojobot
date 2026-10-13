@@ -163,13 +163,15 @@ async fn a_pick_up_by_name_forgets_what_the_run_was_shown_and_a_wrap_code_reopen
     // ── a different agent taking the quiet run by name was shown nothing ─────
     wait_out_the_lease().await;
     let (_, taker) = pick_up(&story, "gamma", &name).await;
-    create(&taker, "place:leftorium", "Wharf Leftorium")
+    create(&taker, "place:leftorium", "Wonder Leftorium")
         .await
         .never_says(ASKED);
     // The positive the absence rests on: once it is shown the places, the same
     // creation beside them is asked about like any session's.
     taker.call("list_entities", json!({"kind": "place"})).await;
-    create(&taker, "place:moes", "Wharf Moes").await.says(ASKED);
+    create(&taker, "place:moes", "Wonder Moes")
+        .await
+        .says(ASKED);
 
     story.finish().await;
 }

@@ -139,6 +139,11 @@ impl Ledger {
     /// shown breaking a tie. A thing this session was already asked about is
     /// passed over, so the question is never repeated.
     ///
+    /// **A word counts only when `is_rare` says so.** The caller answers it from
+    /// the store's own counts for the kind ([`jojobot_domain::memory::words::Rarity`]),
+    /// the one rule `sharing_a_word` applies too, so a word that many things of
+    /// the kind carry never makes a creation look like a repeat.
+    ///
     /// **A word the parent itself gives is not shared between two things under
     /// that parent.** Every handle under a project begins with the project's
     /// slug, so two things side by side would share it by construction. For a
@@ -148,12 +153,16 @@ impl Ledger {
     pub(crate) fn consult(
         &mut self,
         sid: &str,
-        handle: &str,
-        kind: &str,
-        name: &str,
-        aliases: &[String],
-        parent: Option<&str>,
+        created: &Creation,
+        is_rare: &dyn Fn(&str) -> bool,
     ) -> Option<Noticed> {
+        let Creation {
+            handle,
+            kind,
+            name,
+            aliases,
+            parent,
+        } = *created;
         let session = self.sessions.get_mut(sid)?;
         let slug = handle.split_once(':').map_or(handle, |(_, slug)| slug);
         let mut incoming = words(name);
@@ -177,6 +186,7 @@ impl Ledger {
             let shared: Vec<&String> = incoming
                 .intersection(&theirs)
                 .filter(|word| own_parent_words.is_none_or(|parents| !parents.contains(*word)))
+                .filter(|word| is_rare(word))
                 .collect();
             let Some(word) = shared.first() else {
                 continue;
@@ -200,6 +210,17 @@ impl Ledger {
         session.asked.insert(noticed.handle.clone());
         Some(noticed)
     }
+}
+
+/// **The thing a creation made**, as the question compares it with what the
+/// session was shown.
+#[derive(Clone, Copy)]
+pub(crate) struct Creation<'a> {
+    pub(crate) handle: &'a str,
+    pub(crate) kind: &'a str,
+    pub(crate) name: &'a str,
+    pub(crate) aliases: &'a [String],
+    pub(crate) parent: Option<&'a str>,
 }
 
 impl Noticed {
@@ -323,11 +344,14 @@ mod tests {
         let noticed = ledger
             .consult(
                 "s1",
-                "place:springfield-mall",
-                "place",
-                "Mill Road Bridge",
-                &[],
-                None,
+                &Creation {
+                    handle: "place:springfield-mall",
+                    kind: "place",
+                    name: "Mill Road Bridge",
+                    aliases: &[],
+                    parent: None,
+                },
+                &|_| true,
             )
             .expect("a thing shared words with the creation");
         assert_eq!(noticed.handle, "place:contract-atlas", "{noticed:?}");
@@ -337,7 +361,17 @@ mod tests {
         ledger.record("s2", vec![place("place:contract-atlas", "Aaa Wharf")]);
         ledger.record("s2", vec![place("place:bet", "Bbb Wharf")]);
         let noticed = ledger
-            .consult("s2", "place:wharf-road", "place", "Wharf Road", &[], None)
+            .consult(
+                "s2",
+                &Creation {
+                    handle: "place:wharf-road",
+                    kind: "place",
+                    name: "Wharf Road",
+                    aliases: &[],
+                    parent: None,
+                },
+                &|_| true,
+            )
             .expect("a thing shared a word");
         assert_eq!(noticed.handle, "place:bet", "{noticed:?}");
     }
@@ -349,7 +383,17 @@ mod tests {
     #[test]
     fn a_forgotten_session_is_asked_afresh_and_another_is_untouched() {
         let consult = |ledger: &mut Ledger, sid: &str| {
-            ledger.consult(sid, "place:wharf-road", "place", "Wharf Road", &[], None)
+            ledger.consult(
+                sid,
+                &Creation {
+                    handle: "place:wharf-road",
+                    kind: "place",
+                    name: "Wharf Road",
+                    aliases: &[],
+                    parent: None,
+                },
+                &|_| true,
+            )
         };
         let mut ledger = Ledger::default();
         for sid in ["s1", "s2"] {
@@ -481,11 +525,14 @@ mod tests {
         );
         let asked = ledger.consult(
             "s1",
-            "work:atlas-kwik-e-mart",
-            "work",
-            "Kwik E Mart",
-            &[],
-            Some("project:atlas"),
+            &Creation {
+                handle: "work:atlas-kwik-e-mart",
+                kind: "work",
+                name: "Kwik E Mart",
+                aliases: &[],
+                parent: Some("project:atlas"),
+            },
+            &|_| true,
         );
         assert_eq!(
             asked, None,
@@ -498,11 +545,14 @@ mod tests {
         let asked = ledger
             .consult(
                 "s1",
-                "work:atlas-donut-stand-two",
-                "work",
-                "Donut Stand Two",
-                &[],
-                Some("project:atlas"),
+                &Creation {
+                    handle: "work:atlas-donut-stand-two",
+                    kind: "work",
+                    name: "Donut Stand Two",
+                    aliases: &[],
+                    parent: Some("project:atlas"),
+                },
+                &|_| true,
             )
             .expect("a sibling that shares a word the parent does not give is asked about");
         assert_eq!(asked.handle, "work:atlas-x-donut-stand");
@@ -527,11 +577,14 @@ mod tests {
         let asked = ledger
             .consult(
                 "s1",
-                "work:atlas-donut-stand-two",
-                "work",
-                "Donut Stand Two",
-                &[],
-                Some("project:atlas"),
+                &Creation {
+                    handle: "work:atlas-donut-stand-two",
+                    kind: "work",
+                    name: "Donut Stand Two",
+                    aliases: &[],
+                    parent: Some("project:atlas"),
+                },
+                &|_| true,
             )
             .expect("two siblings sharing leaf and preview are asked about");
         assert_eq!(asked.handle, "work:atlas-x-donut-stand");
@@ -554,11 +607,14 @@ mod tests {
         let created = |ledger: &mut Ledger, parent: Option<&str>| {
             ledger.consult(
                 "s1",
-                "work:atlas-kwik-e-mart",
-                "work",
-                "Kwik E Mart",
-                &[],
-                parent,
+                &Creation {
+                    handle: "work:atlas-kwik-e-mart",
+                    kind: "work",
+                    name: "Kwik E Mart",
+                    aliases: &[],
+                    parent,
+                },
+                &|_| true,
             )
         };
         // The shown thing is under another parent.

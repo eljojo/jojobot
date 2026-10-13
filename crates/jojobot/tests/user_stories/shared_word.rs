@@ -92,3 +92,46 @@ async fn the_word_a_thing_takes_from_its_parent_is_not_shared_evidence() {
 
     story.finish().await;
 }
+
+/// "Half my works have 'with' in the name." A word many things of the kind
+/// carry says nothing about whether a searched-for thing is already there, so
+/// an empty search does not name them for it. A word one thing carries still
+/// does.
+#[tokio::test]
+async fn an_empty_search_does_not_name_things_for_a_common_word() {
+    let story = Story::begin("bot:otto").await;
+    let writer = story.session().await;
+    let crowd = [
+        "alpha", "omega", "kappa", "sigma", "theta", "lambda", "epsilon", "iota",
+    ];
+    for slug in crowd {
+        writer
+            .add(&format!("work:{slug}"), &format!("{slug} with batter"))
+            .await;
+    }
+    writer.add("work:tau", "Tau kwikmart").await;
+    writer.add("bot:rho", "Rho").await;
+    let reader = story.as_bot("bot:rho").await;
+
+    // Eight works carry `with`; none is named for it.
+    let common = reader
+        .call(
+            "search",
+            json!({"query": "commute bridge subway with", "kind": "work"}),
+        )
+        .await;
+    common.number("/count", 0).never_says("shares_a_word");
+
+    // The positive the absence rests on: the one work carrying `kwikmart` is.
+    let rare = reader
+        .call(
+            "search",
+            json!({"query": "commute bridge subway kwikmart", "kind": "work"}),
+        )
+        .await;
+    rare.number("/count", 0)
+        .says("work:tau")
+        .says("\"kwikmart\"");
+
+    story.finish().await;
+}

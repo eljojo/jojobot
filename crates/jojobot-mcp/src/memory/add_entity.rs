@@ -595,17 +595,48 @@ impl Jojobot {
                 // **A creation that sits beside a thing this session was shown
                 // is asked about it, once.** Only a creation that landed gets
                 // here, so a guard refusal never doubles up with this.
-                if let Ok(Some(asking)) = self.caller(args.sid.as_deref())
-                    && let Some(noticed) = self.registry.consult_creation(
-                        asking.sid.as_str(),
-                        entity.id.as_str(),
-                        entity.id.kind().map_or("", |kind| kind.as_token()),
-                        &entity.name,
-                        &entity.aliases,
-                        entity.parent.as_ref().map(|parent| parent.as_str()),
-                    )
-                {
-                    crate::answer::note_teaching(&mut body, &noticed.question(entity.id.as_str()));
+                //
+                // **A word counts only when few other things of the kind carry
+                // it**, counted over the store as it stands now with the new
+                // thing left out, which is how a search counts too. A store
+                // that cannot be read gives an empty count,
+                // in which no word is rare, so nothing is asked on a count that
+                // was never taken.
+                if let Ok(Some(asking)) = self.caller(args.sid.as_deref()) {
+                    let kind = entity.id.kind().map_or("", |kind| kind.as_token());
+                    let rarity = match entity.id.kind() {
+                        Some(of_kind) => self
+                            .memory
+                            .list_entities(Some(of_kind))
+                            .await
+                            .map(|held| {
+                                let others: Vec<_> = held
+                                    .into_iter()
+                                    .filter(|other| other.id != entity.id)
+                                    .collect();
+                                jojobot_domain::memory::words::Rarity::of(&others)
+                            })
+                            .unwrap_or_default(),
+                        None => Default::default(),
+                    };
+                    let created = crate::seen::Creation {
+                        handle: entity.id.as_str(),
+                        kind,
+                        name: &entity.name,
+                        aliases: &entity.aliases,
+                        parent: entity.parent.as_ref().map(|parent| parent.as_str()),
+                    };
+                    if let Some(noticed) =
+                        self.registry
+                            .consult_creation(asking.sid.as_str(), &created, &|word| {
+                                rarity.is_rare(kind, word)
+                            })
+                    {
+                        crate::answer::note_teaching(
+                            &mut body,
+                            &noticed.question(entity.id.as_str()),
+                        );
+                    }
                 }
                 crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
                 json_result(&body)
@@ -1414,6 +1445,63 @@ mod tests {
         assert!(
             !teaches(&again, "place:wonder-wharf"),
             "the same thing was asked about twice: {again}",
+        );
+    }
+
+    /// **A word many things of the kind carry is not evidence that a creation
+    /// repeats one of them.** The store holds more works than the rarity limit
+    /// whose names carry the same two common words, and the session was shown all
+    /// of them. A creation that shares only those words is asked nothing. The
+    /// positive it rests on: a creation that shares a word only one shown thing
+    /// carries is asked, and the question names that word.
+    #[tokio::test]
+    async fn a_creation_sharing_only_a_common_word_is_asked_nothing_and_a_rare_one_is() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let crowd = [
+            "alpha", "omega", "kappa", "sigma", "theta", "lambda", "epsilon", "iota",
+        ];
+        let crowded = jojobot_domain::memory::words::COMMON_AT;
+        for slug in crowd.iter().take(crowded) {
+            let landed =
+                created(&jojobot, &sid, "work", slug, &format!("{slug} with batter")).await;
+            assert_eq!(landed["id"], format!("work:{slug}"), "{landed}");
+        }
+        let kept = created(
+            &jojobot,
+            &sid,
+            "work",
+            "tau",
+            "Tau with batter and kwikmart",
+        )
+        .await;
+        assert_eq!(kept["id"], "work:tau", "{kept}");
+        browsed(&jojobot, &sid, "work").await;
+
+        let common = created(&jojobot, &sid, "work", "sigma", "Sigma with batter").await;
+        assert_eq!(common["id"], "work:sigma", "{common}");
+        assert!(
+            !teaches(&common, "merge_entities"),
+            "a creation sharing only common words was asked about a shown thing: {common}",
+        );
+
+        let rare = created(&jojobot, &sid, "work", "phi", "Phi kwikmart").await;
+        assert_eq!(rare["id"], "work:phi", "{rare}");
+        assert!(
+            teaches(&rare, "work:tau") && teaches(&rare, "'kwikmart'"),
+            "a creation sharing a rare word with a shown thing was not asked: {rare}",
+        );
+
+        // The limit counts the OTHER things: two others carry the word, so a
+        // third creation carrying it is still asked, about the one not yet
+        // asked about. A count that included the creation itself would make
+        // three of them common and stay silent.
+        browsed(&jojobot, &sid, "work").await;
+        let third = created(&jojobot, &sid, "work", "omicron", "Omicron kwikmart").await;
+        assert_eq!(third["id"], "work:omicron", "{third}");
+        assert!(
+            teaches(&third, "work:phi"),
+            "a word with two other carriers stopped counting: {third}",
         );
     }
 
