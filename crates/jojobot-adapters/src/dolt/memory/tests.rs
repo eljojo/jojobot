@@ -1971,3 +1971,48 @@ async fn the_fold_built_over_rows_left_in_place_answers_as_over_rows_moved() {
     }
     store.stop().await;
 }
+
+/// **An edit that names the revision it read is judged against the claim's real
+/// writes, whether a merge moved the claim or left it** — the folded claim
+/// written twice is refused at a stale revision, and the refusal names the same
+/// current revision in both shapes. The refusal is read to name two, so a case
+/// that counted nothing in both shapes cannot pass.
+#[tokio::test]
+async fn a_stale_revision_is_counted_on_a_claim_left_in_place_as_on_one_moved() {
+    let scratch = Scratch::new("merged-revision");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_revision")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+    let (_, now) = merged.moved.last().expect("a moved claim");
+    let twice = FactAddress::new(merged.survivor.clone(), FactId(now.clone()));
+
+    let refusal = || async {
+        let patch = FactPatch {
+            content: Some("closes at dawn".into()),
+            expected_revision: Some(1),
+            ..Default::default()
+        };
+        format!(
+            "{:?}",
+            merged
+                .memory
+                .update_fact(&twice, patch, &EntityId("bot:sigma".into()))
+                .await
+        )
+    };
+    let moved = refusal().await;
+    assert!(
+        moved.contains("StaleRevision") && moved.contains('2'),
+        "{moved}"
+    );
+
+    merged.leave_in_place().await;
+
+    assert_eq!(refusal().await, moved);
+    store.stop().await;
+}

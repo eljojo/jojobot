@@ -5779,11 +5779,19 @@ impl Memory for DoltMemory {
         // before anything is written**, counted in the transaction the write
         // appends in.
         if patch.expected_revision.is_some() {
+            // The writes are counted where the claim is stored, which is not
+            // where it is addressed when a merge left it under the folded key.
+            let stored = Self::stored_address_of(
+                &mut tx,
+                &FactAddress::new(key.clone(), address.local.clone()),
+            )
+            .await?
+            .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
             let current: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND fact_id = ?",
             )
-            .bind(key.as_str())
-            .bind(address.local.as_str())
+            .bind(stored.home.as_str())
+            .bind(stored.local.as_str())
             .fetch_one(&mut *tx)
             .await
             .map_err(store)?;
@@ -5935,12 +5943,18 @@ impl Memory for DoltMemory {
         }
         // **Whose words these are, asked of the claim's FIRST write.** A later
         // write by another session does not make it the owner.
+        let stored = Self::stored_address_of(
+            &mut tx,
+            &FactAddress::new(key.clone(), address.local.clone()),
+        )
+        .await?
+        .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
         let first_session: Option<String> = sqlx::query_scalar(
             "SELECT session FROM fact_write WHERE entity = ? AND fact_id = ?
              ORDER BY ordinal ASC LIMIT 1",
         )
-        .bind(key.as_str())
-        .bind(address.local.as_str())
+        .bind(stored.home.as_str())
+        .bind(stored.local.as_str())
         .fetch_optional(&mut *tx)
         .await
         .map_err(store)?
