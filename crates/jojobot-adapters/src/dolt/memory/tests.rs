@@ -750,7 +750,8 @@ impl Merged {
             .expect("the kinds are seeded");
         let survivor = EntityId::person("person:homer");
         let folded = EntityId::person("person:apu");
-        for (handle, name) in [(&survivor, "Homer"), (&folded, "Apu")] {
+        let pointing = EntityId("bot:moe".into());
+        for (handle, name) in [(&survivor, "Homer"), (&folded, "Apu"), (&pointing, "Moe")] {
             memory
                 .add_entity(NewEntity::new(handle.clone(), name, "fixture"))
                 .await
@@ -793,7 +794,12 @@ impl Merged {
             .capture(said(
                 &folded,
                 "runs the store",
-                &[("mood", "angry"), ("job", "clerk"), ("lunch", "salad")],
+                &[
+                    ("mood", "angry"),
+                    ("job", "clerk"),
+                    ("lunch", "salad"),
+                    ("reports_to", "bot:moe"),
+                ],
             ))
             .await
             .expect("capture ok")
@@ -830,13 +836,6 @@ impl Merged {
         // A third thing's claim that points at the folded thing in every way a
         // claim can: an edge, a reference, a field naming it, the claim it was
         // derived from, and a mark naming that claim.
-        let pointing = EntityId("bot:moe".into());
-        memory
-            .add_entity(NewEntity::new(pointing.clone(), "Moe", "fixture"))
-            .await
-            .expect("add_entity ok")
-            .written()
-            .expect("the guard waves it through");
         let mut pointer = said(&pointing, "knows the grocer", &[("friend", "person:apu")]);
         pointer.edge = Some(Edge::new(EdgeShape::Connection, folded.clone()));
         pointer.refs = vec![folded.clone()];
@@ -867,7 +866,9 @@ impl Merged {
                 &survivor,
                 Some("filed twice"),
                 date(2026, 9, 2),
-                &EntityId("bot:sigma".into()),
+                // The manager the folded thing reports to is the one who may
+                // fold it into another thing.
+                &pointing,
                 Some("run-a"),
             )
             .await
@@ -1536,6 +1537,43 @@ async fn what_points_at_a_merged_thing_is_found_at_the_survivor_either_way() {
         "the claim is found by what it was derived from and by its field: {moved:?}"
     );
     assert!(moved[3].contains("bot:moe"), "{moved:?}");
+
+    merged.leave_in_place().await;
+
+    assert_eq!(answers().await, moved);
+    store.stop().await;
+}
+
+/// **The chart reads the same whether a merge moved the folded thing's writes
+/// or left them** — the folded thing reported to a bot, so after the merge the
+/// survivor does: that bot heads the chart and has a report. Both are read
+/// from the bots that ever wrote a manager, and those are read off the writes
+/// where they are stored.
+#[tokio::test]
+async fn the_chart_reads_the_same_whether_a_merge_moved_the_writes_or_left_them() {
+    let scratch = Scratch::new("merged-chart");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_chart")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let answers = || async {
+        let mut tx = merged.pool.begin().await.expect("a transaction");
+        let heads = merged.memory.chart_heads_in(&mut tx).await;
+        let reports = merged
+            .memory
+            .has_reports_in(&mut tx, &merged.pointing)
+            .await;
+        tx.commit().await.expect("the read commits");
+        vec![format!("{heads:?}"), format!("{reports:?}")]
+    };
+    let moved = answers().await;
+    assert_eq!(moved[0], format!("Ok([{:?}])", merged.pointing));
+    assert_eq!(moved[1], "Ok(true)");
 
     merged.leave_in_place().await;
 

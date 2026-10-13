@@ -3156,6 +3156,29 @@ impl DoltMemory {
         }))
     }
 
+    /// **The things that ever wrote a manager**, as the keys their writes are
+    /// read from now. A write a merge left under the folded key counts for the
+    /// survivor, as one it moved does.
+    async fn manager_writers_in(
+        tx: &mut Transaction<'_, MySql>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let stored: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT entity FROM field_write WHERE `key` = ? AND value IS NOT NULL",
+        )
+        .bind(jojobot_domain::memory::REPORTS_TO)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut writers: Vec<EntityId> = Vec::new();
+        for entity in stored {
+            let writer = Self::forward_key(tx, &EntityId(entity)).await?;
+            if !writers.contains(&writer) {
+                writers.push(writer);
+            }
+        }
+        Ok(writers)
+    }
+
     /// **The bots that head the chart**, read inside the write's own transaction:
     /// each manager something reports to that has no manager of its own. The
     /// candidates are the things that ever wrote a manager; each is folded and
@@ -3165,16 +3188,10 @@ impl DoltMemory {
         &self,
         tx: &mut Transaction<'_, MySql>,
     ) -> Result<Vec<EntityId>, MemoryError> {
-        let candidates: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT entity FROM field_write WHERE `key` = ? AND value IS NOT NULL",
-        )
-        .bind(jojobot_domain::memory::REPORTS_TO)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
+        let candidates = Self::manager_writers_in(tx).await?;
         let mut managers = std::collections::BTreeSet::new();
         for candidate in candidates {
-            let held = Self::held_by(tx, &EntityId(candidate)).await?;
+            let held = Self::held_by(tx, &candidate).await?;
             let served = self.with_manager_rendered(tx, &held).await?;
             if let Some(manager) = served
                 .get(jojobot_domain::memory::REPORTS_TO)
@@ -3204,15 +3221,8 @@ impl DoltMemory {
         let Some((subject_key, subject_handle)) = self.resolve(tx, subject).await? else {
             return Ok(false);
         };
-        let candidates: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT entity FROM field_write WHERE `key` = ? AND value IS NOT NULL",
-        )
-        .bind(jojobot_domain::memory::REPORTS_TO)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
+        let candidates = Self::manager_writers_in(tx).await?;
         for candidate in candidates {
-            let candidate = EntityId(candidate);
             if candidate == subject_key {
                 continue;
             }
