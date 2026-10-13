@@ -6569,7 +6569,6 @@ async fn write_entity(
     .execute(&mut **tx)
     .await
     .map_err(store)?;
-    append_entity_write(tx, &entity.id, clock).await?;
     // **Keyed on the badge, not the handle.** An alias row is the same shape
     // `fact.entity` was before `ccc926f`: its own foreign key back to the
     // thing it belongs to, so a rename that left it on the handle would sever
@@ -6589,6 +6588,8 @@ async fn write_entity(
             .await
             .map_err(store)?;
     }
+    // **After the aliases, so the version kept holds the set just written.**
+    append_entity_write(tx, &entity.id, clock).await?;
     Ok(badge)
 }
 
@@ -6606,11 +6607,16 @@ fn parse_stamp(stamp: Option<String>, entity: &str) -> Option<jiff::Timestamp> {
     }
 }
 
-/// **Keep that this entity was written, and when** — the cheap signal
-/// [`DoltMemory::write_summary`] reads, mirroring [`DoltMemory::append_fact_write`]'s
-/// role for facts. Never the row's content: nothing today asks what an
-/// entity used to say, only whether it has changed since a caller last
-/// looked, so a full copy here would be a second history nothing reads.
+/// **Keep that this entity was written, when, and what it looked like
+/// afterwards** — the signal [`DoltMemory::write_summary`] reads, and the version
+/// a history read returns, mirroring [`DoltMemory::append_fact_write`]'s role for
+/// facts.
+///
+/// **The row is read back from the table inside the transaction**, so the
+/// version is what the write left and every call site keeps it the same way.
+/// Each caller therefore writes the entity row, and its aliases, first. A row
+/// that is not there leaves the snapshot columns NULL, which reads as "not
+/// recorded", as every row written before the snapshot does.
 async fn append_entity_write(
     tx: &mut Transaction<'_, MySql>,
     entity: &EntityId,
@@ -6622,13 +6628,88 @@ async fn append_entity_write(
             .fetch_one(&mut **tx)
             .await
             .map_err(store)?;
-    sqlx::query("INSERT INTO entity_write (entity, ordinal, written_at) VALUES (?, ?, ?)")
-        .bind(entity.as_str())
-        .bind(highest.unwrap_or(0) + 1)
-        .bind(clock.now().to_string())
-        .execute(&mut **tx)
-        .await
-        .map_err(store)?;
+    type Row = (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+    );
+    let held: Option<Row> = sqlx::query_as(
+        "SELECT kind, name, source, crm, parent, boot, archived_reason, archived_at, \
+         merged_into, prose, badge FROM entity WHERE id = ?",
+    )
+    .bind(entity.as_str())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(store)?;
+    let aliases: Option<String> = match held.as_ref().and_then(|row| row.10.as_ref()) {
+        None => None,
+        Some(badge) => {
+            let aliases: Vec<String> = sqlx::query_scalar(
+                "SELECT alias FROM entity_alias WHERE entity = ? ORDER BY ordinal",
+            )
+            .bind(badge)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            Some(serde_json::to_string(&aliases).expect("a list of text is JSON"))
+        }
+    };
+    let ordinal = highest.unwrap_or(0) + 1;
+    let at = clock.now().to_string();
+    let Some((
+        kind,
+        name,
+        source,
+        crm,
+        parent,
+        boot,
+        archived_reason,
+        archived_at,
+        merged_into,
+        prose,
+        badge,
+    )) = held
+    else {
+        sqlx::query("INSERT INTO entity_write (entity, ordinal, written_at) VALUES (?, ?, ?)")
+            .bind(entity.as_str())
+            .bind(ordinal)
+            .bind(at)
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        return Ok(());
+    };
+    sqlx::query(
+        "INSERT INTO entity_write (entity, ordinal, written_at, kind, name, source, crm, parent, \
+         boot, archived_reason, archived_at, merged_into, aliases, prose, badge) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(entity.as_str())
+    .bind(ordinal)
+    .bind(at)
+    .bind(kind)
+    .bind(name)
+    .bind(source)
+    .bind(crm)
+    .bind(parent)
+    .bind(boot)
+    .bind(archived_reason)
+    .bind(archived_at)
+    .bind(merged_into)
+    .bind(aliases)
+    .bind(prose)
+    .bind(badge)
+    .execute(&mut **tx)
+    .await
+    .map_err(store)?;
     Ok(())
 }
 

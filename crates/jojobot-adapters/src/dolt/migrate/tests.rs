@@ -103,6 +103,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0074_session_key_hash",
     "0075_session_teaching_run_name",
     "0076_message_supersedes",
+    "0079_entity_write_snapshot",
     "0080_merge_event",
 ];
 

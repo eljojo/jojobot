@@ -589,6 +589,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Column("message", "supersedes"),
     },
     Migration {
+        version: "0079_entity_write_snapshot",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot.sql"),
+        leaves: Leaves::Column("entity_write", "session"),
+    },
+    Migration {
         version: "0080_merge_event",
         sql: include_str!("../../migrations/0080_merge_event.sql"),
         leaves: Leaves::Table("merge_event"),

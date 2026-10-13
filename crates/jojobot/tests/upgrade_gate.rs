@@ -4683,3 +4683,105 @@ async fn any_other_warning_or_error_is_still_a_degradation_beside_the_alert() {
         );
     }
 }
+
+/// **An `entity_write` row an older build appended reads as NULL in every
+/// column the snapshot added, and the first write the current binary makes
+/// keeps its whole row.** The old rows are counted before the binary touches the
+/// store, and the same number of rows is found with no snapshot afterwards: the
+/// migration neither filled them nor lost them. The positive is the new write,
+/// which has a name and a session, so a NULL on the old rows is a choice and not
+/// a column that is never written.
+async fn old_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row(
+    fixture_dir: &str,
+    label: &str,
+) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let old: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_write")
+        .fetch_one(store.pool())
+        .await
+        .expect("the old rows are countable");
+    store.stop().await;
+    assert!(
+        old > 0,
+        "recorded at {git_ref}: the recording holds no entity_write row"
+    );
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let boot: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    )
+    .expect("the boot answers in JSON");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
+        .to_string();
+    let made = surface
+        .call(
+            "add_entity",
+            json!({"kind": "thing", "handle": "omega", "name": "A snapshot",
+                   "source": "user-named", "sid": sid}),
+        )
+        .await;
+    assert!(
+        !made.contains("\"status\":\"blocked\""),
+        "recorded at {git_ref}: making a thing: {made}"
+    );
+    surface.finish().await;
+    booted.stop().await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let unkept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE name IS NULL")
+        .fetch_one(store.pool())
+        .await
+        .expect("the unkept rows are countable");
+    let new: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT name, session FROM entity_write WHERE entity = 'thing:omega'")
+            .fetch_optional(store.pool())
+            .await
+            .expect("the new write is readable");
+    store.stop().await;
+    drop(scratch);
+
+    assert_eq!(
+        unkept, old,
+        "recorded at {git_ref}: the rows an older build appended are the rows with no snapshot"
+    );
+    assert_eq!(
+        new.map(|(name, _)| name),
+        Some(Some("A snapshot".to_string())),
+        "recorded at {git_ref}: the write the current binary made keeps its row"
+    );
+}
+
+#[tokio::test]
+async fn deploy_3_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row() {
+    old_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row(
+        DEPLOY_3_FIXTURE_DIR,
+        "entity-write-3",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn deploy_4_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row() {
+    old_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row(
+        DEPLOY_4_FIXTURE_DIR,
+        "entity-write-4",
+    )
+    .await;
+}
