@@ -660,6 +660,22 @@ fn hit_candidate_ceiling(hit_count: usize, limit: usize) -> bool {
     hit_count >= limit
 }
 
+/// **Whether an answer returns an active claim**: a `facts` list, on an object or
+/// on one it walked to, holding a claim that still stands.
+fn returns_an_active_claim(body: &serde_json::Value) -> bool {
+    match body {
+        serde_json::Value::Object(fields) => fields.iter().any(|(key, value)| {
+            (key == "facts"
+                && value
+                    .as_array()
+                    .is_some_and(|facts| facts.iter().any(|fact| fact["status"] == "active")))
+                || returns_an_active_claim(value)
+        }),
+        serde_json::Value::Array(items) => items.iter().any(returns_an_active_claim),
+        _ => false,
+    }
+}
+
 /// Which clock a neighbourhood read compares.
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
@@ -3340,6 +3356,17 @@ impl Jojobot {
             {
                 tracing::warn!(error = %e, "the moment a charter was read could not be kept");
             }
+        }
+        // **The first answer to a session that returns a claim carries the claims
+        // teaching**, before the session decides how to write one. Asked of the
+        // answer as built, so a recall that returned no claim spends nothing.
+        // Added ahead of the fit, so it counts against the ceiling.
+        if returns_an_active_claim(&body)
+            && self
+                .first_contact(crate::teaching::CLAIMS_DOMAIN, caller.as_ref())
+                .await
+        {
+            crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
         }
         crate::memory::ready::fit_under_ceiling(&mut body);
         fit_recall(

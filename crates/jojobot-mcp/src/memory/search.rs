@@ -190,6 +190,11 @@ pub struct SearchArgs {
 /// can use: every verb here is addressed by handle or by fact address.
 /// Internally the id is what orders a hit list; that is the index's business
 /// (`jojobot_adapters::search::tiebreak`) and it stops there.
+/// **Whether a rendered hit is a claim that still stands.**
+fn is_an_active_claim(hit: &serde_json::Value) -> bool {
+    hit["hit"] == "fact" && hit["status"] == "active"
+}
+
 fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
     match hit {
         Hit::Entity {
@@ -969,9 +974,17 @@ impl Jojobot {
                 (json, size)
             })
             .collect();
+        // **Room for the claims teaching, set aside whenever a claim could be
+        // among the hits**, so it fits under the ceiling beside them.
+        let teaching_room = if rendered.iter().any(|(json, _)| is_an_active_claim(json)) {
+            crate::answer::served_len(&serde_json::json!([crate::teaching::CLAIMS_TEACHING])) + 16
+        } else {
+            0
+        };
         let rest = crate::answer::served_len(&body)
             + crate::answer::widest_not_shown("hits")
-            + crate::answer::STATUS_BAR_ROOM;
+            + crate::answer::STATUS_BAR_ROOM
+            + teaching_room;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
         body["results"] = kept
             .kept()
@@ -980,6 +993,16 @@ impl Jojobot {
             .collect::<Vec<_>>()
             .into();
         body["count"] = kept.kept().len().into();
+        // **The first answer to a session that shows it a claim carries the
+        // claims teaching**, before the session decides how to write one. Asked
+        // of the hits that shipped, so a claim left out spends nothing.
+        if kept.kept().iter().any(|(json, _)| is_an_active_claim(json))
+            && self
+                .first_contact(crate::teaching::CLAIMS_DOMAIN, asking.as_ref())
+                .await
+        {
+            crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
+        }
         if kept.elided() {
             body["not_shown"] =
                 crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "hits");

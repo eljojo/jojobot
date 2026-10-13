@@ -1162,14 +1162,13 @@ mod tests {
         );
     }
 
-    /// **A search that surfaces a claim does not teach the claims, and does not
-    /// spend the slot.** The claims teaching is about writing a claim, so it
-    /// rides on the write verbs; a read that reached a claim first used to
-    /// spend the session's one slot and the capture it is about never got it.
-    /// Here the search surfaces a claim twice and teaches nothing, and the
-    /// capture that follows carries the teaching.
+    /// **A search that surfaces a claim carries the claims teaching, once.** The
+    /// teaching has to reach a session before it decides how to write, and the
+    /// read that first shows it a claim is that moment. The slot is spent there,
+    /// so the second search carries nothing and the capture that follows does not
+    /// repeat it.
     #[tokio::test]
-    async fn a_search_that_surfaces_a_fact_leaves_the_claims_teaching_for_a_write() {
+    async fn a_search_that_surfaces_a_fact_carries_the_claims_teaching_once() {
         use jojobot_domain::memory::search::Hit;
         use jojobot_domain::memory::{Fact, FactId, FactStatus, Provenance, Standing};
 
@@ -1221,8 +1220,10 @@ mod tests {
                 .expect("search ok"),
         );
         assert!(
-            first.get("teaching").is_none(),
-            "a read does not carry the claims teaching: {first}"
+            first["teaching"]
+                .as_array()
+                .is_some_and(|taught| taught.contains(&serde_json::json!(CLAIMS_TEACHING))),
+            "the search that surfaces a claim carries the claims teaching: {first}"
         );
 
         let second = json_of(
@@ -1240,22 +1241,24 @@ mod tests {
             "nor does the second read: {second}"
         );
 
-        // The write the teaching is about still gets it: the reads spent nothing.
+        // The write the teaching is about does not repeat it: the read spent the
+        // slot, and the ledger is one per session whichever verb touched claims first.
         let written = capture_as(&jojobot, &sid, capture_args("alpha", "plays go too")).await;
         assert!(
-            written["teaching"]
-                .as_array()
-                .expect("a list")
-                .contains(&serde_json::json!(CLAIMS_TEACHING)),
-            "the capture after the reads carries the claims teaching: {written}"
+            written
+                .get("teaching")
+                .and_then(|taught| taught.as_array())
+                .is_none_or(|taught| !taught.contains(&serde_json::json!(CLAIMS_TEACHING))),
+            "the capture after the read does not carry the claims teaching again: {written}"
         );
     }
 
-    /// **`recall` does not teach the claims either, with or without facts**,
-    /// and it does not spend the slot: a session that reads first and captures
-    /// after gets the teaching on the capture, which is the verb it is about.
+    /// **`recall` with facts carries the claims teaching, once.** A recall that
+    /// asked for no facts surfaced no claim and spends nothing; the first that
+    /// returns one carries the teaching, and neither the next recall nor the
+    /// capture after it does.
     #[tokio::test]
-    async fn recall_leaves_the_claims_teaching_for_a_write() {
+    async fn recall_with_facts_carries_the_claims_teaching_once() {
         // **A fact seeded straight through the store**, not through
         // `capture` — the MCP verb would consume the session's one teaching
         // itself, leaving nothing for this case to observe.
@@ -1305,8 +1308,10 @@ mod tests {
             .expect("recall ok");
         let with_facts = json_of(&with_facts);
         assert!(
-            with_facts.get("teaching").is_none(),
-            "a recall that returns a claim does not carry the teaching: {with_facts}"
+            with_facts["teaching"]
+                .as_array()
+                .is_some_and(|taught| taught.contains(&serde_json::json!(CLAIMS_TEACHING))),
+            "a recall that returns a claim carries the teaching: {with_facts}"
         );
 
         let again = jojobot
@@ -1322,14 +1327,14 @@ mod tests {
             "nor does the second recall: {again}"
         );
 
-        // The reads spent nothing: the capture after them is taught.
+        // The read spent the slot: the capture after it is not taught again.
         let written = capture_as(&jojobot, &sid, capture_args("alpha", "plays go too")).await;
         assert!(
-            written["teaching"]
-                .as_array()
-                .expect("a list")
-                .contains(&serde_json::json!(CLAIMS_TEACHING)),
-            "the capture after the reads carries the claims teaching: {written}"
+            written
+                .get("teaching")
+                .and_then(|taught| taught.as_array())
+                .is_none_or(|taught| !taught.contains(&serde_json::json!(CLAIMS_TEACHING))),
+            "the capture after the read does not carry the claims teaching again: {written}"
         );
     }
 

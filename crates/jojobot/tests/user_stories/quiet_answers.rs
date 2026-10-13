@@ -63,10 +63,11 @@ async fn the_ordinary_answers_of_the_ordinary_verbs_carry_no_null_keys() {
 }
 
 /// "I read a lot before I wrote anything. Did I miss what the claims are for?"
-/// You did not: the teaching about claims rides on the write verbs, so reading
-/// does not spend it, and the first write after any number of reads carries it.
+/// You did not: the first answer that shows a session a claim carries the
+/// teaching about claims, before it decides how to write one. It rides once, so
+/// the next read and the first write after any number of reads do not repeat it.
 #[tokio::test]
-async fn a_session_that_reads_first_is_taught_on_its_first_write() {
+async fn a_session_that_reads_first_is_taught_on_its_first_read_of_a_claim() {
     let story = Story::begin("bot:otto").await;
     let writer = story.session().await;
     writer.add("person:lisa", "Lisa").await;
@@ -74,27 +75,59 @@ async fn a_session_that_reads_first_is_taught_on_its_first_write() {
     writer.add("bot:sigma", "Sigma").await;
     let reader = story.as_bot("bot:sigma").await;
 
-    // ── reading teaches nothing about claims, however much of it there is ────
+    // ── a read that shows no claim teaches nothing about claims ──────────────
+    reader
+        .call("recall", json!({"subject": "person:lisa"}))
+        .await
+        .never_says("\"teaching\"");
+
+    // ── the first read that shows a claim carries it ─────────────────────────
     reader
         .call("recall", json!({"subject": "person:lisa", "facts": true}))
         .await
         .says("likes the diner")
-        .never_says("\"teaching\"");
+        .says("\"teaching\"")
+        .says("does not destroy the one already there");
+
+    // ── and no later answer does, whichever verb comes next ──────────────────
     reader
         .call("search", json!({"query": "diner"}))
         .await
         .says("likes the diner")
         .never_says("\"teaching\"");
-
-    // ── the first write carries it ───────────────────────────────────────────
     reader
         .call(
             "capture",
             json!({"subject": "person:lisa", "content": "orders the pie", "provenance": "testimony"}),
         )
         .await
-        .says("\"teaching\"")
+        .never_says("does not destroy the one already there");
+
+    story.finish().await;
+}
+
+/// "My first look at the diner was a search." A search that surfaces a claim
+/// carries the same teaching once, and a session that first met a claim there is
+/// not taught again by the recall that follows.
+#[tokio::test]
+async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
+    let story = Story::begin("bot:otto").await;
+    let writer = story.session().await;
+    writer.add("person:lisa", "Lisa").await;
+    writer.fact("person:lisa", "likes the diner").await;
+    writer.add("bot:sigma", "Sigma").await;
+    let reader = story.as_bot("bot:sigma").await;
+
+    reader
+        .call("search", json!({"query": "diner"}))
+        .await
+        .says("likes the diner")
         .says("does not destroy the one already there");
+    reader
+        .call("recall", json!({"subject": "person:lisa", "facts": true}))
+        .await
+        .says("likes the diner")
+        .never_says("does not destroy the one already there");
 
     story.finish().await;
 }
