@@ -5959,9 +5959,11 @@ pub enum MemoryError {
     /// of the record's own fields is refused rather than taking it off the thing
     /// unasked. (An own field named as a setting moves, and is not this.)
     #[error(
-        "'{key}' on this record is held as {held}, and this call names it as {named}. A setting \
-         is not made an own field by naming it: clear it with clear_fields, which takes a key \
-         off whichever bag holds it, then write it under the other"
+        "'{key}' on this record is held as {held}, and this call names it as {named}. To change \
+         its value, send the same call with '{key}' under `sets` and not under `fields`. A \
+         setting is not made an own field by naming it: to hold it as an own field instead, \
+         clear it with clear_fields, which takes a key off whichever bag holds it, then write \
+         it under `fields`"
     )]
     KeyInOtherBag {
         /// The key.
