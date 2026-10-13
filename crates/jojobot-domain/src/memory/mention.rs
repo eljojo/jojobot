@@ -1081,23 +1081,26 @@ impl super::Memory for Mentioning {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<super::Guarded<Entity>, super::MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
     async fn archive_entity(
         &self,
         id: &EntityId,
         reason: &str,
+        session: Option<&str>,
     ) -> Result<Entity, super::MemoryError> {
-        self.inner.archive_entity(id, reason).await
+        self.inner.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, super::Archived), super::MemoryError> {
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     /// **Resolved on the way in.** Every handle an author wrote becomes the
     /// badge its row wears, so the claim keeps a pointer rather than a
@@ -1477,12 +1480,13 @@ impl super::Memory for Mentioning {
         &self,
         entity: &EntityId,
         prose: &str,
+        session: Option<&str>,
     ) -> Result<String, super::MemoryError> {
         refuse_forged(&[prose])?;
         let known = self.known().await?;
         let stored = self
             .inner
-            .set_prose(entity, &resolved(prose, &known).map_err(unloaded)?)
+            .set_prose(entity, &resolved(prose, &known).map_err(unloaded)?, session)
             .await?
             .open();
         Ok(rendered(&stored, &known))
@@ -1932,7 +1936,10 @@ mod tests {
         );
         refused(
             "prose",
-            store.set_prose(&holder, "see @#k7h2mn").await.map(|_| ()),
+            store
+                .set_prose(&holder, "see @#k7h2mn", None)
+                .await
+                .map(|_| ()),
         );
         // **The reason a thought is dropped is text a caller writes**, and a store
         // keeps it as the details of the claim it archives, so it is held to the
@@ -1994,7 +2001,7 @@ mod tests {
             .written()
             .expect("the claim lands");
         store
-            .set_prose(&holder, "a mark with no badge, @# , is text")
+            .set_prose(&holder, "a mark with no badge, @# , is text", None)
             .await
             .expect("prose with a bare mark is stored");
     }

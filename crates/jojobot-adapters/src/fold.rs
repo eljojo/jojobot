@@ -314,11 +314,12 @@ impl Memory for Folded {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.writing.lock().await;
         let renamed = self
             .inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await?;
         if matches!(renamed, Guarded::Written(_)) {
             Folded::follow("rename_entity", self.reload().await);
@@ -326,16 +327,25 @@ impl Memory for Folded {
         Ok(renamed)
     }
 
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         let _gate = self.writing.lock().await;
-        let archived = self.inner.archive_entity(id, reason).await?;
+        let archived = self.inner.archive_entity(id, reason, session).await?;
         Folded::follow("archive_entity", self.refresh(&archived.id).await);
         Ok(archived)
     }
 
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         let _gate = self.writing.lock().await;
-        let restored = self.inner.restore_entity(id).await?;
+        let restored = self.inner.restore_entity(id, session).await?;
         Folded::follow("restore_entity", self.refresh(&restored.0.id).await);
         Ok(restored)
     }
@@ -524,9 +534,14 @@ impl Memory for Folded {
         }
     }
 
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         let _gate = self.writing.lock().await;
-        let stored = self.inner.set_prose(entity, prose).await?;
+        let stored = self.inner.set_prose(entity, prose, session).await?;
         Folded::follow("set_prose", self.refresh(entity).await);
         Ok(stored)
     }
@@ -1057,11 +1072,20 @@ mod tests {
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.0.update_entity(handle, patch).await
         }
-        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-            self.0.archive_entity(id, reason).await
+        async fn archive_entity(
+            &self,
+            id: &EntityId,
+            reason: &str,
+            session: Option<&str>,
+        ) -> Result<Entity, MemoryError> {
+            self.0.archive_entity(id, reason, session).await
         }
-        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-            self.0.restore_entity(id).await
+        async fn restore_entity(
+            &self,
+            id: &EntityId,
+            session: Option<&str>,
+        ) -> Result<(Entity, Archived), MemoryError> {
+            self.0.restore_entity(id, session).await
         }
         async fn rename_entity(
             &self,
@@ -1070,9 +1094,10 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.0
-                .rename_entity(from, to, parent, date, override_token)
+                .rename_entity(from, to, parent, date, override_token, session)
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1135,8 +1160,13 @@ mod tests {
                 .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
-        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-            self.0.set_prose(entity, prose).await
+        async fn set_prose(
+            &self,
+            entity: &EntityId,
+            prose: &str,
+            session: Option<&str>,
+        ) -> Result<String, MemoryError> {
+            self.0.set_prose(entity, prose, session).await
         }
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             self.0.scan().await
@@ -1241,11 +1271,20 @@ mod tests {
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner.update_entity(handle, patch).await
         }
-        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-            self.inner.archive_entity(id, reason).await
+        async fn archive_entity(
+            &self,
+            id: &EntityId,
+            reason: &str,
+            session: Option<&str>,
+        ) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason, session).await
         }
-        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-            self.inner.restore_entity(id).await
+        async fn restore_entity(
+            &self,
+            id: &EntityId,
+            session: Option<&str>,
+        ) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id, session).await
         }
         async fn rename_entity(
             &self,
@@ -1254,9 +1293,10 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(from, to, parent, date, override_token)
+                .rename_entity(from, to, parent, date, override_token, session)
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1314,8 +1354,13 @@ mod tests {
                 .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
-        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-            self.inner.set_prose(entity, prose).await
+        async fn set_prose(
+            &self,
+            entity: &EntityId,
+            prose: &str,
+            session: Option<&str>,
+        ) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose, session).await
         }
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             self.scan_calls
@@ -1383,11 +1428,20 @@ mod tests {
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner.update_entity(handle, patch).await
         }
-        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-            self.inner.archive_entity(id, reason).await
+        async fn archive_entity(
+            &self,
+            id: &EntityId,
+            reason: &str,
+            session: Option<&str>,
+        ) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason, session).await
         }
-        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-            self.inner.restore_entity(id).await
+        async fn restore_entity(
+            &self,
+            id: &EntityId,
+            session: Option<&str>,
+        ) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id, session).await
         }
         async fn rename_entity(
             &self,
@@ -1396,9 +1450,10 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(from, to, parent, date, override_token)
+                .rename_entity(from, to, parent, date, override_token, session)
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1456,8 +1511,13 @@ mod tests {
                 .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
-        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-            self.inner.set_prose(entity, prose).await
+        async fn set_prose(
+            &self,
+            entity: &EntityId,
+            prose: &str,
+            session: Option<&str>,
+        ) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose, session).await
         }
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             self.inner.scan().await
@@ -1688,11 +1748,20 @@ mod tests {
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner.update_entity(handle, patch).await
         }
-        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-            self.inner.archive_entity(id, reason).await
+        async fn archive_entity(
+            &self,
+            id: &EntityId,
+            reason: &str,
+            session: Option<&str>,
+        ) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason, session).await
         }
-        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-            self.inner.restore_entity(id).await
+        async fn restore_entity(
+            &self,
+            id: &EntityId,
+            session: Option<&str>,
+        ) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id, session).await
         }
         async fn rename_entity(
             &self,
@@ -1701,9 +1770,10 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(from, to, parent, date, override_token)
+                .rename_entity(from, to, parent, date, override_token, session)
                 .await
         }
         /// **The counter moves here, before the write is even reported back**
@@ -1794,8 +1864,13 @@ mod tests {
                 .merge(folded, survivor, reason, date, caller, session)
                 .await
         }
-        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-            self.inner.set_prose(entity, prose).await
+        async fn set_prose(
+            &self,
+            entity: &EntityId,
+            prose: &str,
+            session: Option<&str>,
+        ) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose, session).await
         }
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             self.inner.scan().await
@@ -2034,7 +2109,7 @@ mod tests {
 
         let gamma = EntityId::person("person:gamma");
         folded
-            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None)
+            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None)
             .await
             .expect("rename ok")
             .written()
@@ -2105,7 +2180,7 @@ mod tests {
         );
 
         folded
-            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None)
+            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None)
             .await
             .expect("rename ok")
             .written()

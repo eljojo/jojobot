@@ -1673,7 +1673,12 @@ impl Memory for InMemoryMemory {
         Ok(Guarded::Written(served))
     }
 
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        _session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         validate_write_subject(id)?;
         validate_field("reason", reason)?;
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
@@ -1713,7 +1718,11 @@ impl Memory for InMemoryMemory {
         Ok(entity.clone())
     }
 
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        _session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         validate_write_subject(id)?;
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == id) else {
@@ -1755,6 +1764,7 @@ impl Memory for InMemoryMemory {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
         // **A row, never a supplied record** — the same exception
@@ -3591,7 +3601,12 @@ impl Memory for InMemoryMemory {
         })
     }
 
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        _session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         validate_write_subject(entity)?;
         validate_prose(prose)?;
         // Never creates: a handle that names nothing is a miss with its near

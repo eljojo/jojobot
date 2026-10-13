@@ -86,7 +86,11 @@ impl Jojobot {
         {
             return memory_declined("set_charter", refused);
         }
-        let stored = match self.memory.set_prose(&bot, &args.prose).await {
+        let stored = match self
+            .memory
+            .set_prose(&bot, &args.prose, Some(caller.sid.as_str()))
+            .await
+        {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
         };

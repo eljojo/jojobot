@@ -1118,7 +1118,7 @@ async fn a_browse_with_no_handle_named_excludes_what_is_archived() {
     ensure(&jojobot, "person:milhouse").await;
     jojobot
         .memory
-        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
 
@@ -1159,7 +1159,7 @@ async fn a_browse_with_no_handle_named_reports_how_many_archival_excluded() {
     ensure(&jojobot, "person:milhouse").await;
     jojobot
         .memory
-        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
 
@@ -1249,7 +1249,7 @@ async fn a_browse_that_holds_something_and_left_something_out_names_the_route() 
     }
     jojobot
         .memory
-        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
     let landed = json_of(
@@ -1296,7 +1296,7 @@ async fn a_browse_that_holds_something_and_left_something_out_names_the_route() 
     }
     archived_only
         .memory
-        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
     let body = json_of(
@@ -1345,7 +1345,7 @@ async fn a_direct_handle_on_an_archived_entity_reports_nothing_excluded() {
     ensure(&jojobot, "person:bart").await;
     jojobot
         .memory
-        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
 
@@ -6191,7 +6191,7 @@ async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
     ] {
         jojobot
             .memory
-            .set_prose(&EntityId(handle.into()), prose)
+            .set_prose(&EntityId(handle.into()), prose, None)
             .await
             .expect("set_prose ok");
     }
@@ -6378,7 +6378,7 @@ async fn an_empty_selection_names_the_population_it_looked_through() {
     ensure(&jojobot, "thing:jukebox").await;
     jojobot
         .memory
-        .archive_entity(&EntityId("thing:jukebox".into()), "a mistaken write")
+        .archive_entity(&EntityId("thing:jukebox".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
     // Three live things, none holding the key: the population looked at.

@@ -1776,7 +1776,7 @@ mod tests {
         // boot meets when a write the gate never saw has already left it there.
         jojobot
             .memory
-            .set_prose(&EntityId("bot:gamma".into()), &"x".repeat(20_000))
+            .set_prose(&EntityId("bot:gamma".into()), &"x".repeat(20_000), None)
             .await
             .expect("the store keeps the prose");
 
@@ -2725,6 +2725,7 @@ mod tests {
             .archive_entity(
                 &EntityId("bot:delta".into()),
                 "retired, superseded by gamma",
+                None,
             )
             .await
             .expect("archive ok");

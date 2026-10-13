@@ -199,16 +199,26 @@ impl Memory for Scripted {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason, session).await
     }
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-        self.inner.restore_entity(id).await
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
@@ -312,8 +322,13 @@ impl Memory for Scripted {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.inner.scan().await

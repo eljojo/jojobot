@@ -394,6 +394,7 @@ impl Memory for IndexedMemory {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
@@ -404,7 +405,7 @@ impl Memory for IndexedMemory {
         };
         let written = self
             .inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await?;
         if let Guarded::Written(entity) = &written {
             let mut reread = vec![self.refresh(&entity.id).await];
@@ -418,19 +419,28 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let entity = self.inner.archive_entity(id, reason).await?;
+        let entity = self.inner.archive_entity(id, reason, session).await?;
         let reread = self.refresh(&entity.id).await;
         self.caught_up(began, vec![reread]).await;
         Ok(entity)
     }
 
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let restored = self.inner.restore_entity(id).await?;
+        let restored = self.inner.restore_entity(id, session).await?;
         let reread = self.refresh(&restored.0.id).await;
         self.caught_up(began, vec![reread]).await;
         Ok(restored)
@@ -646,10 +656,15 @@ impl Memory for IndexedMemory {
     /// next call — the same "reindex the doc the store just wrote" step every
     /// other write takes, and for the same reason: without it, the one part of
     /// a bot that is pure prose would be the one part search could not see.
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let stored = self.inner.set_prose(entity, prose).await?;
+        let stored = self.inner.set_prose(entity, prose, session).await?;
         let reread = self.refresh(entity).await;
         self.caught_up(began, vec![reread]).await;
         Ok(stored)

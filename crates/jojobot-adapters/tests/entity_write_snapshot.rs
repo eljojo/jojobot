@@ -28,11 +28,12 @@ type Version = (
     Option<String>,
     Option<String>,
     bool,
+    Option<String>,
 );
 
 async fn versions(pool: &sqlx::MySqlPool, handle: &str) -> Vec<Version> {
     sqlx::query_as(
-        "SELECT ordinal, name, aliases, prose, archived_reason, archived_at IS NOT NULL \
+        "SELECT ordinal, name, aliases, prose, archived_reason, archived_at IS NOT NULL, session \
          FROM entity_write WHERE entity = ? ORDER BY ordinal",
     )
     .bind(handle)
@@ -47,6 +48,7 @@ fn version(
     aliases: &str,
     prose: &str,
     archived: Option<&str>,
+    session: &str,
 ) -> Version {
     (
         ordinal,
@@ -55,6 +57,7 @@ fn version(
         Some(prose.into()),
         archived.map(str::to_string),
         archived.is_some(),
+        Some(session.into()),
     )
 }
 
@@ -80,7 +83,10 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
 
     let handcart = EntityId("thing:handcart".into());
     memory
-        .add_entity(NewEntity::new(handcart.clone(), "The Handcart", "test"))
+        .add_entity(NewEntity {
+            session: Some("mk01".into()),
+            ..NewEntity::new(handcart.clone(), "The Handcart", "test")
+        })
         .await
         .expect("add_entity ok")
         .written()
@@ -90,6 +96,7 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
             &handcart,
             EntityPatch {
                 name: Some("The Cart".into()),
+                session: Some("mk02".into()),
                 ..EntityPatch::default()
             },
         )
@@ -102,6 +109,7 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
             &handcart,
             EntityPatch {
                 aliases: Some(vec!["wagon".into()]),
+                session: Some("mk03".into()),
                 ..EntityPatch::default()
             },
         )
@@ -110,22 +118,42 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
         .written()
         .expect("nothing collides");
     memory
-        .set_prose(&handcart, "A two-wheeled cart.")
+        .set_prose(&handcart, "A two-wheeled cart.", Some("mk04"))
         .await
         .expect("a prose edit");
     memory
-        .archive_entity(&handcart, "sold")
+        .archive_entity(&handcart, "sold", Some("mk05"))
         .await
         .expect("an archive");
-    memory.restore_entity(&handcart).await.expect("a restore");
+    memory
+        .restore_entity(&handcart, Some("mk06"))
+        .await
+        .expect("a restore");
+
+    // A rename moves the handle and files its version under the new one.
+    let moved = EntityId("thing:wagon".into());
+    memory
+        .rename_entity(
+            &handcart,
+            &moved,
+            None,
+            jiff::civil::date(2026, 6, 1),
+            None,
+            Some("mk07"),
+        )
+        .await
+        .expect("a rename of the handle")
+        .written()
+        .expect("nothing collides");
 
     let kept = versions(&pool, handcart.as_str()).await;
+    let after_the_move = versions(&pool, moved.as_str()).await;
     let current = memory
         .list_entities(None)
         .await
         .expect("a current read")
         .into_iter()
-        .find(|entity| entity.id == handcart)
+        .find(|entity| entity.id == moved)
         .expect("the entity is there");
     store.stop().await;
 
@@ -133,13 +161,17 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
     assert_eq!(
         kept,
         vec![
-            version(1, "The Handcart", "[]", "", None),
-            version(2, "The Cart", "[]", "", None),
-            version(3, "The Cart", "[\"wagon\"]", "", None),
-            version(4, "The Cart", "[\"wagon\"]", prose, None),
-            version(5, "The Cart", "[\"wagon\"]", prose, Some("sold")),
-            version(6, "The Cart", "[\"wagon\"]", prose, None),
+            version(1, "The Handcart", "[]", "", None, "mk01"),
+            version(2, "The Cart", "[]", "", None, "mk02"),
+            version(3, "The Cart", "[\"wagon\"]", "", None, "mk03"),
+            version(4, "The Cart", "[\"wagon\"]", prose, None, "mk04"),
+            version(5, "The Cart", "[\"wagon\"]", prose, Some("sold"), "mk05"),
+            version(6, "The Cart", "[\"wagon\"]", prose, None, "mk06"),
         ]
+    );
+    assert_eq!(
+        after_the_move,
+        vec![version(1, "The Cart", "[\"wagon\"]", prose, None, "mk07")]
     );
     // The projection answers as it always did.
     assert_eq!(current.name, "The Cart");

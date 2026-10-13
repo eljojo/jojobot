@@ -181,24 +181,27 @@ impl jojobot_domain::memory::Memory for Blindable {
         parent: Option<jojobot_domain::memory::EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<
         jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
         jojobot_domain::memory::MemoryError,
     > {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
     async fn archive_entity(
         &self,
         id: &jojobot_domain::memory::EntityId,
         reason: &str,
+        session: Option<&str>,
     ) -> Result<jojobot_domain::memory::Entity, jojobot_domain::memory::MemoryError> {
-        self.inner.archive_entity(id, reason).await
+        self.inner.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &jojobot_domain::memory::EntityId,
+        session: Option<&str>,
     ) -> Result<
         (
             jojobot_domain::memory::Entity,
@@ -206,7 +209,7 @@ impl jojobot_domain::memory::Memory for Blindable {
         ),
         jojobot_domain::memory::MemoryError,
     > {
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
 
     async fn capture(
@@ -292,8 +295,9 @@ impl jojobot_domain::memory::Memory for Blindable {
         &self,
         entity: &jojobot_domain::memory::EntityId,
         prose: &str,
+        session: Option<&str>,
     ) -> Result<String, jojobot_domain::memory::MemoryError> {
-        self.inner.set_prose(entity, prose).await
+        self.inner.set_prose(entity, prose, session).await
     }
 }
 

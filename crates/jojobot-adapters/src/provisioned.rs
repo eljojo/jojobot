@@ -189,11 +189,16 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// **What comes back is the stored half**, which is the receipt for what
     /// this call put in the store rather than what a later read will answer
     /// with.
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         if let Some(shipped) = self.provisions.prose_for(entity) {
             guard_extension(shipped, prose)?;
         }
-        self.inner.set_prose(entity, prose).await
+        self.inner.set_prose(entity, prose, session).await
     }
 
     // ── everything else is the store's, unchanged ───────────────────────────
@@ -471,6 +476,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         if self.provisions.record_for(from).is_some() {
             return Err(MemoryError::SuppliedHandle {
@@ -478,28 +484,37 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             });
         }
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
     /// **The build's own half has no row to mark.** Same shape as
     /// [`rename_entity`](Self::rename_entity), but there is no candidate to
     /// hand back: archiving carries no near-miss screening, so
     /// [`MemoryError::SuppliedHandle`] is the whole of the answer.
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         if self.provisions.record_for(id).is_some() {
             return Err(MemoryError::SuppliedHandle {
                 attempted: id.to_string(),
             });
         }
-        self.inner.archive_entity(id, reason).await
+        self.inner.archive_entity(id, reason, session).await
     }
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         if self.provisions.record_for(id).is_some() {
             return Err(MemoryError::SuppliedHandle {
                 attempted: id.to_string(),
             });
         }
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
@@ -684,7 +699,7 @@ mod tests {
     async fn a_read_carries_what_the_build_supplies_and_what_the_operator_wrote() {
         let (store, bot) = provisioned().await;
         store
-            .set_prose(&bot, "Gamma also files the weekly note.")
+            .set_prose(&bot, "Gamma also files the weekly note.", None)
             .await
             .expect("the operator's own layer lands");
 
@@ -716,7 +731,7 @@ mod tests {
             .written()
             .expect("an empty board blocks nothing");
         store
-            .set_prose(&other, "Delta writes its own charter.")
+            .set_prose(&other, "Delta writes its own charter.", None)
             .await
             .expect("prose lands");
 
@@ -747,7 +762,7 @@ mod tests {
         );
 
         let refused = store
-            .set_prose(&bot, &round_trip)
+            .set_prose(&bot, &round_trip, None)
             .await
             .expect_err("a write carrying the build's own half is refused");
         assert!(
@@ -756,7 +771,7 @@ mod tests {
         );
 
         store
-            .set_prose(&bot, "Gamma files the weekly note.")
+            .set_prose(&bot, "Gamma files the weekly note.", None)
             .await
             .expect("the same intent, sent as what is being added, lands");
 
@@ -782,7 +797,7 @@ mod tests {
     async fn an_extension_survives_an_upgrade_that_changes_what_the_build_ships() {
         let (store, bot) = provisioned().await;
         store
-            .set_prose(&bot, "Gamma files the weekly note.")
+            .set_prose(&bot, "Gamma files the weekly note.", None)
             .await
             .expect("the operator writes their own layer");
 
@@ -1679,7 +1694,7 @@ mod tests {
     async fn a_build_that_stops_supplying_leaves_the_operators_text_alone() {
         let (store, bot) = provisioned().await;
         store
-            .set_prose(&bot, "Gamma files the weekly note.")
+            .set_prose(&bot, "Gamma files the weekly note.", None)
             .await
             .expect("the operator writes their own layer");
 

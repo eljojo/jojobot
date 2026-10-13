@@ -293,6 +293,7 @@ impl Jojobot {
             aliases: args.aliases.unwrap_or_default(),
             source: args.source,
             crm: args.crm,
+            session: Some(caller.sid.as_str().to_string()),
             // **Where a thing sits is the caller's to say.** A tree the domain
             // holds and the door does not carry makes every write through this
             // verb a root, so a kind that requires a parent has no reachable

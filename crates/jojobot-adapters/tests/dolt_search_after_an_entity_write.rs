@@ -176,7 +176,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
         .written()
         .expect("lands");
     indexed
-        .set_prose(&pager, "walks @pet:contract-quokka-kept at dawn")
+        .set_prose(&pager, "walks @pet:contract-quokka-kept at dawn", None)
         .await
         .expect("prose lands");
 
@@ -231,7 +231,8 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     eprintln!("STATEMENTS update_entity_with_claim write={write} search={after} idle={idle}");
     assert_eq!(after, idle, "a search after update_entity_with_claim");
 
-    let (stored, write) = counted(indexed.set_prose(&pet, "sleeps under the marmalade tree")).await;
+    let (stored, write) =
+        counted(indexed.set_prose(&pet, "sleeps under the marmalade tree", None)).await;
     stored.expect("prose lands");
     let (hits, after) = counted(retrieval.search(&SearchQuery::text("tree"))).await;
     assert!(
@@ -245,12 +246,12 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     assert_eq!(after, idle, "a search after set_prose");
 
     // ── an archive and a restore ─────────────────────────────────────────────
-    let (archived, write) = counted(indexed.archive_entity(&pet, "no longer kept")).await;
+    let (archived, write) = counted(indexed.archive_entity(&pet, "no longer kept", None)).await;
     archived.expect("archives");
     let (_, after) = counted(retrieval.search(&holding_companion(&pet))).await;
     eprintln!("STATEMENTS archive_entity write={write} search={after} idle={idle}");
     assert_eq!(after, idle, "a search after archive_entity");
-    let (restored, write) = counted(indexed.restore_entity(&pet)).await;
+    let (restored, write) = counted(indexed.restore_entity(&pet, None)).await;
     restored.expect("restores");
     let (hits, after) = counted(retrieval.search(&holding_companion(&pet))).await;
     assert!(
@@ -263,7 +264,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     // ── a rename, and everything that names the renamed thing ────────────────
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     let (moved, write) =
-        counted(indexed.rename_entity(&pet, &renamed, None, date(2026, 7, 3), None)).await;
+        counted(indexed.rename_entity(&pet, &renamed, None, date(2026, 7, 3), None, None)).await;
     moved.expect("the rename lands");
     let (by_new, after) = counted(retrieval.search(&holding_companion(&renamed))).await;
     let by_new = by_new.expect("search ok");

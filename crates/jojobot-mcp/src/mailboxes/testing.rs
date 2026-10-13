@@ -320,6 +320,7 @@ pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
     jojobot
         .memory
         .add_entity(NewEntity {
+            session: None,
             id: EntityId::new(EntityKind::BOT, slug),
             name: slug.into(),
             aliases: Vec::new(),

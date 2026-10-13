@@ -1574,6 +1574,7 @@ pub(crate) mod tests {
             _: Option<jojobot_domain::memory::EntityId>,
             _: jiff::civil::Date,
             _: Option<&str>,
+            _session: Option<&str>,
         ) -> Result<
             jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
             jojobot_domain::memory::MemoryError,
@@ -1584,12 +1585,14 @@ pub(crate) mod tests {
             &self,
             _: &jojobot_domain::memory::EntityId,
             _: &str,
+            _session: Option<&str>,
         ) -> Result<jojobot_domain::memory::Entity, jojobot_domain::memory::MemoryError> {
             unimplemented!("migrate_permanent_ids only reads the entity world")
         }
         async fn restore_entity(
             &self,
             _: &jojobot_domain::memory::EntityId,
+            _session: Option<&str>,
         ) -> Result<
             (
                 jojobot_domain::memory::Entity,
@@ -1674,6 +1677,7 @@ pub(crate) mod tests {
             &self,
             _: &jojobot_domain::memory::EntityId,
             _: &str,
+            _session: Option<&str>,
         ) -> Result<String, jojobot_domain::memory::MemoryError> {
             unimplemented!("migrate_permanent_ids only reads the entity world")
         }

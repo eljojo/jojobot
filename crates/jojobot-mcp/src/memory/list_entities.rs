@@ -233,7 +233,7 @@ mod tests {
         ensure(&jojobot, "person:milhouse").await;
         jojobot
             .memory
-            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
             .await
             .expect("archive_entity ok");
 
@@ -274,7 +274,7 @@ mod tests {
         ensure(&jojobot, "person:milhouse").await;
         jojobot
             .memory
-            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
             .await
             .expect("archive_entity ok");
 
@@ -325,7 +325,7 @@ mod tests {
         ensure(&jojobot, "thing:jukebox").await;
         jojobot
             .memory
-            .archive_entity(&EntityId("thing:jukebox".into()), "a mistaken write")
+            .archive_entity(&EntityId("thing:jukebox".into()), "a mistaken write", None)
             .await
             .expect("archive_entity ok");
         let asked = |kind: &str| ListEntitiesArgs {
@@ -405,7 +405,7 @@ mod tests {
         ensure(&jojobot, "person:bart").await;
         jojobot
             .memory
-            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
             .await
             .expect("archive_entity ok");
 
@@ -438,7 +438,7 @@ mod tests {
         ensure(&jojobot, "person:lisa").await;
         jojobot
             .memory
-            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
             .await
             .expect("archive_entity ok");
 

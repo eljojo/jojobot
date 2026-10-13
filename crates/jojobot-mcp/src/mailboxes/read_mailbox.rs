@@ -689,6 +689,7 @@ mod tests {
         jojobot
             .memory
             .add_entity(NewEntity {
+                session: None,
                 id: EntityId("bot:gamma".into()),
                 name: "gamma".into(),
                 aliases: Vec::new(),

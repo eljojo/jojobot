@@ -509,7 +509,7 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
     .expect("not blocked");
     p.agree("after a claim is rewritten").await;
 
-    w.set_prose(&id("person:homer"), "Homer, and what he is for.")
+    w.set_prose(&id("person:homer"), "Homer, and what he is for.", None)
         .await
         .expect("set_prose");
     p.agree("after prose is set").await;
@@ -551,6 +551,7 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
         None,
         date(2026, 9, 4),
         None,
+        None,
     )
     .await
     .expect("rename_entity")
@@ -558,11 +559,11 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
     .expect("not blocked");
     p.agree("after a rename").await;
 
-    w.archive_entity(&id("person:bart"), "not needed")
+    w.archive_entity(&id("person:bart"), "not needed", None)
         .await
         .expect("archive_entity");
     p.agree("after an archive").await;
-    w.restore_entity(&id("person:bart"))
+    w.restore_entity(&id("person:bart"), None)
         .await
         .expect("restore_entity");
     p.agree("after a restore").await;

@@ -421,7 +421,7 @@ mod tests {
             .expect("mark_processed should succeed");
 
         memory
-            .rename_entity(&was, &now, None, date(2026, 6, 2), None)
+            .rename_entity(&was, &now, None, date(2026, 6, 2), None, None)
             .await
             .expect("rename_entity should succeed")
             .written()
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(posted.sender, was.to_string());
 
         memory
-            .rename_entity(&was, &now, None, date(2026, 6, 2), None)
+            .rename_entity(&was, &now, None, date(2026, 6, 2), None, None)
             .await
             .expect("rename_entity should succeed")
             .written()

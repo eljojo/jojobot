@@ -485,7 +485,7 @@ async fn current_handle_agrees_with_entity_wearing_for_every_badge_the_real_stor
         .written()
         .expect("the guard waves it through");
     memory
-        .rename_entity(&was, &now, None, date(2026, 8, 10), None)
+        .rename_entity(&was, &now, None, date(2026, 8, 10), None, None)
         .await
         .expect("rename_entity ok")
         .written()

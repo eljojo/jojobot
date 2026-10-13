@@ -958,7 +958,11 @@ mod tests {
         assert_eq!(owner(&alpha, "lambda").await, Some(beta.clone()));
         jojobot
             .memory
-            .archive_entity(&EntityId("role:lambda".into()), "made under the wrong bot")
+            .archive_entity(
+                &EntityId("role:lambda".into()),
+                "made under the wrong bot",
+                None,
+            )
             .await
             .expect("archived");
         assert_eq!(
@@ -974,7 +978,7 @@ mod tests {
         assert_eq!(owner(&alpha, "rho").await, Some(gamma.clone()));
         jojobot
             .memory
-            .archive_entity(&gamma, "no longer a seat")
+            .archive_entity(&gamma, "no longer a seat", None)
             .await
             .expect("archived");
         assert_eq!(

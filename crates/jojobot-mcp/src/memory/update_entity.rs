@@ -110,6 +110,7 @@ impl Jojobot {
             aliases: args.aliases,
             source: args.source,
             crm: args.crm,
+            session: Some(caller.sid.as_str().to_string()),
             override_token: args.override_token.clone(),
         };
         // **What this call sets, when it sends anything**, is written as one claim

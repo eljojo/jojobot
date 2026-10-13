@@ -639,6 +639,10 @@ pub struct NewEntity {
     pub source: String,
     /// Optional cross-link to this entity in the task layer.
     pub crm: Option<String>,
+    /// **The session making this write** — the `sid` of the run that sent it,
+    /// when it came in on one. A store records it with the version this write
+    /// leaves. Nothing else reads it; a write no session made leaves it empty.
+    pub session: Option<String>,
     /// The entity to create this one **under**, if it is not a root. Screened
     /// by [`guard::decide_parent`]: the parent must already exist, and nothing
     /// may be its own parent.
@@ -668,6 +672,7 @@ impl NewEntity {
             aliases: Vec::new(),
             source: source.into(),
             crm: None,
+            session: None,
             parent: None,
             boot: Boot::default(),
             override_token: None,
@@ -705,6 +710,9 @@ pub struct EntityPatch {
     pub source: Option<String>,
     /// New cross-link to this entity in the task layer.
     pub crm: Option<String>,
+    /// **The session making this edit**, recorded with the version it leaves.
+    /// See [`NewEntity::session`].
+    pub session: Option<String>,
     /// The token the relabel refusal minted, handed back after the caller read
     /// the candidates and judged them different. Same mechanism, and the same
     /// type, as [`NewEntity::override_token`].
@@ -6520,6 +6528,7 @@ pub trait Memory: Send + Sync {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError>;
 
     /// **Archive an entity: out of every default read, reachable by handle.**
@@ -6546,7 +6555,12 @@ pub trait Memory: Send + Sync {
     /// another is [`MemoryError::AlreadyMerged`], for the same reason a
     /// forwarding row is not a thing to rename; naming nothing at all is
     /// [`MemoryError::UnknownEntity`].
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError>;
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError>;
 
     /// **Bring an archived entity back into every default read**, and say what
     /// it was archived for: the entity as it stands now, and the archive it was
@@ -6562,7 +6576,11 @@ pub trait Memory: Send + Sync {
     /// build-supplied record is [`MemoryError::SuppliedHandle`], a folded one
     /// [`MemoryError::AlreadyMerged`], and a name that answers to nothing
     /// [`MemoryError::UnknownEntity`].
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError>;
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError>;
 
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a
@@ -6905,7 +6923,12 @@ pub trait Memory: Send + Sync {
     /// sharing the doc are untouched. An unknown handle is
     /// [`MemoryError::UnknownEntity`] — this verb never creates a doc to hold
     /// the text, exactly as no other verb here creates on a miss.
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError>;
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError>;
 
     /// Every document in the store, whole: its prose, the entity it is, and the
     /// facts in its table. This is the **index's boot scan** — the search

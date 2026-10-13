@@ -281,7 +281,7 @@ impl DoltMemory {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
-            append_entity_write(&mut tx, &EntityId(handle.clone()), &self.clock).await?;
+            append_entity_write(&mut tx, &EntityId(handle.clone()), &self.clock, None).await?;
             tx.commit().await.map_err(store)?;
             given += 1;
         }
@@ -1786,7 +1786,8 @@ impl DoltMemory {
         } else {
             entity.clone()
         };
-        let badge = write_entity(tx, &self.draw, &stored, &self.clock).await?;
+        let badge =
+            write_entity(tx, &self.draw, &stored, &self.clock, new.session.as_deref()).await?;
         Ok(Guarded::Written(Entity {
             badge: Some(badge),
             ..entity
@@ -1850,7 +1851,14 @@ impl DoltMemory {
         } else {
             entity.clone()
         };
-        write_entity(tx, &self.draw, &stored, &self.clock).await?;
+        write_entity(
+            tx,
+            &self.draw,
+            &stored,
+            &self.clock,
+            patch.session.as_deref(),
+        )
+        .await?;
         Ok(Guarded::Written(entity))
     }
 
@@ -3847,7 +3855,12 @@ impl Memory for DoltMemory {
         }
     }
 
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         validate_write_subject(id)?;
         validate_field("reason", reason)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -3899,12 +3912,16 @@ impl Memory for DoltMemory {
         } else {
             entity.clone()
         };
-        write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
+        write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
         tx.commit().await.map_err(store)?;
         Ok(entity)
     }
 
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         validate_write_subject(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **A row, never a supplied record**, for the reason archiving reads
@@ -3947,7 +3964,7 @@ impl Memory for DoltMemory {
         } else {
             entity.clone()
         };
-        write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
+        write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
         tx.commit().await.map_err(store)?;
         Ok((entity, was))
     }
@@ -3959,6 +3976,7 @@ impl Memory for DoltMemory {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -4161,7 +4179,7 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
         }
-        append_entity_write(&mut tx, to, &self.clock).await?;
+        append_entity_write(&mut tx, to, &self.clock, session).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(renamed))
     }
@@ -4853,7 +4871,7 @@ impl Memory for DoltMemory {
             // The signal `write_summary` reads, so the search index sees the new
             // moment as a change although no claim write was added. Filed under
             // the handle, as every other `entity_write` row is.
-            append_entity_write(&mut tx, &handle, &self.clock).await?;
+            append_entity_write(&mut tx, &handle, &self.clock, patch.session.as_deref()).await?;
             tx.commit().await.map_err(store)?;
             let mut fields = fact.fields.clone();
             fields.insert(
@@ -5491,7 +5509,7 @@ impl Memory for DoltMemory {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
-            append_entity_write(&mut tx, survivor, &self.clock).await?;
+            append_entity_write(&mut tx, survivor, &self.clock, session).await?;
         }
 
         let record = Fact {
@@ -5552,7 +5570,7 @@ impl Memory for DoltMemory {
         // exists to answer "has anything changed", never "which entity" —
         // see the migration's own doc — so a single write here is enough to
         // make a merge visible to it, whatever the sweep's fan-out was.
-        append_entity_write(&mut tx, folded, &self.clock).await?;
+        append_entity_write(&mut tx, folded, &self.clock, session).await?;
 
         // **Read back rather than reconstructed.** The fold may have moved the
         // survivor's own row — a folded parent is re-pointed above — so the
@@ -5838,7 +5856,12 @@ impl Memory for DoltMemory {
         Ok(writers)
     }
 
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         validate_write_subject(entity)?;
         validate_prose(prose)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -5858,7 +5881,7 @@ impl Memory for DoltMemory {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        append_entity_write(&mut tx, entity, &self.clock).await?;
+        append_entity_write(&mut tx, entity, &self.clock, session).await?;
         tx.commit().await.map_err(store)?;
         Ok(stored)
     }
@@ -6523,6 +6546,7 @@ async fn write_entity(
     draw: &Draw,
     entity: &Entity,
     clock: &Clock,
+    session: Option<&str>,
 ) -> Result<String, MemoryError> {
     // **The prose is carried across rather than blanked.** A rewrite of an
     // entity's metadata is not a rewrite of what somebody wrote on its page,
@@ -6589,7 +6613,7 @@ async fn write_entity(
             .map_err(store)?;
     }
     // **After the aliases, so the version kept holds the set just written.**
-    append_entity_write(tx, &entity.id, clock).await?;
+    append_entity_write(tx, &entity.id, clock, session).await?;
     Ok(badge)
 }
 
@@ -6621,6 +6645,7 @@ async fn append_entity_write(
     tx: &mut Transaction<'_, MySql>,
     entity: &EntityId,
     clock: &Clock,
+    session: Option<&str>,
 ) -> Result<(), MemoryError> {
     let highest: Option<i64> =
         sqlx::query_scalar("SELECT MAX(ordinal) FROM entity_write WHERE entity = ?")
@@ -6689,8 +6714,8 @@ async fn append_entity_write(
     };
     sqlx::query(
         "INSERT INTO entity_write (entity, ordinal, written_at, kind, name, source, crm, parent, \
-         boot, archived_reason, archived_at, merged_into, aliases, prose, badge) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         boot, archived_reason, archived_at, merged_into, aliases, prose, badge, session) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(entity.as_str())
     .bind(ordinal)
@@ -6707,6 +6732,7 @@ async fn append_entity_write(
     .bind(aliases)
     .bind(prose)
     .bind(badge)
+    .bind(session)
     .execute(&mut **tx)
     .await
     .map_err(store)?;

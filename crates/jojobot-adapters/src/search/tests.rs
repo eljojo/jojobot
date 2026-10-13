@@ -159,7 +159,7 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
             &milhouse,
         )
     );
-    fake.set_prose(&bart, "a page of prose")
+    fake.set_prose(&bart, "a page of prose", None)
         .await
         .expect("prose");
     assert_ne!(
@@ -464,7 +464,7 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
-        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None)
+        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None)
         .await
         .expect("the rename lands");
 
@@ -530,7 +530,7 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
         .written()
         .expect("lands");
     store
-        .set_prose(&pager, "walks @pet:contract-quokka-kept at dawn")
+        .set_prose(&pager, "walks @pet:contract-quokka-kept at dawn", None)
         .await
         .expect("prose lands");
     // The positive the later negatives rest on: before the rename the old
@@ -548,7 +548,7 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     );
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
-        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None)
+        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None)
         .await
         .expect("the rename lands");
 
@@ -662,7 +662,7 @@ async fn a_prose_write_is_found_without_a_scan_of_the_store() {
     let (fake, store, retrieval) = an_index_over_the_fake().await;
     let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
     store
-        .set_prose(&pet, "sleeps under the marmalade tree")
+        .set_prose(&pet, "sleeps under the marmalade tree", None)
         .await
         .expect("prose lands");
 
@@ -706,11 +706,11 @@ async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
     for step in ["archive", "restore"] {
         if step == "archive" {
             store
-                .archive_entity(&pet, "no longer kept")
+                .archive_entity(&pet, "no longer kept", None)
                 .await
                 .expect("archives");
         } else {
-            store.restore_entity(&pet).await.expect("restores");
+            store.restore_entity(&pet, None).await.expect("restores");
         }
         let scans = fake.full_scans();
         let fast = answers(&retrieval, &pet, &holder).await;
@@ -3592,6 +3592,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
             None,
             date(2026, 8, 1),
             None,
+            None,
         )
         .await
         .expect("the rename lands");
@@ -4754,7 +4755,12 @@ impl Memory for Scanned {
     }
     /// Same shape as `update_entity` above: no guard, because archiving
     /// carries none either.
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        _session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         let mut docs = self.docs.write().expect("docs poisoned");
         let doc = docs
             .iter_mut()
@@ -4768,7 +4774,11 @@ impl Memory for Scanned {
         Ok(entity.clone())
     }
     /// The mirror of the archive above, under the same terms.
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        _session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         let mut docs = self.docs.write().expect("docs poisoned");
         let doc = docs
             .iter_mut()
@@ -4793,6 +4803,7 @@ impl Memory for Scanned {
         parent: Option<EntityId>,
         _: Date,
         _: Option<&str>,
+        _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let mut docs = self.docs.write().expect("docs poisoned");
         let doc = docs
@@ -4831,7 +4842,12 @@ impl Memory for Scanned {
     }
     /// Replace the prose on the page that declares this entity. **No
     /// guard**, for the reason `capture` has none.
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        _session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         let mut docs = self.docs.write().expect("docs poisoned");
         let doc = docs
             .iter_mut()
@@ -4956,11 +4972,20 @@ impl Memory for SummarizedScan {
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.inner.declared_types().await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason, session).await
     }
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-        self.inner.restore_entity(id).await
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
+        self.inner.restore_entity(id, session).await
     }
     async fn update_entity(
         &self,
@@ -4976,9 +5001,10 @@ impl Memory for SummarizedScan {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -5007,8 +5033,13 @@ impl Memory for SummarizedScan {
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
         self.inner.fields(entity).await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn update_fact(
         &self,
@@ -5139,13 +5170,23 @@ impl Memory for Delegated {
         _: Option<EntityId>,
         _: Date,
         _: Option<&str>,
+        _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
-    async fn archive_entity(&self, _: &EntityId, _: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        _: &EntityId,
+        _: &str,
+        _session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
-    async fn restore_entity(&self, _: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        _: &EntityId,
+        _session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
     async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -5192,7 +5233,12 @@ impl Memory for Delegated {
     ) -> Result<Merge, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
-    async fn set_prose(&self, _: &EntityId, _: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        _: &EntityId,
+        _: &str,
+        _session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
     async fn declare_type(&self, _: DeclaredType) -> Result<DeclaredType, MemoryError> {
@@ -8571,11 +8617,20 @@ impl Memory for FixedWriteSummary {
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0.update_entity(handle, patch).await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.0.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.0.archive_entity(id, reason, session).await
     }
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
-        self.0.restore_entity(id).await
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
+        self.0.restore_entity(id, session).await
     }
     async fn rename_entity(
         &self,
@@ -8584,9 +8639,10 @@ impl Memory for FixedWriteSummary {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -8635,8 +8691,13 @@ impl Memory for FixedWriteSummary {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.0.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.0.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.0.scan().await

@@ -335,7 +335,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     // with the single-claim read beside it.
     let teapot = EntityId("thing:teapot".into());
     indexed
-        .rename_entity(&kettle, &teapot, None, date(2026, 9, 6), None)
+        .rename_entity(&kettle, &teapot, None, date(2026, 9, 6), None, None)
         .await
         .expect("rename ok")
         .written()
@@ -462,7 +462,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
 
     let delta = EntityId("bot:delta".into());
     indexed
-        .rename_entity(&gamma, &delta, None, date(2026, 9, 3), None)
+        .rename_entity(&gamma, &delta, None, date(2026, 9, 3), None, None)
         .await
         .expect("rename ok")
         .written()

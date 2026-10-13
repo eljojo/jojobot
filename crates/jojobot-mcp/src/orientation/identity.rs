@@ -1452,6 +1452,7 @@ mod tests {
                 None,
                 jiff::civil::date(2026, 9, 1),
                 None,
+                None,
             )
             .await
             .expect("rename ok")
@@ -1504,6 +1505,7 @@ mod tests {
                 &EntityId("bot:sigma".into()),
                 None,
                 jiff::civil::date(2026, 9, 1),
+                None,
                 None,
             )
             .await
@@ -1576,6 +1578,7 @@ mod tests {
                 &EntityId("bot:sigma".into()),
                 None,
                 jiff::civil::date(2026, 9, 1),
+                None,
                 None,
             )
             .await

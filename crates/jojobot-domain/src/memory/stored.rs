@@ -107,15 +107,18 @@ pub trait StoredMemory: Send + Sync {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<super::Guarded<Entity>, super::MemoryError>;
     async fn archive_entity(
         &self,
         id: &EntityId,
         reason: &str,
+        session: Option<&str>,
     ) -> Result<Entity, super::MemoryError>;
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, super::Archived), super::MemoryError>;
     async fn capture(
         &self,
@@ -190,6 +193,7 @@ pub trait StoredMemory: Send + Sync {
         &self,
         entity: &EntityId,
         prose: &str,
+        session: Option<&str>,
     ) -> Result<Stored<String>, super::MemoryError>;
     async fn scan(&self) -> Result<Stored<Vec<super::search::DocScan>>, super::MemoryError>;
     async fn write_summary(&self) -> Result<Option<super::WriteSummary>, super::MemoryError>;
@@ -294,23 +298,26 @@ impl StoredMemory for Unrendered {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<super::Guarded<Entity>, super::MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
     async fn archive_entity(
         &self,
         id: &EntityId,
         reason: &str,
+        session: Option<&str>,
     ) -> Result<Entity, super::MemoryError> {
-        self.0.archive_entity(id, reason).await
+        self.0.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, super::Archived), super::MemoryError> {
-        self.0.restore_entity(id).await
+        self.0.restore_entity(id, session).await
     }
     async fn capture(
         &self,
@@ -422,8 +429,12 @@ impl StoredMemory for Unrendered {
         &self,
         entity: &EntityId,
         prose: &str,
+        session: Option<&str>,
     ) -> Result<Stored<String>, super::MemoryError> {
-        self.0.set_prose(entity, prose).await.map(Stored::new)
+        self.0
+            .set_prose(entity, prose, session)
+            .await
+            .map(Stored::new)
     }
     async fn scan(&self) -> Result<Stored<Vec<super::search::DocScan>>, super::MemoryError> {
         self.0.scan().await.map(Stored::new)

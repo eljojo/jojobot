@@ -342,7 +342,7 @@ pub async fn thought_writers_are_the_bots_whose_claims_point_at_the_thread<M: Me
     with_retired.sort();
     assert_eq!(standing, with_retired, "a live bot is a writer");
     store
-        .archive_entity(&retired, "no longer a seat")
+        .archive_entity(&retired, "no longer a seat", None)
         .await
         .expect("a bot can be archived");
 

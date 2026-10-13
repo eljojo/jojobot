@@ -85,7 +85,11 @@ async fn readiness_is_read_from_the_store(memory: &dyn Memory) {
     assert_eq!(mix.blockers, [unfinished("work:loop-check-in")]);
 
     memory
-        .archive_entity(&EntityId("work:sigma".to_string()), "no longer tracked")
+        .archive_entity(
+            &EntityId("work:sigma".to_string()),
+            "no longer tracked",
+            None,
+        )
         .await
         .expect("it archives");
     let phi = verdict(memory, "work:phi").await;

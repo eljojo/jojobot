@@ -1544,7 +1544,11 @@ async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
         store.add_entity(new).await.expect("the fixture is written");
     }
     store
-        .archive_entity(&EntityId("place:far-country".into()), "a mistaken write")
+        .archive_entity(
+            &EntityId("place:far-country".into()),
+            "a mistaken write",
+            None,
+        )
         .await
         .expect("the place is archived");
     // **A thing folded into another keeps its row**, which a merge leaves behind;

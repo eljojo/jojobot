@@ -85,7 +85,11 @@ impl Jojobot {
         if args.restore.unwrap_or(false) {
             return self.restore(&handle, &args, caller.sid.as_str()).await;
         }
-        let entity = match self.memory.archive_entity(&handle, &args.reason).await {
+        let entity = match self
+            .memory
+            .archive_entity(&handle, &args.reason, Some(caller.sid.as_str()))
+            .await
+        {
             Ok(entity) => entity,
             Err(e) => return memory_declined("archive_entity", e),
         };
@@ -120,7 +124,7 @@ impl Jojobot {
         args: &ArchiveEntityArgs,
         session: &str,
     ) -> Result<CallToolResult, McpError> {
-        let (entity, was) = match self.memory.restore_entity(handle).await {
+        let (entity, was) = match self.memory.restore_entity(handle, Some(session)).await {
             Ok(restored) => restored,
             Err(e) => return memory_declined("archive_entity", e),
         };

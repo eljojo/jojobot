@@ -213,15 +213,22 @@ mod tests {
                 _: Option<EntityId>,
                 _: jiff::civil::Date,
                 _: Option<&str>,
+                _session: Option<&str>,
             ) -> Result<Guarded<Entity>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
-            async fn archive_entity(&self, _: &EntityId, _: &str) -> Result<Entity, MemoryError> {
+            async fn archive_entity(
+                &self,
+                _: &EntityId,
+                _: &str,
+                _session: Option<&str>,
+            ) -> Result<Entity, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
             async fn restore_entity(
                 &self,
                 _: &EntityId,
+                _session: Option<&str>,
             ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
@@ -279,7 +286,12 @@ mod tests {
             ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
-            async fn set_prose(&self, _: &EntityId, _: &str) -> Result<String, MemoryError> {
+            async fn set_prose(
+                &self,
+                _: &EntityId,
+                _: &str,
+                _session: Option<&str>,
+            ) -> Result<String, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
             async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {

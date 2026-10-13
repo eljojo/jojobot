@@ -584,19 +584,26 @@ impl Memory for DownMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.1
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.1.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.1.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.1.restore_entity(id).await
+        self.1.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0 {
@@ -683,8 +690,13 @@ impl Memory for DownMemory {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.1.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.1.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.1.scan().await
@@ -753,19 +765,26 @@ impl Memory for FoldBehindMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.0.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.0.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.0.restore_entity(id).await
+        self.0.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0.capture(fact).await? {
@@ -835,8 +854,13 @@ impl Memory for FoldBehindMemory {
             .await?;
         Err(fold_behind(Landed::Merge(Box::new(done))))
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.0.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.0.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.0.scan().await
@@ -915,19 +939,26 @@ impl Memory for RacingMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
@@ -1005,8 +1036,13 @@ impl Memory for RacingMemory {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.inner.scan().await
@@ -1076,19 +1112,26 @@ impl Memory for MovesAfterTheRead {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
@@ -1162,8 +1205,13 @@ impl Memory for MovesAfterTheRead {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.inner.scan().await
@@ -1240,19 +1288,26 @@ impl Memory for YieldsLikeAStore {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         yield_like_a_store().await;
@@ -1317,8 +1372,13 @@ impl Memory for YieldsLikeAStore {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.inner.scan().await
@@ -1385,19 +1445,26 @@ impl Memory for ConflictingMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.0.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.0.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.0.restore_entity(id).await
+        self.0.restore_entity(id, session).await
     }
     async fn capture(&self, _fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         Err(MemoryError::Conflict)
@@ -1455,8 +1522,13 @@ impl Memory for ConflictingMemory {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.0.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.0.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.0.scan().await
@@ -1530,19 +1602,26 @@ impl Memory for FailsOnCapture {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason).await
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason, session).await
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
+        session: Option<&str>,
     ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let nth = self.seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -1613,8 +1692,13 @@ impl Memory for FailsOnCapture {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose).await
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.inner.scan().await

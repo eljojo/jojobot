@@ -309,7 +309,14 @@ impl Jojobot {
             .await?;
         let renamed = match self
             .memory
-            .rename_entity(&from, &to, parent, date, args.override_token.as_deref())
+            .rename_entity(
+                &from,
+                &to,
+                parent,
+                date,
+                args.override_token.as_deref(),
+                Some(caller.sid.as_str()),
+            )
             .await
         {
             Ok(renamed) => renamed,

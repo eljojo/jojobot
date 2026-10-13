@@ -129,11 +129,15 @@ async fn memory_with_an_archived_entity() -> Arc<dyn Memory> {
     let store = Arc::new(InMemoryMemory::booted());
     seed(store.as_ref()).await;
     store
-        .archive_entity(&EntityId("place:shelbyville".into()), "a mistaken write")
+        .archive_entity(
+            &EntityId("place:shelbyville".into()),
+            "a mistaken write",
+            None,
+        )
         .await
         .expect("archive_entity ok");
     store
-        .archive_entity(&EntityId("topic:widgets".into()), "a mistaken write")
+        .archive_entity(&EntityId("topic:widgets".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
     store
@@ -241,6 +245,7 @@ async fn seed(store: &dyn Memory) {
         .set_prose(
             &EntityId("topic:widgets".into()),
             &format!("What the stall is for {}", typed("prose")),
+            None,
         )
         .await
         .expect("the prose is written");
@@ -918,6 +923,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
         .set_prose(
             &EntityId("topic:widgets".into()),
             "handcart's twin is @thing:handcart-lost, and it is kept near @place:shelbyville",
+            None,
         )
         .await
         .expect("the unresolvable mention is written");
@@ -962,6 +968,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
             &EntityId("thing:handcart-2".into()),
             None,
             Date::constant(2026, 3, 10),
+            None,
             None,
         )
         .await

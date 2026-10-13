@@ -135,19 +135,29 @@ impl Memory for Counted {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.hit("rename_entity");
         self.inner
-            .rename_entity(from, to, parent, date, override_token)
+            .rename_entity(from, to, parent, date, override_token, session)
             .await
     }
-    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+        session: Option<&str>,
+    ) -> Result<Entity, MemoryError> {
         self.hit("archive_entity");
-        self.inner.archive_entity(id, reason).await
+        self.inner.archive_entity(id, reason, session).await
     }
-    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+        session: Option<&str>,
+    ) -> Result<(Entity, Archived), MemoryError> {
         self.hit("restore_entity");
-        self.inner.restore_entity(id).await
+        self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.hit("capture");
@@ -259,9 +269,14 @@ impl Memory for Counted {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
-    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+    async fn set_prose(
+        &self,
+        entity: &EntityId,
+        prose: &str,
+        session: Option<&str>,
+    ) -> Result<String, MemoryError> {
         self.hit("set_prose");
-        self.inner.set_prose(entity, prose).await
+        self.inner.set_prose(entity, prose, session).await
     }
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.hit("scan");

@@ -2007,7 +2007,7 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     .await;
 
     store
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None)
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -3218,7 +3218,7 @@ pub async fn a_write_that_rewrites_a_child_leaves_it_where_it_was<M: Memory>(sto
     );
 
     store
-        .set_prose(&child, "The machine, and what it is for.")
+        .set_prose(&child, "The machine, and what it is for.", None)
         .await
         .expect("set_prose should succeed");
     assert_eq!(
@@ -3434,7 +3434,10 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
     .await;
 
     let charter = "Keeps the schedule.\n\nHard line: never writes to the ledger.";
-    let stored = store.set_prose(&bot, charter).await.expect("set_prose ok");
+    let stored = store
+        .set_prose(&bot, charter, None)
+        .await
+        .expect("set_prose ok");
     assert_eq!(stored, charter, "the verb returns what a read will return");
     let scanned = store
         .scan_entity(&bot)
@@ -3446,7 +3449,7 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
     // Replaced, never appended: a charter is what is so now, not a trail.
     let rewritten = "Keeps the schedule. Nothing else.";
     store
-        .set_prose(&bot, rewritten)
+        .set_prose(&bot, rewritten, None)
         .await
         .expect("set_prose ok");
     let scanned = store
@@ -3472,7 +3475,7 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
 
     // An empty charter is not a charter.
     assert!(
-        store.set_prose(&bot, "   ").await.is_err(),
+        store.set_prose(&bot, "   ", None).await.is_err(),
         "blank prose is refused rather than silently clearing the page"
     );
 
@@ -3488,7 +3491,7 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
         format!("   {FACTS_HEADER}   "),
     ] {
         let err = store
-            .set_prose(&bot, &forged)
+            .set_prose(&bot, &forged, None)
             .await
             .expect_err("prose carrying a reserved line must be refused");
         assert!(
@@ -3508,7 +3511,7 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
     let mentioning = "the facts table is at the bottom of this page";
     assert_eq!(
         store
-            .set_prose(&bot, mentioning)
+            .set_prose(&bot, mentioning, None)
             .await
             .expect("ordinary prose"),
         mentioning,
@@ -3519,7 +3522,7 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
     // hold the prose, the same rule every other verb here follows.
     let ghost = EntityId("bot:contract-ghost-bot".into());
     let err = store
-        .set_prose(&ghost, "a charter for nobody")
+        .set_prose(&ghost, "a charter for nobody", None)
         .await
         .expect_err("an unknown entity must miss");
     assert!(
@@ -6486,7 +6489,7 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
     // Renamed BEFORE the drop — a fix that merely carried the room's own
     // served value forward would already show this name, coincidentally.
     store
-        .rename_entity(&pointer_v1, &pointer_v2, None, date(2026, 9, 3), None)
+        .rename_entity(&pointer_v1, &pointer_v2, None, date(2026, 9, 3), None, None)
         .await
         .expect("rename ok")
         .written()
@@ -6507,7 +6510,7 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
     // Renamed AGAIN, AFTER the drop — only a permanent id, never a handle
     // the drop happened to see, survives this one.
     store
-        .rename_entity(&pointer_v2, &pointer_v3, None, date(2026, 9, 5), None)
+        .rename_entity(&pointer_v2, &pointer_v3, None, date(2026, 9, 5), None, None)
         .await
         .expect("rename ok")
         .written()
@@ -8543,7 +8546,7 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_an_edge<M: Memory>(
 
     let renamed_to = EntityId("thing:contract-hijack-elsewhere".into());
     store
-        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None)
+        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None, None)
         .await
         .expect("rename should succeed")
         .written()
@@ -8600,7 +8603,7 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_ref<M: Memory>(st
 
     let renamed_to = EntityId("thing:contract-ref-departed".into());
     store
-        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None)
+        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None, None)
         .await
         .expect("rename should succeed")
         .written()
@@ -8651,7 +8654,7 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_parent<M: Memory>
 
     let renamed_to = EntityId("thing:contract-parented-departed".into());
     store
-        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None)
+        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None, None)
         .await
         .expect("rename should succeed")
         .written()
@@ -8713,6 +8716,7 @@ pub async fn a_same_handle_rename_with_a_different_parent_reparents<M: Memory>(s
             Some(new_home.clone()),
             date(2026, 6, 1),
             None,
+            None,
         )
         .await
         .expect("a same-handle call naming a different parent is a reparent")
@@ -8747,7 +8751,7 @@ pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memo
     .await;
 
     let no_parent_named = store
-        .rename_entity(&child, &child, None, date(2026, 6, 1), None)
+        .rename_entity(&child, &child, None, date(2026, 6, 1), None, None)
         .await;
     assert!(
         matches!(no_parent_named, Err(MemoryError::NothingToRename { .. })),
@@ -8755,7 +8759,14 @@ pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memo
     );
 
     let same_parent_named = store
-        .rename_entity(&child, &child, Some(home.clone()), date(2026, 6, 1), None)
+        .rename_entity(
+            &child,
+            &child,
+            Some(home.clone()),
+            date(2026, 6, 1),
+            None,
+            None,
+        )
         .await;
     assert!(
         matches!(same_parent_named, Err(MemoryError::NothingToRename { .. })),
@@ -8778,6 +8789,7 @@ pub async fn a_same_handle_rename_naming_an_unknown_parent_is_blocked<M: Memory>
             &child,
             Some(unknown_parent.clone()),
             date(2026, 6, 1),
+            None,
             None,
         )
         .await
@@ -9607,7 +9619,7 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     let target = EntityId("view:contract-supplied-rename-target".into());
 
     let err = store
-        .rename_entity(&shipped, &target, None, date(2026, 6, 10), None)
+        .rename_entity(&shipped, &target, None, date(2026, 6, 10), None, None)
         .await
         .expect_err("a rename of a build-supplied handle must be refused, not silently accepted");
     assert!(
@@ -9635,7 +9647,7 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     .await;
     let now = EntityId("thing:contract-supplied-rename-stored-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 10), None)
+        .rename_entity(&was, &now, None, date(2026, 6, 10), None, None)
         .await
         .expect("a stored entity's rename should succeed")
         .written()
@@ -9680,7 +9692,7 @@ pub async fn archive_entity_persists_the_reason_and_the_moment<M: Memory>(store:
 
     let before = jiff::Timestamp::now();
     let written = store
-        .archive_entity(&target.id, "a mistaken write")
+        .archive_entity(&target.id, "a mistaken write", None)
         .await
         .expect("archive_entity should succeed");
     let after = jiff::Timestamp::now();
@@ -9737,14 +9749,14 @@ pub async fn a_second_archive_is_refused_not_overwritten<M: Memory>(store: &M) {
     )
     .await;
     let first = store
-        .archive_entity(&target.id, "a mistaken write")
+        .archive_entity(&target.id, "a mistaken write", None)
         .await
         .expect("the first archive should succeed")
         .archived
         .expect("the first archive must set archived");
 
     let err = store
-        .archive_entity(&target.id, "somebody not relevant at all")
+        .archive_entity(&target.id, "somebody not relevant at all", None)
         .await
         .expect_err("a second archive must be refused, not silently accepted");
     assert!(
@@ -9776,7 +9788,7 @@ pub async fn a_second_archive_is_refused_not_overwritten<M: Memory>(store: &M) {
 pub async fn an_archive_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memory>(store: &M) {
     let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
     let err = store
-        .archive_entity(&shipped, "a mistaken write")
+        .archive_entity(&shipped, "a mistaken write", None)
         .await
         .expect_err("archiving a build-supplied handle must be refused, not silently accepted");
     assert!(
@@ -9795,7 +9807,7 @@ pub async fn an_archive_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Me
     )
     .await;
     let written = store
-        .archive_entity(&stored.id, "a mistaken write")
+        .archive_entity(&stored.id, "a mistaken write", None)
         .await
         .expect("a genuinely stored entity's archive should succeed");
     assert!(
@@ -9911,7 +9923,7 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
     .await;
     let now = EntityId("work:contract-double-rename-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 11), None)
+        .rename_entity(&was, &now, None, date(2026, 6, 11), None, None)
         .await
         .expect("the first rename lands")
         .written()
@@ -9919,7 +9931,7 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
 
     let elsewhere = EntityId("person:contract-double-rename-elsewhere".into());
     let moved = store
-        .rename_entity(&was, &elsewhere, None, date(2026, 6, 12), None)
+        .rename_entity(&was, &elsewhere, None, date(2026, 6, 12), None, None)
         .await
         .expect_err("a stale handle must not be renamed as if it still had a row");
     assert!(
@@ -9930,7 +9942,7 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
 
     let never = EntityId("person:contract-rename-attempt-never-existed".into());
     let missed = store
-        .rename_entity(&never, &elsewhere, None, date(2026, 6, 12), None)
+        .rename_entity(&never, &elsewhere, None, date(2026, 6, 12), None, None)
         .await
         .expect_err("a handle nothing ever held must miss");
     assert!(
@@ -10502,11 +10514,11 @@ pub async fn a_graph_query_selects_a_kind_and_returns_its_prose<M: Memory>(store
     let charter = "Keeps the roster.\n\nHard line: never writes to the ledger.\n\nWorks in \
                    the yard.";
     store
-        .set_prose(&one, charter)
+        .set_prose(&one, charter, None)
         .await
         .expect("set_prose should succeed");
     store
-        .set_prose(&outsider, "Not a bot, and holds a page anyway.")
+        .set_prose(&outsider, "Not a bot, and holds a page anyway.", None)
         .await
         .expect("set_prose should succeed");
 
@@ -12268,7 +12280,7 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
     .await;
 
     store
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None)
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -12366,14 +12378,14 @@ pub async fn an_archived_entity_is_restored_and_nothing_else_moves<M: Memory>(st
     // Not archived yet: there is nothing to restore, and nothing is written.
     assert!(
         matches!(
-            store.restore_entity(&board).await,
+            store.restore_entity(&board, None).await,
             Err(MemoryError::NotArchived { .. })
         ),
         "a restore of something that was never archived is refused"
     );
 
     store
-        .archive_entity(&board, "wrong advice")
+        .archive_entity(&board, "wrong advice", None)
         .await
         .expect("the archive lands");
     let state = || async {
@@ -12388,7 +12400,7 @@ pub async fn an_archived_entity_is_restored_and_nothing_else_moves<M: Memory>(st
     assert_eq!(state().await, Some(true), "the archive is on the row");
 
     let (restored, was) = store
-        .restore_entity(&board)
+        .restore_entity(&board, None)
         .await
         .expect("the restore lands");
     assert!(restored.archived.is_none(), "{restored:?}");
@@ -12415,17 +12427,17 @@ pub async fn an_archived_entity_is_restored_and_nothing_else_moves<M: Memory>(st
     // A second restore has nothing left to do; a name that answers to nothing
     // is a miss; and the cycle can go round again.
     assert!(matches!(
-        store.restore_entity(&board).await,
+        store.restore_entity(&board, None).await,
         Err(MemoryError::NotArchived { .. })
     ));
     assert!(matches!(
         store
-            .restore_entity(&EntityId("project:contract-restore-nobody".into()))
+            .restore_entity(&EntityId("project:contract-restore-nobody".into()), None)
             .await,
         Err(MemoryError::UnknownEntity { .. })
     ));
     store
-        .archive_entity(&board, "again")
+        .archive_entity(&board, "again", None)
         .await
         .expect("a restored entity can be archived again");
 }
@@ -14330,11 +14342,11 @@ pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store:
     )
     .await;
     store
-        .set_prose(&kept, "The survivor's own page.")
+        .set_prose(&kept, "The survivor's own page.", None)
         .await
         .expect("the survivor takes prose");
     store
-        .set_prose(&spare, "The duplicate's own page.")
+        .set_prose(&spare, "The duplicate's own page.", None)
         .await
         .expect("the duplicate takes prose");
 
@@ -14719,7 +14731,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     // **Without an override.** The survivor now carries the folded side's name,
     // and the forwarding row still wears it.
     let landed = store
-        .rename_entity(&survivor, &renamed, None, date(2026, 9, 3), None)
+        .rename_entity(&survivor, &renamed, None, date(2026, 9, 3), None, None)
         .await
         .expect("the rename answers");
     assert!(
@@ -14743,7 +14755,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     };
     assert_eq!(said(&folded).await, Some(renamed.clone()));
     let refused = store
-        .rename_entity(&folded, &folded, None, date(2026, 9, 5), None)
+        .rename_entity(&folded, &folded, None, date(2026, 9, 5), None, None)
         .await
         .expect_err("a forwarding row is not renamed");
     let MemoryError::AlreadyMerged { into, .. } = &refused else {
@@ -14757,7 +14769,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     // **The paired negative**: a rename that nears another thing is blocked.
     let near = EntityId::person("person:contract-survives-other-later");
     let blocked = store
-        .rename_entity(&renamed, &near, None, date(2026, 9, 4), None)
+        .rename_entity(&renamed, &near, None, date(2026, 9, 4), None, None)
         .await
         .expect("the rename answers");
     let Guarded::Blocked { candidates, .. } = &blocked else {
@@ -14773,7 +14785,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     );
 
     let again = store
-        .rename_entity(&renamed, &renamed_again, None, date(2026, 9, 6), None)
+        .rename_entity(&renamed, &renamed_again, None, date(2026, 9, 6), None, None)
         .await
         .expect("the rename answers");
     assert!(matches!(again, Guarded::Written(_)), "{again:?}");
@@ -14848,7 +14860,7 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     .await;
 
     store
-        .rename_entity(&before, &after, None, date(2026, 7, 2), None)
+        .rename_entity(&before, &after, None, date(2026, 7, 2), None, None)
         .await
         .expect("the rename lands")
         .written()

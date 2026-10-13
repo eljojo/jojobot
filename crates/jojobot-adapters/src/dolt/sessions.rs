@@ -1929,6 +1929,7 @@ mod tests {
                 None,
                 jiff::civil::date(2026, 1, 2),
                 None,
+                None,
             )
             .await
             .expect("rename_entity should succeed")
@@ -1940,6 +1941,7 @@ mod tests {
                 &EntityId("bot:contract-migrate-bot-column-sigma".to_string()),
                 None,
                 jiff::civil::date(2026, 1, 3),
+                None,
                 None,
             )
             .await
