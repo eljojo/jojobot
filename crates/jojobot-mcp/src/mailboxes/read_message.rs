@@ -116,6 +116,13 @@ impl Jojobot {
                 return Ok(not_yours(&id, &message.mailbox));
             }
         }
+        // **The caller's key is checked before either path**, so a key that
+        // opens nothing is refused the history of an archived message exactly as
+        // it is refused a plain read of it.
+        let run = match self.acting_run(args.sid.as_deref()) {
+            Ok(run) => run,
+            Err(refused) => return Ok(refused),
+        };
         // **The history is read where the message is readable, and nowhere
         // else.** Everything above, privacy and ownership included, has already
         // been asked; a message nobody can read falls through to the delivery
@@ -129,10 +136,6 @@ impl Jojobot {
                 Err(e) => mailbox_declined(e),
             };
         }
-        let run = match self.acting_run(args.sid.as_deref()) {
-            Ok(run) => run,
-            Err(refused) => return Ok(refused),
-        };
         let acting = jojobot_domain::mailbox::Acting {
             session: run.as_deref(),
             at: self.clock().now(),
@@ -458,6 +461,64 @@ mod tests {
             read["state"], "processed",
             "…and reading it did not move it: {read}"
         );
+    }
+
+    /// **The history of an archived message is read only by a caller the verb
+    /// would let read it.** A processed message is readable from any bot's box,
+    /// so no box check stands in front of it, and the caller's key is the one
+    /// check left: a key that opens nothing is refused a plain read of the
+    /// message and has to be refused its history. Paired with the key that
+    /// opens a session, which reads it.
+    #[tokio::test]
+    async fn the_history_of_an_archived_message_is_refused_to_a_key_that_opens_nothing() {
+        let jojobot = mailbox_handler();
+        let gamma = owning(&jojobot, "gamma").await;
+        let delta = owning(&jojobot, "delta").await;
+        let theirs = send(&jojobot, "delta", "epsilon", "a finding worth filing").await;
+        let id = theirs["id"].as_str().expect("an id").to_string();
+        jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: id.clone(),
+                notes: Some("acted on".into()),
+                sid: Some(delta),
+                quarantine: None,
+            }))
+            .await
+            .expect("mark_processed ok");
+        let ask = |sid: &str, history: bool| {
+            let jojobot = &jojobot;
+            let id = id.clone();
+            let sid = sid.to_string();
+            async move {
+                json_of(
+                    &jojobot
+                        .read_message(Parameters(ReadMessageArgs {
+                            history: Some(history),
+                            message_id: id,
+                            sid: Some(sid),
+                        }))
+                        .await
+                        .expect("read_message answers"),
+                )
+            }
+        };
+
+        let opened = ask(&gamma, true).await;
+        assert_eq!(
+            opened["history"]["count"], 1,
+            "a key that opens a session reads the history: {opened}"
+        );
+        let plain = ask("not-a-key-at-all", false).await;
+        assert_eq!(
+            plain["status"], "blocked",
+            "the plain read refuses a key that opens nothing: {plain}"
+        );
+        let refused = ask("not-a-key-at-all", true).await;
+        assert_eq!(
+            refused["status"], "blocked",
+            "the history of the same message is refused to the same key: {refused}"
+        );
+        assert!(refused.get("history").is_none(), "{refused}");
     }
 
     /// **An id that names nothing is blocked, not an error** — the same answer

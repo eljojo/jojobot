@@ -331,6 +331,7 @@ impl Mailboxes for CountedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
     ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
     {
+        self.calls.hit("message_history", Kind::Read);
         self.inner.message_history(id).await
     }
 }
@@ -368,5 +369,55 @@ impl Teachings for CountedTeachings {
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
         self.calls.hit("taught", Kind::Read);
         self.inner.taught().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jojobot_domain::mailbox::NewMessage;
+    use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+
+    /// **A read of a message's history is counted as a read.** A counted store
+    /// that forwarded it unseen would let a case about reads pass over a call that
+    /// reached the store.
+    #[tokio::test]
+    async fn a_read_of_a_messages_history_is_counted_as_a_read() {
+        // A handle can be read only once the kind set is loaded, which a case in
+        // this process may have unloaded.
+        jojobot_domain::memory::kinds::load_shipped();
+        let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let counted = CountedMailboxes::new(store);
+        let owner = EntityId("bot:alpha".into());
+        counted
+            .create_mailbox(&MailboxName("alpha".into()), &owner, None)
+            .await
+            .expect("the box is made");
+        let posted = counted
+            .post_message(NewMessage {
+                mailbox: MailboxName("alpha".into()),
+                body: "a message".into(),
+                subject: None,
+                sender: "beta".into(),
+                sent_at: jiff::Timestamp::UNIX_EPOCH,
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+                supersedes: None,
+            })
+            .await
+            .expect("the post lands")
+            .written()
+            .expect("nothing blocks it");
+        counted.calls.reset();
+
+        counted
+            .message_history(&posted.id)
+            .await
+            .expect("the history reads");
+
+        assert_eq!(counted.calls.seen().get("message_history"), Some(&1));
+        assert_eq!(counted.calls.reads(), 1, "{:?}", counted.calls.seen());
+        assert_eq!(counted.calls.writes(), 0);
     }
 }
