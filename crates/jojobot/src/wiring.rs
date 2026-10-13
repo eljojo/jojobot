@@ -389,32 +389,32 @@ pub async fn boot_store_pushing(
         tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
     }
 
-    // **A clock that states a day continues after what the store already holds
-    // on that day.** It counts from midnight in every process, so a process
-    // started over a store another process filled would stamp its first writes
-    // before that process's last. The clock is made once here and every stamp
-    // below, in the memory store and above it, comes from this one.
+    // **A clock that states a day continues after the newest stamp the store
+    // already holds, on that day or after it.** It counts from midnight in every
+    // process, so a process started over a store another process filled would
+    // stamp its first writes before that process's last. The clock is made once
+    // here and every stamp below, in the memory store and above it, comes from
+    // this one.
     //
-    // **Not fatal, but loud**: a store that cannot answer here is one the boot
-    // reports on, and the clock then starts at midnight as it did before this
-    // pass existed. What follows is stamps that may sort before older ones, so
-    // the line says that.
+    // **Fatal on a stated clock.** A store that cannot answer here would leave a
+    // clock that stamps from the day's midnight, and a new record may then sort
+    // before an older one with nothing to say so afterwards. Refusing is the same
+    // fact said where somebody can act on it. The real clock reads nothing here.
     let clock = match clock.stated() {
         None => clock,
-        Some(day) => match jojobot_adapters::dolt::newest_stamp_on(store.pool(), day).await {
-            Ok(newest) => clock.continuing_after(newest),
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    %day,
-                    "STATED CLOCK NOT CONTINUED — the newest stamp on the stated day could not be \
-                     read, so this server stamps from the day's midnight and a new record may \
-                     sort before an older one. Nothing stored was changed; a restart once the \
-                     store is reachable continues the clock."
-                );
-                clock
-            }
-        },
+        Some(day) => {
+            let newest = jojobot_adapters::dolt::newest_stamp_from(store.pool(), day)
+                .await
+                .with_context(|| {
+                    format!(
+                        "STATED CLOCK NOT CONTINUED — the newest stamp from the stated day {day} \
+                         on could not be read, so the server would stamp from the day's midnight \
+                         and a new record could sort before an older one. Nothing stored was \
+                         changed; start again once the store is reachable."
+                    )
+                })?;
+            clock.continuing_after(newest)
+        }
     };
 
     // **Memory is served from the store**, over the same pool as mail and

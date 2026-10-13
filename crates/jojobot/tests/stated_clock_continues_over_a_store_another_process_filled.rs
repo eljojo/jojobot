@@ -9,6 +9,7 @@
 //! a write it makes.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -35,14 +36,12 @@ impl Drop for Scratch {
 /// [`DAY`]**, over a store whose only row, when `seeded_at` is given, is a run
 /// begun at that moment by an earlier process.
 async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>) -> Timestamp {
+    // One directory per call: two seeded cases run side by side in this process.
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
     let state_dir = std::env::temp_dir().join(format!(
         "jojobot-continued-clock-{}-{}",
         std::process::id(),
-        if seeded_at.is_some() {
-            "seeded"
-        } else {
-            "empty"
-        }
+        CALLS.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
@@ -143,6 +142,22 @@ async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>) -> Timestamp {
 #[tokio::test]
 async fn a_beat_written_over_a_store_another_process_filled_is_stamped_after_what_it_holds() {
     let seeded: Timestamp = format!("{DAY}T23:00:00.5Z").parse().expect("a moment");
+
+    let stamp = stamp_of_a_beat_after(Some(seeded)).await;
+
+    assert!(
+        stamp > seeded,
+        "the beat is stamped {stamp}, which is not after the run the store already held, {seeded}"
+    );
+}
+
+/// **A stamp after the stated day counts as well.** The earlier process left a
+/// run begun at one in the morning on the day after [`DAY`]. A beat the new
+/// process writes is stamped after it, though the stated day is over a day behind
+/// it.
+#[tokio::test]
+async fn a_beat_written_over_a_store_holding_a_stamp_on_the_next_day_is_stamped_after_it() {
+    let seeded: Timestamp = "2026-06-02T01:00:00.5Z".parse().expect("a moment");
 
     let stamp = stamp_of_a_beat_after(Some(seeded)).await;
 

@@ -937,8 +937,12 @@ pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
     }
 }
 
-/// **The newest stamp the store holds on `day`**, or `None` when nothing in it
-/// was stamped on that day.
+/// **The newest stamp the store holds on `day` or after it**, or `None` when
+/// nothing in it was stamped from that day on.
+///
+/// **A later day counts.** A store another process filled can hold a stamp
+/// after the day a clock is acting out, and a clock that continued only from
+/// the day itself would start behind that stamp.
 ///
 /// **Every column that keeps an instant is read**, found in the schema rather
 /// than listed here: an instant is text of 40 or 48 characters, and a column
@@ -949,7 +953,7 @@ pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
 /// **The newest is found by the instant, not by the text.** `…:00.5Z` sorts
 /// before `…:00Z` as text and is the later of the two. So each column is asked
 /// for its newest second first, and only the rows of that second are parsed.
-pub async fn newest_stamp_on(
+pub async fn newest_stamp_from(
     pool: &MySqlPool,
     day: jiff::civil::Date,
 ) -> Result<Option<jiff::Timestamp>, sqlx::Error> {
@@ -961,13 +965,13 @@ pub async fn newest_stamp_on(
     )
     .fetch_all(pool)
     .await?;
-    let on_the_day = format!("{day}T%");
+    let from_the_day = format!("{day}T");
     let mut newest: Option<jiff::Timestamp> = None;
     for (table, column) in columns {
         let second: Option<String> = sqlx::query_scalar(&format!(
-            "SELECT MAX(LEFT(`{column}`, 19)) FROM `{table}` WHERE `{column}` LIKE ?"
+            "SELECT MAX(LEFT(`{column}`, 19)) FROM `{table}` WHERE `{column}` >= ?"
         ))
-        .bind(&on_the_day)
+        .bind(&from_the_day)
         .fetch_one(pool)
         .await?;
         let Some(second) = second else { continue };
