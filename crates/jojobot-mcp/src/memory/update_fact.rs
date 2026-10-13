@@ -365,6 +365,12 @@ impl Jojobot {
         // **A move is planned before anything is written**, so a refusal leaves the
         // document as it was. The section itself takes its new place in this edit;
         // the chunks that carry it on follow once it has landed.
+        // **Held from the read of the neighbours to the end of the edit**, for the
+        // reason a put holds it: the key is minted from that read.
+        let _placing = match args.after {
+            Some(_) => Some(self.registry.hold_placing(&address.home).await),
+            None => None,
+        };
         let move_plan = match args.after.as_deref() {
             Some(after) => match self.plan_move(&address, after).await {
                 Ok(plan) => Some(plan),

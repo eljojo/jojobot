@@ -296,6 +296,13 @@ pub struct SessionRegistry {
     /// gone when the process is. Nothing in it is stored. See
     /// [`SessionRegistry::note_unstar`].
     unstars: std::sync::Mutex<HashMap<(String, String), usize>>,
+    /// **One mutex per thing whose sections' order keys are being minted**, keyed
+    /// by the thing's handle. A key is minted from a read of the neighbours and
+    /// written after it, so two callers placing sections at one spot mint the
+    /// same key unless one waits for the other. Held here because the transport
+    /// builds a handler per connection and this is what the process shares.
+    /// Nothing in it is stored. See [`SessionRegistry::hold_placing`].
+    placing: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// **When each session was last handed its bot's charter**, on the server's
     /// clock: at the boot that minted it and at every read of the charter. It is
     /// what a charter change is compared against, so the notice ends when the
@@ -459,6 +466,21 @@ impl SessionRegistry {
             .entry(key.to_string())
             .or_default()
             .clone()
+    }
+
+    /// **Wait for the right to place sections on `thing`**, and hold it until the
+    /// guard drops: from the read of the neighbours, through the mint, to the
+    /// last write built on it. Different things never wait on each other.
+    ///
+    /// An entry nobody holds or waits on is dropped on the next call, so a
+    /// handle that names nothing leaves no slot behind once its caller is gone.
+    pub(crate) async fn hold_placing(&self, thing: &EntityId) -> tokio::sync::OwnedMutexGuard<()> {
+        let gate = {
+            let mut held = self.placing.lock().expect("the placing map is poisoned");
+            held.retain(|_, gate| Arc::strong_count(gate) > 1);
+            held.entry(thing.as_str().to_string()).or_default().clone()
+        };
+        gate.lock_owned().await
     }
 
     /// How many gate slots the registry holds. Test only: it is what shows that a

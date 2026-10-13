@@ -1237,3 +1237,139 @@ async fn an_order_field_on_a_claim_that_is_no_document_makes_no_section() {
     );
     assert!(body["results"][0].get("document").is_none(), "{body}");
 }
+
+/// **Two connections over one store that gives up the thread where a real one
+/// does.** The transport builds a handler per connection and the process shares
+/// one registry, so two handlers over one registry are the shape production has.
+fn two_connections() -> (Jojobot, Jojobot, Arc<InMemoryMemory>) {
+    let memory = Arc::new(InMemoryMemory::seeded());
+    let store: Arc<dyn Memory> = Arc::new(YieldsLikeAStore {
+        inner: memory.clone(),
+    });
+    let registry = seeded_registry();
+    let on = || {
+        Jojobot::new(
+            store.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            registry.clone(),
+        )
+    };
+    (on(), on(), memory)
+}
+
+/// The order keys of a document's live sections, in reading order, with the
+/// first line of each.
+async fn placed(memory: &Arc<InMemoryMemory>, document: &str) -> Vec<(String, String)> {
+    let facts = memory
+        .recall(&EntityId::person(document))
+        .await
+        .expect("the document reads");
+    live_sections(&facts)
+        .into_iter()
+        .map(|held| (held.order.clone(), held.section.first_line.clone()))
+        .collect()
+}
+
+/// **Two puts after the same section, at the same moment, mint different keys.**
+/// Each reads the neighbours, mints between them and writes; with nothing
+/// between the read and the write, both read the same neighbours and mint the
+/// same key, and the order they land in is the record ids' and neither call's.
+#[tokio::test]
+async fn two_puts_after_the_same_section_mint_different_keys() {
+    let (a, b, memory) = two_connections();
+    let document = "document:homer";
+    put_ok(&a, document, "# Anchor\n\nanchor\n").await;
+    let anchor = address_of(&a, document, "# Anchor").await;
+
+    let after_anchor = |markdown: &'static str| {
+        let anchor = anchor.clone();
+        async move {
+            PutDocumentArgs {
+                after: Some(anchor),
+                ..put_args(document, markdown).await
+            }
+        }
+    };
+    let left_args = after_anchor("# Left\n\nleft\n").await;
+    let right_args = after_anchor("# Right\n\nright\n").await;
+    let (left, right) = tokio::join!(put(&a, left_args), put(&b, right_args));
+    let (left, right) = (json_of(&left), json_of(&right));
+    assert_ne!(left["status"], "blocked", "{left}");
+    assert_ne!(right["status"], "blocked", "{right}");
+
+    let held = placed(&memory, document).await;
+    let lines: Vec<&str> = held.iter().map(|(_, line)| line.as_str()).collect();
+    assert_eq!(lines.len(), 3, "the anchor and both sections: {held:?}");
+    assert_eq!(lines[0], "# Anchor", "{held:?}");
+    assert!(
+        lines.contains(&"# Left") && lines.contains(&"# Right"),
+        "both sections exist: {held:?}"
+    );
+    let keys: std::collections::BTreeSet<&str> = held.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys.len(), 3, "every section has its own key: {held:?}");
+}
+
+/// **Two moves behind the same section, at the same moment, mint different
+/// keys.** The move reads the neighbours and mints between them as a put does.
+#[tokio::test]
+async fn two_moves_behind_the_same_section_mint_different_keys() {
+    let (a, b, memory) = two_connections();
+    let document = "document:homer";
+    put_ok(
+        &a,
+        document,
+        "# One\n\n1\n\n# Two\n\n2\n\n# Three\n\n3\n\n# Four\n\n4\n",
+    )
+    .await;
+    let one = address_of(&a, document, "# One").await;
+    let three = address_of(&a, document, "# Three").await;
+    let four = address_of(&a, document, "# Four").await;
+
+    let (first, second) = tokio::join!(
+        move_section(&a, &three, &one),
+        move_section(&b, &four, &one)
+    );
+    assert_ne!(json_of(&first)["status"], "blocked", "{first:?}");
+    assert_ne!(json_of(&second)["status"], "blocked", "{second:?}");
+
+    let held = placed(&memory, document).await;
+    let keys: std::collections::BTreeSet<&str> = held.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(held.len(), 4, "{held:?}");
+    assert_eq!(keys.len(), 4, "every section has its own key: {held:?}");
+    assert_eq!(held[0].1, "# One", "{held:?}");
+}
+
+/// **Placing on one document never makes a call on another wait**, and a call on
+/// the same document does wait for the one that holds it.
+#[tokio::test]
+async fn placing_waits_per_document_and_never_across_documents() {
+    let (a, b, _memory) = two_connections();
+    ensure(&a, "document:homer").await;
+    ensure(&a, "document:marge").await;
+    let held = a
+        .registry
+        .hold_placing(&EntityId::person("document:homer"))
+        .await;
+
+    let other = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        put(&b, put_args("document:marge", "# Elsewhere\n\ne\n").await),
+    )
+    .await
+    .expect("a different document does not wait");
+    assert_ne!(json_of(&other)["status"], "blocked", "{other:?}");
+
+    let same_args = put_args("document:homer", "# Here\n\nh\n").await;
+    let same = std::pin::pin!(put(&b, same_args));
+    let mut same = same;
+    let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut same).await;
+    assert!(early.is_err(), "the same document waits for the holder");
+    drop(held);
+    let done = tokio::time::timeout(std::time::Duration::from_secs(5), same)
+        .await
+        .expect("it goes on once the holder lets go");
+    assert_ne!(json_of(&done)["status"], "blocked", "{done:?}");
+}

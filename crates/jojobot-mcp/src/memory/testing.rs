@@ -1170,6 +1170,161 @@ impl Memory for MovesAfterTheRead {
     }
 }
 
+/// **A store that gives up the thread where a real store does**: after a read
+/// has answered, and either side of a write. An in-memory double answers at once,
+/// so two callers on one thread never interleave and a race between a read and
+/// the write built on it cannot happen. This one lets them: the second caller
+/// reads before the first has written.
+pub(crate) struct YieldsLikeAStore {
+    pub(crate) inner: Arc<InMemoryMemory>,
+}
+
+/// Hand the thread to every other task that is ready, a few times over.
+async fn yield_like_a_store() {
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[async_trait]
+impl Memory for YieldsLikeAStore {
+    async fn former_handles(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
+        self.inner.former_handles().await
+    }
+    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        self.inner.list_entities(kind).await
+    }
+    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        self.inner.add_entity(new).await
+    }
+    async fn declare_type(
+        &self,
+        declared: jojobot_domain::memory::types::DeclaredType,
+    ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
+        self.inner.declare_type(declared).await
+    }
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: jojobot_domain::memory::types::Origin,
+        fields: Vec<jojobot_domain::memory::types::Field>,
+    ) -> Result<(), MemoryError> {
+        self.inner.declare_kind(token, origin, fields).await
+    }
+    async fn declared_kinds(
+        &self,
+    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+        self.inner.declared_kinds().await
+    }
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        self.inner.reclaim_kind(token).await
+    }
+    async fn declared_types(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
+        self.inner.declared_types().await
+    }
+    async fn update_entity(
+        &self,
+        id: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.inner.update_entity(id, patch).await
+    }
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: jiff::civil::Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.inner
+            .rename_entity(from, to, parent, date, override_token)
+            .await
+    }
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason).await
+    }
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
+        self.inner.restore_entity(id).await
+    }
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        yield_like_a_store().await;
+        let written = self.inner.capture(fact).await;
+        yield_like_a_store().await;
+        written
+    }
+    async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        let read = self.inner.recall(subject).await;
+        yield_like_a_store().await;
+        read
+    }
+    async fn history(
+        &self,
+        entity: &EntityId,
+        key: &str,
+    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
+        self.inner.history(entity, key).await
+    }
+    async fn claim_history(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+    ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
+        self.inner.claim_history(address).await
+    }
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        self.inner.fields(entity).await
+    }
+    async fn update_fact(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        self.inner.update_fact(address, patch, caller).await
+    }
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        session: Option<&str>,
+    ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
+        self.inner
+            .retract(address, reason, date, caller, session)
+            .await
+    }
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        session: Option<&str>,
+    ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
+        self.inner
+            .merge(folded, survivor, reason, date, caller, session)
+            .await
+    }
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose).await
+    }
+    async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        self.inner.scan().await
+    }
+}
+
 /// **Every `capture` and `update_fact` collides — the shape a real store's
 /// optimistic concurrency takes** (SQLSTATE `40001`), for a caller that
 /// needs `MemoryError::Conflict` without spinning up a real store to race
