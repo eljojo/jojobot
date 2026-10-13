@@ -564,6 +564,15 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .written()
         .expect("not blocked");
     p.agree("after mail for other boxes").await;
+    // **Sent earlier than mail already on the board**: the board lists by the
+    // instant the sender declared, so this one lands before the rest and not
+    // after them.
+    w.post_message(post("delta", "gamma", "three, written earlier", 5))
+        .await
+        .expect("post an earlier-dated message")
+        .written()
+        .expect("not blocked");
+    p.agree("after a message dated before the others").await;
     assert!(
         matches!(
             w.post_message(post("gamm", "delta", "five", 60)).await,

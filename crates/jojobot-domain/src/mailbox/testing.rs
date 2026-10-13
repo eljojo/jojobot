@@ -608,11 +608,15 @@ impl Mailboxes for InMemoryMailboxes {
         }
         let quarantined = self.quarantined.lock().expect("quarantine lock");
         let messages = self.messages.lock().expect("message lock");
-        Ok(messages
+        let mut board: Vec<Message> = messages
             .iter()
             .filter(|m| !quarantined.iter().any(|(_, card, _)| card == &m.id))
             .map(|m| read_as_stored(&messages, m))
-            .collect())
+            .collect();
+        // The real board lists by the instant the sender declared, the order the
+        // messages were filed in breaking a tie; the sort is stable.
+        board.sort_by_key(|m| m.sent_at);
+        Ok(board)
     }
 
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {

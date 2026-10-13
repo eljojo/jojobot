@@ -119,9 +119,23 @@ impl Image {
             Some(counts) => count(counts, &message),
             None => return false,
         }
-        self.at.insert(message.id.clone(), self.messages.len());
-        self.messages.push(message);
+        // The board lists by the instant the sender declared, the order of filing
+        // breaking a tie, and this message was filed last.
+        let place = self
+            .messages
+            .partition_point(|held| held.sent_at <= message.sent_at);
+        self.messages.insert(place, message);
+        self.reindex();
         true
+    }
+
+    fn reindex(&mut self) {
+        self.at = self
+            .messages
+            .iter()
+            .enumerate()
+            .map(|(place, m)| (m.id.clone(), place))
+            .collect();
     }
 }
 
