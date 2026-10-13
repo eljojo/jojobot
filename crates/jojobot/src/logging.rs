@@ -4,10 +4,20 @@
 
 use tracing_subscriber::{Layer, layer::SubscriberExt};
 
+/// **Whether a log written to `stream` is coloured.** One rule: only when the
+/// stream is an interactive terminal. The service under systemd writes to a
+/// pipe, and colour there puts escape codes inside a field's text, so a search of
+/// the log for `tool="capture"` finds nothing.
+pub fn colour_for(stream: &impl std::io::IsTerminal) -> bool {
+    stream.is_terminal()
+}
+
 /// **The subscriber the binary logs through**, over any writer. Start-up and the
-/// case that reads the log back build it the same way.
+/// case that reads the log back build it the same way. `ansi` is the answer of
+/// [`colour_for`] for the stream the writer ends in.
 pub fn logging<W>(
     writer: W,
+    ansi: bool,
     level: tracing_subscriber::EnvFilter,
 ) -> impl tracing::Subscriber + Send + Sync
 where
@@ -16,6 +26,7 @@ where
     tracing_subscriber::registry().with(level).with(
         tracing_subscriber::fmt::layer()
             .with_writer(writer)
+            .with_ansi(ansi)
             .with_filter(without_the_lines_the_log_says_elsewhere()),
     )
 }
@@ -89,7 +100,11 @@ mod tests {
     #[test]
     fn the_benign_merge_warning_is_filtered_and_other_tantivy_events_are_not() {
         let kept = Kept::default();
-        let subscriber = logging(kept.clone(), tracing_subscriber::EnvFilter::new("info"));
+        let subscriber = logging(
+            kept.clone(),
+            false,
+            tracing_subscriber::EnvFilter::new("info"),
+        );
         tracing::subscriber::with_default(subscriber, || {
             tracing::warn!(target: "tantivy::indexer::segment_manager", "couldn't find segment in SegmentManager");
             tracing::warn!(target: "tantivy::indexer::segment_updater", "another tantivy warning");
@@ -113,6 +128,56 @@ mod tests {
         }
     }
 
+    /// **A log written to something that is not a terminal carries no escape
+    /// byte, and the text a search looks for is whole.** The default formatter
+    /// colours a field's name, which puts escape codes inside `tool="capture"`
+    /// and hides it from a search of the log.
+    #[test]
+    fn a_log_that_is_not_a_terminal_holds_plain_text() {
+        let kept = Kept::default();
+        let subscriber = logging(
+            kept.clone(),
+            false,
+            tracing_subscriber::EnvFilter::new("info"),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(tool = "capture", outcome = "answered", "mcp request ended");
+        });
+        let bytes = kept.0.lock().expect("log buffer").clone();
+        assert!(
+            !bytes.contains(&0x1b),
+            "an escape byte was written: {:?}",
+            String::from_utf8_lossy(&bytes)
+        );
+        let text = String::from_utf8(bytes).expect("utf8");
+        assert!(
+            text.contains("tool=\"capture\""),
+            "the field is whole in the text: {text}"
+        );
+    }
+
+    /// **Colour is a choice made once, from the stream.** A file is not a
+    /// terminal, so the rule says no; and the flag it feeds is what turns colour
+    /// on, so a build that ignored it would pass the case above for the wrong
+    /// reason.
+    #[test]
+    fn colour_is_on_only_when_the_stream_is_a_terminal() {
+        let not_a_terminal = std::fs::File::open("/dev/null").expect("a device that exists");
+        assert!(!colour_for(&not_a_terminal));
+
+        let kept = Kept::default();
+        let subscriber = logging(
+            kept.clone(),
+            true,
+            tracing_subscriber::EnvFilter::new("info"),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(tool = "capture", "mcp request ended");
+        });
+        let bytes = kept.0.lock().expect("log buffer").clone();
+        assert!(bytes.contains(&0x1b), "colour on writes escape codes");
+    }
+
     /// **The same holds for the path tantivy's warnings really take.** Tantivy
     /// logs through the `log` crate, and the binary's subscriber bridges it into
     /// tracing; a bridged event's own target is "log", with tantivy's module in
@@ -124,7 +189,11 @@ mod tests {
         // second test that installed it first is not a failure.
         let _ = tracing_log::LogTracer::init();
         let kept = Kept::default();
-        let subscriber = logging(kept.clone(), tracing_subscriber::EnvFilter::new("info"));
+        let subscriber = logging(
+            kept.clone(),
+            false,
+            tracing_subscriber::EnvFilter::new("info"),
+        );
         tracing::subscriber::with_default(subscriber, || {
             tracing_log::log::warn!(target: "tantivy::indexer::segment_manager", "couldn't find segment in SegmentManager");
             tracing_log::log::warn!(target: "tantivy::indexer::segment_updater", "another tantivy warning");

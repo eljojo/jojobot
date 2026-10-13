@@ -1529,22 +1529,6 @@ async fn a_listen_dropped_by_the_client_logs_one_info_line_naming_it() {
     ct.cancel();
 }
 
-/// The text of a log a person reads: the subscriber colours its fields, which
-/// splits `tool="capture"` with escape codes.
-fn without_colour(text: &str) -> String {
-    let mut kept = String::new();
-    let mut in_escape = false;
-    for c in text.chars() {
-        match (in_escape, c) {
-            (_, '\u{1b}') => in_escape = true,
-            (true, 'm') => in_escape = false,
-            (false, c) => kept.push(c),
-            _ => {}
-        }
-    }
-    kept
-}
-
 /// A teaching ledger that can be made to hold the next call open, so a tool call
 /// is still being answered when its client goes away.
 struct StallsWhenTold {
@@ -1594,6 +1578,7 @@ async fn a_closed_connection_leaves_only_the_request_logs_error_in_the_process_l
     let writer = buffer.clone();
     let _log = tracing::subscriber::set_default(jojobot::logging::logging(
         move || writer.clone(),
+        false,
         tracing_subscriber::EnvFilter::new("info"),
     ));
     let teachings = Arc::new(StallsWhenTold {
@@ -1612,15 +1597,12 @@ async fn a_closed_connection_leaves_only_the_request_logs_error_in_the_process_l
         let buffer = buffer.clone();
         async move {
             for _ in 0..60 {
-                if without_colour(&buffer.warnings()).contains(needle) {
+                if buffer.warnings().contains(needle) {
                     return;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            panic!(
-                "{needle:?} never reached the log: {}",
-                without_colour(&buffer.warnings())
-            );
+            panic!("{needle:?} never reached the log: {}", buffer.warnings());
         }
     };
     let client_info = || {
@@ -1713,7 +1695,7 @@ async fn a_closed_connection_leaves_only_the_request_logs_error_in_the_process_l
 
     // Let the transport finish whatever it reports after a close.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let text = without_colour(&buffer.warnings());
+    let text = buffer.warnings();
     let errors: Vec<&str> = text.lines().filter(|l| l.contains(" ERROR ")).collect();
     assert_eq!(errors.len(), 1, "one ERROR, the capture's: {text}");
     assert!(

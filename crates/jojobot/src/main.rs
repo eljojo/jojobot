@@ -246,5 +246,6 @@ fn init_tracing() {
     } else {
         "info".into()
     };
-    jojobot::logging::logging(std::io::stdout, filter).init();
+    let ansi = jojobot::logging::colour_for(&std::io::stdout());
+    jojobot::logging::logging(std::io::stdout, ansi, filter).init();
 }
