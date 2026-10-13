@@ -1348,6 +1348,18 @@ pub(crate) fn record_room(rest: usize, skeleton: usize, widest_pointer: usize) -
     jojobot_domain::text::ANSWER_CEILING.saturating_sub(rest + skeleton + widest_pointer)
 }
 
+/// **What an answer says of the standing decisions it did not carry**, and the
+/// browse that reads them.
+fn decisions_not_shown(count: usize, of: &str) -> serde_json::Value {
+    serde_json::json!({
+        "count": count,
+        "how_to_proceed": format!(
+            "recall kind: decision with parent: {of} and facts: true reads every \
+             standing decision, filling in parts"
+        ),
+    })
+}
+
 /// The key a standing decision carries in an answer, naming its thread.
 const STANDING_DECISION_OF: &str = "standing_decision_of";
 
@@ -1471,7 +1483,13 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
             skeleton["facts"] = serde_json::json!([]);
         }
         skeleton["facts_not_shown"] = serde_json::json!({"count": 0, "how_to_proceed": ""});
-        let mut room = ANSWER_CEILING.saturating_sub(rest + widest + size(&skeleton));
+        let of = objects[0][STANDING_DECISION_OF]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let widest_block =
+            crate::answer::under_key("decisions_not_shown", &decisions_not_shown(usize::MAX, &of));
+        let mut room = ANSWER_CEILING.saturating_sub(rest + widest_block + size(&skeleton));
         let mut kept: Vec<serde_json::Value> = Vec::new();
         let mut used = 0usize;
         for decision in &objects {
@@ -1484,12 +1502,14 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
             kept.push(decision.clone());
         }
         let left_out = objects.len() - kept.len();
-        let of = objects[0][STANDING_DECISION_OF]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        // The block that names the decisions left out rides beside the thread's
+        // records, so the records are filled after it is counted.
+        let block = (left_out > 0).then(|| decisions_not_shown(left_out, &of));
+        let block_cost = block.as_ref().map_or(0, |block| {
+            crate::answer::under_key("decisions_not_shown", block) + 1
+        });
         if thread_has_records {
-            fit_facts_of_one(body, thread, 0, used);
+            fit_facts_of_one(body, thread, 0, used + block_cost);
         } else {
             body["objects"] = serde_json::json!([thread]);
         }
@@ -1502,14 +1522,8 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
         );
         body["count"] = served.len().into();
         body["objects"] = served.into();
-        if left_out > 0 {
-            body["decisions_not_shown"] = serde_json::json!({
-                "count": left_out,
-                "how_to_proceed": format!(
-                    "recall kind: decision with parent: {of} and facts: true reads every \
-                     standing decision, filling in parts"
-                ),
-            });
+        if let Some(block) = block {
+            body["decisions_not_shown"] = block;
         }
         return;
     }

@@ -144,10 +144,7 @@ impl Jojobot {
         // **The block is counted under its key**, as it rides the answer: the
         // key is characters the answer spends too.
         let rest = envelope(page.len()).to_string().chars().count()
-            + serde_json::json!({ "not_shown": crate::answer::not_shown(held, held, "runs") })
-                .to_string()
-                .chars()
-                .count()
+            + crate::answer::under_key("not_shown", &crate::answer::not_shown(held, held, "runs"))
             + STATUS_BAR_ROOM;
         let kept = Capped::beside(rest).head(&rendered, |(_, size)| *size);
         let mut answer = envelope(kept.kept().len());

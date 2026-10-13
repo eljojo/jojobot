@@ -495,10 +495,17 @@ pub(crate) fn not_shown(count: usize, offset: usize, what: &str) -> serde_json::
 /// measured with the largest numbers a count and an offset can hold, so no real
 /// block of `what` is wider.
 pub(crate) fn widest_not_shown(what: &str) -> usize {
-    serde_json::json!({"not_shown": not_shown(usize::MAX, usize::MAX, what)})
-        .to_string()
-        .chars()
-        .count()
+    under_key("not_shown", &not_shown(usize::MAX, usize::MAX, what))
+}
+
+/// **The characters a block takes in an answer, with the key it rides under.**
+/// Every fill that keeps room for a block naming what it left out counts that
+/// block here, so the key is never left out of the sum. The comma that joins it
+/// to its neighbour is not counted.
+pub(crate) fn under_key(key: &str, block: &serde_json::Value) -> usize {
+    let mut keyed = serde_json::Map::new();
+    keyed.insert(key.to_string(), block.clone());
+    serde_json::Value::Object(keyed).to_string().chars().count()
 }
 
 // ── what a write says about itself ──────────────────────────────────────────

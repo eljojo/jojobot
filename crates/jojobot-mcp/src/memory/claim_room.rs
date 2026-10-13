@@ -335,10 +335,7 @@ fn read_of_a_thing(entity: &Entity, folded: &Fold) -> (usize, usize, usize) {
         "teaching": [crate::teaching::CLAIMS_TEACHING],
     });
     let rest = envelope.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
-    let widest = crate::answer::not_shown(usize::MAX, usize::MAX, "objects")
-        .to_string()
-        .chars()
-        .count();
+    let widest = crate::answer::widest_not_shown("objects");
     (skeleton, rest, widest)
 }
 

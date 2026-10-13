@@ -210,7 +210,8 @@ pub fn fit_under_ceiling(body: &mut serde_json::Value) {
         // The row without its blockers, and the marker at its widest.
         object["blocked_by"] = serde_json::json!([]);
         let own = crate::answer::served_len(object) + 1;
-        let marker = cost_of(&left_out_marker(usize::MAX)) + "blocked_by_left_out".len();
+        let marker =
+            crate::answer::under_key("blocked_by_left_out", &left_out_marker(usize::MAX)) + 1;
         let room = BLOCKED_BY_ROOM.min(ANSWER_CEILING.saturating_sub(rest + own + marker));
         let mut spent = 0usize;
         let kept = blockers
@@ -283,5 +284,67 @@ mod tests {
         let listed: std::collections::BTreeSet<String> =
             BLOCKER_WORDS.iter().map(|word| word.to_string()).collect();
         assert_eq!(written, listed);
+    }
+    /// **The room the cut keeps for its marker is the marker as it rides the
+    /// answer, key included.** A read whose other content leaves the blockers
+    /// less than their own bound is cut to what is left, and the marker that
+    /// counts the rest is spent from the same room. Swept over how much else the
+    /// answer carries, because the edge of the room falls in a different place
+    /// for each size, and a marker counted short only shows where an entry ends
+    /// within its shortfall of the edge.
+    #[test]
+    fn a_cut_answer_keeps_room_for_its_marker_under_its_key() {
+        let verdict = Verdict {
+            ready: false,
+            blockers: (0..60)
+                .map(|n| Blocker::Dependency {
+                    handle: format!("work:{}", "d".repeat(20 + n % 7)),
+                    why: Why::Unfinished,
+                })
+                .collect(),
+        };
+        let mut object = serde_json::json!({"id": "work:phi", "name": "phi"});
+        render(&mut object, &verdict);
+        assert!(
+            object["blocked_by_left_out"]["count"].as_u64().unwrap_or(0) > 0,
+            "the case needs a list cut at its own bound: {object}"
+        );
+        let measured = {
+            let mut bare = serde_json::json!({"objects": [object.clone()]});
+            bare["objects"][0]["blocked_by"] = serde_json::json!([]);
+            bare["objects"][0]
+                .as_object_mut()
+                .map(|fields| fields.remove("blocked_by_left_out"));
+            crate::answer::served_len(&bare)
+        };
+        let reserved = crate::answer::STATUS_BAR_ROOM + crate::answer::widest_not_shown("objects");
+        // Other content that leaves the blockers about 1,000 characters.
+        let base = jojobot_domain::text::ANSWER_CEILING - reserved - measured - 1_000;
+        let rendered_whole = object["blocked_by"].as_array().map_or(0, Vec::len);
+        let mut cut_by_the_room = 0;
+        for other in base..base + 400 {
+            let mut body = serde_json::json!({
+                "objects": [object.clone()],
+                "other": "x".repeat(other),
+            });
+            fit_under_ceiling(&mut body);
+            let served = crate::answer::served_len(&body) + reserved;
+            assert!(
+                served <= jojobot_domain::text::ANSWER_CEILING,
+                "{other}: the answer is {served} of {} with its status bar and the block a \
+                 fill would add",
+                jojobot_domain::text::ANSWER_CEILING
+            );
+            let kept = body["objects"][0]["blocked_by"]
+                .as_array()
+                .map_or(0, Vec::len);
+            if kept < rendered_whole {
+                cut_by_the_room += 1;
+            }
+        }
+        assert_eq!(
+            cut_by_the_room, 400,
+            "the room, not the bound, did the cutting"
+        );
     }
 }

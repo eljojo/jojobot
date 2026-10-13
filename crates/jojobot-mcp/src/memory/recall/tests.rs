@@ -8220,3 +8220,120 @@ async fn a_stored_where_past_a_cap_is_refused_naming_the_view_and_the_fix() {
     );
     assert_ne!(plain["status"], "blocked", "{plain}");
 }
+
+/// **A thread read with four standing decisions, as the served answer**: each
+/// decision `decision_words` words long and the thread holding `findings`
+/// records of `finding_words` words. Returns the answer before the status bar.
+async fn a_kitchen_answer(
+    decisions: usize,
+    decision_words: usize,
+    findings: usize,
+    finding_words: usize,
+) -> serde_json::Value {
+    let jojobot = crate::harness::handler_shipped();
+    let sid = writing_as(&jojobot);
+    ensure(&jojobot, "thread:simpson-kitchen").await;
+    for n in 0..decisions {
+        // Long and unlike each other, so the near-slug screen waves each through.
+        let mut state = 0x9e37_79b9_u64.wrapping_mul(n as u64 + 1);
+        let name: String = (0..24)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                char::from(b'a' + ((state >> 33) % 26) as u8)
+            })
+            .collect();
+        let name = name.as_str();
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thread:simpson-kitchen".into()),
+                sid: Some(sid.clone()),
+                ..add_args("decision", name, name)
+            }))
+            .await
+            .expect("add ok");
+        let reasons: String = (0..decision_words)
+            .map(|word| format!("r{word} "))
+            .collect();
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args(&format!("decision:{name}"), &format!("decided: {reasons}"))
+            },
+        )
+        .await;
+    }
+    for finding in 0..findings {
+        let words: String = (0..finding_words)
+            .map(|word| format!("f{finding}w{word} "))
+            .collect();
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args(
+                    "thread:simpson-kitchen",
+                    &format!("finding {finding}: {words}"),
+                )
+            },
+        )
+        .await;
+    }
+    json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid.clone()),
+                ..of("thread:simpson-kitchen")
+            }))
+            .await
+            .expect("recall ok"),
+    )
+}
+
+/// **A thread cut in its standing decisions AND in its own records keeps room
+/// for both blocks that say what was left out.** The two cuts each add a block
+/// to the answer, so the room kept for blocks is spent twice. Swept over the
+/// size of the thread's records, because the edge of the fill falls in a
+/// different place for each size, and a block left unreserved only shows where
+/// the last record ends within its width of the edge.
+#[tokio::test]
+async fn a_thread_cut_in_decisions_and_in_records_keeps_room_for_both_blocks() {
+    for pad in 0..40 {
+        let answer = a_kitchen_answer(4, 1800, 30, 60 + pad).await;
+        assert!(
+            answer["decisions_not_shown"].is_object() && answer["not_shown"].is_object(),
+            "{pad}: the case needs both cuts: {}",
+            answer.to_string().chars().take(300).collect::<String>()
+        );
+        let served = crate::answer::served_len(&answer) + crate::answer::STATUS_BAR_ROOM;
+        assert!(
+            served <= jojobot_domain::text::ANSWER_CEILING,
+            "{pad}: the answer is {served} of {} with its status bar",
+            jojobot_domain::text::ANSWER_CEILING
+        );
+    }
+}
+
+/// **A thread with no records of its own, cut in its standing decisions, keeps
+/// room for the block that names them.** The thread has no fill after the
+/// decisions, so the room kept before them is the only room the block has.
+/// Swept over the size of a decision for the same reason as the case above.
+#[tokio::test]
+async fn a_thread_with_only_decisions_keeps_room_for_the_block_naming_the_rest() {
+    for pad in 0..40 {
+        let answer = a_kitchen_answer(60, 90 + pad, 0, 0).await;
+        assert!(
+            answer["decisions_not_shown"].is_object(),
+            "{pad}: the case needs the cut: {}",
+            answer.to_string().chars().take(300).collect::<String>()
+        );
+        let served = crate::answer::served_len(&answer) + crate::answer::STATUS_BAR_ROOM;
+        assert!(
+            served <= jojobot_domain::text::ANSWER_CEILING,
+            "{pad}: the answer is {served} of {} with its status bar",
+            jojobot_domain::text::ANSWER_CEILING
+        );
+    }
+}
