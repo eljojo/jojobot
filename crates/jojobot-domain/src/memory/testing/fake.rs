@@ -2575,6 +2575,19 @@ impl Memory for InMemoryMemory {
                     source.local.clone(),
                 ));
             }
+            // **So are the references and the mark the write kept**, each
+            // stored under a storage key and served under today's handle.
+            if let Some(refs) = &mut write.refs {
+                for object in refs.iter_mut() {
+                    *object = self.current_handle(object);
+                }
+            }
+            if let Some(marked) = &mut write.stands_for {
+                for named in marked.iter_mut() {
+                    *named =
+                        FactAddress::new(self.current_handle(&named.home), named.local.clone());
+                }
+            }
         }
         Ok(mine)
     }

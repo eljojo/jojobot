@@ -115,6 +115,9 @@ mod investigating;
 /// The three loops a person actually keeps, and the one with no cadence.
 #[path = "user_stories/keeping_up.rs"]
 mod keeping_up;
+/// What a record pointed at and stood for at each write of it.
+#[path = "user_stories/kept_marks.rs"]
+mod kept_marks;
 /// A run taken over by its name is taught and shown afresh; a wrap code is not.
 #[path = "user_stories/picked_up_by_name.rs"]
 mod picked_up_by_name;

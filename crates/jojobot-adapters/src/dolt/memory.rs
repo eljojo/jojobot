@@ -1372,6 +1372,55 @@ impl DoltMemory {
         Ok(stored.clone())
     }
 
+    /// **Read what a write kept of the claim's references and mark, onto the
+    /// write**, served under the handles the keys answer to today.
+    ///
+    /// A write kept before the columns existed holds NULL in both, and reads as
+    /// `None` rather than as a write that pointed at or stood for nothing. A
+    /// cell that is not the JSON this store wrote is damage and is named, not
+    /// read as empty.
+    async fn read_kept_marks(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        row: &sqlx::mysql::MySqlRow,
+        write: &mut ClaimWrite,
+    ) -> Result<(), MemoryError> {
+        let damaged = |what: &str| {
+            unreadable(&format!(
+                "its kept {what} cannot be read as the list this store wrote"
+            ))
+        };
+        if let Some(cell) = row
+            .try_get::<Option<String>, _>("kept_refs")
+            .map_err(store)?
+        {
+            let keys: Vec<String> = serde_json::from_str(&cell).map_err(|_| damaged("refs"))?;
+            let mut refs = Vec::with_capacity(keys.len());
+            for key in keys {
+                refs.push(self.current_handle(tx, &EntityId(key)).await?);
+            }
+            write.refs = Some(refs);
+        } else {
+            write.refs = None;
+        }
+        if let Some(cell) = row
+            .try_get::<Option<String>, _>("kept_stands_for")
+            .map_err(store)?
+        {
+            let pairs: Vec<[String; 2]> =
+                serde_json::from_str(&cell).map_err(|_| damaged("mark"))?;
+            let mut marked = Vec::with_capacity(pairs.len());
+            for [home, local] in pairs {
+                let resolved = self.current_handle(tx, &EntityId(home)).await?;
+                marked.push(FactAddress::new(resolved, FactId(local)));
+            }
+            write.stands_for = Some(marked);
+        } else {
+            write.stands_for = None;
+        }
+        Ok(())
+    }
+
     /// **Every pointer-bearing field on a fact, lowered from served (handle)
     /// form to stored (badge) form, in one pass, unconditionally.**
     ///
@@ -3034,8 +3083,8 @@ impl DoltMemory {
                                      happened_through, edge_shape,
                                      edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
-                                     written_at, session)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     written_at, session, refs, stands_for)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -3060,6 +3109,10 @@ impl DoltMemory {
         // instance acting out a day.
         .bind(clock.now().to_string())
         .bind(session)
+        // **What the claim pointed at and stood for at this write**, kept
+        // because the tables behind a current read keep the newest set only.
+        .bind(kept_refs(&fact.refs))
+        .bind(kept_stands_for(&fact.stands_for))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -3583,6 +3636,25 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
             reason.zip(at).map(|(reason, at)| Archived { reason, at })
         },
     })
+}
+
+/// **The references of a claim, as one write keeps them**: a JSON array of the
+/// keys the entities are stored under, in the order they were named.
+fn kept_refs(refs: &[EntityId]) -> String {
+    serde_json::to_string(&refs.iter().map(EntityId::as_str).collect::<Vec<_>>())
+        .expect("a list of strings is JSON")
+}
+
+/// **The mark of a claim, as one write keeps it**: a JSON array of
+/// `[home key, claim id]` pairs, in the order they were named.
+fn kept_stands_for(marked: &[FactAddress]) -> String {
+    serde_json::to_string(
+        &marked
+            .iter()
+            .map(|named| [named.home.as_str(), named.local.as_str()])
+            .collect::<Vec<_>>(),
+    )
+    .expect("a list of string pairs is JSON")
 }
 
 fn fact_from(
@@ -4566,7 +4638,8 @@ impl Memory for DoltMemory {
         // uses.** One row shape and one reader: a second would be a second
         // place for the columns to drift.
         let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, w.written_at, w.session, {FACT_WRITE_COLUMNS} FROM fact_write w
+            "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
+                    w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
         ))
         .bind(key.as_str())
@@ -4602,10 +4675,11 @@ impl Memory for DoltMemory {
                 .try_get::<Option<String>, _>("written_at")
                 .map_err(store)?
                 .and_then(|at| at.parse::<jiff::Timestamp>().ok());
-            // **Fields and references are left empty rather than read.** They
-            // are versioned by their own substrate and by nothing here, so
-            // reading today's keys onto a write from a year ago would report
-            // them as what that write said. `ClaimWrite` carries neither.
+            // **Fields are left empty rather than read.** They are versioned by
+            // their own substrate and by nothing here, so reading today's keys
+            // onto a write from a year ago would report them as what that write
+            // said. The references and the mark come off the write's own row,
+            // below.
             let mut fact = fact_from(
                 row,
                 key.clone(),
@@ -4632,6 +4706,7 @@ impl Memory for DoltMemory {
             // write kept before the column existed and for one no run made.
             let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
             write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
+            self.read_kept_marks(&mut tx, row, &mut write).await?;
             history.push(write);
         }
         tx.commit().await.map_err(store)?;
@@ -4658,7 +4733,8 @@ impl Memory for DoltMemory {
         // entity holds, ordered so each claim's own writes stay oldest-first
         // once grouped by id below.
         let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, w.written_at, w.session, {FACT_WRITE_COLUMNS} FROM fact_write w
+            "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
+                    w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
         ))
         .bind(key.as_str())
@@ -4696,6 +4772,7 @@ impl Memory for DoltMemory {
             }
             let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
             write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
+            self.read_kept_marks(&mut tx, row, &mut write).await?;
             histories.entry(id).or_default().push(write);
         }
         tx.commit().await.map_err(store)?;

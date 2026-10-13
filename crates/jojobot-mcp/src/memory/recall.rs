@@ -991,6 +991,21 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
                 if let Some(day) = &write.stale_after {
                     fields.insert("stale_after".into(), day.to_string().into());
                 }
+                // **What this write pointed at and stood for.** An empty list is
+                // a write that recorded none, and an absent key is a write kept
+                // before the store recorded them: the two read apart.
+                if let Some(refs) = &write.refs {
+                    fields.insert(
+                        "refs".into(),
+                        refs.iter().map(|named| named.as_str()).collect::<Vec<_>>().into(),
+                    );
+                }
+                if let Some(marked) = &write.stands_for {
+                    fields.insert(
+                        "stands_for".into(),
+                        marked.iter().map(|named| named.to_string()).collect::<Vec<_>>().into(),
+                    );
+                }
             }
             rendered
         }).collect::<Vec<_>>(),

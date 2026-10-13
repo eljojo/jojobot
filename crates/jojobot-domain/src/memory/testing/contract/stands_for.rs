@@ -1,4 +1,4 @@
-use super::support::{capture, edit, other_caller};
+use super::support::{add, capture, edit, other_caller};
 use super::*;
 
 /// **A mark names claims, and each has to be there** — the same rule
@@ -493,6 +493,89 @@ pub async fn sources_stay_active_and_walkable_after_being_marked<M: Memory>(stor
     );
 }
 
+/// **A claim's references and its mark are kept at each write of it.** The
+/// tables that answer a current read hold the newest state only, so a mark set
+/// twice leaves nothing of the first, and a read of the claim's writes shows each
+/// set as that write had it. **Paired in one read**: the current read shows only
+/// the newest, which is what keeps the writes from being a second copy of it.
+pub async fn a_claims_refs_and_marks_are_kept_at_each_write<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-kept-writes");
+    let pointed = EntityId::person("person:contract-kept-pointed");
+    add(
+        store,
+        NewEntity::new(pointed.clone(), "The Pointed One", "the roster"),
+    )
+    .await;
+    let claim = capture(
+        store,
+        NewFact {
+            refs: vec![pointed.clone()],
+            ..NewFact::about(subject.clone(), "met at the fair", date(2026, 5, 1))
+        },
+    )
+    .await;
+    let beta = capture(
+        store,
+        NewFact::about(subject.clone(), "stood by the stall", date(2026, 5, 2)),
+    )
+    .await;
+    let gamma = capture(
+        store,
+        NewFact::about(subject.clone(), "bought a ticket", date(2026, 5, 3)),
+    )
+    .await;
+    for named in [&beta, &gamma] {
+        edit(
+            store,
+            &claim.address(),
+            FactPatch {
+                stands_for: Some(vec![named.address()]),
+                ..FactPatch::default()
+            },
+        )
+        .await;
+    }
+
+    let writes = store
+        .claim_history(&claim.address())
+        .await
+        .expect("the writes of a claim read");
+    assert_eq!(writes.len(), 3, "a capture and two edits are three writes");
+    assert_eq!(
+        writes[0].refs,
+        Some(vec![pointed.clone()]),
+        "the first write does not show what it pointed at: {writes:?}"
+    );
+    assert_eq!(
+        writes[0].stands_for,
+        Some(Vec::new()),
+        "the first write stood for nothing and a store that kept it says so: {writes:?}"
+    );
+    assert_eq!(
+        writes[1].stands_for,
+        Some(vec![beta.address()]),
+        "the first mark was erased by the second: {writes:?}"
+    );
+    assert_eq!(writes[2].stands_for, Some(vec![gamma.address()]));
+    assert_eq!(
+        writes[2].refs,
+        Some(vec![pointed]),
+        "an edit that named no refs lost them from its write: {writes:?}"
+    );
+    let now = store
+        .recall(&subject)
+        .await
+        .expect("recall should succeed")
+        .into_iter()
+        .find(|f| f.id == claim.id)
+        .expect("the claim is there");
+    assert_eq!(
+        now.stands_for,
+        vec![gamma.address()],
+        "the current read shows the newest mark only"
+    );
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_stands_for<M: Memory>(store: &M) {
     stands_for_must_name_facts_that_exist(store).await;
@@ -504,4 +587,5 @@ pub async fn run_all_stands_for<M: Memory>(store: &M) {
     clear_stands_for_takes_the_mark_off(store).await;
     stands_for_replaces_rather_than_merges(store).await;
     sources_stay_active_and_walkable_after_being_marked(store).await;
+    a_claims_refs_and_marks_are_kept_at_each_write(store).await;
 }

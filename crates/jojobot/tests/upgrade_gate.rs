@@ -4785,3 +4785,131 @@ async fn deploy_4_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row()
     )
     .await;
 }
+
+/// **A `fact_write` row an older build appended reads as NULL in the two columns
+/// that keep references and the mark, and the first claim the current binary
+/// writes keeps both.** The old rows are counted before the binary touches the
+/// store, and the same number is found with no kept references afterwards: the
+/// migration neither filled them nor lost them. The positive is the new claim,
+/// which kept the thing it pointed at and an empty mark, so a NULL on the old
+/// rows is a choice and not a column that is never written.
+async fn old_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references(
+    fixture_dir: &str,
+    label: &str,
+) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let old: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write")
+        .fetch_one(store.pool())
+        .await
+        .expect("the old rows are countable");
+    store.stop().await;
+    assert!(
+        old > 0,
+        "recorded at {git_ref}: the recording holds no fact_write row"
+    );
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let boot: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    )
+    .expect("the boot answers in JSON");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
+        .to_string();
+    for (kind, handle, name) in [
+        ("thing", "omega", "A kept reference"),
+        ("person", "teddy", "A pointed person"),
+    ] {
+        let made = surface
+            .call(
+                "add_entity",
+                json!({"kind": kind, "handle": handle, "name": name,
+                       "source": "user-named", "sid": sid}),
+            )
+            .await;
+        assert!(
+            !made.contains("\"status\":\"blocked\""),
+            "recorded at {git_ref}: making {kind}:{handle}: {made}"
+        );
+    }
+    let written = surface
+        .call(
+            "capture",
+            json!({"subject": "thing:omega", "content": "points at a person",
+                   "provenance": "testimony", "refs": ["person:teddy"], "sid": sid}),
+        )
+        .await;
+    assert!(
+        !written.contains("\"status\":\"blocked\""),
+        "recorded at {git_ref}: writing the claim: {written}"
+    );
+    surface.finish().await;
+    booted.stop().await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let unkept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE refs IS NULL")
+        .fetch_one(store.pool())
+        .await
+        .expect("the unkept rows are countable");
+    let new: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT w.refs, w.stands_for, p.badge FROM fact_write w
+         JOIN entity e ON e.badge = w.entity AND e.id = 'thing:omega'
+         JOIN entity p ON p.id = 'person:teddy'",
+    )
+    .fetch_optional(store.pool())
+    .await
+    .expect("the new write is readable");
+    store.stop().await;
+    drop(scratch);
+
+    assert_eq!(
+        unkept, old,
+        "recorded at {git_ref}: the rows an older build appended are the rows with no kept references"
+    );
+    let (refs, stands_for, pointed_badge) =
+        new.unwrap_or_else(|| panic!("recorded at {git_ref}: the new claim has no write"));
+    assert_eq!(
+        refs,
+        Some(format!("[\"{pointed_badge}\"]")),
+        "recorded at {git_ref}: the write the current binary made keeps what it pointed at"
+    );
+    assert_eq!(
+        stands_for,
+        Some("[]".to_string()),
+        "recorded at {git_ref}: the write keeps an empty mark as empty, not as unrecorded"
+    );
+}
+
+#[tokio::test]
+async fn deploy_3_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references() {
+    old_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references(
+        DEPLOY_3_FIXTURE_DIR,
+        "fact-write-3",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn deploy_4_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references() {
+    old_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references(
+        DEPLOY_4_FIXTURE_DIR,
+        "fact-write-4",
+    )
+    .await;
+}

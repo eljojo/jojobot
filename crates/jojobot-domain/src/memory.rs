@@ -5166,14 +5166,14 @@ pub struct EntityVersion {
 /// [`Fact::inserted_at`] for the claim, [`ClaimWrite::written_at`] for the
 /// write.
 ///
-/// ⚠️ **Nor does it carry the record's fields or its references.** Those are
-/// versioned by their own substrate and by nothing here, so a claim's write
-/// reporting them would report today's keys against words from a year ago.
+/// ⚠️ **It does not carry the record's fields.** Those are versioned by their
+/// own substrate and by nothing here, so a claim's write reporting them would
+/// report today's keys against words from a year ago.
 ///
-/// **Nor does it carry [`Fact::stands_for`], for the same reason.** The mark
-/// is current state, not versioned per write — a store answers what a record
-/// stands for now, never what it stood for as of an old write, so there is
-/// nothing honest to put here yet.
+/// **It carries [`Fact::refs`] and [`Fact::stands_for`] as each write had
+/// them.** The tables that answer a current read hold current state only, so
+/// each write keeps its own copy, and a write kept before the store did that
+/// carries `None` rather than today's value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimWrite {
     /// **Which write this is, counting from one.** The first write is what the
@@ -5223,6 +5223,15 @@ pub struct ClaimWrite {
     pub derived_from: Option<FactAddress>,
     /// When somebody was to look at it again, as this write had it.
     pub stale_after: Option<Date>,
+    /// **The entities the record pointed at, as this write had them** — see
+    /// [`Fact::refs`]. `None` for a write kept before the store kept them,
+    /// which says nothing was recorded, where `Some` of an empty list says the
+    /// write pointed at nothing.
+    pub refs: Option<Vec<EntityId>>,
+    /// **The claims the record stood for, as this write had them** — see
+    /// [`Fact::stands_for`]. `None` and `Some` of an empty list differ as they
+    /// do for [`ClaimWrite::refs`].
+    pub stands_for: Option<Vec<FactAddress>>,
 }
 
 impl ClaimWrite {
@@ -5248,6 +5257,8 @@ impl ClaimWrite {
             edge: fact.edge.clone(),
             derived_from: fact.derived_from.clone(),
             stale_after: fact.stale_after,
+            refs: Some(fact.refs.clone()),
+            stands_for: Some(fact.stands_for.clone()),
         }
     }
 }

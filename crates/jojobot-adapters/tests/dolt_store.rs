@@ -2358,6 +2358,98 @@ async fn dolt_satisfies_the_stands_for_contract() {
     store.stop().await;
 }
 
+/// **The mark's own contract, through the fold.** The fold image answers a
+/// claim's writes from what the store gave it, so a field the store kept and the
+/// image dropped would pass the case above and fail here.
+#[tokio::test]
+async fn dolt_satisfies_the_stands_for_contract_when_folded() {
+    let scratch = Scratch::new("stands-for-folded");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "standsforfolded")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    folded.rebuild().await.expect("the image fills");
+
+    memory::run_all_stands_for(&folded).await;
+
+    store.stop().await;
+}
+
+/// **A write kept before the store kept references and marks reads as not
+/// recorded, and a cell that is not what the store wrote is damage.** The same
+/// claim is read three ways: as written, with both cells NULL as an older build
+/// left them, and with a cell that is not JSON. The first is the positive the
+/// other two depend on.
+#[tokio::test]
+async fn a_write_with_no_kept_references_reads_as_not_recorded_and_a_damaged_one_is_named() {
+    let scratch = Scratch::new("kept-marks-null");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "keptmarksnull")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let subject = EntityId::person("person:contract-kept-null");
+    let pointed = EntityId::person("person:contract-kept-pointee");
+    for (handle, name) in [(&subject, "The Subject"), (&pointed, "The Pointed")] {
+        memory
+            .add_entity(NewEntity::new(handle.clone(), name, "the roster"))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+    }
+    let claim = memory
+        .capture(NewFact {
+            refs: vec![pointed.clone()],
+            ..NewFact::about(subject, "points at someone", date(2026, 5, 1))
+        })
+        .await
+        .expect("the claim is written")
+        .written()
+        .expect("nothing blocks it");
+
+    let kept = memory
+        .claim_history(&claim.address())
+        .await
+        .expect("the writes read");
+    assert_eq!(kept[0].refs, Some(vec![pointed]));
+    assert_eq!(kept[0].stands_for, Some(Vec::new()));
+
+    sqlx::query("UPDATE fact_write SET refs = NULL, stands_for = NULL")
+        .execute(&pool)
+        .await
+        .expect("the cells are cleared");
+    let older = memory
+        .claim_history(&claim.address())
+        .await
+        .expect("the writes read");
+    assert_eq!(
+        (older[0].refs.clone(), older[0].stands_for.clone()),
+        (None, None)
+    );
+
+    sqlx::query("UPDATE fact_write SET refs = 'not a list'")
+        .execute(&pool)
+        .await
+        .expect("the cell is damaged");
+    let damaged = memory.claim_history(&claim.address()).await;
+    assert!(
+        matches!(&damaged, Err(MemoryError::Store(said)) if said.contains("refs")),
+        "a cell the store did not write is named, not read as empty: {damaged:?}"
+    );
+
+    store.stop().await;
+}
+
 /// **…and what sits under a supplied record answers over the real store too.**
 ///
 /// The read is derived from `list_entities` rather than implemented by either
