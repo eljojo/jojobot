@@ -54,6 +54,17 @@ impl FoldedTeachings {
     }
 }
 
+impl FoldedTeachings {
+    /// Whether the ledger holds this pair; `None` when no ledger is held.
+    fn holds(&self, pair: &(Sid, String)) -> Option<bool> {
+        self.taught
+            .read()
+            .expect("fold lock")
+            .as_ref()
+            .map(|taught| taught.contains(pair))
+    }
+}
+
 #[async_trait]
 impl Teachings for FoldedTeachings {
     async fn first_contact(
@@ -62,7 +73,20 @@ impl Teachings for FoldedTeachings {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
-        self.inner.first_contact(sid, domain, at).await
+        let pair = (sid.clone(), domain.to_string());
+        // A pair the ledger holds changes nothing, so it never reaches the store.
+        if self.holds(&pair) == Some(true) {
+            return Ok(false);
+        }
+        let _gate = self.writing.lock().await;
+        if self.holds(&pair) == Some(true) {
+            return Ok(false);
+        }
+        let first = self.inner.first_contact(sid, domain, at).await?;
+        if let Some(taught) = self.taught.write().expect("fold lock").as_mut() {
+            taught.insert(pair);
+        }
+        Ok(first)
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {

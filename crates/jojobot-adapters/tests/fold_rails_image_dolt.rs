@@ -36,7 +36,7 @@ const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of", "summaries_o
 const SWITCHED_MAIL: &[&str] = &["list_mailboxes", "scan_messages", "message_by_id", "sent_by"];
 
 /// The teaching calls the image serves.
-const SWITCHED_TEACHINGS: &[&str] = &[];
+const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
 
 struct Scratch(PathBuf);
 

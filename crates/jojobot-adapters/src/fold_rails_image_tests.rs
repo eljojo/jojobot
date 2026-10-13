@@ -29,7 +29,7 @@ const SWITCHED_SESSIONS: &[&str] = &["read_session", "sessions_of", "summaries_o
 const SWITCHED_MAIL: &[&str] = &["list_mailboxes", "scan_messages", "message_by_id", "sent_by"];
 
 /// The teaching calls served from memory once the ledger has loaded.
-const SWITCHED_TEACHINGS: &[&str] = &[];
+const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
 
 async fn session_walk(switched: &[&str]) {
     let store = Arc::new(InMemorySessions::new());
