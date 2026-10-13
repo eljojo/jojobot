@@ -1244,6 +1244,32 @@ fn live_tasks() -> usize {
         .num_alive_tasks()
 }
 
+/// **Capture what the binary's own subscriber writes, at INFO, for the rest of
+/// the case.** The filter the binary logs through is part of what is read, so a
+/// line it leaves out is not here and a line it keeps is.
+fn capture_process_log() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+    let buffer = LogBuffer::default();
+    let writer = buffer.clone();
+    let guard = tracing::subscriber::set_default(jojobot::logging::logging(
+        move || writer.clone(),
+        false,
+        tracing_subscriber::EnvFilter::new("info"),
+    ));
+    (buffer, guard)
+}
+
+/// Wait, up to three seconds, for `needle` to reach the log. A log that never
+/// gets it fails the case, naming what it did get.
+async fn wait_for_the_log(log: &LogBuffer, needle: &str) {
+    for _ in 0..60 {
+        if log.warnings().contains(needle) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("{needle:?} never reached the log: {}", log.warnings());
+}
+
 /// **A client on the newest revision may listen for a changed tool list.**
 ///
 /// jojobot agrees to `2026-07-28` and advertises that its tool list can move,
@@ -1258,7 +1284,7 @@ fn live_tasks() -> usize {
 /// and meets a different handler: the client ends it by closing the stream.
 #[tokio::test]
 async fn a_client_on_the_newest_revision_may_listen() {
-    let (warnings, _log) = capture_warnings();
+    let (log, _log) = capture_process_log();
     let (addr, ct) = spawn_server(no_auth_state).await;
     let url = format!("http://{addr}/mcp");
     let http = reqwest::Client::new();
@@ -1299,10 +1325,22 @@ async fn a_client_on_the_newest_revision_may_listen() {
     );
 
     drop(stream);
+    // **The negative waits for its positive.** The server notices the closed
+    // stream on its own schedule, so a read taken straight after the drop sees
+    // nothing whether or not the transport is about to log a fault. The request
+    // log's line for the closed listen is the positive, and the transport's last
+    // line for that connection ("serve finished") comes after anything it would
+    // report as a fault, so the log is read only once both are in it.
+    wait_for_the_log(&log, "subscriptions/listen").await;
+    wait_for_the_log(&log, "serve finished").await;
+    let text = log.warnings();
+    let faults: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains(" WARN ") || l.contains(" ERROR "))
+        .collect();
     assert!(
-        warnings.warnings().is_empty(),
-        "listening is not a fault, so it logs no WARN: {}",
-        warnings.warnings()
+        faults.is_empty(),
+        "listening is not a fault, so it logs no WARN or ERROR: {faults:?}"
     );
     ct.cancel();
 }
