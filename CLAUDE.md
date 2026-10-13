@@ -15,6 +15,14 @@ into software: versioned, tested, enforced. A fuzzy rule in a markdown file
 becomes a typed invariant the compiler and tests hold. The end state is
 sessions that boot *from jojobot* instead of from files.
 
+**One server instance, the only writer — so every read comes from memory.**
+jojobot runs as exactly one process, and every write passes through it. That
+is why the whole fold is held in memory and every read is answered from it
+alone; each write updates the store and the fold in the same step, so the
+fold is always current. **No read goes to the store.** ⚠️ A second writer of
+any kind — another worker, a restore, a migration tool, a person running SQL
+— makes the memory copy silently wrong. (Decision log 292.)
+
 ## ⚠️ THE BRIGHT LINE — zero user PII, zero life specifics. Ever.
 
 **This repo is public. Nothing that identifies a user's life enters it —
