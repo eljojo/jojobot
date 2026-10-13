@@ -803,17 +803,20 @@ impl Merged {
             .written()
             .expect("the guard waves it through")
             .address();
+        let mut first_claim = said(
+            &folded,
+            "runs the store",
+            &[
+                ("mood", "angry"),
+                ("job", "clerk"),
+                ("lunch", "salad"),
+                ("reports_to", "bot:moe"),
+            ],
+        );
+        // A reference of the claim's own, which moves with the claim.
+        first_claim.refs = vec![pointing.clone()];
         let first = memory
-            .capture(said(
-                &folded,
-                "runs the store",
-                &[
-                    ("mood", "angry"),
-                    ("job", "clerk"),
-                    ("lunch", "salad"),
-                    ("reports_to", "bot:moe"),
-                ],
-            ))
+            .capture(first_claim)
             .await
             .expect("capture ok")
             .written()
@@ -838,6 +841,8 @@ impl Merged {
                 FactPatch {
                     content: Some("closes at midnight".into()),
                     provenance: Some(Provenance::Inference),
+                    // A mark of the claim's own, which moves with the claim.
+                    stands_for: Some(vec![own.clone()]),
                     ..Default::default()
                 },
                 &EntityId("bot:sigma".into()),
@@ -934,25 +939,20 @@ impl Merged {
     async fn leave_in_place(&self) {
         self.leave_names_in_place().await;
         self.leave_pointers_in_place().await;
-        self.leave_fields_in_place().await;
-        for (was, now) in &self.moved {
-            for (table, id_column) in [("fact", "id"), ("fact_write", "fact_id")] {
-                let moved_back = sqlx::query(&format!(
-                    "UPDATE {table} SET entity = ?, {id_column} = ? WHERE entity = ? AND {id_column} = ?"
-                ))
-                .bind(self.folded_key.as_str())
-                .bind(was)
-                .bind(self.survivor_key.as_str())
-                .bind(now)
-                .execute(&self.pool)
-                .await
-                .expect("the rows go back");
-                assert!(
-                    moved_back.rows_affected() > 0,
-                    "{table}: no row of {now} to put back, so the case would read the moved shape"
-                );
-            }
-        }
+        put_field_writes_back(
+            &self.pool,
+            &self.survivor_key,
+            &self.folded_key,
+            &self.moved,
+        )
+        .await;
+        put_claims_back(
+            &self.pool,
+            &self.survivor_key,
+            &self.folded_key,
+            &self.moved,
+        )
+        .await;
     }
 
     /// Put the child back under the folded thing, and the folded thing's own
@@ -1041,57 +1041,102 @@ impl Merged {
         .expect("the field goes back");
         tx.commit().await.expect("the pointers commit");
     }
+}
 
-    /// Put the folded thing's field writes back under its key and its claims'
-    /// old ids, and number each side's writes of a key from one in the order
-    /// they stand, as they were before the merge interleaved them.
-    async fn leave_fields_in_place(&self) {
-        const PARKED: i64 = 1 << 40;
-        let came_from_folded: std::collections::HashMap<&str, &str> = self
-            .moved
-            .iter()
-            .map(|(was, now)| (now.as_str(), was.as_str()))
-            .collect();
-        let rows = sqlx::query(
-            "SELECT `key`, ordinal, fact_id FROM field_write
-             WHERE entity = ? ORDER BY `key`, ordinal",
+/// Put the folded thing's field writes back under its key and its claims'
+/// old ids, and number each side's writes of a key from one in the order
+/// they stand, as they were before the merge interleaved them.
+async fn put_field_writes_back(
+    pool: &sqlx::MySqlPool,
+    survivor_key: &EntityId,
+    folded_key: &EntityId,
+    moved: &[(String, String)],
+) {
+    const PARKED: i64 = 1 << 40;
+    let came_from_folded: std::collections::HashMap<&str, &str> = moved
+        .iter()
+        .map(|(was, now)| (now.as_str(), was.as_str()))
+        .collect();
+    let rows = sqlx::query(
+        "SELECT `key`, ordinal, fact_id FROM field_write
+         WHERE entity = ? ORDER BY `key`, ordinal",
+    )
+    .bind(survivor_key.as_str())
+    .fetch_all(pool)
+    .await
+    .expect("the writes read");
+    let mut placed: std::collections::HashMap<(String, bool), i64> = Default::default();
+    for row in &rows {
+        let key: String = row.get("key");
+        let ordinal: i64 = row.get("ordinal");
+        let fact: String = row.get("fact_id");
+        let folded = came_from_folded.get(fact.as_str());
+        let next = placed.entry((key.clone(), folded.is_some())).or_insert(0);
+        *next += 1;
+        sqlx::query(
+            "UPDATE field_write SET entity = ?, fact_id = ?, ordinal = ?
+             WHERE entity = ? AND `key` = ? AND ordinal = ?",
         )
-        .bind(self.survivor_key.as_str())
-        .fetch_all(&self.pool)
+        .bind(if folded.is_some() {
+            folded_key.as_str()
+        } else {
+            survivor_key.as_str()
+        })
+        .bind(folded.copied().unwrap_or(fact.as_str()))
+        .bind(*next + PARKED)
+        .bind(survivor_key.as_str())
+        .bind(&key)
+        .bind(ordinal)
+        .execute(pool)
         .await
-        .expect("the writes read");
-        let mut placed: std::collections::HashMap<(String, bool), i64> = Default::default();
-        for row in &rows {
-            let key: String = row.get("key");
-            let ordinal: i64 = row.get("ordinal");
-            let fact: String = row.get("fact_id");
-            let folded = came_from_folded.get(fact.as_str());
-            let next = placed.entry((key.clone(), folded.is_some())).or_insert(0);
-            *next += 1;
-            sqlx::query(
-                "UPDATE field_write SET entity = ?, fact_id = ?, ordinal = ?
-                 WHERE entity = ? AND `key` = ? AND ordinal = ?",
-            )
-            .bind(if folded.is_some() {
-                self.folded_key.as_str()
-            } else {
-                self.survivor_key.as_str()
-            })
-            .bind(folded.copied().unwrap_or(fact.as_str()))
-            .bind(*next + PARKED)
-            .bind(self.survivor_key.as_str())
-            .bind(&key)
-            .bind(ordinal)
-            .execute(&self.pool)
+        .expect("the write goes back");
+    }
+    sqlx::query("UPDATE field_write SET ordinal = ordinal - ? WHERE ordinal >= ?")
+        .bind(PARKED)
+        .bind(PARKED)
+        .execute(pool)
+        .await
+        .expect("the writes come down");
+}
+
+/// Put the claim rows a merge moved back under the folded key and the ids they
+/// had, leaving the event as it is.
+async fn put_claims_back(
+    pool: &sqlx::MySqlPool,
+    survivor_key: &EntityId,
+    folded_key: &EntityId,
+    moved: &[(String, String)],
+) {
+    for (was, now) in moved {
+        for (table, id_column) in [("fact", "id"), ("fact_write", "fact_id")] {
+            let moved_back = sqlx::query(&format!(
+                "UPDATE {table} SET entity = ?, {id_column} = ? WHERE entity = ? AND {id_column} = ?"
+            ))
+            .bind(folded_key.as_str())
+            .bind(was)
+            .bind(survivor_key.as_str())
+            .bind(now)
+            .execute(pool)
             .await
-            .expect("the write goes back");
+            .expect("the rows go back");
+            assert!(
+                moved_back.rows_affected() > 0,
+                "{table}: no row of {now} to put back, so the case would read the moved shape"
+            );
         }
-        sqlx::query("UPDATE field_write SET ordinal = ordinal - ? WHERE ordinal >= ?")
-            .bind(PARKED)
-            .bind(PARKED)
-            .execute(&self.pool)
+        // The references and marks that belong to the claim move with it.
+        for table in ["fact_event_metadata", "fact_event_ref", "fact_stands_for"] {
+            sqlx::query(&format!(
+                "UPDATE {table} SET fact_home = ?, fact_id = ? WHERE fact_home = ? AND fact_id = ?"
+            ))
+            .bind(folded_key.as_str())
+            .bind(was)
+            .bind(survivor_key.as_str())
+            .bind(now)
+            .execute(pool)
             .await
-            .expect("the writes come down");
+            .expect("the claim's own rows go back");
+        }
     }
 }
 
@@ -1158,6 +1203,20 @@ async fn claims_left_in_place_by_a_merge_read_like_claims_moved_by_it() {
         "the survivor's own, two moved and the account"
     );
     assert!(moved_each.iter().all(Option::is_some), "{moved_each:?}");
+    assert!(
+        moved_each
+            .iter()
+            .flatten()
+            .any(|fact| !fact.refs.is_empty()),
+        "a folded claim's own reference reads on the survivor: {moved_each:?}"
+    );
+    assert!(
+        moved_each
+            .iter()
+            .flatten()
+            .any(|fact| !fact.stands_for.is_empty()),
+        "and so does its own mark: {moved_each:?}"
+    );
     assert!(moved_own.is_some());
     assert!(list(merged.folded_key.clone()).await.is_empty());
 
@@ -1174,6 +1233,18 @@ async fn claims_left_in_place_by_a_merge_read_like_claims_moved_by_it() {
         stored_under_folded > 0,
         "the rows are back under the folded key"
     );
+    for table in ["fact_event_ref", "fact_stands_for"] {
+        let own: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE fact_home = ?"))
+                .bind(merged.folded_key.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("counts");
+        assert!(
+            own > 0,
+            "{table}: the claim's own rows are back under the folded key"
+        );
+    }
 
     assert_eq!(list(merged.survivor_key.clone()).await, moved_list);
     for ((_, now), control) in merged.moved.iter().zip(&moved_each) {
@@ -1669,6 +1740,157 @@ async fn names_and_children_left_by_a_merge_read_like_ones_it_moved() {
     assert_eq!(parent.as_deref(), Some(merged.folded_key.as_str()));
     let left = answers().await;
     for (moved, left) in moved.iter().zip(&left) {
+        assert_eq!(left, moved);
+    }
+    store.stop().await;
+}
+
+/// **A chain of two merges, both of which left their rows in place, reads like
+/// the same two merges when they moved them** — the thing folded first into a
+/// second thing that was folded into a third. A claim of the first is served
+/// at the id the second merge gave it, a field written by each of the three is
+/// placed by the moment it was made, and the middle thing holds nothing.
+#[tokio::test]
+async fn a_chain_of_merges_left_in_place_reads_like_the_chain_moved() {
+    let scratch = Scratch::new("merged-chain");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_chain")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    let last = EntityId::person("person:homer");
+    let middle = EntityId::person("person:apu");
+    let first = EntityId::person("person:lisa");
+    for (handle, name) in [(&last, "Homer"), (&middle, "Apu"), (&first, "Lisa")] {
+        memory
+            .add_entity(NewEntity::new(handle.clone(), name, "fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+    }
+    for (about, what, fields) in [
+        (
+            &last,
+            "keeps bees",
+            vec![("city", "Springfield"), ("mood", "calm")],
+        ),
+        (
+            &first,
+            "plays the saxophone",
+            vec![("mood", "bored"), ("hobby", "jazz")],
+        ),
+        (&middle, "runs the store", vec![("mood", "angry")]),
+    ] {
+        let mut fact = NewFact::about(about.clone(), what, date(2026, 9, 1));
+        fact.fields = fields
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        fact.sets = fact.fields.keys().cloned().collect();
+        memory
+            .capture(fact)
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through");
+    }
+    for (gone, kept) in [(&first, &middle), (&middle, &last)] {
+        memory
+            .merge(
+                gone,
+                kept,
+                Some("filed twice"),
+                date(2026, 9, 2),
+                &EntityId("bot:sigma".into()),
+                Some("run-a"),
+            )
+            .await
+            .expect("the fold lands");
+    }
+    let mut tx = pool.begin().await.expect("a transaction");
+    let mut keys = Vec::new();
+    for handle in [&last, &middle, &first] {
+        keys.push(
+            memory
+                .resolve(&mut tx, handle)
+                .await
+                .expect("resolve ok")
+                .expect("the thing exists")
+                .0,
+        );
+    }
+    tx.commit().await.expect("the read commits");
+    let (last_key, middle_key, first_key) = (keys[0].clone(), keys[1].clone(), keys[2].clone());
+    let events = memory
+        .merge_events(Some(&middle))
+        .await
+        .expect("events read");
+    assert_eq!(events.len(), 2, "{events:?}");
+    let moved = |event: &jojobot_domain::memory::MergeEvent| -> Vec<(String, String)> {
+        event
+            .claims
+            .iter()
+            .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
+            .collect()
+    };
+    let (first_moved, second_moved) = (moved(&events[0]), moved(&events[1]));
+
+    let answers = || async {
+        let mut said = vec![
+            format!("{:?}", memory.recall(&last).await),
+            format!("{:?}", memory.fields(&last).await),
+            format!("{:?}", memory.fields_versioned(&last).await),
+            format!("{:?}", memory.key_trails(&last).await),
+            format!("{:?}", memory.history(&last, "mood").await),
+            format!(
+                "{:?}",
+                memory.claim_histories(&last).await.map(|all| {
+                    let mut all: Vec<_> = all.into_iter().collect();
+                    all.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                    all
+                })
+            ),
+        ];
+        for gone in [&middle, &first] {
+            said.push(format!("{:?}", memory.recall(gone).await));
+            said.push(format!("{:?}", memory.fields(gone).await));
+        }
+        said
+    };
+    let moved_answers = answers().await;
+    let held = memory.fields(&last).await.expect("the fields read");
+    assert_eq!(
+        held.get("mood").map(String::as_str),
+        Some("angry"),
+        "{held:?}"
+    );
+    assert_eq!(
+        held.get("hobby").map(String::as_str),
+        Some("jazz"),
+        "{held:?}"
+    );
+    assert_eq!(
+        memory.recall(&last).await.expect("recall reads").len(),
+        5,
+        "the survivor's claim, the two folded claims and the two accounts"
+    );
+
+    // The later merge is put back first, then the earlier one.
+    put_field_writes_back(&pool, &last_key, &middle_key, &second_moved).await;
+    put_claims_back(&pool, &last_key, &middle_key, &second_moved).await;
+    put_field_writes_back(&pool, &middle_key, &first_key, &first_moved).await;
+    put_claims_back(&pool, &middle_key, &first_key, &first_moved).await;
+
+    let left = answers().await;
+    assert_eq!(left.len(), moved_answers.len());
+    for (moved, left) in moved_answers.iter().zip(&left) {
         assert_eq!(left, moved);
     }
     store.stop().await;
