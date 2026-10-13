@@ -1482,3 +1482,49 @@ async fn a_ping_through_the_served_app_logs_one_line_naming_the_tool() {
     assert!(ended[0].contains("http_method=POST"), "{}", ended[0]);
     assert!(ended[0].contains("outcome=\"answered\""), "{}", ended[0]);
 }
+
+/// **A listen the client drops is logged as the request that ended it.** On the
+/// newest revision a standing stream is a held-open POST, not a GET, so the line
+/// names `subscriptions/listen` and says the client or the proxy closed it. It
+/// is not an ERROR from this layer: only a tool call dropped before its answer is.
+#[tokio::test]
+async fn a_listen_dropped_by_the_client_logs_one_info_line_naming_it() {
+    let buffer = LogBuffer::default();
+    let writer = buffer.clone();
+    let _log = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish(),
+    );
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+
+    let mut stream = open_listen(&http, &url, None, 9).await;
+    let mut pending = String::new();
+    next_stream_message(&mut stream, &mut pending)
+        .await
+        .expect("the listen is acknowledged");
+    drop(stream);
+
+    // The server notices the closed connection on its own schedule.
+    let mut text = String::new();
+    for _ in 0..40 {
+        text = buffer.warnings();
+        if text.contains("subscriptions/listen") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let ended: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("jojobot::request_log") && l.contains("subscriptions/listen"))
+        .collect();
+    assert_eq!(ended.len(), 1, "one line for the listen: {text}");
+    assert!(ended[0].contains(" INFO "), "{}", ended[0]);
+    assert!(ended[0].contains("http_method=POST"), "{}", ended[0]);
+    assert!(ended[0].contains("outcome=\"cancelled\""), "{}", ended[0]);
+    ct.cancel();
+}
