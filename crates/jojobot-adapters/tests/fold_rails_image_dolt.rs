@@ -234,6 +234,40 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
         format!("{:?}", store.scan_messages().await),
         "the image keeps what the store keeps about how each message was taken"
     );
+    // A delivery of a box with nothing new says how THIS delivery happened for
+    // the message nobody recorded a way for, and still writes nothing.
+    let again = folded
+        .read_mailbox(&inbox, TakenBy::Reading)
+        .await
+        .expect("read_mailbox again");
+    assert_eq!(
+        format!("{again:?}"),
+        format!(
+            "{:?}",
+            store
+                .read_mailbox(&inbox, TakenBy::Reading)
+                .await
+                .expect("the store reads")
+        ),
+        "a delivery with nothing new answers as the store does"
+    );
+    let unrecorded = again
+        .written()
+        .expect("not blocked")
+        .messages
+        .into_iter()
+        .find(|d| d.message.id == old.id)
+        .expect("the old message is handed over again");
+    assert_eq!(
+        unrecorded.message.taken_by,
+        Some(TakenBy::Reading),
+        "the way this delivery happened is told for a message with none recorded"
+    );
+    assert_eq!(
+        format!("{:?}", folded.scan_messages().await),
+        format!("{:?}", store.scan_messages().await),
+        "and the board still records none for it"
+    );
     server.stop().await;
 }
 

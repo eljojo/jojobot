@@ -1159,4 +1159,105 @@ mod tests {
              the write path rather than always falling through to the store"
         );
     }
+
+    /// **The images of mail and runs sit inside the whole assembled stack.** A
+    /// filled image answers from memory, so a write made AROUND the stack,
+    /// straight to the bare store, is invisible to a read through the outermost
+    /// port; and a write made THROUGH it is visible. The first alone would pass
+    /// on a stack that dropped the image and the second alone on one that never
+    /// read the store, so the pair is the proof.
+    #[tokio::test]
+    async fn mail_and_runs_are_held_in_memory_inside_the_assembled_stack() {
+        use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+        use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
+        use jojobot_domain::session::testing::InMemorySessions;
+        use jojobot_domain::session::{NewSession, Sessions, Sid};
+
+        jojobot_domain::memory::kinds::load_shipped();
+        let bare: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
+        let (folded, indexed) = assemble_memory(bare).expect("index opens");
+        folded.rebuild().await.expect("the memory image fills");
+        let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let runs = Arc::new(InMemorySessions::new());
+        let wired = assemble_ports(indexed, mail.clone(), runs.clone());
+        wired.mail_image.rebuild().await.expect("the board fills");
+        wired.sessions_image.rebuild().await.expect("the runs fill");
+
+        let new_run = |id: &str, sid: &str| NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid(sid.into()),
+            id: Some(jojobot_domain::session::SessionId(id.into())),
+            key_hash: None,
+            focus: "a sitting".into(),
+            started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            timezone: None,
+            started_on: None,
+        };
+        let post = |body: &str| NewMessage {
+            mailbox: MailboxName("gamma".into()),
+            body: body.into(),
+            subject: None,
+            sender: "delta".into(),
+            sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            in_reply_to: None,
+            supersedes: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        };
+
+        // Through the stack: both are visible from the outermost port.
+        wired
+            .mailboxes
+            .create_mailbox(
+                &MailboxName("gamma".into()),
+                &EntityId("bot:gamma".into()),
+                None,
+            )
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        wired
+            .mailboxes
+            .post_message(post("through the stack"))
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+        wired
+            .sessions
+            .begin(new_run("through", "th01"))
+            .await
+            .expect("begin ok");
+        assert_eq!(
+            wired.mailboxes.scan_messages().await.expect("scan").len(),
+            1,
+            "a post through the outermost port is visible from it"
+        );
+        assert_eq!(
+            wired.sessions.all_sessions().await.expect("list").len(),
+            1,
+            "a run begun through the outermost port is visible from it"
+        );
+
+        // Around the stack, straight to the bare stores: the images answer.
+        mail.post_message(post("around the stack"))
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+        runs.begin(new_run("around", "ar01"))
+            .await
+            .expect("begin ok");
+        assert_eq!(
+            wired.mailboxes.scan_messages().await.expect("scan").len(),
+            1,
+            "the board is answered from memory, so a write around the stack is not seen"
+        );
+        assert_eq!(
+            wired.sessions.all_sessions().await.expect("list").len(),
+            1,
+            "the runs are answered from memory, so a write around the stack is not seen"
+        );
+    }
 }

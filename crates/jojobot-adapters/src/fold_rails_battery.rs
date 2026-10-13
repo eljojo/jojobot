@@ -238,6 +238,17 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
         .expect("begin");
     p.agree("after three runs, two starting at one instant")
         .await;
+    // **Runs that start earlier than runs already held, and one that starts at
+    // the same instant with a name that sorts before**: the store lists newest
+    // start first with the name breaking a tie, so neither goes first.
+    w.begin(new("marge", "m4rg", "mmmmm1", 5))
+        .await
+        .expect("begin an older run");
+    w.begin(new("maggie", "m499", "aaaaa1", 15))
+        .await
+        .expect("begin a run with a name that sorts before");
+    p.agree("after runs that start before and at the same instant as the others")
+        .await;
 
     calls.reset();
     let first = w
