@@ -163,3 +163,76 @@ async fn the_teaching_image_answers_as_the_real_store_does_after_every_kind_of_w
     walk_every_kind_of_teaching(&rails).await;
     server.stop().await;
 }
+
+/// **A message taken before deliveries were recorded has no way of being taken
+/// on the board**, and a later delivery that hands it over again as a leftover
+/// says how THIS delivery happened without writing it. The image must keep what
+/// the store keeps, so the way is still unknown after that delivery, and a board
+/// read says so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it_was_taken() {
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage, TakenBy};
+    let scratch = Scratch::new("legacy-read");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database(&server, "legacy_read").await;
+    let store = Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)));
+    let inbox = MailboxName("gamma".into());
+    store
+        .create_mailbox(&inbox, &EntityId("bot:gamma".into()), None)
+        .await
+        .expect("create")
+        .written()
+        .expect("not blocked");
+    let post = |body: &str| NewMessage {
+        mailbox: inbox.clone(),
+        body: body.into(),
+        subject: None,
+        sender: "delta".into(),
+        sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+        in_reply_to: None,
+        supersedes: None,
+        sender_mail_waiting_at_send: None,
+        posted_by_session: None,
+    };
+    let old = store
+        .post_message(post("taken long ago"))
+        .await
+        .expect("post")
+        .written()
+        .expect("not blocked");
+    // The state a delivery of an older build left: read, with no delivery row.
+    sqlx::query("UPDATE message SET state = 'read' WHERE id = ?")
+        .bind(old.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the legacy state is written");
+
+    let counted = Arc::new(CountedMailboxes::new(store.clone()));
+    let folded = FoldedMailboxes::new(counted.clone());
+    folded.rebuild().await.expect("the image loads");
+    folded
+        .post_message(post("arrives later"))
+        .await
+        .expect("post")
+        .written()
+        .expect("not blocked");
+    let delivery = folded
+        .read_mailbox(&inbox, TakenBy::Posting)
+        .await
+        .expect("read_mailbox")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        delivery.messages.len(),
+        2,
+        "the old message comes back as a leftover beside the new one: {delivery:?}"
+    );
+    assert_eq!(
+        format!("{:?}", folded.scan_messages().await),
+        format!("{:?}", store.scan_messages().await),
+        "the image keeps what the store keeps about how each message was taken"
+    );
+    server.stop().await;
+}

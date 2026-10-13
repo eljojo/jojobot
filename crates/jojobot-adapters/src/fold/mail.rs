@@ -403,9 +403,14 @@ impl Mailboxes for FoldedMailboxes {
         let delivery = self.inner.read_mailbox(name, taken_by).await?;
         if let Guarded::Written(delivery) = &delivery {
             self.follow("read_mailbox", |image| {
+                // **Only the messages this delivery took.** A leftover is handed
+                // over again with the way THIS delivery happened, which the store
+                // does not write for it: the store still holds the way it was
+                // taken the first time, or none.
                 delivery
                     .messages
                     .iter()
+                    .filter(|d| !d.seen_before)
                     .all(|d| image.put(d.message.clone()))
             })
             .await;
