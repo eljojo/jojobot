@@ -599,8 +599,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Table("merge_event"),
     },
     Migration {
-        version: "0081_fact_write_refs_stands_for",
-        sql: include_str!("../../migrations/0081_fact_write_refs_stands_for.sql"),
+        version: "0081_fact_write_refs",
+        sql: include_str!("../../migrations/0081_fact_write_refs.sql"),
+        leaves: Leaves::Column("fact_write", "refs"),
+    },
+    Migration {
+        version: "0082_fact_write_stands_for",
+        sql: include_str!("../../migrations/0082_fact_write_stands_for.sql"),
         leaves: Leaves::Column("fact_write", "stands_for"),
     },
 ];

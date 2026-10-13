@@ -105,7 +105,8 @@ const ALL_VERSIONS: &[&str] = &[
     "0076_message_supersedes",
     "0079_entity_write_snapshot",
     "0080_merge_event",
-    "0081_fact_write_refs_stands_for",
+    "0081_fact_write_refs",
+    "0082_fact_write_stands_for",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped
@@ -3021,6 +3022,61 @@ async fn an_interrupted_message_posted_by_session_add_is_recognized_by_the_colum
             .expect("the schema is readable"),
         "…and the column the migration is for is really there afterwards",
     );
+
+    store.stop().await;
+}
+
+/// **A death between the two columns the kept references and mark add leaves the
+/// second to be added, not the first replayed.**
+///
+/// The two columns were one `ALTER` with two clauses and a landed-check that
+/// asked about the second only. A death after `refs` landed and before
+/// `stands_for` did left the table half changed behind a ledger saying both were
+/// in, and the retry failed on a column that already stood. Each column is its own
+/// file with its own check. The schema is put back to the state that death leaves:
+/// `refs` present, `stands_for` gone, the second ledger row taken away and its
+/// marker committed. The start has to add `stands_for` alone.
+#[tokio::test]
+async fn an_interrupted_pair_of_kept_columns_finishes_with_the_one_that_is_missing() {
+    let scratch = Scratch::new("migrate-interrupted-kept-columns");
+    let path = scratch.0.clone();
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("keptcolumnspartway")
+        .await
+        .expect("a database of its own");
+
+    run(&pool).await.expect("the schema");
+
+    sqlx::raw_sql("ALTER TABLE fact_write DROP COLUMN stands_for")
+        .execute(&pool)
+        .await
+        .expect("the second column goes back to missing");
+    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+        .bind("0082_fact_write_stands_for")
+        .execute(&pool)
+        .await
+        .expect("the ledger row goes");
+    mark_begun(&pool, "0082_fact_write_stands_for")
+        .await
+        .expect("the marker lands");
+
+    assert_eq!(
+        run(&pool).await.expect("the start completes the schema"),
+        vec!["0082_fact_write_stands_for".to_string()],
+        "the column that did NOT land is added on its own, and the one that did is not replayed",
+    );
+    // Read by a route that is not the probe: the column takes a value.
+    sqlx::raw_sql(
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status,
+                                 recorded_at, refs, stands_for)
+         VALUES ('e', 'f1', 1, 'c', 'inference', 'active', '2026-01-01', '[]', '[]')",
+    )
+    .execute(&pool)
+    .await
+    .expect("both columns take a value");
 
     store.stop().await;
 }

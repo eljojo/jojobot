@@ -1,0 +1,16 @@
+-- What a claim stood for at each write of it.
+--
+-- `fact_stands_for` (0044) answers what a claim stands for NOW: a write replaces
+-- its rows whole, so a mark set twice leaves nothing of the first. This column
+-- keeps the mark on `fact_write` beside the references (0081), so an earlier mark
+-- can be read back. The table stays as the projection and answers every current
+-- read as before.
+--
+-- `stands_for` is the claims it stood for, as one text: a JSON array of
+-- [home key, claim id] pairs, in the order they were named. The home key is the
+-- permanent id of the thing. LONGTEXT for the reason `refs` is.
+--
+-- **Nullable and nothing backfilled**, for the reason `refs` is.
+--
+-- One statement with one clause, for the reason 0081 is.
+ALTER TABLE fact_write ADD COLUMN stands_for LONGTEXT NULL;

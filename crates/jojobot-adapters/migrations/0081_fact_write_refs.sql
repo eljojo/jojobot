@@ -1,0 +1,24 @@
+-- What a claim pointed at at each write of it.
+--
+-- `fact_event_ref` (0012) answers what a claim points at NOW: a write replaces
+-- its rows whole, so a set changed twice leaves nothing of the first.
+-- `fact_write` (0034) keeps the whole claim on every write, and this column keeps
+-- the references, so an earlier set can be read back. The table stays as the
+-- projection and answers every current read as before. The mark a claim stands
+-- for is kept the same way by the migration after this one.
+--
+-- `refs` is the entities the claim pointed at, as one text: a JSON array of the
+-- keys the entities are stored under, in the order they were named. A key is the
+-- permanent id of the thing, so a read after a rename serves the handle the thing
+-- wears now. It is LONGTEXT because a claim may point at as many things as a
+-- caller names, and a cell that stopped taking the set would fail the claim's
+-- next write.
+--
+-- **Nullable and nothing backfilled.** A row an older build appended holds no
+-- set, the earlier sets are gone, and it stays NULL. A reader treats NULL as
+-- "not recorded", never as a write that pointed at nothing.
+--
+-- One statement with one clause, because this store commits DDL as it goes and
+-- the runner asks whether a migration landed by asking about the column it adds.
+-- A second clause could be left unapplied behind a ledger saying it was in.
+ALTER TABLE fact_write ADD COLUMN refs LONGTEXT NULL;
