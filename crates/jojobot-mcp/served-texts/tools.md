@@ -849,7 +849,9 @@ named here and in `fields` is refused, and a key the record already holds
 in the other is refused with the way to move it. A key that only labels
 the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
-The keys that make a thing fall due act on it only when sent here.
+The keys that make a thing fall due act on it only when sent here. A key
+comes off the thing again with `update_fact`'s `clear_fields` on the
+record that carries it.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
@@ -5090,6 +5092,11 @@ un-retract.
 value in `fields`: an empty value is a value somebody wrote, and
 setting a key to nothing and taking the key off the record are two
 different edits.
+
+**It takes the key off the thing as well as off the record**, whichever
+bag holds it, so this is the way to take a key off a thing. Send it to
+the active record that carries the key: `recall` the thing with
+`backing` true and the key names that record.
 
 To move a value to another key, send the new key in `sets` (or in `fields`
 for a key of the claim itself) and `clear_fields` with the old one in the

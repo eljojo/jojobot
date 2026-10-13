@@ -4259,3 +4259,78 @@ fn the_claim_that_a_correction_is_safe_names_testimony_as_its_exception() {
         "the promise does not name the claims it does not hold for: {sentence}"
     );
 }
+
+/// **A key an earlier record set comes off the thing when `clear_fields` names it
+/// on that record.** The thing holds `waiting_on` from the first write; a later
+/// write sets another key and does not carry it. Clearing on the record that
+/// carries the key takes it off the thing, the other key stays, and that
+/// record's history still reads the value it held.
+#[tokio::test]
+async fn clear_fields_on_the_carrying_record_takes_a_key_off_the_thing() {
+    let jojobot = handler();
+    ensure(&jojobot, "project:atlas").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "phi", "phi")
+        }))
+        .await
+        .expect("add ok");
+    let carrier = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("waiting_on".to_string(), "project:atlas".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:phi", "blocked on the atlas")
+        },
+    )
+    .await;
+    let address = address_of(&carrier);
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("status".to_string(), "waiting".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:phi", "parked")
+        },
+    )
+    .await;
+    let held = fields_of(&jojobot, "work:phi").await;
+    assert_eq!(held["waiting_on"], "project:atlas", "{held}");
+    assert_eq!(held["status"], "waiting", "{held}");
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["waiting_on".into()]),
+            ..update_args(&address)
+        },
+    )
+    .await;
+
+    let after = fields_of(&jojobot, "work:phi").await;
+    assert!(
+        after.get("waiting_on").is_none(),
+        "the key comes off the thing: {after}"
+    );
+    assert_eq!(after["status"], "waiting", "the other key stays: {after}");
+    let history = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                history: Some("waiting_on".into()),
+                ..recall_args("work:phi")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        history.to_string().contains("project:atlas"),
+        "the key's history keeps the value it held: {history}"
+    );
+}

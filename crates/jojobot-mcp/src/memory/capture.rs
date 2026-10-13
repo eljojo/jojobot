@@ -194,7 +194,9 @@ pub struct CaptureArgs {
     /// in the other is refused with the way to move it. A key that only labels
     /// the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
     /// `recorded_by`) is never a property of the thing and is refused here by name.
-    /// The keys that make a thing fall due act on it only when sent here.
+    /// The keys that make a thing fall due act on it only when sent here. A key
+    /// comes off the thing again with `update_fact`'s `clear_fields` on the
+    /// record that carries it.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already

@@ -1142,6 +1142,34 @@ fn the_update_fact_description_names_the_moves_it_cannot_make_in_place() {
     );
 }
 
+/// **`update_fact`'s `clear_fields` says it takes a key off the thing, and how to
+/// find the record that carries it.** The route to take a key off a thing exists
+/// and a session that wants one has to find it the first time it looks: the
+/// record is the one `recall` shows with `backing`.
+#[test]
+fn the_clear_fields_argument_names_how_to_find_the_record_that_carries_a_key() {
+    let described = argument_description("update_fact", "clear_fields");
+    for name in ["`recall`", "`backing`", "`sets`"] {
+        assert!(
+            described.contains(name),
+            "clear_fields does not name {name}: {described}"
+        );
+    }
+}
+
+/// **`capture`'s `sets` says how a key comes off the thing again**, in the place
+/// that explains how a key gets onto it.
+#[test]
+fn the_capture_sets_argument_names_the_route_that_takes_a_key_off() {
+    let described = argument_description("capture", "sets");
+    for name in ["`update_fact`", "`clear_fields`"] {
+        assert!(
+            described.contains(name),
+            "capture's sets does not name {name}: {described}"
+        );
+    }
+}
+
 /// **`list_runs` points at the read that returns a run's chronology.**
 #[test]
 fn the_list_runs_description_points_at_recall_for_a_chronology() {

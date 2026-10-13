@@ -171,6 +171,11 @@ pub struct UpdateFactArgs {
     /// setting a key to nothing and taking the key off the record are two
     /// different edits.
     ///
+    /// **It takes the key off the thing as well as off the record**, whichever
+    /// bag holds it, so this is the way to take a key off a thing. Send it to
+    /// the active record that carries the key: `recall` the thing with
+    /// `backing` true and the key names that record.
+    ///
     /// To move a value to another key, send the new key in `sets` (or in `fields`
     /// for a key of the claim itself) and `clear_fields` with the old one in the
     /// same call.
