@@ -546,6 +546,14 @@ impl SessionRegistry {
         held.by_name.get(name).cloned()
     }
 
+    /// **Who a key belongs to, for a log line**: the bot's handle and the run's
+    /// public name, or `None` for a key the registry is not holding. The key is
+    /// never returned.
+    pub fn whose_key(&self, key: &str) -> Option<(String, String)> {
+        let handle = self.lookup_key(key)?;
+        Some((handle.bot.0, handle.name.0))
+    }
+
     /// What this name addresses, or `None` for one this registry is not holding
     /// — a typo, or a run that never wrote a card for a restart to rebuild it
     /// from. **A name is not a credential**: this is for the callers that

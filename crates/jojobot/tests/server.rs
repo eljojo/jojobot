@@ -1421,3 +1421,64 @@ async fn a_client_on_an_older_revision_is_told_listen_is_not_a_method() {
     assert_eq!(message["error"]["code"], -32601, "{message}");
     ct.cancel();
 }
+
+/// **A call through the served app is logged by the request log.** The layer's
+/// own cases drive it alone; this one sends a `ping` through the client and the
+/// real app, so a layer that is written and never mounted fails here. The log
+/// line names the tool and the HTTP method, and no body.
+#[tokio::test]
+async fn a_ping_through_the_served_app_logs_one_line_naming_the_tool() {
+    use rmcp::ServiceExt;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
+    use rmcp::transport::StreamableHttpClientTransport;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Default)]
+    struct Kept(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Kept {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Kept {
+        type Writer = Kept;
+        fn make_writer(&'a self) -> Kept {
+            self.clone()
+        }
+    }
+    let kept = Kept::default();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(kept.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish(),
+    );
+
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let transport = StreamableHttpClientTransport::from_uri(format!("http://{addr}/mcp"));
+    let client_info = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("jojobot-test-client", "0.0.1"),
+    );
+    let client = client_info.serve(transport).await.unwrap();
+    client
+        .call_tool(CallToolRequestParams::new("ping"))
+        .await
+        .unwrap();
+    client.cancel().await.unwrap();
+    ct.cancel();
+
+    let text = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+    let ended: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("mcp request ended") && l.contains("tool=\"ping\""))
+        .collect();
+    assert_eq!(ended.len(), 1, "one line for the ping: {text}");
+    assert!(ended[0].contains("http_method=POST"), "{}", ended[0]);
+    assert!(ended[0].contains("outcome=\"answered\""), "{}", ended[0]);
+}

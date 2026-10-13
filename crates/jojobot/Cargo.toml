@@ -38,8 +38,13 @@ anyhow.workspace = true
 jiff.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# The request log wraps a response's body to see when it ends or is dropped.
+http-body = "1"
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+# A case on the slow-call warning moves the clock instead of waiting a minute.
+tokio = { workspace = true, features = ["test-util"] }
 # The fake store behind the domain's `testing` feature: the end-to-end tests
 # need a store that actually holds a write, with no network.
 jojobot-domain = { workspace = true, features = ["testing"] }

@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod config;
 pub mod push;
+pub mod request_log;
 pub mod routes;
 pub mod ui;
 pub mod wiring;
@@ -157,6 +158,12 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
             routes::require_bearer,
         ));
     }
+    // **Outermost on `/mcp`**, so a request the bearer check refuses is logged
+    // too, and a request's line covers its whole life.
+    mcp_router = mcp_router.route_layer(axum::middleware::from_fn_with_state(
+        request_log::RequestLog::new(state.registry.clone()),
+        request_log::log_request,
+    ));
 
     // **The listing is mounted only when it is configured**, and it cannot be
     // configured without an issuer. That is the whole of the no-bypass rule:
