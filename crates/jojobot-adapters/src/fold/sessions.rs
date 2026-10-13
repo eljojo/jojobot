@@ -251,7 +251,10 @@ impl Sessions for FoldedSessions {
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
-        self.inner.all_sessions().await
+        match self.held(|image| image.runs.clone()) {
+            Some(runs) => Ok(runs),
+            None => self.inner.all_sessions().await,
+        }
     }
 
     async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
