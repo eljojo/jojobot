@@ -716,3 +716,253 @@ fn a_things_own_order_is_kept_when_its_clock_stepped_back() {
     assert_eq!(own, vec![1, 2], "the duplicate's writes were reordered");
     assert_eq!(merged.len(), 3, "every write is placed: {merged:?}");
 }
+
+/// **Two things merged, and the two shapes the store can hold the merge in.**
+/// The merge moves the folded thing's claims onto the survivor today. A merge
+/// that leaves them where they were made is the same merge with its rows put
+/// back, which is what [`Merged::leave_in_place`] does to the store, with the
+/// event untouched. Every read family holds the two shapes to one answer.
+struct Merged {
+    memory: DoltMemory,
+    pool: sqlx::MySqlPool,
+    survivor_key: EntityId,
+    folded_key: EntityId,
+    /// The own claim of the survivor.
+    own: FactAddress,
+    /// For each claim the merge moved: the id it had and the id it was given.
+    moved: Vec<(String, String)>,
+}
+
+impl Merged {
+    /// Make the two things, give each claims, merge them, and keep the keys.
+    /// The folded thing's second claim is written twice.
+    async fn make(pool: sqlx::MySqlPool) -> Merged {
+        let memory = DoltMemory::open(pool.clone());
+        jojobot_domain::memory::kinds::seed(&memory)
+            .await
+            .expect("the kinds are seeded");
+        let survivor = EntityId::person("person:homer");
+        let folded = EntityId::person("person:apu");
+        for (handle, name) in [(&survivor, "Homer"), (&folded, "Apu")] {
+            memory
+                .add_entity(NewEntity::new(handle.clone(), name, "fixture"))
+                .await
+                .expect("add_entity ok")
+                .written()
+                .expect("the guard waves it through");
+        }
+        let said =
+            |about: &EntityId, what: &str| NewFact::about(about.clone(), what, date(2026, 9, 1));
+        let own = memory
+            .capture(said(&survivor, "keeps bees"))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through")
+            .address();
+        memory
+            .capture(said(&folded, "runs the store"))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through")
+            .address();
+        let second = memory
+            .capture(said(&folded, "closes at night"))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through")
+            .address();
+        memory
+            .update_fact(
+                &second,
+                FactPatch {
+                    content: Some("closes at midnight".into()),
+                    provenance: Some(Provenance::Inference),
+                    ..Default::default()
+                },
+                &EntityId("bot:sigma".into()),
+            )
+            .await
+            .expect("update_fact ok")
+            .written()
+            .expect("the guard waves it through");
+        memory
+            .merge(
+                &folded,
+                &survivor,
+                Some("filed twice"),
+                date(2026, 9, 2),
+                &EntityId("bot:sigma".into()),
+                Some("run-a"),
+            )
+            .await
+            .expect("the fold lands");
+        let mut tx = pool.begin().await.expect("a transaction");
+        let (survivor_key, _) = memory
+            .resolve(&mut tx, &survivor)
+            .await
+            .expect("resolve ok")
+            .expect("the survivor exists");
+        let (folded_key, _) = memory
+            .resolve(&mut tx, &folded)
+            .await
+            .expect("resolve ok")
+            .expect("the folded thing exists");
+        tx.commit().await.expect("the read commits");
+        let event = memory
+            .merge_events(Some(&survivor))
+            .await
+            .expect("events read")
+            .pop()
+            .expect("the merge left an event");
+        let moved = event
+            .claims
+            .iter()
+            .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
+            .collect();
+        Merged {
+            memory,
+            pool,
+            survivor_key,
+            folded_key,
+            own,
+            moved,
+        }
+    }
+
+    /// Put the folded thing's claims back under the key and the ids they were
+    /// made under, leaving the event and the survivor's own claims as they are.
+    async fn leave_in_place(&self) {
+        for (was, now) in &self.moved {
+            for (table, id_column) in [("fact", "id"), ("fact_write", "fact_id")] {
+                let moved_back = sqlx::query(&format!(
+                    "UPDATE {table} SET entity = ?, {id_column} = ? WHERE entity = ? AND {id_column} = ?"
+                ))
+                .bind(self.folded_key.as_str())
+                .bind(was)
+                .bind(self.survivor_key.as_str())
+                .bind(now)
+                .execute(&self.pool)
+                .await
+                .expect("the rows go back");
+                assert!(
+                    moved_back.rows_affected() > 0,
+                    "{table}: no row of {now} to put back, so the case would read the moved shape"
+                );
+            }
+        }
+    }
+}
+
+/// **A merge whose claims were left in place reads, as to its claims, exactly
+/// like a merge whose claims were moved** — the survivor lists them under its
+/// own handle and the ids the event gave them, and the folded thing lists
+/// nothing. The survivor's own claim reads as it did, so the case cannot pass
+/// by rewriting every address.
+#[tokio::test]
+async fn claims_left_in_place_by_a_merge_read_like_claims_moved_by_it() {
+    let scratch = Scratch::new("merged-claims");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_claims")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let read = |address: FactAddress| {
+        let merged = &merged;
+        async move {
+            let mut tx = merged.pool.begin().await.expect("a transaction");
+            let fact = merged
+                .memory
+                .fact_projected(&mut tx, &address)
+                .await
+                .expect("the substrate projects one");
+            tx.commit().await.expect("the read commits");
+            fact
+        }
+    };
+    let list = |key: EntityId| {
+        let merged = &merged;
+        async move {
+            let mut tx = merged.pool.begin().await.expect("a transaction");
+            let facts = merged
+                .memory
+                .facts_projected(&mut tx, &key)
+                .await
+                .expect("the substrate projects");
+            tx.commit().await.expect("the read commits");
+            facts
+        }
+    };
+    let served_as =
+        |now: &str| FactAddress::new(merged.survivor_key.clone(), FactId(now.to_string()));
+
+    // The moved shape is the control: what the reads answer today.
+    let moved_list = list(merged.survivor_key.clone()).await;
+    let mut moved_each = Vec::new();
+    for (_, now) in &merged.moved {
+        moved_each.push(read(served_as(now)).await);
+    }
+    let moved_own = read(FactAddress::new(
+        merged.survivor_key.clone(),
+        merged.own.local.clone(),
+    ))
+    .await;
+    assert_eq!(
+        moved_list.len(),
+        4,
+        "the survivor's own, two moved and the account"
+    );
+    assert!(moved_each.iter().all(Option::is_some), "{moved_each:?}");
+    assert!(moved_own.is_some());
+    assert!(list(merged.folded_key.clone()).await.is_empty());
+
+    merged.leave_in_place().await;
+
+    // The folded rows are where they were made, and nothing is under the new ids.
+    let stored_under_folded: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
+            .bind(merged.folded_key.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("counts");
+    assert!(
+        stored_under_folded > 0,
+        "the rows are back under the folded key"
+    );
+
+    assert_eq!(list(merged.survivor_key.clone()).await, moved_list);
+    for ((_, now), control) in merged.moved.iter().zip(&moved_each) {
+        assert_eq!(&read(served_as(now)).await, control, "{now}");
+    }
+    assert_eq!(
+        read(FactAddress::new(
+            merged.survivor_key.clone(),
+            merged.own.local.clone()
+        ))
+        .await,
+        moved_own,
+        "the survivor's own claim reads as it did"
+    );
+    assert!(
+        list(merged.folded_key.clone()).await.is_empty(),
+        "the folded thing lists nothing of its own"
+    );
+    for (was, _) in &merged.moved {
+        assert_eq!(
+            read(FactAddress::new(
+                merged.folded_key.clone(),
+                FactId(was.clone())
+            ))
+            .await,
+            None,
+            "{was}: the old address answers nothing under the folded key"
+        );
+    }
+    store.stop().await;
+}

@@ -1356,6 +1356,105 @@ impl DoltMemory {
         Ok(Some(FactAddress::new(handle, FactId(local))))
     }
 
+    /// **Whether a merge folded this key into another thing.** The events say
+    /// so whether or not the rows were moved.
+    async fn is_folded_key(
+        tx: &mut Transaction<'_, MySql>,
+        key: &EntityId,
+    ) -> Result<bool, MemoryError> {
+        let found: Option<i64> = sqlx::query_scalar(
+            "SELECT merge_no FROM merge_event WHERE ordinal = 0 AND folded = ? LIMIT 1",
+        )
+        .bind(key.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(found.is_some())
+    }
+
+    /// **The keys folded into a survivor, read from the merge events**: every
+    /// thing a merge folded into it, and everything folded into those earlier,
+    /// each with the id its stored claims are served under on the survivor.
+    /// A claim a merge moved is stored under the survivor already and is in no
+    /// list here; one it left under the folded key is in `served`. A merge made
+    /// before events were kept has no event and adds nothing.
+    async fn keys_folded_into(
+        tx: &mut Transaction<'_, MySql>,
+        survivor: &EntityId,
+    ) -> Result<Vec<FoldedKey>, MemoryError> {
+        let mut keys: Vec<String> = Vec::new();
+        let mut frontier = vec![survivor.as_str().to_string()];
+        // A merge cannot fold a thing into itself, so the chain ends; the bound
+        // is for a store that has been edited by hand.
+        for _ in 0..64 {
+            let mut next = Vec::new();
+            for into in &frontier {
+                let folded: Vec<String> = sqlx::query_scalar(
+                    "SELECT folded FROM merge_event WHERE ordinal = 0 AND survivor = ?
+                     ORDER BY merge_no",
+                )
+                .bind(into)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(store)?;
+                for key in folded {
+                    if key != survivor.as_str() && !keys.contains(&key) {
+                        keys.push(key.clone());
+                        next.push(key);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        let mut hops: std::collections::HashMap<(String, String), (String, String)> =
+            std::collections::HashMap::new();
+        for key in &keys {
+            let rows = sqlx::query(
+                "SELECT folded_id, survivor, survivor_id FROM merge_event
+                 WHERE ordinal > 0 AND folded = ? ORDER BY merge_no",
+            )
+            .bind(key)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            for row in &rows {
+                hops.insert(
+                    (
+                        key.clone(),
+                        row.try_get::<String, _>("folded_id").map_err(store)?,
+                    ),
+                    (
+                        row.try_get::<String, _>("survivor").map_err(store)?,
+                        row.try_get::<String, _>("survivor_id").map_err(store)?,
+                    ),
+                );
+            }
+        }
+        let mut out = Vec::with_capacity(keys.len());
+        for key in &keys {
+            let mut served = std::collections::HashMap::new();
+            for ((folded, id), _) in hops.iter().filter(|((folded, _), _)| folded == key) {
+                let mut at = (folded.clone(), id.clone());
+                for _ in 0..64 {
+                    let Some(next) = hops.get(&at) else { break };
+                    at = next.clone();
+                    if at.0 == survivor.as_str() {
+                        served.insert(id.clone(), at.1.clone());
+                        break;
+                    }
+                }
+            }
+            out.push(FoldedKey {
+                key: EntityId(key.clone()),
+                served,
+            });
+        }
+        Ok(out)
+    }
+
     async fn current_handle(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -1732,7 +1831,44 @@ impl DoltMemory {
     /// handle stored as itself — never a raw handle a caller sent. A caller
     /// resolves it once, at the top of its own write or read, exactly as
     /// every other lookup here does.
+    ///
+    /// **A thing's claims include the ones merged into it that still sit under
+    /// the key they were made under**, served under the survivor's handle and the
+    /// id the merge event gave them, so a merge that left its rows in place
+    /// reads like one that moved them. **A key that was merged away holds
+    /// nothing of its own**: what it still stores is the survivor's now.
     async fn facts_projected(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+    ) -> Result<Vec<Fact>, MemoryError> {
+        if Self::is_folded_key(tx, entity).await? {
+            return Ok(Vec::new());
+        }
+        let mut facts = self.claims_stored_at(tx, entity).await?;
+        let folded = Self::keys_folded_into(tx, entity).await?;
+        if folded.is_empty() {
+            return Ok(facts);
+        }
+        let handle = self.current_handle(tx, entity).await?;
+        for folded in &folded {
+            for mut fact in self.claims_stored_at(tx, &folded.key).await? {
+                let Some(served) = folded.served.get(fact.id.as_str()) else {
+                    continue;
+                };
+                fact.id = FactId(served.clone());
+                fact.home = handle.clone();
+                fact.subject = handle.clone();
+                facts.push(fact);
+            }
+        }
+        facts.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+        Ok(facts)
+    }
+
+    /// The claims stored under one key, as they are stored: the newest write of
+    /// each. [`Self::facts_projected`] is the read that answers for a thing.
+    async fn claims_stored_at(
         &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
@@ -1754,7 +1890,56 @@ impl DoltMemory {
     /// One addressed claim, projected from the substrate. **`address.home`
     /// must already be a storage key**, for the same reason `facts_projected`
     /// needs one.
+    ///
+    /// **A claim merged into this thing that still sits under the key it was
+    /// made under answers at the address the merge event gave it**, exactly as
+    /// [`Self::facts_projected`] lists it. A key that was merged away answers
+    /// for nothing.
     async fn fact_projected(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<Option<Fact>, MemoryError> {
+        if Self::is_folded_key(tx, &address.home).await? {
+            return Ok(None);
+        }
+        if let Some(own) = self.claim_stored_at(tx, address).await? {
+            return Ok(Some(own));
+        }
+        // The address may name the claim by the id a merge gave it: walk the
+        // events back to where it is stored.
+        let mut at = address.clone();
+        for _ in 0..64 {
+            let origin = sqlx::query(
+                "SELECT folded, folded_id FROM merge_event
+                 WHERE survivor = ? AND survivor_id = ? AND ordinal > 0
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(at.home.as_str())
+            .bind(at.local.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            let Some(origin) = origin else {
+                return Ok(None);
+            };
+            at = FactAddress::new(
+                EntityId(origin.try_get::<String, _>("folded").map_err(store)?),
+                FactId(origin.try_get::<String, _>("folded_id").map_err(store)?),
+            );
+            if let Some(mut fact) = self.claim_stored_at(tx, &at).await? {
+                let handle = self.current_handle(tx, &address.home).await?;
+                fact.id = address.local.clone();
+                fact.home = handle.clone();
+                fact.subject = handle;
+                return Ok(Some(fact));
+            }
+        }
+        Ok(None)
+    }
+
+    /// One claim as it is stored at one address: its newest write.
+    async fn claim_stored_at(
         &self,
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
@@ -3484,6 +3669,14 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
 /// The first ordinal of the range a merge parks field writes in while it
 /// renumbers them: far above any count of writes of one key.
 const PARKED: i64 = 1 << 40;
+
+/// **A key a merge folded into a survivor**, and the id each of its stored
+/// claims is served under on the survivor.
+struct FoldedKey {
+    key: EntityId,
+    /// The id a claim is stored under here, to the id the survivor serves it as.
+    served: std::collections::HashMap<String, String>,
+}
 
 /// One field write as a merge orders it.
 #[derive(Debug, Clone, PartialEq, Eq)]
