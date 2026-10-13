@@ -76,3 +76,56 @@ async fn switched_reads_answer_from_memory_exactly_as_the_store_does() {
     };
     walk_every_kind_of_write(&probe).await;
 }
+
+/// **A boot declares the types the build ships, every time, and a store that
+/// already holds them has nothing to fold again.** A declaration the image
+/// already holds, word for word, changes how no thing folds, so it must not read
+/// the whole store again: with the image full, six such declarations at boot read
+/// it six times over and the server took minutes to start. Paired with the
+/// positive: a declaration that differs still reads the image again and changes
+/// what a counter key folds to.
+#[tokio::test]
+async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let thing = EntityId("thing:delta".into());
+    folded
+        .add_entity(NewEntity::new(thing.clone(), "Delta Station", "fold-image"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+
+    let ranked = DeclaredType::new(
+        "fold-ranked",
+        vec![Field::required("rank", ValueType::Number)],
+    );
+    folded.declare_type(ranked.clone()).await.expect("declared");
+
+    counted.reset();
+    folded.declare_type(ranked).await.expect("declared again");
+    assert_eq!(
+        counted.seen(),
+        std::collections::BTreeMap::from([("declare_type", 1)]),
+        "declaring what the image already holds reached the store for more than the declaration"
+    );
+
+    counted.reset();
+    folded
+        .declare_type(DeclaredType::new(
+            "fold-ranked",
+            vec![Field::required("rank", ValueType::Text)],
+        ))
+        .await
+        .expect("declared differently");
+    assert!(
+        counted.calls() > 1,
+        "a declaration that differs must read the image again: {:?}",
+        counted.seen()
+    );
+}

@@ -590,6 +590,15 @@ impl Memory for Folded {
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
         let _gate = self.writing.lock().await;
         let written = self.inner.declare_type(declared).await?;
+        // **A declaration the image already holds, word for word, folds nothing
+        // differently.** A boot declares every type the build ships, so on a
+        // store that has them each of those would read the whole image again.
+        if self
+            .held(|image| image.types().contains(&written))
+            .unwrap_or(false)
+        {
+            return Ok(written);
+        }
         self.reload().await.map_err(|source| {
             MemoryError::Store(format!(
                 "declare_type landed, but the fold could not rebuild to reflect it: {source}"
