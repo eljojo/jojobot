@@ -220,7 +220,14 @@ impl Sessions for FoldedSessions {
     }
 
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
-        self.inner.read_session(id).await
+        validate_session_id(id)?;
+        match self.held(|image| image.run(id).cloned()) {
+            Some(Some(run)) => Ok(run),
+            Some(None) => Err(SessionError::UnknownSession {
+                attempted: id.to_string(),
+            }),
+            None => self.inner.read_session(id).await,
+        }
     }
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
