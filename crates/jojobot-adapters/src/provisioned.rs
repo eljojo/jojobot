@@ -251,6 +251,12 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// **A supplied record is not edited by the edit that writes a claim**, for the
     /// reason `update_entity` refuses it: the claim must not be a way past the
     /// screen.
+    ///
+    /// **An edit that names nothing of the record itself is a capture.** What the
+    /// call sets is written on top of what the build ships, exactly as `capture`
+    /// writes it, and the record answered with is the supplied one. A name,
+    /// aliases, source or crm in the same call refuses the whole call, so the
+    /// claim is not written either.
     async fn update_entity_with_claim(
         &self,
         handle: &EntityId,
@@ -258,6 +264,29 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         if let Some((supplied, _)) = self.provisions.record_for(handle) {
+            let edits_the_record = patch.name.is_some()
+                || patch.aliases.is_some()
+                || patch.source.is_some()
+                || patch.crm.is_some();
+            if !edits_the_record {
+                // The same check the store makes before it writes the pair.
+                if claim.subject != *handle {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "the claim is about {}, and the thing being edited is {handle}",
+                        claim.subject
+                    )));
+                }
+                return Ok(match self.inner.capture(claim).await? {
+                    Guarded::Written(fact) => Guarded::Written((supplied.clone(), fact)),
+                    Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    } => Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    },
+                });
+            }
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates: vec![guard::EntityMatch {
@@ -825,6 +854,87 @@ mod tests {
         assert!(
             matches!(stored, jojobot_domain::memory::Guarded::Written(ref e) if e.name == "The week ahead"),
             "…and a stored record still renames exactly as it did: {stored:?}",
+        );
+    }
+
+    /// **An edit that writes a claim and names nothing of the record itself is a
+    /// capture on a supplied record**, and a name beside it refuses the whole
+    /// call.
+    ///
+    /// Three reads in one case. The claim lands and the supplied record is what
+    /// comes back, with what the build ships still under what was set; the same
+    /// call with a name refuses and leaves the claim unwritten, so the pair is
+    /// whole or not at all; and a claim about another record than the one edited
+    /// is the malformed call it is on a stored record. Without the second, a
+    /// layer that ignored the patch and wrote the claim would pass the first.
+    #[tokio::test]
+    async fn an_edit_that_only_sets_lands_on_a_supplied_record_and_one_that_renames_does_not() {
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
+        let id = EntityId("view:loops".into());
+        let claim = |content: &str, key: &str| {
+            let mut fact = NewFact::about(id.clone(), content, Date::constant(2026, 10, 12));
+            fact.fields
+                .insert(key.to_string(), "kept on top".to_string());
+            fact.sets.insert(key.to_string());
+            fact
+        };
+
+        let landed = over
+            .update_entity_with_claim(&id, EntityPatch::default(), claim("a note", "note"))
+            .await
+            .expect("a sets-only edit of a supplied record answers");
+        match landed {
+            Guarded::Written((entity, _)) => assert_eq!(entity.id, id),
+            other => panic!("a sets-only edit lands on a supplied record: {other:?}"),
+        }
+        let held = over.fields(&id).await.expect("fields read");
+        assert_eq!(
+            held.get("note").map(String::as_str),
+            Some("kept on top"),
+            "{held:?}"
+        );
+        assert_eq!(
+            held.get("selects").map(String::as_str),
+            Some("rhythm"),
+            "what the build ships is still under it: {held:?}",
+        );
+
+        let renamed = over
+            .update_entity_with_claim(
+                &id,
+                EntityPatch {
+                    name: Some("Mine".into()),
+                    ..Default::default()
+                },
+                claim("another note", "other"),
+            )
+            .await
+            .expect("the refusal is an answer");
+        assert!(
+            matches!(renamed, Guarded::Blocked { ref attempted, .. } if attempted == &id),
+            "a name beside the sets refuses the call: {renamed:?}",
+        );
+        let held = over.fields(&id).await.expect("fields read");
+        assert!(
+            !held.contains_key("other"),
+            "a refused edit writes none of its claim: {held:?}",
+        );
+
+        let elsewhere = over
+            .update_entity_with_claim(
+                &id,
+                EntityPatch::default(),
+                NewFact::about(
+                    EntityId("view:ready".into()),
+                    "about another record",
+                    Date::constant(2026, 10, 12),
+                ),
+            )
+            .await;
+        assert!(
+            matches!(elsewhere, Err(MemoryError::InvalidFact(_))),
+            "a claim about another record is a malformed call: {elsewhere:?}",
         );
     }
 

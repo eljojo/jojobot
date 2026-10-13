@@ -87,6 +87,15 @@ pub(crate) enum Blocked {
     MustExist(&'static str),
 }
 
+/// **Does a candidate stand for the very record the call edits.** A stored
+/// thing is never its own near miss, so this is true only when the layer that
+/// holds what the build supplies refused the edit of that record itself.
+fn names_itself(attempted: &EntityId, candidates: &[EntityMatch]) -> bool {
+    candidates
+        .iter()
+        .any(|c| c.reason == guard::MatchReason::ExactHandle && &c.handle == attempted)
+}
+
 /// The write guard's answer: **nothing was written**, and here is what jojobot
 /// suspects you meant.
 ///
@@ -122,6 +131,16 @@ pub(crate) fn blocked_result(
              add_entity with override_token: \"{token}\". That token belongs to THIS refusal and \
              lifts no other. Display names are not unique and never have to be; the handle is \
              what has to be.",
+        ),
+        // **The record the call edits is the build's own.** Its name, aliases,
+        // source and crm come from the build, and no token lifts that, so none is
+        // offered. The way that works is a write on top of it: `capture`, or
+        // `update_entity` with `sets` alone.
+        Blocked::Relabelling(_) if names_itself(attempted, candidates) => format!(
+            "Nothing was written: '{attempted}' is a record the build supplies, so its name, \
+             aliases, source and crm come from the build and are not edited here. Facts and \
+             settings written to it with capture, or with update_entity and only `sets`, are \
+             kept on top of what the build ships. No token changes this refusal.",
         ),
         // Says "name" rather than "rename": this gate fires on an alias write
         // too, and telling a caller nothing was renamed when they renamed

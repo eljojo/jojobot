@@ -669,4 +669,214 @@ mod tests {
             "must name the near miss: {body}"
         );
     }
+    /// The call a caller sends to edit a record: only the pieces it names.
+    fn edit(handle: &str) -> UpdateEntityArgs {
+        UpdateEntityArgs {
+            handle: handle.into(),
+            name: None,
+            aliases: None,
+            source: None,
+            crm: None,
+            override_token: None,
+            sets: None,
+            sid: Some(crate::harness::TEST_SID.into()),
+        }
+    }
+
+    /// A run of sixteen hex digits, the shape of the token a refusal mints.
+    /// Asked of the shape and not of a sentence, so a refusal reworded still
+    /// answers the question: does this refusal hand out a token.
+    fn carries_a_token(advice: &str) -> bool {
+        advice
+            .chars()
+            .collect::<Vec<_>>()
+            .windows(16)
+            .any(|w| w.iter().all(char::is_ascii_hexdigit))
+    }
+
+    /// 🚨 **A refusal on a record the build ships never offers a token, and names
+    /// the write that works.** The record is the build's own, so no token lifts
+    /// the refusal. One that carried a token sent the caller round a loop: the
+    /// resend was refused again, with a new token, for ever.
+    ///
+    /// **Three things at once.** Every field of the edit that the build keeps is
+    /// refused with no token; a resend with a token the caller invented, which is
+    /// the move the old advice asked for, is refused the same way and writes
+    /// nothing; and the write the refusal names lands on the same record, so the
+    /// way forward exists. Without the last, a refusal that named nothing real
+    /// would pass the first two.
+    #[tokio::test]
+    async fn a_shipped_records_relabel_refusal_offers_no_token_and_names_a_write_that_lands() {
+        let jojobot = handler_shipped();
+        let sid = writing_as(&jojobot);
+
+        let calls = [
+            (
+                "name",
+                UpdateEntityArgs {
+                    name: Some("Mine".into()),
+                    ..edit("view:loops")
+                },
+            ),
+            (
+                "aliases",
+                UpdateEntityArgs {
+                    aliases: Some(vec!["rounds".into()]),
+                    ..edit("view:loops")
+                },
+            ),
+            (
+                "source",
+                UpdateEntityArgs {
+                    source: Some("me".into()),
+                    ..edit("view:loops")
+                },
+            ),
+            (
+                "crm",
+                UpdateEntityArgs {
+                    crm: Some("ref-1".into()),
+                    ..edit("view:loops")
+                },
+            ),
+            (
+                "a token nobody minted",
+                UpdateEntityArgs {
+                    name: Some("Mine".into()),
+                    override_token: Some("0123456789abcdef".into()),
+                    ..edit("view:loops")
+                },
+            ),
+        ];
+        for (label, args) in calls {
+            let result = jojobot
+                .update_entity(Parameters(args))
+                .await
+                .expect("a shipped record's refusal is an answer");
+            let body = blocked(&result);
+            let way = body["how_to_proceed"].as_str().expect("advice is a string");
+            assert!(
+                !way.contains("override_token") && !carries_a_token(way),
+                "{label}: a refusal nothing can lift offers no token: {body}",
+            );
+            assert!(
+                way.contains("capture"),
+                "{label}: the refusal names the write that works: {body}",
+            );
+            assert_eq!(body["fix_by"], "change", "{label}: {body}");
+        }
+
+        // Nothing moved: the name the build ships is the name that reads back.
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid.clone()),
+                    ..recall_args("view:loops")
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        assert_eq!(read["objects"][0]["name"], "The Loops", "{read}");
+
+        // The write the refusal names, made on the same record, lands.
+        let wrote = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(sid),
+                    sets: Some([("note".to_string(), "kept on top".to_string())].into()),
+                    ..capture_args("view:loops", "A caller's own note on the loops view")
+                }))
+                .await
+                .expect("a write to a shipped record answers"),
+        );
+        assert_ne!(wrote["status"], "blocked", "{wrote}");
+    }
+
+    /// **A sets-only edit of a record the build ships lands on top of it**, as a
+    /// capture with sets does, and what the build ships stays under it.
+    ///
+    /// Paired with the same call on a stored entity, which behaves as it always
+    /// did, and with an edit that names a piece the build keeps beside the sets:
+    /// that one is refused whole, so the sets do not land either.
+    #[tokio::test]
+    async fn a_sets_only_edit_of_a_shipped_record_lands_on_top_of_what_ships() {
+        let jojobot = handler_shipped();
+        let sid = writing_as(&jojobot);
+
+        let landed = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    sets: Some([("note".to_string(), "kept on top".to_string())].into()),
+                    ..edit("view:loops")
+                }))
+                .await
+                .expect("a sets-only edit answers"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert_eq!(landed["id"], "view:loops", "{landed}");
+        assert!(landed["claim"]["address"].is_string(), "{landed}");
+
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid.clone()),
+                    ..recall_args("view:loops")
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        let loops = &read["objects"][0];
+        assert_eq!(loops["fields"]["note"], "kept on top", "{read}");
+        assert!(
+            loops["fields"]["selects"].is_string(),
+            "what the build ships is still there under the edit: {read}",
+        );
+        assert_eq!(
+            loops["name"], "The Loops",
+            "the build keeps the name: {read}"
+        );
+
+        // The same call on a stored entity still lands, as before.
+        jojobot
+            .add_entity(Parameters(add_args("thing", "red-bike", "Red Bike")))
+            .await
+            .expect("add ok");
+        let stored = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    sets: Some([("colour".to_string(), "red".to_string())].into()),
+                    ..edit("thing:red-bike")
+                }))
+                .await
+                .expect("a stored entity's sets-only edit answers"),
+        );
+        assert_ne!(stored["status"], "blocked", "{stored}");
+        assert_eq!(stored["id"], "thing:red-bike", "{stored}");
+
+        // A piece the build keeps, beside sets: refused whole.
+        let whole = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    name: Some("Mine".into()),
+                    sets: Some([("other".to_string(), "x".to_string())].into()),
+                    ..edit("view:loops")
+                }))
+                .await
+                .expect("answers"),
+        );
+        assert_eq!(whole["status"], "blocked", "{whole}");
+        let after = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid),
+                    ..recall_args("view:loops")
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        assert!(
+            after["objects"][0]["fields"]["other"].is_null(),
+            "a refused edit writes none of its sets: {after}",
+        );
+    }
 }
