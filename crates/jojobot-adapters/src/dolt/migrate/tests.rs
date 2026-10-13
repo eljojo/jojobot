@@ -103,7 +103,19 @@ const ALL_VERSIONS: &[&str] = &[
     "0074_session_key_hash",
     "0075_session_teaching_run_name",
     "0076_message_supersedes",
-    "0079_entity_write_snapshot",
+    "0079_entity_write_snapshot_kind",
+    "0079_entity_write_snapshot_name",
+    "0079_entity_write_snapshot_source",
+    "0079_entity_write_snapshot_crm",
+    "0079_entity_write_snapshot_parent",
+    "0079_entity_write_snapshot_boot",
+    "0079_entity_write_snapshot_archived_reason",
+    "0079_entity_write_snapshot_archived_at",
+    "0079_entity_write_snapshot_merged_into",
+    "0079_entity_write_snapshot_aliases",
+    "0079_entity_write_snapshot_prose",
+    "0079_entity_write_snapshot_badge",
+    "0079_entity_write_snapshot_session",
     "0080_merge_event",
     "0081_fact_write_refs",
     "0082_fact_write_stands_for",
@@ -2215,6 +2227,121 @@ async fn an_interrupted_former_handle_widening_is_recognized_by_the_columns_type
     .execute(&pool)
     .await
     .expect("…and the row takes the handle the old width refused");
+
+    store.stop().await;
+}
+
+/// The columns the entity-write snapshot adds, in the order they are added.
+const SNAPSHOT_COLUMNS: [&str; 13] = [
+    "kind",
+    "name",
+    "source",
+    "crm",
+    "parent",
+    "boot",
+    "archived_reason",
+    "archived_at",
+    "merged_into",
+    "aliases",
+    "prose",
+    "badge",
+    "session",
+];
+
+/// **A boot killed part way through the entity-write snapshot completes on the
+/// next boot.** The snapshot adds thirteen columns and this store applies DDL
+/// clause by clause without rolling back. The state a death leaves is some
+/// columns present, the ledger silent about them and a begun marker on the
+/// statement that was in flight. Every migration of the snapshot must answer
+/// for its own column alone, so the next boot records the one that landed,
+/// applies the ones that did not, and re-issues none that landed.
+///
+/// **Both halves of the death**: the in-flight column landed (the boot records
+/// it without re-issuing it) and it did not (the boot applies it).
+#[tokio::test]
+async fn a_boot_killed_part_way_through_the_entity_write_snapshot_completes_on_the_next_boot() {
+    let scratch = Scratch::new("migrate-interrupted-entity-write-snapshot");
+    let path = scratch.0.clone();
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+
+    let family: Vec<&str> = MIGRATIONS
+        .iter()
+        .map(|m| m.version)
+        .filter(|version| version.starts_with("0079_"))
+        .collect();
+    let in_flight = 4.min(family.len() - 1);
+
+    for (landed, name) in [(true, "snapshotlanded"), (false, "snapshotnotlanded")] {
+        let pool = store.database(name).await.expect("a database of its own");
+        run(&pool).await.expect("the schema");
+
+        // Five columns stand when the in-flight statement landed, four when
+        // it did not. The rest were never started.
+        let standing = if landed { 5 } else { 4 };
+        for column in &SNAPSHOT_COLUMNS[standing..] {
+            sqlx::raw_sql(&format!("ALTER TABLE entity_write DROP COLUMN {column}"))
+                .execute(&pool)
+                .await
+                .expect("the column goes");
+        }
+        for version in &family[in_flight..] {
+            sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+                .bind(version)
+                .execute(&pool)
+                .await
+                .expect("the ledger row goes");
+        }
+        mark_begun(&pool, family[in_flight])
+            .await
+            .expect("the marker lands");
+
+        let applied = run(&pool)
+            .await
+            .expect("the next boot completes the snapshot");
+        let expected: Vec<String> = family[if landed { in_flight + 1 } else { in_flight }..]
+            .iter()
+            .map(|version| version.to_string())
+            .collect();
+        assert_eq!(
+            applied, expected,
+            "the boot applies what did not land and only that (landed: {landed})",
+        );
+
+        let present: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = 'entity_write'
+             ORDER BY ordinal_position",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("the columns are readable");
+        let snapshot: Vec<&str> = present
+            .iter()
+            .map(String::as_str)
+            .filter(|column| SNAPSHOT_COLUMNS.contains(column))
+            .collect();
+        assert_eq!(
+            snapshot, SNAPSHOT_COLUMNS,
+            "every column is present, once, in the order the snapshot adds them (landed: {landed})",
+        );
+
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        for version in &family {
+            assert!(
+                recorded.iter().any(|seen| seen == version),
+                "the ledger holds {version} (landed: {landed}): {recorded:?}",
+            );
+        }
+        assert!(
+            run(&pool).await.expect("a second boot").is_empty(),
+            "the boot after the completing one changes nothing (landed: {landed})",
+        );
+    }
 
     store.stop().await;
 }

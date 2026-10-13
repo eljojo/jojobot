@@ -1,0 +1,24 @@
+-- What an entity looked like at each write, and the session that wrote it.
+--
+-- `entity_write` (0051) logged that a write happened and when. The thirteen
+-- migrations that start with 0079 add the rest: the whole row as it stood after
+-- the write, the way `fact_write` (0034) keeps the whole claim on every write.
+-- A rename, an alias change, a prose edit, an archive and a restore each leave a
+-- row, so an earlier value can be read back and told from one the entity always
+-- held. The `entity` row stays as the projection and answers every current read
+-- as before.
+--
+-- `aliases` is the alias set as one text: a JSON array, in order, because an
+-- alias is free text and no separator is safe in it. `badge` is the permanent id
+-- of the thing, so a history read is exact after a rename and after a freed
+-- handle is taken by a new thing. `session` is the run that made the write.
+--
+-- **Every column is nullable and nothing is backfilled.** A row an older build
+-- appended holds none of this, the earlier values are gone, and it stays NULL.
+-- A reader treats a NULL snapshot as "not recorded", never as an empty entity.
+--
+-- One column on its own, split out of what was one ALTER carrying all thirteen
+-- (rule 106): this store applies DDL clause by clause and does not roll it
+-- back, so a death between clauses left a table the next boot could not
+-- migrate. Each column now has its own migration and its own landed check.
+ALTER TABLE entity_write ADD COLUMN kind VARCHAR(32) NULL;

@@ -589,8 +589,68 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Column("message", "supersedes"),
     },
     Migration {
-        version: "0079_entity_write_snapshot",
-        sql: include_str!("../../migrations/0079_entity_write_snapshot.sql"),
+        version: "0079_entity_write_snapshot_kind",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_kind.sql"),
+        leaves: Leaves::Column("entity_write", "kind"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_name",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_name.sql"),
+        leaves: Leaves::Column("entity_write", "name"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_source",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_source.sql"),
+        leaves: Leaves::Column("entity_write", "source"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_crm",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_crm.sql"),
+        leaves: Leaves::Column("entity_write", "crm"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_parent",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_parent.sql"),
+        leaves: Leaves::Column("entity_write", "parent"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_boot",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_boot.sql"),
+        leaves: Leaves::Column("entity_write", "boot"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_archived_reason",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_archived_reason.sql"),
+        leaves: Leaves::Column("entity_write", "archived_reason"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_archived_at",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_archived_at.sql"),
+        leaves: Leaves::Column("entity_write", "archived_at"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_merged_into",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_merged_into.sql"),
+        leaves: Leaves::Column("entity_write", "merged_into"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_aliases",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_aliases.sql"),
+        leaves: Leaves::Column("entity_write", "aliases"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_prose",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_prose.sql"),
+        leaves: Leaves::Column("entity_write", "prose"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_badge",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_badge.sql"),
+        leaves: Leaves::Column("entity_write", "badge"),
+    },
+    Migration {
+        version: "0079_entity_write_snapshot_session",
+        sql: include_str!("../../migrations/0079_entity_write_snapshot_session.sql"),
         leaves: Leaves::Column("entity_write", "session"),
     },
     Migration {
