@@ -763,7 +763,14 @@ impl Merged {
                 .iter()
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect();
-            fact.sets = fact.fields.keys().cloned().collect();
+            // A key named `own_...` stays on the record; every other key is set
+            // on the thing.
+            fact.sets = fact
+                .fields
+                .keys()
+                .filter(|key| !key.starts_with("own_"))
+                .cloned()
+                .collect();
             fact
         };
         let own = memory
@@ -788,7 +795,7 @@ impl Merged {
             .written()
             .expect("the guard waves it through");
         let second = memory
-            .capture(said(&folded, "closes at night", &[]))
+            .capture(said(&folded, "closes at night", &[("own_shift", "night")]))
             .await
             .expect("capture ok")
             .written()
@@ -1227,5 +1234,61 @@ async fn claim_histories_left_in_place_by_a_merge_read_like_ones_moved_by_it() {
     for (moved, left) in moved.iter().zip(&left) {
         assert_eq!(left, moved);
     }
+    store.stop().await;
+}
+
+/// **A merge whose claims were left in place answers the thought-room and
+/// bag-of-keys questions of its claims exactly as a merge that moved them** —
+/// when each claim was last touched, and which of a claim's keys stay off the
+/// thing. The folded claim carrying a key of its own is read to keep it off, so
+/// a case that found nothing on both sides cannot pass.
+#[tokio::test]
+async fn touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_moved_ones() {
+    let scratch = Scratch::new("merged-touches");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_touches")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    let answers = || async {
+        let mut ids = vec![merged.own.local.clone()];
+        let mut served = Vec::new();
+        for (_, now) in &merged.moved {
+            ids.push(FactId(now.clone()));
+            served.push(FactAddress::new(
+                merged.survivor.clone(),
+                FactId(now.clone()),
+            ));
+        }
+        let mut tx = merged.pool.begin().await.expect("a transaction");
+        let touched = DoltMemory::touched_moments(&mut tx, &merged.survivor_key, &ids)
+            .await
+            .expect("touches read");
+        tx.commit().await.expect("the read commits");
+        let mut touched: Vec<_> = touched.into_iter().collect();
+        touched.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        let mut said = vec![format!("{touched:?}")];
+        for address in &served {
+            said.push(format!(
+                "{:?}",
+                merged.memory.keys_kept_off_the_thing(address).await
+            ));
+        }
+        said
+    };
+    let moved = answers().await;
+    assert_eq!(moved[0].matches("FactId").count(), 3, "{moved:?}");
+    assert!(
+        moved.iter().any(|said| said.contains("own_shift")),
+        "a key of a claim's own stays off the thing: {moved:?}"
+    );
+
+    merged.leave_in_place().await;
+
+    assert_eq!(answers().await, moved);
     store.stop().await;
 }

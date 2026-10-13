@@ -2655,12 +2655,20 @@ impl DoltMemory {
         fact: &FactId,
     ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::WriteClass>, MemoryError>
     {
+        // The claim's writes are stored where the claim is stored, which is not
+        // the address it is served at when a merge left it under the key it was
+        // made under.
+        let Some(stored) =
+            Self::stored_address_of(tx, &FactAddress::new(entity.clone(), fact.clone())).await?
+        else {
+            return Ok(Default::default());
+        };
         let rows = sqlx::query(
             "SELECT `key`, value, write_class FROM field_write
              WHERE entity = ? AND fact_id = ? ORDER BY `key`, ordinal",
         )
-        .bind(entity.as_str())
-        .bind(fact.as_str())
+        .bind(stored.home.as_str())
+        .bind(stored.local.as_str())
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
@@ -3491,14 +3499,42 @@ impl DoltMemory {
             query = query.bind(id.as_str());
         }
         let rows = query.fetch_all(&mut **tx).await.map_err(store)?;
+        let mut found = std::collections::HashSet::new();
         for row in rows {
             let fact_id: String = row.try_get("fact_id").map_err(store)?;
             let written_at = row
                 .try_get::<Option<String>, _>("written_at")
                 .map_err(store)?
                 .and_then(|at| at.parse::<jiff::Timestamp>().ok());
+            found.insert(fact_id.clone());
             if let Some(at) = written_at {
                 touched.insert(FactId(fact_id), at);
+            }
+        }
+        // **A claim a merge left under the key it was made under is touched
+        // when its writes were**, wherever they are stored.
+        for id in ids.iter().filter(|id| !found.contains(id.as_str())) {
+            let served = FactAddress::new(home.clone(), id.clone());
+            let Some(stored) = Self::stored_address_of(tx, &served).await? else {
+                continue;
+            };
+            if stored == served {
+                continue;
+            }
+            let newest: Option<Option<String>> = sqlx::query_scalar(
+                "SELECT written_at FROM fact_write WHERE entity = ? AND fact_id = ?
+                 ORDER BY ordinal DESC LIMIT 1",
+            )
+            .bind(stored.home.as_str())
+            .bind(stored.local.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            if let Some(at) = newest
+                .flatten()
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok())
+            {
+                touched.insert(id.clone(), at);
             }
         }
         Ok(touched)
