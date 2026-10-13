@@ -1537,6 +1537,11 @@ async fn pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrot
         vec![
             format!("{:?}", merged.memory.recall(&merged.pointing).await),
             format!("{:?}", merged.memory.fields(&merged.pointing).await),
+            format!("{:?}", merged.memory.key_trails(&merged.pointing).await),
+            format!(
+                "{:?}",
+                merged.memory.history(&merged.pointing, "friend").await
+            ),
             format!(
                 "{:?}",
                 merged.memory.claim_history(&merged.pointing_claim).await
@@ -1892,6 +1897,77 @@ async fn a_chain_of_merges_left_in_place_reads_like_the_chain_moved() {
     assert_eq!(left.len(), moved_answers.len());
     for (moved, left) in moved_answers.iter().zip(&left) {
         assert_eq!(left, moved);
+    }
+    store.stop().await;
+}
+
+/// **The fold the server answers every read from holds a merge that left its
+/// rows in place as it holds one that moved them.** The fold is built from the
+/// store's scan and its other whole-thing reads, so each of them must carry the
+/// survivor's claims, fields, histories and pointers. The control is the fold
+/// built over the moved shape; the case is the fold built again over the same
+/// store with the rows put back under the folded key.
+#[tokio::test]
+async fn the_fold_built_over_rows_left_in_place_answers_as_over_rows_moved() {
+    let scratch = Scratch::new("merged-fold");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_fold")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+    let folded_memory = crate::fold::Folded::new(std::sync::Arc::new(merged.memory.clone()));
+    folded_memory.rebuild().await.expect("the fold loads");
+
+    let answers = || async {
+        let mut said = Vec::new();
+        for handle in [&merged.survivor, &merged.folded, &merged.pointing] {
+            said.push(format!("{:?}", folded_memory.recall(handle).await));
+            said.push(format!("{:?}", folded_memory.fields(handle).await));
+            said.push(format!(
+                "{:?}",
+                folded_memory.fields_versioned(handle).await
+            ));
+            said.push(format!("{:?}", folded_memory.key_trails(handle).await));
+            said.push(format!(
+                "{:?}",
+                folded_memory.claim_histories(handle).await.map(|all| {
+                    let mut all: Vec<_> = all.into_iter().collect();
+                    all.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                    all
+                },)
+            ));
+            said.push(format!("{:?}", folded_memory.referring_to(handle).await));
+            said.push(format!("{:?}", folded_memory.scan_entity(handle).await));
+        }
+        for (was, now) in &merged.moved {
+            for address in [
+                FactAddress::new(merged.survivor.clone(), FactId(now.clone())),
+                FactAddress::new(merged.folded.clone(), FactId(was.clone())),
+            ] {
+                said.push(format!("{:?}", folded_memory.claim_history(&address).await));
+                said.push(format!("{:?}", folded_memory.built_on(&address).await));
+            }
+        }
+        said.push(format!("{:?}", folded_memory.list_entities(None).await));
+        said
+    };
+    let moved = answers().await;
+    assert!(
+        moved.iter().any(|said| said.contains("closes at midnight")),
+        "the fold holds the folded thing's claim on the survivor"
+    );
+
+    merged.leave_in_place().await;
+    // Writes made outside the server are not seen by a fold already loaded.
+    folded_memory.rebuild().await.expect("the fold loads again");
+
+    let left = answers().await;
+    assert_eq!(left.len(), moved.len());
+    for (index, (moved, left)) in moved.iter().zip(&left).enumerate() {
+        assert_eq!(left, moved, "answer {index}");
     }
     store.stop().await;
 }

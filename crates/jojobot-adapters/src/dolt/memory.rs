@@ -1521,6 +1521,61 @@ impl DoltMemory {
         Ok(FactAddress::new(home, at.local))
     }
 
+    /// **A stored field value served as a merge leaves it served**: every link in
+    /// it that names a folded thing names what that thing became, with the rule
+    /// the merge repoints a value by. A value a merge already rewrote names the
+    /// survivor and is returned as it is.
+    async fn forward_stored_values(
+        tx: &mut Transaction<'_, MySql>,
+        writes: &mut [(String, Option<String>)],
+    ) -> Result<(), MemoryError> {
+        let merges: Vec<(String, String)> = sqlx::query(
+            "SELECT folded, survivor FROM merge_event WHERE ordinal = 0 ORDER BY merge_no",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?
+        .iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("folded").map_err(store)?,
+                row.try_get::<String, _>("survivor").map_err(store)?,
+            ))
+        })
+        .collect::<Result<_, MemoryError>>()?;
+        if merges.is_empty() {
+            return Ok(());
+        }
+        let declared = Self::types_in(tx).await?;
+        for (key, value) in writes.iter_mut() {
+            let Some(held) = value else { continue };
+            for (folded, survivor) in &merges {
+                if let Some(now) = jojobot_domain::memory::repoint_field_value(
+                    key, held, &declared, folded, survivor,
+                ) {
+                    *held = now;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::forward_stored_values`] over the writes a history is read from.
+    async fn forward_raw_values(
+        tx: &mut Transaction<'_, MySql>,
+        rows: &mut [RawWrite],
+    ) -> Result<(), MemoryError> {
+        let mut values: Vec<(String, Option<String>)> = rows
+            .iter()
+            .map(|row| (row.key.clone(), row.value.clone()))
+            .collect();
+        Self::forward_stored_values(tx, &mut values).await?;
+        for (row, (_, value)) in rows.iter_mut().zip(values) {
+            row.value = value;
+        }
+        Ok(())
+    }
+
     /// **The storage keys whose rows make up one thing**: its own and those of
     /// everything folded into it. A key that was folded away holds none.
     async fn keys_holding(
@@ -5536,6 +5591,7 @@ impl Memory for DoltMemory {
         };
         let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
         rows.sort_by_key(|write| write.ordinal);
+        Self::forward_raw_values(&mut tx, &mut rows).await?;
         let facts = self.facts_of(&mut tx, &storage_key).await?;
         tx.commit().await.map_err(store)?;
 
@@ -5602,6 +5658,7 @@ impl Memory for DoltMemory {
         let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
         rows.retain(|write| write.key == key);
         rows.sort_by_key(|write| write.ordinal);
+        Self::forward_raw_values(&mut tx, &mut rows).await?;
         // The record a write arrived in says when it happened and what became
         // of it, so the claims are read alongside.
         let facts = self.facts_of(&mut tx, &storage_key).await?;
