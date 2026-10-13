@@ -42,6 +42,14 @@
 
 **What was decided is held apart from what was gathered around it.** A decision is its own child of the thread, of the `decision` kind, and its words are an ordinary record on it. Reading a thread puts its standing decisions first, inside the thread's ceiling and the answer's, and names what it left out. A session that reads the research first comes away well informed and confidently wrong, because good research rarely says what was chosen. **A decision that changes is never reworded:** a new decision names the one it replaces, and the old one is archived with its reason, so what was decided when stays readable.
 
+## Numbered collections
+
+**A container can number what it holds.** A thing that carries `numbers_by` names the key its members are numbered by, and every descendant carrying that key holds a whole number, unique across the whole subtree, archived members included. ⭐ **So a member is named by its number:** `topic:springfield-ordinances/32` resolves wherever a handle is taken, and a bot finds ordinance 32 without searching for the words.
+
+**jojobot keeps the count, never the writer.** The next number is a read, the largest held plus one, and a write that would repeat a number is refused, naming the member that holds it. There is no allocator to drift: two writers racing for one number get one success and one refusal that names the winner.
+
+**A number is never reused.** A retired member is archived, not deleted, so its number still resolves, to it and to the reason it was retired. Nothing here is specific to rules; a run of episodes or a series of issues numbers the same way.
+
 ## Reading a container whole
 
 **A container can be read whole because the ceiling already capped it.** That is the point of the bound: the reader loads everything relevant and nothing more, without guessing where to stop.
