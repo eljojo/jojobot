@@ -379,3 +379,51 @@ pub async fn a_receipt_of_a_survivor_names_the_folded_names_the_roster_shows<M: 
     assert_eq!(moved.folded_names, wanted, "the rename's receipt");
     assert_eq!(shown(&renamed).await, wanted, "and the roster still agrees");
 }
+
+/// **The folded names of a survivor come in one order in every store**: the
+/// handle order of the folded things, each with its display name first, whatever
+/// order they were folded in and whatever order the store lists its rows in. The
+/// thing folded first sorts last here, so a store that followed the order of the
+/// merges, or of its rows, would read the other way.
+pub async fn the_folded_names_of_a_survivor_come_in_the_order_of_the_handles<M: Memory>(store: &M) {
+    let kept = EntityId(format!("org:{}", "contract-folded-order-kept"));
+    let zeta = EntityId(format!("org:{}", "contract-folded-order-zzyxwv"));
+    let alpha = EntityId(format!("org:{}", "contract-folded-order-aaqrst"));
+    for (id, name, alias) in [
+        (&kept, "Folded Order Kept", "Marblequay Order"),
+        (&zeta, "Folded Order Zeta Name", "Thistledown Zeta"),
+        (&alpha, "Folded Order Alpha Name", "Driftwood Alpha"),
+    ] {
+        add(
+            store,
+            NewEntity {
+                aliases: vec![alias.into()],
+                ..NewEntity::new(id.clone(), name, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    for folded in [&zeta, &alpha] {
+        store
+            .merge(folded, &kept, None, date(2026, 7, 2), &other_caller(), None)
+            .await
+            .expect("the fold lands");
+    }
+    let survivor = store
+        .list_entities(None)
+        .await
+        .expect("the roster reads")
+        .into_iter()
+        .find(|entity| entity.id == kept)
+        .expect("the survivor is listed");
+    assert_eq!(
+        survivor.folded_names,
+        [
+            "Folded Order Alpha Name",
+            "Driftwood Alpha",
+            "Folded Order Zeta Name",
+            "Thistledown Zeta"
+        ],
+        "the folded names are not in handle order: {survivor:?}"
+    );
+}

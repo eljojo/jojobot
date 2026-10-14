@@ -2513,8 +2513,22 @@ fn a_survivor_is_named_each_folded_name_once() {
     with_folded_names(&mut rows);
     assert_eq!(
         rows[0].folded_names,
-        ["Spare", "Extra", "Older", "Ancient"],
-        "the display name comes first, a name the survivor wears is skipped, a repeat is kept once, and what was folded into the folded thing is named too"
+        ["Older", "Ancient", "Spare", "Extra"],
+        "the folded things come in handle order, each with its display name first; a name the survivor wears is skipped, a repeat is kept once, and what was folded into the folded thing is named too"
+    );
+    let mut reversed = rows.clone();
+    for row in &mut reversed {
+        row.folded_names.clear();
+    }
+    reversed.reverse();
+    with_folded_names(&mut reversed);
+    let survivor = reversed
+        .iter()
+        .find(|row| row.id.as_str() == format!("org:{}", "kept"))
+        .expect("the survivor");
+    assert_eq!(
+        survivor.folded_names, rows[0].folded_names,
+        "the order does not follow the order the rows were listed in"
     );
     assert!(
         rows[1].folded_names.is_empty(),

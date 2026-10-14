@@ -463,7 +463,8 @@ pub struct Entity {
     /// of what was folded into it because [`Entity::labels`] reads this beside its
     /// own, and a reader is shown them apart from `aliases`, which holds only what
     /// a caller wrote. A name the survivor already holds is not repeated here.
-    /// Empty on a thing nobody merged into.
+    /// They come in the handle order of the folded things, whatever order a store
+    /// lists its rows in. Empty on a thing nobody merged into.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folded_names: Vec<String>,
     /// Where this entity came from — **never invented**. An entity exists
@@ -5358,8 +5359,8 @@ pub struct MergeEvent {
 /// **Name on each survivor the things that were folded into it.** A merge carries
 /// no name: the folded thing keeps its own, and the survivor answers to them
 /// because the stores set [`Entity::folded_names`] from the folds when they list.
-/// The names are the folded display names first, then their aliases, in the order
-/// the walk found the folded things. A name the survivor already answers to is
+/// The names come in the handle order of the folded things, each with its display
+/// name first and then its aliases, so every store gives the same order. A name the survivor already answers to is
 /// left out, compared without regard to case, and so is a name repeated within
 /// the list. A thing that was itself folded away is named for nobody. Shared by
 /// every store so a fold gives the same answer in each.
@@ -5373,7 +5374,9 @@ pub fn with_folded_names(entities: &mut [Entity]) {
         }
     }
     for survivor in survivors {
-        let folded = folded_into(&survivor, entities);
+        let mut folded = folded_into(&survivor, entities);
+        // One order in every store, whatever order the rows were listed in.
+        folded.sort();
         let named: Vec<String> = {
             let Some(own) = entities
                 .iter()
