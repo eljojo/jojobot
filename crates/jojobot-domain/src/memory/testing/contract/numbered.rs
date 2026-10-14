@@ -435,7 +435,14 @@ pub async fn a_numbered_handle_is_never_given_to_a_new_thing<M: Memory>(store: &
         "a numbered handle is not a handle to make: {made:?}"
     );
     let renamed = store
-        .rename_entity(&o.curfew, &taken, None, date(2026, 5, 6), None, None)
+        .rename_entity(
+            &o.curfew,
+            &taken,
+            None,
+            date(2026, 5, 6),
+            crate::memory::Override::none(),
+            None,
+        )
         .await;
     assert!(
         matches!(renamed, Err(MemoryError::InvalidEntity(_))),

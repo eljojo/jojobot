@@ -671,6 +671,7 @@ mod tests {
                     parent: None,
                     recorded_at: None,
                     override_token: None,
+                    override_reason: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -880,6 +881,7 @@ mod tests {
             crm: None,
             sets: None,
             override_token: None,
+            override_reason: None,
             sid: Some(TEST_SID.into()),
         }
     }

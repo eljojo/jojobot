@@ -298,6 +298,7 @@ pub fn nearest_numbers(
                     name: member.name.clone(),
                     source: member.source.clone(),
                     reason: MatchReason::HeldNumber,
+                    told_apart_by: None,
                 })
             })
             .collect(),

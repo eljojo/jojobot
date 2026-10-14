@@ -75,7 +75,8 @@ impl MatchReason {
             | MatchReason::SelfParent
             | MatchReason::SameName
             | MatchReason::NearSlug
-            | MatchReason::NearName => false,
+            | MatchReason::NearName
+            | MatchReason::HeldNumber => false,
         }
     }
 }

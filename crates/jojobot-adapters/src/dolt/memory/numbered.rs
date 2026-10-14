@@ -230,6 +230,7 @@ impl DoltMemory {
                         name: member.name.clone(),
                         source: member.source.clone(),
                         reason: guard::MatchReason::HeldNumber,
+                        told_apart_by: None,
                     })
                 })
                 .collect();
