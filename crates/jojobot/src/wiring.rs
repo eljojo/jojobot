@@ -535,6 +535,59 @@ pub async fn boot_store_pushing(
         .on_clock(clock);
     let resolved = open_provisioned(bare_memory, supplied).await?;
 
+    // **A handle the build stopped supplying, or renamed, keeps the writes the
+    // operator made while it was supplied** (rule 508). They are filed under the
+    // handle's own text with no row, so a read finds nothing and calls the handle
+    // unknown. This gives such a handle a row, so it reads back as any stored
+    // thing. **After the kinds are loaded**, which `open_provisioned` does: the
+    // kind of the row comes from the handle. **Over an instance told what the
+    // build supplies**, so a handle still supplied is left alone. Every boot, and
+    // cheap when there is nothing to do: a build can stop supplying a handle at
+    // any release.
+    match linking.adopt_handles_without_a_row().await {
+        Ok(report) => {
+            for handle in &report.adopted {
+                tracing::info!(
+                    %handle,
+                    "store: gave a row to a handle whose writes outlived its record, so it reads \
+                     back as a stored thing"
+                );
+            }
+            for key in &report.left {
+                tracing::warn!(
+                    %key,
+                    "WRITES FILED UNDER A HANDLE OF A KIND THIS BUILD DOES NOT DECLARE — they \
+                     were not given a row and no read reaches them. A person has to say what \
+                     they are."
+                );
+            }
+            // A pointer at an adopted handle was written as the handle's text,
+            // because the record had no badge to point at. It is lowered onto the
+            // badge the row wears now, as every other pointer is.
+            if !report.adopted.is_empty() {
+                match badging.resolve_stale_pointer_columns().await {
+                    Ok(0) => {}
+                    Ok(rewritten) => tracing::info!(
+                        rewritten,
+                        "store: resolved pointers at the adopted handles onto their badges"
+                    ),
+                    Err(e) => tracing::error!(
+                        error = %e,
+                        "POINTERS AT ADOPTED HANDLES NOT RESOLVED — a pointer still holds the \
+                         handle's text rather than its badge, and a person has to repair it. \
+                         A restart repeats the scan."
+                    ),
+                }
+            }
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            "HANDLES WITHOUT A ROW NOT ADOPTED — what the operator wrote on a handle the build \
+             no longer supplies is still in the store and not reachable. Nothing was lost; a \
+             restart once the store is reachable repeats the pass."
+        ),
+    }
+
     // **A reference-typed field value, stored as plain handle text before
     // this build lowered it at write time, rewritten onto the permanent id
     // it names** (rule 290). Runs after the three passes above for the same

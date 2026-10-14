@@ -5451,9 +5451,11 @@ async fn plant_a_claim_filed_under(
     .execute(pool)
     .await
     .expect("the record's first write lands");
+    // **The shape `capture` with `sets` writes**: the class `sets`, which is what
+    // makes the key a property of the thing, and the moment of the write.
     sqlx::query(
-        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-         VALUES (?, ?, 1, ?, 'f1')",
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+         VALUES (?, ?, 1, ?, 'f1', '2026-10-08T14:02:10Z', 'sets')",
     )
     .bind(key)
     .bind(field.0)
@@ -5554,5 +5556,149 @@ async fn a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_
         );
         booted.stop().await;
     }
+    drop(scratch);
+}
+
+/// A handle some earlier build supplied and this one does not.
+const RETIRED_HANDLE: &str = "view:upgrade-fixture-retired";
+
+/// **What the operator wrote on a handle the build stopped supplying reads back
+/// as an ordinary stored thing.** The writes sit filed under the handle's own
+/// text with no row. The first boot gives the handle a row, takes the kind from
+/// the handle and the name from its slug, and files the claim and the field under
+/// the row's badge, so `recall` answers as for any thing and the next boot has
+/// nothing left to do. Paired with a handle the build still supplies, which keeps
+/// its writes where they are, is given no row, and is not named.
+#[tokio::test]
+async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_back_as_a_thing() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "retired-handle").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_claim_filed_under(
+        store.pool(),
+        RETIRED_HANDLE,
+        "a claim written while the build supplied this view",
+        ("answer", "kept"),
+    )
+    .await;
+    // The pair: an overlay on a handle the build still supplies, filed the same way.
+    plant_a_claim_filed_under(
+        store.pool(),
+        SHIPPED_HANDLE_WITHOUT_ONE,
+        "a claim on a view the build still supplies",
+        ("answer", "still on top"),
+    )
+    .await;
+    store.stop().await;
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let retired = recalled_with_claims(&first, RETIRED_HANDLE).await;
+    let object = &retired["objects"][0];
+    assert_eq!(
+        object["id"], RETIRED_HANDLE,
+        "recorded at {git_ref}: the handle answers as a thing: {retired}"
+    );
+    assert_eq!(
+        object["name"], "upgrade-fixture-retired",
+        "recorded at {git_ref}: the name is the handle's slug: {retired}"
+    );
+    assert_eq!(
+        object["fields"]["answer"], "kept",
+        "recorded at {git_ref}: the field reads back: {retired}"
+    );
+    assert!(
+        object["facts"]
+            .to_string()
+            .contains("while the build supplied"),
+        "recorded at {git_ref}: the claim reads back: {retired}"
+    );
+    let shipped = recalled_with_claims(&first, SHIPPED_HANDLE_WITHOUT_ONE).await;
+    assert_eq!(
+        shipped["objects"][0]["fields"]["answer"], "still on top",
+        "recorded at {git_ref}: a handle still supplied keeps its overlay: {shipped}"
+    );
+    assert_eq!(
+        log_lines_naming(&first, RETIRED_HANDLE).len(),
+        1,
+        "recorded at {git_ref}: the first boot names the handle it gave a row: {:?}",
+        first.log
+    );
+    assert!(
+        log_lines_naming(&first, SHIPPED_HANDLE_WITHOUT_ONE).is_empty(),
+        "recorded at {git_ref}: a handle still supplied is not named"
+    );
+    // The recording itself holds no handle to adopt: the one line that names a
+    // handle is the planted one's.
+    assert_eq!(
+        first
+            .log
+            .iter()
+            .filter(|line| line.contains("handle="))
+            .count(),
+        1,
+        "recorded at {git_ref}: the boot gave a row to the planted handle and to no other: {:?}",
+        first.log
+    );
+    first.stop().await;
+
+    // The store, read with no binary over it.
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (kind, badge): (String, Option<String>) =
+        sqlx::query_as("SELECT kind, badge FROM entity WHERE id = ?")
+            .bind(RETIRED_HANDLE)
+            .fetch_one(store.pool())
+            .await
+            .expect("the handle has a row now");
+    assert_eq!(
+        kind, "view",
+        "recorded at {git_ref}: the kind is the handle's"
+    );
+    let badge = badge.expect("recorded at {git_ref}: the row wears a badge like any other");
+    let filed_under_the_badge: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact WHERE entity = ?")
+            .bind(&badge)
+            .fetch_one(store.pool())
+            .await
+            .expect("counted");
+    let filed_under_the_handle: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact WHERE entity = ?")
+            .bind(RETIRED_HANDLE)
+            .fetch_one(store.pool())
+            .await
+            .expect("counted");
+    assert_eq!(
+        (filed_under_the_badge, filed_under_the_handle),
+        (1, 0),
+        "recorded at {git_ref}: the claim moved onto the badge"
+    );
+    let rows_at_the_supplied_handle: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM entity WHERE id = ?")
+            .bind(SHIPPED_HANDLE_WITHOUT_ONE)
+            .fetch_one(store.pool())
+            .await
+            .expect("counted");
+    assert_eq!(
+        rows_at_the_supplied_handle, 0,
+        "recorded at {git_ref}: a handle the build supplies is given no row"
+    );
+    store.stop().await;
+
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    assert!(
+        log_lines_naming(&second, RETIRED_HANDLE).is_empty(),
+        "recorded at {git_ref}: the second boot has nothing left to give a row: {:?}",
+        second.log
+    );
+    let again = recalled_with_claims(&second, RETIRED_HANDLE).await;
+    assert_eq!(
+        again["objects"][0]["fields"]["answer"], "kept",
+        "recorded at {git_ref}: the thing still answers on the second boot: {again}"
+    );
+    second.stop().await;
     drop(scratch);
 }

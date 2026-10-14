@@ -56,6 +56,8 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 use super::ids::{self, Draw};
 use super::ordinal;
 
+pub use adopt::AdoptionReport;
+
 /// **What the field-link migration did, and what it left alone.**
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FieldLinkReport {
@@ -356,27 +358,41 @@ impl DoltMemory {
                 continue;
             }
             let mut tx = self.pool.begin().await.map_err(store)?;
-            for statement in [
-                "UPDATE fact SET entity = ? WHERE entity = ?",
-                "UPDATE fact SET derived_from = ? WHERE derived_from = ?",
-                "UPDATE field_write SET entity = ? WHERE entity = ?",
-                "UPDATE fact_write SET entity = ? WHERE entity = ?",
-                "UPDATE fact_write SET derived_from = ? WHERE derived_from = ?",
-                "UPDATE fact_event_metadata SET fact_home = ? WHERE fact_home = ?",
-                "UPDATE fact_event_ref SET fact_home = ? WHERE fact_home = ?",
-                "UPDATE entity_alias SET entity = ? WHERE entity = ?",
-            ] {
-                sqlx::query(statement)
-                    .bind(&badge)
-                    .bind(&handle)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(store)?;
-            }
+            Self::rekey_to_badge(&mut tx, &handle, &badge).await?;
             tx.commit().await.map_err(store)?;
             rekeyed += 1;
         }
         Ok(rekeyed)
+    }
+
+    /// **Every badge-keyed column of a thing's own writes, moved from the
+    /// handle they were filed under onto the badge it wears.** The one list, so
+    /// the backfill of rows written before badges and the adoption of a handle
+    /// whose writes outlived its record cannot drift apart about which columns
+    /// hold a storage key.
+    async fn rekey_to_badge(
+        tx: &mut Transaction<'_, MySql>,
+        handle: &str,
+        badge: &str,
+    ) -> Result<(), MemoryError> {
+        for statement in [
+            "UPDATE fact SET entity = ? WHERE entity = ?",
+            "UPDATE fact SET derived_from = ? WHERE derived_from = ?",
+            "UPDATE field_write SET entity = ? WHERE entity = ?",
+            "UPDATE fact_write SET entity = ? WHERE entity = ?",
+            "UPDATE fact_write SET derived_from = ? WHERE derived_from = ?",
+            "UPDATE fact_event_metadata SET fact_home = ? WHERE fact_home = ?",
+            "UPDATE fact_event_ref SET fact_home = ? WHERE fact_home = ?",
+            "UPDATE entity_alias SET entity = ? WHERE entity = ?",
+        ] {
+            sqlx::query(statement)
+                .bind(badge)
+                .bind(handle)
+                .execute(&mut **tx)
+                .await
+                .map_err(store)?;
+        }
+        Ok(())
     }
 
     /// **The completion gate `backfill_handle_keyed_rows` asks**, over one
@@ -7936,6 +7952,7 @@ async fn append_merge_event(
     Ok(())
 }
 
+mod adopt;
 mod numbered;
 
 #[cfg(test)]

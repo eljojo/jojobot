@@ -8994,3 +8994,273 @@ async fn a_record_from_before_the_history_reads_as_unrecorded() {
 
     store.stop().await;
 }
+
+/// One claim and the field it set, filed under `key` below the surface: a badge
+/// for a stored thing, the handle's own text for a record the build supplied.
+/// The column lists are the ones the upgrade gate copies from the recordings.
+async fn file_a_claim_under(pool: &sqlx::MySqlPool, key: &str, content: &str, field: &str) {
+    sqlx::query(
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                           recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                           derived_from_id, inserted_at, stale_after, happened_at,
+                           happened_through)
+         VALUES (?, 'f1', ?, NULL, 'testimony', 'settled', 'active',
+                 '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                 NULL, NULL)",
+    )
+    .bind(key)
+    .bind(content)
+    .execute(pool)
+    .await
+    .expect("the record lands");
+    sqlx::query(
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                standing, status, recorded_at, edge_shape, edge_object,
+                                derived_from, derived_from_id, inserted_at, stale_after,
+                                written_at, happened_at, happened_through, session)
+         VALUES (?, 'f1', 1, ?, NULL, 'testimony', 'settled', 'active',
+                 '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+    )
+    .bind(key)
+    .bind(content)
+    .execute(pool)
+    .await
+    .expect("the record's first write lands");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+         VALUES (?, ?, 1, 'kept', 'f1')",
+    )
+    .bind(key)
+    .bind(field)
+    .execute(pool)
+    .await
+    .expect("the field lands");
+}
+
+/// A view record the build supplies, as `views.rs` ships one.
+fn supplied_view(id: &EntityId, name: &str) -> Provision {
+    Provision::record(
+        jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
+            id: id.clone(),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: name.into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
+    )
+}
+
+/// **A handle whose writes outlived its record gets a row, and nothing else
+/// does.** The build supplied `view:contract-retired` once and the operator wrote
+/// on it; the build stopped, and the writes sit filed under the handle's own text
+/// with no row. The adoption gives it a row (the kind from the handle, the name
+/// from its slug), mints its badge and files the claim and the field under it.
+///
+/// The cases beside it are what keeps the pass narrow, each paired with the
+/// adoption: a handle the build still supplies keeps its writes where they are, a
+/// key whose kind this build does not declare is left and reported, a stored
+/// thing's badge-keyed writes are no orphan, and a handle a thing wore before a
+/// rename is no orphan either. A second call has nothing left to do.
+#[tokio::test]
+async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
+    let scratch = Scratch::new("adopt-retired");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "adoptretired")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let retired = EntityId("view:contract-retired".into());
+    let still_supplied = EntityId("view:contract-shipped".into());
+    let supplied = Provisions::new(vec![supplied_view(&still_supplied, "Shipped")]);
+    let memory_store = DoltMemory::open(pool.clone()).knowing(supplied);
+
+    // A stored thing with its own claim under its badge, and a handle it wore
+    // before a rename, which an older build filed a claim under.
+    let stored = EntityId("thing:contract-stored".into());
+    memory_store
+        .add_entity(jojobot_domain::memory::NewEntity::new(
+            stored.clone(),
+            "Stored",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let stored_badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(stored.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the stored thing wears a badge");
+    sqlx::query(
+        "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+         VALUES ('thing:contract-formerly', ?, '2026-10-01', 1)",
+    )
+    .bind(&stored_badge)
+    .execute(&pool)
+    .await
+    .expect("the former handle lands");
+    file_a_claim_under(
+        &pool,
+        "thing:contract-formerly",
+        "filed under an old handle",
+        "old",
+    )
+    .await;
+
+    // **The operator's writes are made by the real writer**, while the build
+    // supplies both views: a capture with `sets`, which files the claim and the
+    // key under the handle's own text.
+    let shipped_both = Provisions::new(vec![
+        supplied_view(&retired, "Retired"),
+        supplied_view(&still_supplied, "Shipped"),
+    ]);
+    let writer = DoltMemory::open(pool.clone()).knowing(shipped_both);
+    for (subject, content) in [
+        (&retired, "written while shipped"),
+        (&still_supplied, "on a shipped view"),
+    ] {
+        let mut fact =
+            jojobot_domain::memory::NewFact::about(subject.clone(), content, date(2026, 10, 8));
+        fact.fields.insert("answer".to_string(), "kept".to_string());
+        fact.sets.insert("answer".to_string());
+        writer
+            .capture(memory::state(fact))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("a write on a supplied record lands");
+    }
+    // A bare key with no colon is a badge whose row is gone, which is other
+    // damage and no handle to adopt. A key under a kind nobody declares cannot be
+    // written through the writer. Both are filed below the surface.
+    file_a_claim_under(&pool, "bare0k", "under a key that names no handle", "y").await;
+    file_a_claim_under(
+        &pool,
+        "zzzz:contract-nokind",
+        "under a kind nobody declares",
+        "x",
+    )
+    .await;
+
+    let report = memory_store
+        .adopt_handles_without_a_row()
+        .await
+        .expect("the pass runs");
+    assert_eq!(
+        report.adopted,
+        vec![retired.clone()],
+        "only the handle whose writes outlived its record is adopted"
+    );
+    assert_eq!(
+        report.left,
+        vec!["zzzz:contract-nokind".to_string()],
+        "a key of a kind this build does not declare is left and reported"
+    );
+
+    let (kind, name, source, badge): (String, String, String, Option<String>) =
+        sqlx::query_as("SELECT kind, name, source, badge FROM entity WHERE id = ?")
+            .bind(retired.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the adopted handle has a row");
+    assert_eq!(
+        (kind.as_str(), name.as_str(), source.as_str()),
+        ("view", "contract-retired", "jojobot")
+    );
+    let badge = badge.expect("the row wears a badge like any other");
+    for (table, column) in [
+        ("fact", "entity"),
+        ("fact_write", "entity"),
+        ("field_write", "entity"),
+    ] {
+        let under_badge: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
+                .bind(&badge)
+                .fetch_one(&pool)
+                .await
+                .expect("counted");
+        let under_handle: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
+                .bind(retired.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("counted");
+        assert_eq!(
+            (under_badge, under_handle),
+            (1, 0),
+            "{table}.{column}: the write moved onto the badge"
+        );
+    }
+    // Read back through the port, as any thing is.
+    let claims = memory_store.recall(&retired).await.expect("recall reads");
+    assert!(
+        claims
+            .iter()
+            .any(|fact| fact.content.contains("written while shipped")),
+        "the claim reads back: {claims:?}"
+    );
+    assert_eq!(
+        memory_store
+            .fields(&retired)
+            .await
+            .expect("fields read")
+            .get("answer")
+            .map(String::as_str),
+        Some("kept")
+    );
+
+    // What stays where it was.
+    let rows_at_the_supplied_handle: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM entity WHERE id = ?")
+            .bind(still_supplied.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("counted");
+    let still_under_its_text: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact WHERE entity = ?")
+            .bind(still_supplied.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("counted");
+    assert_eq!(
+        (rows_at_the_supplied_handle, still_under_its_text),
+        (0, 1),
+        "a handle the build still supplies gets no row and keeps its write"
+    );
+    let rows_made: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity WHERE id IN \
+         ('thing:contract-formerly', 'zzzz:contract-nokind', 'bare0k')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("counted");
+    assert_eq!(
+        rows_made, 0,
+        "a former handle and an unknown kind get no row"
+    );
+
+    let again = memory_store
+        .adopt_handles_without_a_row()
+        .await
+        .expect("the pass runs again");
+    assert!(
+        again.adopted.is_empty(),
+        "a second call has nothing left to adopt: {again:?}"
+    );
+
+    store.stop().await;
+}
