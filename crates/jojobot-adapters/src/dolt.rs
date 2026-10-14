@@ -947,8 +947,9 @@ pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
 /// **Every column that keeps an instant is read**, found in the schema rather
 /// than listed here: an instant is text of 40 or 48 characters, and a column
 /// added later is read without anybody remembering to name it. The ledger of
-/// applied migrations is left out, because it records when the migration RAN, on
-/// the real clock, and not a moment of the run being acted out.
+/// applied migrations and the record of finished passes are left out, because
+/// each records when the work RAN, on the real clock, and not a moment of the run
+/// being acted out.
 ///
 /// **The newest is found by the instant, not by the text.** `…:00.5Z` sorts
 /// before `…:00Z` as text and is the later of the two. So each column is asked
@@ -961,7 +962,8 @@ pub async fn newest_stamp_from(
         "SELECT CAST(table_name AS CHAR), CAST(column_name AS CHAR) \
          FROM information_schema.columns \
          WHERE table_schema = DATABASE() AND data_type = 'varchar' \
-           AND character_maximum_length IN (40, 48) AND table_name <> 'schema_migration'",
+           AND character_maximum_length IN (40, 48) \
+           AND table_name NOT IN ('schema_migration', 'store_pass')",
     )
     .fetch_all(pool)
     .await?;

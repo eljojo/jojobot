@@ -47,7 +47,7 @@ fn run(sid: &str, started_at: Timestamp) -> NewSession {
 /// other two. A stamp the day before, and a row the migration ledger wrote on
 /// the day, are not the answer.
 #[tokio::test]
-async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_day_before_and_the_ledger()
+async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_day_before_the_ledger_and_the_pass_record()
  {
     let scratch = Scratch(std::env::temp_dir().join(format!(
         "jojobot-newest-stamp-{}-{}",
@@ -115,6 +115,12 @@ async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_da
     .execute(&pool)
     .await
     .expect("a ledger row");
+    sqlx::query(
+        "INSERT INTO store_pass (name, finished_at) VALUES ('probe_pass', '2026-06-01T23:59:58Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("a pass record row");
 
     let newest = jojobot_adapters::dolt::newest_stamp_from(&pool, date(2026, 6, 1))
         .await

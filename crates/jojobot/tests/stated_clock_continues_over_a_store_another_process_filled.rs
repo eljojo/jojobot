@@ -34,8 +34,9 @@ impl Drop for Scratch {
 
 /// **The stamp of a journal beat written by the real binary acting out
 /// [`DAY`]**, over a store whose only row, when `seeded_at` is given, is a run
-/// begun at that moment by an earlier process.
-async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>) -> Timestamp {
+/// begun at that moment by an earlier process, after `earlier_boots` boots of
+/// the binary over the same store.
+async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>, earlier_boots: usize) -> Timestamp {
     // One directory per call: two seeded cases run side by side in this process.
     static CALLS: AtomicUsize = AtomicUsize::new(0);
     let state_dir = std::env::temp_dir().join(format!(
@@ -72,10 +73,20 @@ async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>) -> Timestamp {
         seeding.stop().await;
     }
 
+    for _ in 0..earlier_boots {
+        beat_written_by_the_binary(&state_dir, store_port).await;
+    }
+    beat_written_by_the_binary(&state_dir, store_port).await
+}
+
+/// **One run of the real binary acting out [`DAY`]** over the store in
+/// `state_dir`: it boots, writes a journal beat, stops, and the beat's stamp is
+/// returned.
+async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16) -> Timestamp {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
-        .env("STATE_DIRECTORY", &state_dir)
+        .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
@@ -105,16 +116,32 @@ async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>) -> Timestamp {
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
             .await
             .expect("connecting to the real binary");
-    let booted: serde_json::Value = serde_json::from_str(
+    let mut booted: serde_json::Value = serde_json::from_str(
         &surface
             .call("start_here", serde_json::json!({"bot": "assistant"}))
             .await,
     )
     .expect("the boot answers in JSON");
+    if booted
+        .pointer("/session/sid")
+        .and_then(|sid| sid.as_str())
+        .is_none()
+    {
+        // An earlier boot of the binary left a run to pick up; this one starts its own.
+        booted = serde_json::from_str(
+            &surface
+                .call(
+                    "start_here",
+                    serde_json::json!({"bot": "assistant", "resume": "new"}),
+                )
+                .await,
+        )
+        .expect("the boot answers in JSON");
+    }
     let sid = booted
         .pointer("/session/sid")
         .and_then(|sid| sid.as_str())
-        .expect("a boot with nothing to resume hands back a sid")
+        .expect("a boot hands back a sid once it has answered the resume choice")
         .to_string();
     let beat: serde_json::Value = serde_json::from_str(
         &surface
@@ -143,7 +170,7 @@ async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>) -> Timestamp {
 async fn a_beat_written_over_a_store_another_process_filled_is_stamped_after_what_it_holds() {
     let seeded: Timestamp = format!("{DAY}T23:00:00.5Z").parse().expect("a moment");
 
-    let stamp = stamp_of_a_beat_after(Some(seeded)).await;
+    let stamp = stamp_of_a_beat_after(Some(seeded), 0).await;
 
     assert!(
         stamp > seeded,
@@ -159,7 +186,7 @@ async fn a_beat_written_over_a_store_another_process_filled_is_stamped_after_wha
 async fn a_beat_written_over_a_store_holding_a_stamp_on_the_next_day_is_stamped_after_it() {
     let seeded: Timestamp = "2026-06-02T01:00:00.5Z".parse().expect("a moment");
 
-    let stamp = stamp_of_a_beat_after(Some(seeded)).await;
+    let stamp = stamp_of_a_beat_after(Some(seeded), 0).await;
 
     assert!(
         stamp > seeded,
@@ -174,10 +201,32 @@ async fn a_beat_written_over_a_store_holding_a_stamp_on_the_next_day_is_stamped_
 async fn a_beat_written_over_a_store_with_no_stamp_on_the_day_is_stamped_at_midnight() {
     let midnight: Timestamp = format!("{DAY}T00:00:00Z").parse().expect("a moment");
 
-    let stamp = stamp_of_a_beat_after(None).await;
+    let stamp = stamp_of_a_beat_after(None, 0).await;
 
     assert!(
         stamp >= midnight && stamp.duration_since(midnight).as_secs() < 600,
         "the beat is stamped {stamp}, which is not within ten minutes of {midnight}"
+    );
+}
+
+/// **A boot that finishes a store pass leaves the stated day where it was.** A
+/// pass records its end on the real clock, so a later boot that read that moment
+/// as a stamp of the run being acted out would continue from today. The binary
+/// boots twice over one store: the first boot finishes the passes a new store
+/// owes, and a beat written by the second is still stamped on [`DAY`].
+#[tokio::test]
+async fn a_stated_day_survives_a_boot_that_finished_a_store_pass() {
+    let midnight: Timestamp = format!("{DAY}T00:00:00Z").parse().expect("a moment");
+
+    let stamp = stamp_of_a_beat_after(None, 1).await;
+
+    assert!(
+        stamp >= midnight && stamp.duration_since(midnight).as_secs() < 3600,
+        "the beat is stamped {stamp}, which is not within an hour of {midnight}"
+    );
+    assert_ne!(
+        stamp.to_zoned(jiff::tz::TimeZone::UTC).date(),
+        Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date(),
+        "the beat is stamped on the real day, so the stated clock moved to today"
     );
 }
