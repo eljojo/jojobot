@@ -54,6 +54,7 @@ use jojobot_domain::memory::{
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
+use super::ordinal;
 
 /// **What the field-link migration did, and what it left alone.**
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -3479,15 +3480,13 @@ impl DoltMemory {
             false => Vec::new(),
         };
         for (key, value) in wrote {
-            let highest: Option<i64> = sqlx::query_scalar(
-                "SELECT MAX(ordinal) FROM field_write WHERE entity = ? AND `key` = ?",
+            let ordinal = ordinal::next(
+                tx,
+                "field_write",
+                &[("entity", entity.as_str()), ("key", &key)],
             )
-            .bind(entity.as_str())
-            .bind(&key)
-            .fetch_one(&mut **tx)
             .await
             .map_err(store)?;
-            let ordinal = highest.unwrap_or(0) + 1;
             // **The bag this write was made under**, stored by name. A key no
             // caller classed is an own field of its record.
             let class = classes
@@ -3671,12 +3670,14 @@ impl DoltMemory {
         clock: &Clock,
         session: Option<&str>,
     ) -> Result<(), MemoryError> {
-        let highest: Option<i64> = sqlx::query_scalar(
-            "SELECT MAX(ordinal) FROM fact_write WHERE entity = ? AND fact_id = ?",
+        let ordinal = ordinal::next(
+            tx,
+            "fact_write",
+            &[
+                ("entity", fact.home.as_str()),
+                ("fact_id", fact.id.as_str()),
+            ],
         )
-        .bind(fact.home.as_str())
-        .bind(fact.id.as_str())
-        .fetch_one(&mut **tx)
         .await
         .map_err(store)?;
         sqlx::query(
@@ -3690,7 +3691,7 @@ impl DoltMemory {
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
-        .bind(highest.unwrap_or(0) + 1)
+        .bind(ordinal)
         .bind(&fact.content)
         .bind(fact.details.as_deref())
         .bind(fact.provenance.as_token())
@@ -4957,11 +4958,11 @@ impl Memory for DoltMemory {
         // handle never moved, so there is nothing here for a later resolve
         // to walk back through.
         if from != to {
-            let highest: Option<i64> = sqlx::query_scalar(
-                "SELECT MAX(ordinal) FROM entity_former_handle WHERE former_handle = ?",
+            let ordinal = ordinal::next(
+                &mut tx,
+                "entity_former_handle",
+                &[("former_handle", from.as_str())],
             )
-            .bind(from.as_str())
-            .fetch_one(&mut *tx)
             .await
             .map_err(store)?;
             sqlx::query(
@@ -4971,7 +4972,7 @@ impl Memory for DoltMemory {
             .bind(from.as_str())
             .bind(&badge)
             .bind(date.to_string())
-            .bind(highest.unwrap_or(0) + 1)
+            .bind(ordinal)
             .execute(&mut *tx)
             .await
             .map_err(store)?;
@@ -7320,12 +7321,9 @@ async fn append_type_write(
     by_session: Option<&str>,
     clock: &Clock,
 ) -> Result<(), MemoryError> {
-    let held: Option<i32> =
-        sqlx::query_scalar("SELECT MAX(ordinal) FROM type_write WHERE name = ?")
-            .bind(name)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(store)?;
+    let ordinal = ordinal::next(tx, "type_write", &[("name", name)])
+        .await
+        .map_err(store)?;
     let keys: Vec<serde_json::Value> = fields
         .iter()
         .map(|field| {
@@ -7343,7 +7341,7 @@ async fn append_type_write(
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind(name)
-    .bind(held.unwrap_or(0) + 1)
+    .bind(ordinal)
     .bind(clock.now().to_string())
     .bind(by_session)
     .bind(serde_json::Value::Array(keys).to_string())
@@ -7737,12 +7735,9 @@ async fn append_entity_version(
     clock: &Clock,
     session: Option<&str>,
 ) -> Result<(), MemoryError> {
-    let highest: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(ordinal) FROM entity_write WHERE entity = ?")
-            .bind(entity.as_str())
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(store)?;
+    let ordinal = ordinal::next(tx, "entity_write", &[("entity", entity.as_str())])
+        .await
+        .map_err(store)?;
     type Row = (
         String,
         String,
@@ -7777,7 +7772,6 @@ async fn append_entity_version(
             Some(serde_json::to_string(&aliases).expect("a list of text is JSON"))
         }
     };
-    let ordinal = highest.unwrap_or(0) + 1;
     let at = clock.now().to_string();
     let Some((
         kind,

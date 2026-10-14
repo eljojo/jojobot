@@ -33,6 +33,7 @@ use jojobot_domain::session::{
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
+use super::ordinal;
 
 /// Sessions kept in the SQL store jojobot runs.
 ///
@@ -383,14 +384,10 @@ impl DoltSessions {
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
     ) -> Result<i32, SessionError> {
-        let row = sqlx::query(
-            "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM journal_entry WHERE session = ?",
-        )
-        .bind(id.as_str())
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(store)?;
-        row.try_get::<i32, _>(0).map_err(store)
+        let ordinal = ordinal::next(tx, "journal_entry", &[("session", id.as_str())])
+            .await
+            .map_err(store)?;
+        i32::try_from(ordinal).map_err(|e| SessionError::Store(e.to_string()))
     }
 
     /// **Keep one change of a run, in the transaction that made it.** The record
@@ -1400,19 +1397,16 @@ impl Sessions for DoltSessions {
         by_session: Option<&str>,
     ) -> Result<(), SessionError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let held: Option<i32> =
-            sqlx::query_scalar("SELECT MAX(ordinal) FROM charter_change_write WHERE bot = ?")
-                .bind(bot.as_str())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(store)?;
+        let ordinal = ordinal::next(&mut tx, "charter_change_write", &[("bot", bot.as_str())])
+            .await
+            .map_err(store)?;
         sqlx::query(
             "INSERT INTO charter_change_write
                (bot, ordinal, changed_by, changed_by_session, changed_at)
              VALUES (?, ?, ?, ?, ?)",
         )
         .bind(bot.as_str())
-        .bind(held.unwrap_or(0) + 1)
+        .bind(ordinal)
         .bind(change.by.as_str())
         .bind(by_session)
         .bind(stamp(change.at))

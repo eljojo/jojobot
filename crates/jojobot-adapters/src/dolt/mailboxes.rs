@@ -41,6 +41,7 @@ use jojobot_domain::push::{Outbox, Push, PushError};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
+use super::ordinal;
 
 /// Mailboxes kept in the SQL store jojobot runs.
 ///
@@ -729,18 +730,15 @@ async fn append_push_attempt(
     attempted_at: Timestamp,
     next_attempt_at: Option<Timestamp>,
 ) -> Result<(), PushError> {
-    let held: Option<i32> =
-        sqlx::query_scalar("SELECT MAX(ordinal) FROM push_attempt WHERE message_id = ?")
-            .bind(message.as_str())
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(push_store)?;
+    let ordinal = ordinal::next(tx, "push_attempt", &[("message_id", message.as_str())])
+        .await
+        .map_err(push_store)?;
     sqlx::query(
         "INSERT INTO push_attempt (message_id, ordinal, attempted_at, outcome, next_attempt_at)
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind(message.as_str())
-    .bind(held.unwrap_or(0) + 1)
+    .bind(ordinal)
     .bind(push_stamp(attempted_at))
     .bind(outcome)
     .bind(next_attempt_at.map(push_stamp))
@@ -1151,8 +1149,7 @@ impl Mailboxes for DoltMailboxes {
         }
 
         let id = MessageId(mint(&mut tx, &self.draw).await?);
-        let ordinal: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(ordinal), 0) + 1 FROM message")
-            .fetch_one(&mut *tx)
+        let ordinal = ordinal::next(&mut tx, "message", &[])
             .await
             .map_err(store)?;
         let stored = Message {
