@@ -2408,6 +2408,7 @@ Read a document as markdown: its live sections joined in order, byte for byte as
 Archived sections are left out and counted.
 A document longer than one answer comes back in parts: the sections from `offset` that fit, with `next_offset` and a not_shown block naming the call that reads the rest.
 The document's own name, one_liner, stale_after and resource ride beside the text, never inside it.
+`as_of` (a day or an instant) reads the document as it stood then: each section in the wording, place and archive state it had, a section made later absent, and the answer names the moment it used.
 A document that does not exist is a blocked result with candidates.
 ```
 
@@ -2418,6 +2419,13 @@ A document that does not exist is a blocked result with candidates.
   "inputSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
+      "as_of": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "document": {
         "type": "string"
       },
@@ -2445,6 +2453,17 @@ A document that does not exist is a blocked result with candidates.
   },
   "name": "read_document"
 }
+```
+
+#### `read_document` — argument `/inputSchema.as_of`
+
+```text
+**Read the document as it stood then**: a day, `YYYY-MM-DD`, meaning the
+end of that day in your zone, or an instant such as
+`2026-08-03T12:00:00Z`. Each section reads in the wording, place and
+archive state it had at that moment; a section made later is absent and
+one archived later is there. The answer names the moment it used. Leave it
+off to read the document as it stands.
 ```
 
 #### `read_document` — argument `/inputSchema.document`

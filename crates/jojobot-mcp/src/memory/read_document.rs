@@ -18,6 +18,14 @@ pub struct ReadDocumentArgs {
     /// Leave it off to start at the top.
     #[serde(default)]
     pub(crate) offset: Option<usize>,
+    /// **Read the document as it stood then**: a day, `YYYY-MM-DD`, meaning the
+    /// end of that day in your zone, or an instant such as
+    /// `2026-08-03T12:00:00Z`. Each section reads in the wording, place and
+    /// archive state it had at that moment; a section made later is absent and
+    /// one archived later is there. The answer names the moment it used. Leave it
+    /// off to read the document as it stands.
+    #[serde(default)]
+    pub(crate) as_of: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -35,8 +43,11 @@ impl Jojobot {
                        the sections from `offset` that fit, with `next_offset` and a \
                        not_shown block naming the call that reads the rest. The document's \
                        own name, one_liner, stale_after and resource ride beside the text, \
-                       never inside it. A document that does not exist is a blocked result \
-                       with candidates."
+                       never inside it. `as_of` (a day or an instant) reads the document as \
+                       it stood then: each section in the wording, place and archive state it \
+                       had, a section made later absent, and the answer names the moment it \
+                       used. A document that does not exist is a blocked result with \
+                       candidates."
     )]
     pub(crate) async fn read_document(
         &self,
@@ -46,7 +57,6 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        let _ = caller;
         let subject = EntityId::person(&args.document);
         if subject.kind() != Some(EntityKind::DOCUMENT) {
             return memory_declined(
@@ -57,9 +67,25 @@ impl Jojobot {
                 )),
             );
         }
-        let facts = match self.memory.recall(&subject).await {
-            Ok(facts) => facts,
-            Err(e) => return memory_declined("read_document", e),
+        let as_of = match args.as_of.as_deref() {
+            None => None,
+            Some(asked) => {
+                let moment = match self.moment_of(asked, caller.as_ref()).await {
+                    Ok(moment) => moment,
+                    Err(e) => return memory_declined("read_document", e),
+                };
+                match self.facts_as_of(&subject, moment).await {
+                    Ok(then) => Some((asked.trim().to_string(), then)),
+                    Err(e) => return memory_declined("read_document", e),
+                }
+            }
+        };
+        let facts = match &as_of {
+            Some((_, then)) => then.facts.clone(),
+            None => match self.memory.recall(&subject).await {
+                Ok(facts) => facts,
+                Err(e) => return memory_declined("read_document", e),
+            },
         };
         let thing = match self.memory.scan_entity(&subject).await {
             Ok(Some(scanned)) => scanned,
@@ -101,6 +127,22 @@ impl Jojobot {
         }
         if offset > 0 {
             body["offset"] = offset.into();
+        }
+        if let Some((asked, then)) = &as_of {
+            body["as_of"] = serde_json::json!({
+                "asked": asked,
+                "moment": then.moment.to_string(),
+            });
+            if !then.unplaced.is_empty() {
+                // **Named, never vouched for**: these sections rest on a write
+                // the store kept before it stamped its writes.
+                body["as_of"]["unplaced"] = then
+                    .unplaced
+                    .iter()
+                    .map(|id| serde_json::Value::from(id.0.as_str()))
+                    .collect::<Vec<_>>()
+                    .into();
+            }
         }
 
         // What is spent before any text: the answer without it, the pointer to

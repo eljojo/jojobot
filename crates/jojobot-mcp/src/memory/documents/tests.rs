@@ -47,6 +47,7 @@ async fn read_part(jojobot: &Jojobot, document: &str, offset: Option<usize>) -> 
             .read_document(Parameters(ReadDocumentArgs {
                 document: document.into(),
                 offset,
+                as_of: None,
                 sid: Some(TEST_SID.into()),
             }))
             .await
@@ -716,6 +717,7 @@ async fn a_thing_that_is_not_a_document_is_refused_and_an_offset_past_the_end_is
         .read_document(Parameters(ReadDocumentArgs {
             document: "place:springfield".into(),
             offset: None,
+            as_of: None,
             sid: Some(TEST_SID.into()),
         }))
         .await

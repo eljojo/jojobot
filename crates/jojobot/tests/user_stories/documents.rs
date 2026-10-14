@@ -388,3 +388,206 @@ async fn a_long_sections_code_stays_literal_across_the_cut() {
         .await
         .says("person:nelson");
 }
+
+// --- a document as it stood on a day ------------------------------------------
+//
+// "What did the manual say before the last edit?" `read_document` takes `as_of`,
+// a day or an instant, and answers with the sections as they stood then. Every
+// story below writes on two different days, because a story that wrote on one
+// day could not tell a read as of a day from a read of today.
+
+const AUGUST: &str = "2026-08-03";
+const SEPTEMBER: &str = "2026-09-15";
+const OCTOBER: &str = "2026-10-08";
+
+/// The addresses of the sections of [`MANUAL`], in the order they were put.
+async fn manual_addresses(session: &super::dsl::Session) -> Vec<String> {
+    let facts = session.recall("document:homer").await.json();
+    facts["objects"][0]["facts"]
+        .as_array()
+        .expect("the document's records")
+        .iter()
+        .map(|fact| fact["address"].as_str().expect("an address").to_string())
+        .collect()
+}
+
+/// **A section edited on a later day reads, as of the earlier day, as it was
+/// then, and today's read is unchanged.** Three reads of one document: as of the
+/// day it was put, as of a day between the two writes, and as of the day after the
+/// edit. The pair is the point: the read as of the day before the edit and the
+/// read of today differ, so the argument is doing something.
+#[tokio::test]
+async fn a_document_as_of_a_day_reads_that_days_wording_and_today_is_unchanged() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let opening = manual_addresses(&session).await[1].clone();
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({
+                "address": opening, "field": "details",
+                "find": "at six", "replace": "at five",
+            }),
+        )
+        .await;
+    let edited = MANUAL.replace("at six", "at five");
+
+    let today = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(today["markdown"], edited, "today reads the edit: {today}");
+    assert!(
+        today.get("as_of").is_none(),
+        "a read with no as_of names no moment: {today}"
+    );
+
+    for day in [AUGUST, SEPTEMBER] {
+        let then = session
+            .call(
+                "read_document",
+                json!({"document": "document:homer", "as_of": day}),
+            )
+            .await
+            .json();
+        assert_eq!(
+            then["markdown"], MANUAL,
+            "as of {day} the wording is the one put in August: {then}"
+        );
+        assert_eq!(
+            then["as_of"]["asked"], day,
+            "the answer echoes the ask: {then}"
+        );
+        assert!(
+            then["as_of"]["moment"]
+                .as_str()
+                .is_some_and(|moment| moment.starts_with(&format!("{day}T23:59:59"))),
+            "a day means the end of that day, and the answer names the instant: {then}"
+        );
+    }
+
+    let after = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": OCTOBER}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        after["markdown"], edited,
+        "as of the day of the edit the edit is there: {after}"
+    );
+}
+
+/// **A section made later is absent as of the earlier day, and one archived later
+/// is present.** Paired in one document: the section put in October is not in the
+/// August read, and the section archived in October is.
+#[tokio::test]
+async fn a_section_made_later_is_absent_and_one_archived_later_is_present() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let addresses = manual_addresses(&session).await;
+    let (closing, opening) = (addresses[2].clone(), addresses[1].clone());
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "after": closing,
+                "markdown": "## Cleaning\n\nWipe the fryer down each night.\n",
+            }),
+        )
+        .await;
+    session
+        .call(
+            "update_fact",
+            json!({"address": opening, "status": "archived"}),
+        )
+        .await;
+
+    let today = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let today_text = today["markdown"].as_str().expect("text");
+    assert!(
+        today_text.contains("Cleaning") && !today_text.contains("Opening"),
+        "today has the new section and not the archived one: {today}"
+    );
+
+    let then = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        then["markdown"], MANUAL,
+        "as of September the manual is as it was put: the archived section is there and the later one is not: {then}"
+    );
+    assert!(
+        then["archived_sections_left_out"].is_null(),
+        "nothing had been archived yet, so nothing is counted as left out: {then}"
+    );
+}
+
+/// **A section moved later reads, as of the earlier day, in the place it had.**
+#[tokio::test]
+async fn a_section_moved_later_reads_in_its_old_place_as_of_the_earlier_day() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let addresses = manual_addresses(&session).await;
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({"address": addresses[2], "after": addresses[0]}),
+        )
+        .await;
+
+    let today = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_ne!(
+        today["markdown"], MANUAL,
+        "the move changed today's read, or this story proves nothing: {today}"
+    );
+    let then = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        then["markdown"], MANUAL,
+        "as of September the closing is still last: {then}"
+    );
+}

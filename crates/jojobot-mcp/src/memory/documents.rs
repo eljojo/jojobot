@@ -7,6 +7,7 @@
 //! ordinary claim about the document and is not part of its text.
 
 use super::*;
+use jojobot_domain::memory::FactId;
 use jojobot_domain::memory::document::{self, Section};
 use jojobot_domain::memory::order;
 
@@ -83,7 +84,117 @@ pub(crate) struct MovePlan {
     pub(crate) rest: Vec<(FactAddress, String)>,
 }
 
+/// **A document's records as they stood at one moment**, rebuilt so the same
+/// reading code that serves today's page serves that one.
+pub(crate) struct AsOf {
+    /// The records that existed then, each carrying the wording, the archive
+    /// state and the section keys it held then. A record made later is absent.
+    pub(crate) facts: Vec<Fact>,
+    /// The instant the answer is about.
+    pub(crate) moment: jiff::Timestamp,
+    /// The records whose state at that moment rests on a write the store kept
+    /// with no moment of its own, and that the read therefore placed before
+    /// every stamped one. It names them rather than vouching for them.
+    pub(crate) unplaced: Vec<FactId>,
+}
+
+/// **The keys a section is read back from, besides its words.** What a section
+/// held under them then is what places it and shapes its edges.
+const SECTION_KEYS: [&str; 4] = [
+    document::ORDER,
+    document::LEVEL,
+    document::EDGES,
+    document::CONTINUES,
+];
+
 impl Jojobot {
+    /// **The instant a caller's `as_of` names.** A day means the end of that
+    /// day, in the zone the asking run works in, else the instance's: the
+    /// document as it stood when that day was over. An instant is taken as given.
+    pub(crate) async fn moment_of(
+        &self,
+        asked: &str,
+        caller: Option<&crate::caller::Caller>,
+    ) -> Result<jiff::Timestamp, MemoryError> {
+        let asked = asked.trim();
+        if let Ok(day) = asked.parse::<jiff::civil::Date>() {
+            let zone = match caller.and_then(crate::caller::Caller::zone) {
+                Some(zone) => zone,
+                None => self.unzoned_frame().await,
+            };
+            return day
+                .at(23, 59, 59, 999_999_999)
+                .to_zoned(zone)
+                .map(|end| end.timestamp())
+                .map_err(|why| {
+                    MemoryError::InvalidQuery(format!(
+                        "as_of '{asked}' names a day this zone cannot place: {why}"
+                    ))
+                });
+        }
+        asked.parse::<jiff::Timestamp>().map_err(|_| {
+            MemoryError::InvalidQuery(format!(
+                "as_of is a day, YYYY-MM-DD, or an instant such as 2026-08-03T12:00:00Z, and \
+                 '{asked}' is neither"
+            ))
+        })
+    }
+
+    /// **Rebuild a document's records as they stood at `moment`.** Each record
+    /// takes its newest write at or before the moment, and each section key its
+    /// newest write at or before it. A record with no write by then did not exist
+    /// and is left out; a record whose write by then was an archive is present
+    /// and archived. A write with no moment is older than every write with one.
+    pub(crate) async fn facts_as_of(
+        &self,
+        subject: &EntityId,
+        moment: jiff::Timestamp,
+    ) -> Result<AsOf, MemoryError> {
+        let facts = self.memory.recall(subject).await?;
+        let chains = self.memory.claim_histories(subject).await?;
+        let trails = self.memory.key_trails(subject).await?;
+        let by_then =
+            |written_at: Option<jiff::Timestamp>| written_at.is_none_or(|at| at <= moment);
+        let mut kept = Vec::with_capacity(facts.len());
+        let mut unplaced = Vec::new();
+        for mut fact in facts {
+            let Some(write) = chains
+                .get(&fact.id)
+                .and_then(|chain| chain.iter().rev().find(|write| by_then(write.written_at)))
+            else {
+                continue;
+            };
+            if write.written_at.is_none() {
+                unplaced.push(fact.id.clone());
+            }
+            fact.content = write.content.clone();
+            fact.details = write.details.clone();
+            fact.status = write.status;
+            for key in SECTION_KEYS {
+                let held = trails
+                    .record_writes
+                    .iter()
+                    .filter(|w| w.fact == fact.id && w.key == key && by_then(w.written_at))
+                    .max_by_key(|w| w.ordinal)
+                    .and_then(|w| w.value.clone());
+                match held {
+                    Some(value) => {
+                        fact.fields.insert(key.to_string(), value);
+                    }
+                    None => {
+                        fact.fields.remove(key);
+                    }
+                }
+            }
+            kept.push(fact);
+        }
+        Ok(AsOf {
+            facts: kept,
+            moment,
+            unplaced,
+        })
+    }
+
     /// **Where an address a caller holds reads now**: moved by the merge walk when
     /// a merge moved its claim, and homed under the handle its thing answers to.
     async fn served_address(&self, address: &FactAddress) -> Result<FactAddress, MemoryError> {
