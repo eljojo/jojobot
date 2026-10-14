@@ -222,7 +222,7 @@ impl Jojobot {
         }
         .and(crate::changed::Changed::value(
             session.as_str(),
-            "entry",
+            crate::changed::ENTRY,
             None,
             Some(entry.id.as_str()),
         ));
@@ -230,7 +230,7 @@ impl Jojobot {
             changed = changed.and(match &focus_was {
                 Ok(was) => crate::changed::Changed::value(
                     session.as_str(),
-                    "focus",
+                    crate::changed::FOCUS,
                     was.as_deref(),
                     Some(now),
                 ),

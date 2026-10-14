@@ -271,7 +271,7 @@ impl Jojobot {
         if story_is_new {
             changed = changed.and(crate::changed::Changed::value(
                 session.as_str(),
-                "entry",
+                crate::changed::ENTRY,
                 None,
                 Some(entry.id.as_str()),
             ));
@@ -279,7 +279,7 @@ impl Jojobot {
         changed = changed.and(match &before {
             Some(read) => crate::changed::Changed::value(
                 session.as_str(),
-                "state",
+                crate::changed::STATE,
                 Some(read.state.as_token()),
                 Some(wrapped.state.as_token()),
             ),

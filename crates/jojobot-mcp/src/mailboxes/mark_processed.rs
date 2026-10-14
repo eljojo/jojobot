@@ -166,7 +166,7 @@ impl Jojobot {
                         match &located {
                             Some(before) => crate::changed::Changed::value(
                                 quarantined.id.as_str(),
-                                "state",
+                                crate::changed::STATE,
                                 Some(before.state.as_token()),
                                 Some(mailbox::QUARANTINE_STATE_TOKEN),
                             ),
@@ -239,13 +239,13 @@ impl Jojobot {
                     match &located {
                         Some(before) => crate::changed::Changed::value(
                             processed.id.as_str(),
-                            "state",
+                            crate::changed::STATE,
                             Some(before.state.as_token()),
                             Some(processed.state.as_token()),
                         )
                         .and(crate::changed::Changed::text(
                             processed.id.as_str(),
-                            "notes",
+                            crate::changed::NOTES,
                             None,
                             before.notes.as_deref(),
                             processed.notes.as_deref(),

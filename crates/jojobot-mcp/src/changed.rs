@@ -27,6 +27,21 @@ const CHANGES_SHOWN: usize = 20;
 /// its size, as text is.
 const VALUE_SHOWN_BYTES: usize = 240;
 
+/// What changed on a message or a run: its state.
+pub(crate) const STATE: &str = "state";
+
+/// What changed on a message: the notes it was retired with.
+pub(crate) const NOTES: &str = "notes";
+
+/// What changed on a run: a chronology entry.
+pub(crate) const ENTRY: &str = "entry";
+
+/// What changed on a run: its focus.
+pub(crate) const FOCUS: &str = "focus";
+
+/// What changed on a claim or an entry: its words.
+pub(crate) const WORDS: &str = "words";
+
 /// The word `changed` holds when the call changed nothing.
 pub(crate) const NOTHING: &str = "nothing";
 
@@ -220,8 +235,10 @@ impl Changed {
             before.and_then(|scan| scan.entity.as_ref()),
             after.and_then(|scan| scan.entity.as_ref()),
         );
+        // **A write landed and its thing cannot be found.** An empty list would
+        // read as a call that changed nothing.
         let Some(after_entity) = after_entity else {
-            return Self::default();
+            return Self::not_read();
         };
         let on = after_entity.id.as_str();
         match before_entity {
@@ -363,7 +380,7 @@ fn entity_changes(before: &Entity, after: &Entity, changes: &mut Vec<Change>) {
 fn claim_changes(before: &Fact, after: &Fact, changes: &mut Vec<Change>) {
     let on = after.address().to_string();
     if before.content != after.content {
-        changes.push(Change::on(&on, "words").sized(Some(&before.content), Some(&after.content)));
+        changes.push(Change::on(&on, WORDS).sized(Some(&before.content), Some(&after.content)));
     }
     if before.details != after.details {
         changes.push(
@@ -525,21 +542,31 @@ mod tests {
     use crate::memory::testing::*;
     use crate::memory::update_entity::UpdateEntityArgs;
     use crate::memory::update_fact::UpdateFactArgs;
+    use jojobot_domain::memory::Memory;
     use rmcp::handler::server::wrapper::Parameters;
+    use std::sync::Arc;
 
     /// **The verbs that only read.** Every other tool is a write and must
     /// carry `changed`, so a tool added later is a write until it is named
-    /// here.
+    /// here. A verb listed here either reads only or reports what it changed
+    /// in its own fields.
     const READS: &[&str] = &[
         "list_entities",
         "list_runs",
         "list_sent",
         "ping",
         "read_document",
+        // Delivery: each message in `messages` carries its `state` (now `read`)
+        // and `seen_before`, which tells a move from new to read from a re-delivery.
         "read_mailbox",
+        // Delivery: the message's `state` (now `read`) and `seen_before`; a
+        // history read sets `taken` to false and moves nothing.
         "read_message",
         "recall",
         "search",
+        // Boot: `session.swept` lists the abandoned runs it closed,
+        // `identity.owned_mailbox.healed` says a missing box was opened, and
+        // `session.claim.status` says whether the role was taken.
         "start_here",
     ];
 
@@ -869,6 +896,176 @@ mod tests {
                 .expect("update_entity answers"),
         );
         assert_eq!(again["changed"], "nothing", "{again}");
+    }
+
+    /// **A receipt carries the block the way a verb puts it there.**
+    fn receipt(changed: crate::changed::Changed) -> serde_json::Value {
+        let mut body = serde_json::json!({});
+        crate::changed::note_changed(&mut body, changed);
+        body
+    }
+
+    /// 🚨 **A write that landed and whose thing cannot be found afterwards is
+    /// `not_read`**, never `nothing`: an empty list reads as a call that
+    /// changed nothing. Two scans that differ are a list, which is the positive
+    /// the refusal to guess is held against.
+    #[tokio::test]
+    async fn a_thing_missing_after_the_write_is_not_read_and_two_scans_that_differ_are_a_list() {
+        use crate::changed::{Changed, NOT_READ};
+        let jojobot = handler();
+        writing_as(&jojobot);
+        ensure(&jojobot, "person:lisa").await;
+        let id = jojobot_domain::memory::EntityId("person:lisa".into());
+        let before = jojobot
+            .as_it_stands(&id)
+            .await
+            .expect("the read answers")
+            .expect("the thing is there");
+        jojobot
+            .update_entity(Parameters(renaming("person:lisa", "Lisa Simpson")))
+            .await
+            .expect("update_entity answers");
+        let after = jojobot
+            .as_it_stands(&id)
+            .await
+            .expect("the read answers")
+            .expect("the thing is there");
+
+        for (side, changed) in [
+            ("no scan on either side", Changed::of_thing(None, None)),
+            (
+                "a thing before and none after",
+                Changed::of_thing(Some(&before), None),
+            ),
+        ] {
+            let body = receipt(changed);
+            assert_eq!(body["changed"], NOT_READ, "{side}: {body}");
+            assert!(body.get("changed_note").is_some(), "{side}: {body}");
+        }
+
+        let body = receipt(Changed::of_thing(Some(&before), Some(&after)));
+        let list = body["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {body}"));
+        assert!(list.iter().any(|c| c["what"] == "name"), "{body}");
+        assert!(body.get("changed_note").is_none(), "{body}");
+
+        let body = receipt(Changed::of_thing(None, Some(&after)));
+        assert_eq!(body["changed"][0]["what"], "created", "{body}");
+    }
+
+    /// **A list is cut at `CHANGES_SHOWN`, and says how many it left out.** Exactly
+    /// that many entries ship whole, with no left-out block.
+    #[test]
+    fn a_list_past_the_cut_ships_the_cut_and_counts_the_rest() {
+        use crate::changed::Changed;
+        let moved = |count: usize| {
+            (0..count).fold(Changed::default(), |all, n| {
+                all.and(Changed::value(
+                    "person:lisa",
+                    "name",
+                    Some("before"),
+                    Some(&format!("after {n}")),
+                ))
+            })
+        };
+
+        let at_the_cut = receipt(moved(20));
+        assert_eq!(at_the_cut["changed"].as_array().map(Vec::len), Some(20));
+        assert!(at_the_cut.get("changed_left_out").is_none(), "{at_the_cut}");
+
+        let past = receipt(moved(27));
+        assert_eq!(past["changed"].as_array().map(Vec::len), Some(20));
+        assert_eq!(past["changed_left_out"]["count"], 7, "{past}");
+        assert!(
+            past["changed_left_out"]["how_to_read"].is_string(),
+            "{past}"
+        );
+        assert_eq!(past["changed"][19]["to"], "after 19", "{past}");
+    }
+
+    /// **A value past `VALUE_SHOWN_BYTES` is named by its size on each side**
+    /// and shows no words; one of exactly that size shows as itself.
+    #[test]
+    fn a_value_past_the_shown_size_is_named_by_bytes_and_one_at_it_is_shown() {
+        use crate::changed::Changed;
+        let at_the_limit = "x".repeat(240);
+        let past = "y".repeat(241);
+
+        let shown = receipt(Changed::value(
+            "person:lisa",
+            "name",
+            Some("short"),
+            Some(&at_the_limit),
+        ));
+        assert_eq!(shown["changed"][0]["from"], "short", "{shown}");
+        assert_eq!(shown["changed"][0]["to"], at_the_limit, "{shown}");
+        assert!(shown["changed"][0].get("bytes_after").is_none(), "{shown}");
+
+        let sized = receipt(Changed::value(
+            "person:lisa",
+            "name",
+            Some("short"),
+            Some(&past),
+        ));
+        let entry = &sized["changed"][0];
+        assert_eq!(entry["bytes_before"], 5, "{sized}");
+        assert_eq!(entry["bytes_after"], 241, "{sized}");
+        assert!(
+            entry.get("from").is_none() && entry.get("to").is_none(),
+            "{sized}"
+        );
+    }
+
+    /// 🚨 **A before-read that fails makes the answer `not_read`**, and the
+    /// write still lands: the caller is told it could not be read, not that
+    /// nothing changed. The same call over a store that reads is the list.
+    #[tokio::test]
+    async fn a_before_read_that_fails_is_not_read_and_the_rename_still_lands() {
+        use crate::changed::NOT_READ;
+        use crate::session::scripted::Scripted;
+        use jojobot_domain::memory::testing::InMemoryMemory;
+        let inner = Arc::new(InMemoryMemory::seeded());
+        let scripted = Arc::new(Scripted::over(inner.clone()));
+        let jojobot = Jojobot::new(
+            scripted.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        writing_as(&jojobot);
+        ensure(&jojobot, "person:lisa").await;
+        let id = jojobot_domain::memory::EntityId("person:lisa".into());
+
+        // The claim room reads the thing first; the before-read is the second scan.
+        scripted.script(|s| s.scan_entity_fails_on = Some(2));
+        let blind = json_of(
+            &jojobot
+                .update_entity(Parameters(renaming("person:lisa", "Lisa Simpson")))
+                .await
+                .expect("update_entity answers"),
+        );
+        assert_eq!(blind["changed"], NOT_READ, "{blind}");
+        assert!(blind.get("changed_note").is_some(), "{blind}");
+        let stored = inner
+            .list_entities(None)
+            .await
+            .expect("the inner store lists")
+            .into_iter()
+            .find(|e| e.id == id)
+            .expect("the thing is there");
+        assert_eq!(stored.name, "Lisa Simpson", "the rename landed");
+
+        let reading = json_of(
+            &jojobot
+                .update_entity(Parameters(renaming("person:lisa", "Lisa Marie Simpson")))
+                .await
+                .expect("update_entity answers"),
+        );
+        assert_eq!(reading["changed"][0]["what"], "name", "{reading}");
+        assert_eq!(reading["changed"][0]["from"], "Lisa Simpson", "{reading}");
     }
 
     /// **A charter written twice in the same words changes nothing the second

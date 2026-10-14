@@ -75,7 +75,7 @@ impl Jojobot {
                     match before {
                         Some(before) => crate::changed::Changed::text(
                             session.as_str(),
-                            "words",
+                            crate::changed::WORDS,
                             Some(entry.id.as_str()),
                             Some(before.as_str()),
                             Some(entry.text.as_str()),

@@ -78,6 +78,10 @@ pub(crate) struct Script {
     pub(crate) update_fails: bool,
     /// `list_entities` of this kind fails.
     pub(crate) listing_fails_for: Option<EntityKind>,
+    /// The `scan_entity` call with this number, counting from 1 once it is set,
+    /// fails, and no other does. Every write lands: a case picks the read
+    /// before a write, behind a `changed` block, and the read after it works.
+    pub(crate) scan_entity_fails_on: Option<usize>,
     /// `recall` of this entity fails.
     pub(crate) recall_fails_for: Option<EntityId>,
     /// An `add_entity_with_first_claim` that lands is reported as `FoldBehind`.
@@ -343,6 +347,18 @@ impl Memory for Scripted {
         &self,
         entity: &EntityId,
     ) -> Result<Option<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        let failing = {
+            let mut script = self.script.lock().unwrap();
+            let due = script.scan_entity_fails_on == Some(1);
+            script.scan_entity_fails_on = script
+                .scan_entity_fails_on
+                .and_then(|n| n.checked_sub(1))
+                .filter(|n| *n > 0);
+            due
+        };
+        if failing {
+            return Err(MemoryError::Store("the thing cannot be scanned".into()));
+        }
         self.inner.scan_entity(entity).await
     }
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
