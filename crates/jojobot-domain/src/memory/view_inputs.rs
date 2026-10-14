@@ -98,6 +98,66 @@ impl Bound {
     }
 }
 
+/// **What a write of a view's keys breaks**, as the key and what it wanted, or
+/// nothing. A view's `inputs` has to read, every `$name` its `where` or its
+/// `parent` uses has to be one it declares, and a `parent` that is an input has to
+/// be a handle. **A view that declares no input is not held to this**: a `$word`
+/// in its question is a word.
+pub fn breaks_a_view(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Option<(String, String)> {
+    const WHERE: &str = "where";
+    const PARENT: &str = "parent";
+    let same = |key: &str| before.get(key) == after.get(key);
+    if same(KEY) && same(WHERE) && same(PARENT) {
+        return None;
+    }
+    let declared = match parse(after.get(KEY).map_or("", String::as_str)) {
+        Ok(declared) => declared,
+        Err(refused) => return Some((KEY.to_string(), refused.words)),
+    };
+    if declared.is_empty() {
+        return None;
+    }
+    let says = spelled(&declared);
+    let mut uses: Vec<(&str, String)> = Vec::new();
+    if let Some(line) = after.get(WHERE) {
+        uses.extend(
+            super::filter::expression::placeholders(line)
+                .into_iter()
+                .map(|name| (WHERE, name)),
+        );
+    }
+    if let Some(name) = after
+        .get(PARENT)
+        .and_then(|parent| parent.trim().strip_prefix('$'))
+        .filter(|name| is_a_name(name))
+    {
+        uses.push((PARENT, name.to_string()));
+    }
+    for (key, name) in uses {
+        let Some(decl) = declared.iter().find(|d| d.name == name) else {
+            return Some((
+                key.to_string(),
+                format!(
+                    "the view uses ${name}, which its `inputs` do not declare. It declares: {says}"
+                ),
+            ));
+        };
+        if key == PARENT && !matches!(decl.ty, InputType::Kind(_)) {
+            return Some((
+                key.to_string(),
+                format!(
+                    "the view's `parent` is the input ${name}, and a parent is a thing: declare \
+                     it as `{name}: kind <kind>`"
+                ),
+            ));
+        }
+    }
+    None
+}
+
 /// **The words a type is spelled with.**
 fn spelling(ty: &InputType) -> String {
     match ty {
@@ -400,9 +460,9 @@ mod tests {
     /// out is bound to nothing when the view allows it.
     #[test]
     fn a_handle_binds_to_the_thing_and_follows_a_rename() {
-        let known = vec![entity("project:krusty-burger-app", "k7h2mn")];
+        let known = vec![entity("project:atlas", "k7h2mn")];
         let former = vec![FormerHandle {
-            former: EntityId("project:krusty-app".into()),
+            former: EntityId("project:the-move".into()),
             badge: "k7h2mn".into(),
             changed_at: TODAY,
         }];
@@ -410,17 +470,17 @@ mod tests {
         let bound = bind(
             "view:ready",
             &view,
-            &given(&[("project", "project:krusty-app")]),
+            &given(&[("project", "project:the-move")]),
             &known,
             &former,
             TODAY,
         )
         .expect("a handle the thing wore binds");
         let value = bound.get("project").flatten().expect("a value");
-        assert_eq!(value.text, "project:krusty-burger-app");
+        assert_eq!(value.text, "project:atlas");
         assert_eq!(
             value.handle.as_ref().map(EntityId::as_str),
-            Some("project:krusty-burger-app")
+            Some("project:atlas")
         );
 
         let left_out = bind("view:ready", &view, &given(&[]), &known, &former, TODAY)
@@ -436,8 +496,8 @@ mod tests {
     #[test]
     fn a_call_that_does_not_fit_is_refused_naming_every_input() {
         let known = vec![
-            entity("project:krusty-burger-app", "k7h2mn"),
-            entity("person:bob", "b0bb0b"),
+            entity("project:atlas", "k7h2mn"),
+            entity("person:bart", "b0bb0b"),
         ];
         let view = decls("project: kind project, due: date?, count: number?");
         let declared = "project: kind project, due: date?, count: number?";
@@ -449,13 +509,13 @@ mod tests {
         assert!(missing.words.contains("project"), "{}", missing.words);
         assert!(missing.words.contains(declared), "{}", missing.words);
 
-        let unknown = refuse(&[("projekt", "project:krusty-burger-app")]);
+        let unknown = refuse(&[("projekt", "project:atlas")]);
         assert!(unknown.words.contains("projekt"), "{}", unknown.words);
         assert!(unknown.words.contains(declared), "{}", unknown.words);
 
-        let wrong_kind = refuse(&[("project", "person:bob")]);
+        let wrong_kind = refuse(&[("project", "person:bart")]);
         assert!(
-            wrong_kind.words.contains("person:bob"),
+            wrong_kind.words.contains("person:bart"),
             "{}",
             wrong_kind.words
         );
@@ -478,16 +538,16 @@ mod tests {
             no_handle.words
         );
 
-        let nothing = refuse(&[("project", "project:homers-tree-house")]);
+        let nothing = refuse(&[("project", "project:kitchen-floor")]);
         assert!(
-            nothing.words.contains("project:homers-tree-house"),
+            nothing.words.contains("project:kitchen-floor"),
             "{}",
             nothing.words
         );
 
-        let not_a_date = refuse(&[("project", "project:krusty-burger-app"), ("due", "soon")]);
+        let not_a_date = refuse(&[("project", "project:atlas"), ("due", "soon")]);
         assert!(not_a_date.words.contains("due"), "{}", not_a_date.words);
-        let not_a_number = refuse(&[("project", "project:krusty-burger-app"), ("count", "many")]);
+        let not_a_number = refuse(&[("project", "project:atlas"), ("count", "many")]);
         assert!(
             not_a_number.words.contains("count"),
             "{}",
@@ -498,7 +558,7 @@ mod tests {
             "view:ready",
             &view,
             &given(&[
-                ("project", "project:krusty-burger-app"),
+                ("project", "project:atlas"),
                 ("due", "today+3d"),
                 ("count", "12"),
             ]),
@@ -515,5 +575,71 @@ mod tests {
             fits.get("count").flatten().map(|v| v.text.as_str()),
             Some("12")
         );
+    }
+
+    fn view(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        given(pairs)
+    }
+
+    /// **A view may use only the inputs it declares, and its `inputs` has to read.**
+    /// **Paired**: the same view with the name spelled as declared is accepted,
+    /// and a view that declares nothing keeps its `$word` as a word.
+    #[test]
+    fn a_view_may_use_only_the_inputs_it_declares() {
+        let none = view(&[]);
+        let declares = [
+            ("selects", "work"),
+            ("inputs", "project: kind project?, due: date?"),
+        ];
+        let with = |extra: &[(&'static str, &'static str)]| {
+            let mut pairs = declares.to_vec();
+            pairs.extend_from_slice(extra);
+            view(&pairs)
+        };
+
+        assert_eq!(
+            breaks_a_view(
+                &none,
+                &with(&[("where", "project = $project && due <= $due")])
+            ),
+            None
+        );
+        assert_eq!(breaks_a_view(&none, &with(&[("parent", "$project")])), None);
+
+        let typo = breaks_a_view(&none, &with(&[("where", "project = $projekt")]))
+            .expect("an undeclared input is refused");
+        assert_eq!(typo.0, "where");
+        assert!(
+            typo.1.contains("projekt") && typo.1.contains("project: kind project?"),
+            "{}",
+            typo.1
+        );
+
+        let parent_typo = breaks_a_view(&none, &with(&[("parent", "$projekt")]))
+            .expect("an undeclared input is refused");
+        assert_eq!(parent_typo.0, "parent");
+
+        let not_a_handle = breaks_a_view(&none, &with(&[("parent", "$due")]))
+            .expect("a parent has to be a handle");
+        assert_eq!(not_a_handle.0, "parent");
+
+        let unreadable = breaks_a_view(
+            &none,
+            &view(&[("selects", "work"), ("inputs", "project kind")]),
+        )
+        .expect("a list that does not read is refused");
+        assert_eq!(unreadable.0, "inputs");
+
+        // A view that declares nothing keeps `$5` and `$x` as words.
+        assert_eq!(
+            breaks_a_view(
+                &none,
+                &view(&[("selects", "work"), ("where", "price = $x")])
+            ),
+            None
+        );
+        // An edit that leaves the three keys as they were is not asked again.
+        let stored = with(&[("where", "project = $projekt")]);
+        assert_eq!(breaks_a_view(&stored, &stored), None);
     }
 }

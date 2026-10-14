@@ -4235,6 +4235,19 @@ pub fn guard_fit(
             }
         }
     }
+    // **A view's inputs have to read, and its question may use only the ones it
+    // declares.** The view kind's own rule, so it runs whether or not anything
+    // declared the kind.
+    if kind == EntityKind::VIEW.as_token()
+        && let Some((key, wanted)) = view_inputs::breaks_a_view(before, after)
+    {
+        return Err(MemoryError::BreaksType {
+            name: kind.to_string(),
+            value: after.get(&key).cloned().unwrap_or_default(),
+            key,
+            wanted,
+        });
+    }
     // **A loop that cannot say when its next cycle falls due is refused when it
     // is made.** It is the loop kind's own rule and not a declaration's, so it
     // runs whether or not anything declared the kind.

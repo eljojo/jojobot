@@ -4661,3 +4661,125 @@ fn an_offset_past_the_end_skips_all_and_serves_nothing() {
 fn a_room_smaller_than_one_object_still_serves_that_object() {
     assert_eq!(window_bounds(&[40, 40], 0, 5), (0, 1));
 }
+
+fn thing(handle: &str, badge: &str) -> Entity {
+    crate::memory::kinds::load_shipped();
+    Entity {
+        id: EntityId(handle.to_string()),
+        kind: EntityId(handle.to_string())
+            .kind()
+            .expect("a handle of a shipped kind"),
+        name: handle.to_string(),
+        aliases: Vec::new(),
+        source: "test".to_string(),
+        crm: None,
+        parent: None,
+        boot: Boot::default(),
+        merged_into: None,
+        badge: Some(badge.to_string()),
+        archived: None,
+    }
+}
+
+fn sent(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+fn a_view_with_an_input() -> Asked {
+    let held = sent(&[
+        ("selects", "work"),
+        ("where", "status != done && owner = $who"),
+        ("inputs", "project: kind project?, who: kind bot?"),
+        ("parent", "$project"),
+    ]);
+    asked_by_view(&held, &[])
+}
+
+/// **A view is filled from the inputs of a call**: its `where` takes the values,
+/// its `parent` is the thing the input names, and a left-out input drops the
+/// terms that use it. **Paired**: the same view asked with nothing is the view
+/// with those terms gone, and a view with no inputs asked with nothing comes back
+/// as it was.
+#[test]
+fn a_view_is_filled_from_the_inputs_of_a_call() {
+    let day = jiff::civil::date(2026, 10, 14);
+    let known = vec![
+        thing("project:atlas", "k7h2mn"),
+        thing("bot:gamma", "g4mm4g"),
+    ];
+    let (filled, parent) = a_view_with_an_input()
+        .filled(
+            "view:ready",
+            &sent(&[("project", "project:atlas"), ("who", "bot:gamma")]),
+            &known,
+            &[],
+            day,
+        )
+        .expect("a call that fits");
+    assert_eq!(
+        filled.expression.as_deref(),
+        Some("status != done && owner = bot:gamma")
+    );
+    assert_eq!(parent.as_ref().map(EntityId::as_str), Some("project:atlas"));
+
+    let (left_out, no_parent) = a_view_with_an_input()
+        .filled("view:ready", &sent(&[]), &known, &[], day)
+        .expect("every input is optional");
+    assert_eq!(left_out.expression.as_deref(), Some("status != done"));
+    assert_eq!(no_parent, None);
+
+    let plain = asked_by_view(
+        &sent(&[("selects", "work"), ("where", "status != done")]),
+        &[],
+    );
+    let (same, nothing) = plain
+        .clone()
+        .filled("view:colleagues", &sent(&[]), &known, &[], day)
+        .expect("nothing asked of a view that takes nothing");
+    assert_eq!(same.expression, plain.expression);
+    assert_eq!(nothing, None);
+}
+
+/// **A call that does not fit is refused and the view is not run**, and a view
+/// that names a thing as its `parent` reaches it through the handles it wore.
+#[test]
+fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_rename() {
+    let day = jiff::civil::date(2026, 10, 14);
+    let known = vec![thing("project:atlas", "k7h2mn")];
+    let refused = a_view_with_an_input()
+        .filled(
+            "view:ready",
+            &sent(&[("projekt", "project:atlas")]),
+            &known,
+            &[],
+            day,
+        )
+        .expect_err("an input nobody declared");
+    assert!(refused.words.contains("projekt"), "{}", refused.words);
+    assert!(
+        refused.words.contains("project: kind project?"),
+        "{}",
+        refused.words
+    );
+
+    let named = asked_by_view(
+        &sent(&[("selects", "work"), ("parent", "project:the-move")]),
+        &[],
+    );
+    let former = vec![crate::memory::FormerHandle {
+        former: EntityId("project:the-move".into()),
+        badge: "k7h2mn".into(),
+        changed_at: day,
+    }];
+    let (_, parent) = named
+        .filled("view:loops", &sent(&[]), &known, &former, day)
+        .expect("a view that names its parent");
+    assert_eq!(
+        parent.as_ref().map(EntityId::as_str),
+        Some("project:atlas"),
+        "the handle it was saved under still reaches the thing"
+    );
+}

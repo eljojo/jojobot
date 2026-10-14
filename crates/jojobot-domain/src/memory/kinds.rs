@@ -330,6 +330,14 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // **The order the things come back in**: a key, then `ascending` or
             // `descending`. Text, read when the view runs.
             Field::new("order", ValueType::Text),
+            // **What the view takes**, as `name: type` separated by commas, where a
+            // type is `kind <kind>`, `date`, `number` or `text` and a trailing `?`
+            // lets a call leave the input out. The question uses an input as
+            // `$name` in `where` and as `parent`; see [`super::view_inputs`].
+            Field::new(super::view_inputs::KEY, ValueType::Text),
+            // **Only the direct children of this thing**, a handle or an input
+            // written `$name`. Text, read when the view runs.
+            Field::new("parent", ValueType::Text),
         ],
         // **A seat, and the three keys the software knows about it.** All optional:
         // a released role has no holder, and a role nobody has claimed has none of

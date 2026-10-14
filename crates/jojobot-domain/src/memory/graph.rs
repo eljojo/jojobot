@@ -22,7 +22,7 @@ use super::filter::{Filter, Order, Ordered, Test};
 
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FactStatus,
-    MemoryError, guard, mention, search::DocScan, types, validate_subject,
+    FormerHandle, MemoryError, guard, mention, search::DocScan, types, validate_subject,
 };
 
 /// **How far a walk may go.** A bound rather than a preference: an edge may
@@ -820,9 +820,62 @@ pub struct Asked {
     /// `shows_keys`. `None` when it names none, which means every key — a
     /// different question from an empty list.
     pub keys: Option<Vec<String>>,
+    /// **What the view takes**, as it is written in its `inputs`: a list of
+    /// `name: type`. See [`super::view_inputs`].
+    pub inputs: Option<String>,
+    /// **Only the direct children of this thing**, from the view's `parent`: a
+    /// handle, or an input written `$name`.
+    pub parent: Option<String>,
 }
 
 impl Asked {
+    /// **The view with a call's inputs filled in.** The call's values are checked
+    /// against what the view declares and bound ([`super::view_inputs::bind`]),
+    /// the `where` is returned with them in it and every term of a left-out input
+    /// dropped, and the `parent` is the thing it names. Both callers of
+    /// [`asked_by_view`] fill a view through this, so the page and the verb cannot
+    /// bind an input two ways. A view that declares nothing, asked with nothing,
+    /// comes back as it was.
+    pub fn filled(
+        mut self,
+        view: &str,
+        given: &BTreeMap<String, String>,
+        known: &[Entity],
+        former: &[FormerHandle],
+        today: jiff::civil::Date,
+    ) -> Result<(Asked, Option<EntityId>), super::view_inputs::Refusal> {
+        let declared = super::view_inputs::parse(self.inputs.as_deref().unwrap_or(""))?;
+        let bound = super::view_inputs::bind(view, &declared, given, known, former, today)?;
+        if let Some(line) = self.expression.take() {
+            self.expression =
+                super::filter::expression::with_inputs(&line, &bound).map_err(|e| {
+                    super::view_inputs::Refusal {
+                        words: format!("Nothing was read: {e}"),
+                        nearest: Vec::new(),
+                    }
+                })?;
+        }
+        let parent = match self
+            .parent
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            None => None,
+            Some(named) => match named.strip_prefix('$').and_then(|name| bound.get(name)) {
+                // The input the view names, and what the call bound it to.
+                Some(value) => value.and_then(|value| value.handle.clone()),
+                // A thing the view names itself, reached through its former
+                // handles too, so a rename does not leave it asking after a name.
+                None => Some(
+                    super::resolve_handle(&EntityId(named.to_string()), known, former)
+                        .map_or_else(|| EntityId(named.to_string()), |e| e.id.clone()),
+                ),
+            },
+        };
+        Ok((self, parent))
+    }
+
     /// **The view's key filters as a selection takes them**: its filter records,
     /// then its expression, which is read against the asker's day and asked in
     /// the view's scope. Both callers of [`asked_by_view`] run the view's question
@@ -962,6 +1015,8 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
             .get("asks")
             .and_then(|word| super::readiness::Ask::named(word)),
         answers_type: held.get("answers_type").cloned(),
+        inputs: held.get("inputs").cloned().filter(|i| !i.trim().is_empty()),
+        parent: held.get("parent").cloned().filter(|p| !p.trim().is_empty()),
         follow,
         // **A list of blanks names no key**, so it narrows nothing, the same
         // as a view that names none.

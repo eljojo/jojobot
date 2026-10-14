@@ -79,6 +79,54 @@ pub fn date_word(word: &str, today: Date) -> Result<String, MemoryError> {
     }
 }
 
+/// **The inputs a saved expression names**, as `$name` words, in the order
+/// written.
+pub fn placeholders(text: &str) -> Vec<String> {
+    let Ok(tokens) = lex(text) else {
+        return Vec::new();
+    };
+    tokens
+        .iter()
+        .filter_map(|token| match &token.kind {
+            Kind::Word(word) => word
+                .strip_prefix('$')
+                .filter(|name| crate::memory::view_inputs::is_a_name(name))
+                .map(str::to_string),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **Whether a saved expression reads, with each `$name` standing for a value.**
+/// A view's `where` is written before any call has bound its inputs, so it is
+/// checked as it will read once they are: every `$name` is a value, and the rest
+/// is the line the reader would take. Which value a name is bound to, and
+/// whether it is the right type for the key, is a call's question.
+pub fn reads_saved(text: &str) -> Result<(), MemoryError> {
+    let today = Date::constant(2000, 1, 1);
+    let Ok(tokens) = lex(text) else {
+        return read(text, today).map(|_| ());
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let mut standing = String::with_capacity(text.len());
+    let mut cut = 0;
+    for token in &tokens {
+        let Kind::Word(word) = &token.kind else {
+            continue;
+        };
+        if word
+            .strip_prefix('$')
+            .is_some_and(crate::memory::view_inputs::is_a_name)
+        {
+            standing.extend(&chars[cut..token.position - 1]);
+            standing.push('0');
+            cut = token.end - 1;
+        }
+    }
+    standing.extend(&chars[cut..]);
+    read(&standing, today).map(|_| ())
+}
+
 /// **A saved expression with its inputs filled in.** A `$name` the view declared
 /// becomes the value the call bound it to, and every term that uses an input the
 /// call left out is dropped, with the `&&`, `||`, `!` and parentheses around it

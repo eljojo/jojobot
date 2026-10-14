@@ -346,15 +346,15 @@ fn filled(text: &str, pairs: &[(&str, Option<&str>)]) -> Option<String> {
 fn an_input_is_replaced_by_the_value_bound_to_it() {
     let line = filled(
         "status != done && project = $project",
-        &[("project", Some("project:krusty-burger-app"))],
+        &[("project", Some("project:atlas"))],
     );
     assert_eq!(
         line.as_deref(),
-        Some("status != done && project = project:krusty-burger-app")
+        Some("status != done && project = project:atlas")
     );
     assert_eq!(
         tree(line.as_deref().unwrap()),
-        tree("status != done && project = project:krusty-burger-app")
+        tree("status != done && project = project:atlas")
     );
     assert_eq!(
         filled("due <= $when", &[("when", Some("2026-10-17"))]).as_deref(),
@@ -440,4 +440,34 @@ fn a_word_that_is_no_declared_input_is_left_as_written() {
             .as_deref(),
         Some("status != done")
     );
+}
+
+/// **A saved expression is checked with each `$name` standing for a value**, in
+/// an equality, a list, a `contains` and an ordering, and `$name`s are listed in
+/// the order written. **Paired**: a line that does not read with its names
+/// replaced is refused as it always was.
+#[test]
+fn a_saved_expression_reads_with_its_inputs_as_values() {
+    for line in [
+        "project = $project",
+        "due <= $when && status != done",
+        "tags in ($a, b)",
+        "title contains $q",
+        "!(owner = $who)",
+    ] {
+        assert!(reads_saved(line).is_ok(), "{line} should read");
+    }
+    for line in [
+        "due <= soon",
+        "project =",
+        "project = $project &&",
+        "due <= \"$when\"",
+    ] {
+        assert!(reads_saved(line).is_err(), "{line} should not read");
+    }
+    assert_eq!(
+        placeholders("project = $project && (due <= $when || owner = $who) && price = $5"),
+        vec!["project", "when", "who"]
+    );
+    assert!(placeholders("status != done").is_empty());
 }

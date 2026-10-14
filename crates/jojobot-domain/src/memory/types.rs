@@ -358,9 +358,8 @@ impl ValueType {
             // this store knows, or it is a string with a colon in it.
             ValueType::Reference => EntityId(value.to_string()).kind().is_some(),
             // Read on a fixed day: whether it parses does not depend on which.
-            ValueType::Expression => {
-                super::filter::expression::parse(value, jiff::civil::date(2000, 1, 1)).is_ok()
-            }
+            // A saved line may name inputs as `$name`, which stand for values.
+            ValueType::Expression => super::filter::expression::reads_saved(value).is_ok(),
         }
     }
 }
