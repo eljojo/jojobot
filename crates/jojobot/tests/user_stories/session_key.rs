@@ -9,7 +9,7 @@ use jojobot_domain::memory::{EntityId, Guarded, NewEntity, NewFact};
 use jojobot_domain::session::{NewSession, SessionState, Sessions, Sid};
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 /// **A voucher issued the way the engine issues one**, held by the run called
 /// `holder`: through the store, because no verb writes one. Returns its handle.
@@ -49,13 +49,13 @@ async fn voucher_held_by(story: &Story, slug: &str, holder: &str) -> EntityId {
     voucher
 }
 
-async fn voucher_state(story: &Story, voucher: &EntityId) -> String {
-    story
-        .memory_store()
-        .fields(voucher)
+/// **A voucher's state, read the way a caller reads it**: a recall through the
+/// served surface, at the field the thing holds. The store is not the oracle.
+async fn voucher_state(reader: &Session, voucher: &EntityId) -> String {
+    reader
+        .recall(voucher.as_str())
         .await
-        .expect("the voucher reads")["state"]
-        .clone()
+        .text_at("/objects/0/fields/state")
 }
 
 #[tokio::test]
@@ -151,7 +151,7 @@ async fn a_run_still_writing_cannot_be_taken_by_its_name_and_a_quiet_one_can() {
             .never_says(&key);
     }
     assert_eq!(
-        voucher_state(&story, &grant).await,
+        voucher_state(&s, &grant).await,
         "held",
         "a refused pick-up voids nothing"
     );
@@ -177,8 +177,9 @@ async fn a_run_still_writing_cannot_be_taken_by_its_name_and_a_quiet_one_can() {
         "the one who took the run is told when it last wrote: {}",
         taken.json()
     );
+    let reader = later.as_bot("bot:delta").await;
     assert_eq!(
-        voucher_state(&story, &grant).await,
+        voucher_state(&reader, &grant).await,
         "void",
         "everything the old sitting held ends with the pick-up"
     );
@@ -188,7 +189,7 @@ async fn a_run_still_writing_cannot_be_taken_by_its_name_and_a_quiet_one_can() {
     taker
         .call("journal", json!({"entry": "picked it up"}))
         .await;
-    let old = later.as_bot("bot:delta").await;
+    let old = &reader;
     old.refused(
         "journal",
         json!({"entry": "from the old sitting", "sid": key}),
@@ -335,19 +336,56 @@ async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_land
         .says("`resume`")
         .never_says("`sid`")
         .never_says(&code);
+
+    // **The spent half the doc above promises**, on a bot whose wrapped run is
+    // its newest, so its code can be presented. While unspent, text carrying it
+    // is refused; presenting it as `resume` spends it, and the same text lands
+    // and reads back from the store.
+    s.add("bot:delta", "Delta").await;
+    let delta = story.as_bot("bot:delta").await;
+    delta.call("journal", json!({"entry": "working"})).await;
+    let spent_later = delta
+        .call("wrap_session", json!({"story": "done for now"}))
+        .await
+        .json()["wrap_code"]
+        .as_str()
+        .expect("a wrap hands back a code")
+        .to_string();
+    let text = json!({"subject": "topic:widgets", "provenance": "inference",
+                      "content": format!("the code {spent_later} was spent")});
+    other.refused("capture", text.clone()).await;
+    let (_, reopened) = story
+        .call(
+            "start_here",
+            json!({"bot": "delta", "brief": true, "resume": spent_later}),
+        )
+        .await;
+    assert!(
+        reopened.is_some(),
+        "the code opens the wrapped run for one last change"
+    );
+    other.call("capture", text).await;
+    other
+        .call("recall", json!({"subject": "topic:widgets", "facts": true}))
+        .await
+        .says("was spent");
     story.finish().await;
 }
 
-/// **Two pick-ups of one quiet run, made at the same moment, hand a key to one
-/// of them.** The run's name is public, so whoever reads it can ask for the
-/// run. A pick-up writes a key and no entry, so the run must count as written
-/// to at the pick-up, or the second ask meets a run that still reads as quiet,
-/// is handed a key too, and turns the first taker away from the run it had just
-/// been given. **This case pins that moment and does not pin the bot's lock:**
-/// with the lock removed it stays green, because the in-memory stores leave no
-/// gap between the quiet check and the new key for a second ask to land in.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_pick_ups_of_one_quiet_run_at_once_hand_a_key_to_one() {
+/// **A pick-up counts as a write to the run, so a second ask straight after it
+/// is turned away.** The run's name is public, so whoever reads it can ask for
+/// the run. A pick-up writes a key and no entry, so the run has to count as
+/// written to at the pick-up, or the second ask meets a run that still reads as
+/// quiet, is handed a key too, and turns the first taker away from the run it
+/// had just been given.
+///
+/// **This case is sequential on purpose and does not pin the bot's lock.** A
+/// concurrent form of it stays green with the lock removed, because the
+/// in-memory stores leave no gap between the quiet check and the new key for a
+/// second ask to land in; no story can pin the lock without a store that has
+/// one.
+#[tokio::test]
+async fn a_second_ask_straight_after_a_pick_up_is_turned_away() {
     // A lease of seconds on the real clock: the run goes quiet by waiting, and
     // is not swept, which a stated far-off day would do to it before the quiet
     // rule ran at all.
@@ -363,34 +401,15 @@ async fn two_pick_ups_of_one_quiet_run_at_once_hand_a_key_to_one() {
     tokio::time::sleep(lease + std::time::Duration::from_millis(500)).await;
 
     let ask = json!({"bot": "gamma", "brief": true, "resume": name});
-    // Two tasks, not two futures in one: futures joined in one task are polled
-    // by one thread in turn and never interleave, which would leave the lock
-    // under test with nothing to do.
-    let story = std::sync::Arc::new(story);
-    let spawned = |story: std::sync::Arc<Story>, ask: serde_json::Value| {
-        tokio::spawn(async move { story.call_either("start_here", ask).await })
-    };
-    let (first, second) = tokio::join!(
-        spawned(story.clone(), ask.clone()),
-        spawned(story.clone(), ask.clone()),
-    );
-    let ((first, first_taker), (second, second_taker)) =
-        (first.expect("first ask"), second.expect("second ask"));
-    let takers: Vec<_> = [first_taker, second_taker].into_iter().flatten().collect();
-    assert_eq!(
-        takers.len(),
-        1,
-        "exactly one pick-up is handed a key: {} / {}",
-        first.raw(),
-        second.raw()
-    );
-    // The positive the count depends on: the key that was handed out works.
-    let taker = &takers[0];
-    assert_ne!(taker.sid(), key, "the winner has a new key");
+    let (_, first) = story.call("start_here", ask.clone()).await;
+    let taker = first.expect("a quiet run is handed to the first who names it");
+    assert_ne!(taker.sid(), key, "the first taker has a new key");
+    // The second ask, with the run just taken: turned away, and told the run
+    // wrote at the pick-up.
+    let second = story.refused_at_the_door("start_here", ask).await;
+    second.says(&name).never_says(taker.sid()).never_says(&key);
+    // The positive both depend on: the key that was handed out still works.
     taker.call("journal", json!({"entry": "mine"})).await;
-    let Ok(story) = std::sync::Arc::try_unwrap(story) else {
-        panic!("both asks are over, so nothing else holds the story");
-    };
     story.finish().await;
 }
 
