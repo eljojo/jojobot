@@ -6698,20 +6698,23 @@ async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
         "the fold of two things that each wrote status once failed: {folded:?}",
     );
 
-    let writes: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT value, ordinal FROM field_write WHERE `key` = 'status' ORDER BY ordinal",
-    )
-    .fetch_all(&pool)
-    .await
-    .expect("the writes read");
+    // **The merge moves no row**, so the writes are read where the survivor
+    // serves them: its own in their order and the duplicate's after them.
+    let writes: Vec<Option<String>> = memory
+        .history(&survivor, "status")
+        .await
+        .expect("the history reads")
+        .into_iter()
+        .map(|write| write.value)
+        .collect();
     assert_eq!(
         writes,
         vec![
-            ("next".to_string(), 1),
-            ("now".to_string(), 2),
-            ("done".to_string(), 3)
+            Some("next".to_string()),
+            Some("now".to_string()),
+            Some("done".to_string())
         ],
-        "the survivor's own writes keep their ordinals and the moved one follows them",
+        "the survivor's own writes keep their places and the duplicate's follows them",
     );
     assert_eq!(
         memory.fields(&survivor).await.expect("the fields read")["status"],
@@ -6921,16 +6924,17 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
             .await
             .unwrap_or_else(|e| panic!("the fold lands when {what}: {e:?}"));
 
-        let writes: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT value, ordinal FROM field_write WHERE `key` = 'status' ORDER BY ordinal",
-        )
-        .fetch_all(&pool)
-        .await
-        .expect("the writes read");
+        let writes: Vec<Option<String>> = memory
+            .history(&survivor, "status")
+            .await
+            .expect("the history reads")
+            .into_iter()
+            .map(|write| write.value)
+            .collect();
         assert_eq!(
             writes,
-            vec![(order[0].to_string(), 1), (order[1].to_string(), 2)],
-            "when {what}, the writes are renumbered oldest first",
+            vec![Some(order[0].to_string()), Some(order[1].to_string())],
+            "when {what}, the survivor serves the writes oldest first",
         );
         assert_eq!(
             memory.fields(&survivor).await.expect("the fields read")["status"],

@@ -1076,6 +1076,8 @@ const ORDINARY: &[&str] = &[
     "thing:contract-kettle",
     "thing:contract-merge-cap-dup",
     "thing:contract-merge-cap-fits",
+    "thing:contract-search-claim-kept",
+    "thing:contract-search-claim-spare",
     "thing:contract-merge-room-dup",
     "thing:contract-listed-thing",
     "thing:contract-long-history",

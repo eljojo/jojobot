@@ -3842,126 +3842,6 @@ impl DoltMemory {
         Ok(repointed)
     }
 
-    /// **Move the duplicate's field writes onto the survivor, in the order they
-    /// were made.**
-    ///
-    /// The fold of a thing's fields takes the newest write of each key by
-    /// ordinal, so a merge that put the duplicate's writes after the survivor's
-    /// would make the duplicate's value win whatever its age. Each key's two
-    /// histories are interleaved by the moment the store stamped each write
-    /// ([`interleave`]) and both sides are renumbered from one as one mapping,
-    /// across `field_write` and `field_link`, which is keyed by the write's
-    /// address. A claim's new id comes from `renamed`.
-    ///
-    /// **The move goes through a parked range.** The primary key is (thing, key,
-    /// ordinal), so renumbering in place would collide half way. Every row is
-    /// first set to its final ordinal plus [`PARKED`], a range nothing holds,
-    /// then the whole range is brought down in one statement.
-    async fn interleave_writes(
-        tx: &mut Transaction<'_, MySql>,
-        folded: &str,
-        survivor: &str,
-        renamed: &std::collections::HashMap<String, String>,
-    ) -> Result<(), MemoryError> {
-        let mut by_key: std::collections::BTreeMap<String, (Vec<StampedWrite>, Vec<StampedWrite>)> =
-            std::collections::BTreeMap::new();
-        for write in Self::stamped_writes(tx, folded).await? {
-            by_key.entry(write.key.clone()).or_default().0.push(write);
-        }
-        for write in Self::stamped_writes(tx, survivor).await? {
-            by_key.entry(write.key.clone()).or_default().1.push(write);
-        }
-        for (key, (theirs, ours)) in by_key {
-            // A key only the survivor holds has nothing to interleave.
-            if theirs.is_empty() {
-                continue;
-            }
-            for (place, (side, write)) in interleave(&theirs, &ours).into_iter().enumerate() {
-                let (from, fact_id) = match side {
-                    Side::Folded => (
-                        folded,
-                        renamed.get(&write.fact_id).unwrap_or(&write.fact_id),
-                    ),
-                    Side::Survivor => (survivor, &write.fact_id),
-                };
-                let parked = place as i64 + 1 + PARKED;
-                sqlx::query(
-                    "UPDATE field_write SET entity = ?, fact_id = ?, ordinal = ? \
-                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
-                )
-                .bind(survivor)
-                .bind(fact_id)
-                .bind(parked)
-                .bind(from)
-                .bind(&key)
-                .bind(write.ordinal)
-                .execute(&mut **tx)
-                .await
-                .map_err(store)?;
-                sqlx::query(
-                    "UPDATE field_link SET entity = ?, ordinal = ? \
-                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
-                )
-                .bind(survivor)
-                .bind(parked)
-                .bind(from)
-                .bind(&key)
-                .bind(write.ordinal)
-                .execute(&mut **tx)
-                .await
-                .map_err(store)?;
-            }
-        }
-        for table in ["field_write", "field_link"] {
-            sqlx::query(&format!(
-                "UPDATE {table} SET ordinal = ordinal - ? WHERE entity = ? AND ordinal >= ?"
-            ))
-            .bind(PARKED)
-            .bind(survivor)
-            .bind(PARKED)
-            .execute(&mut **tx)
-            .await
-            .map_err(store)?;
-        }
-        Ok(())
-    }
-
-    /// Every field write on one thing with the moment the store stamped it,
-    /// each key's writes in ordinal order. **A stamp that does not parse reads as
-    /// no stamp**, the same as a write that was never stamped.
-    async fn stamped_writes(
-        tx: &mut Transaction<'_, MySql>,
-        entity: &str,
-    ) -> Result<Vec<StampedWrite>, MemoryError> {
-        let rows = sqlx::query(
-            "SELECT `key`, ordinal, fact_id, written_at FROM field_write \
-             WHERE entity = ? ORDER BY `key`, ordinal",
-        )
-        .bind(entity)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        let mut writes = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let key: String = row.try_get("key").map_err(store)?;
-            let stamp: Option<String> = row.try_get("written_at").map_err(store)?;
-            let written_at = stamp.and_then(|text| match text.parse::<jiff::Timestamp>() {
-                Ok(at) => Some(at),
-                Err(e) => {
-                    tracing::warn!(error = %e, entity, key, "a write's stamp does not parse; it reads as unstamped");
-                    None
-                }
-            });
-            writes.push(StampedWrite {
-                ordinal: row.try_get("ordinal").map_err(store)?,
-                fact_id: row.try_get("fact_id").map_err(store)?,
-                key,
-                written_at,
-            });
-        }
-        Ok(writes)
-    }
-
     /// The next local id on this page: `f` and the highest number already
     /// there, plus one.
     ///
@@ -3976,6 +3856,15 @@ impl DoltMemory {
     /// address is the pair, so two pages may hold the same local id without
     /// either being reachable through the other.
     async fn mint(tx: &mut Transaction<'_, MySql>, home: &EntityId) -> Result<FactId, MemoryError> {
+        Ok(Self::mint_many(tx, home, 1).await?.remove(0))
+    }
+
+    /// **The next `count` ids free on a thing**, in order.
+    async fn mint_many(
+        tx: &mut Transaction<'_, MySql>,
+        home: &EntityId,
+        count: usize,
+    ) -> Result<Vec<FactId>, MemoryError> {
         let taken: Vec<String> = sqlx::query_scalar("SELECT id FROM fact WHERE entity = ?")
             .bind(home.as_str())
             .fetch_all(&mut **tx)
@@ -3986,7 +3875,9 @@ impl DoltMemory {
             .filter_map(|id| id.strip_prefix('f')?.parse::<u64>().ok())
             .max()
             .unwrap_or(0);
-        Ok(FactId(format!("f{}", highest + 1)))
+        Ok((1..=count as u64)
+            .map(|offset| FactId(format!("f{}", highest + offset)))
+            .collect())
     }
 
     /// The declared types, read inside the transaction that is about to write.
@@ -4074,10 +3965,6 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
                                   w.edge_shape, \
                                   w.edge_object, w.derived_from, w.derived_from_id, \
                                   w.inserted_at, w.stale_after";
-
-/// The first ordinal of the range a merge parks field writes in while it
-/// renumbers them: far above any count of writes of one key.
-const PARKED: i64 = 1 << 40;
 
 /// **A key a merge folded into a survivor**, and the id each of its stored
 /// claims is served under on the survivor.
@@ -6354,132 +6241,28 @@ impl Memory for DoltMemory {
             }
         }
 
-        // **Every column that holds this key, in one transaction.** A fold
-        // that moved the claims and not the writes under them would leave a
-        // thing whose fields disagree with its records.
-        // 🚨 **A row is renumbered as it moves, never bulk-updated.** A fact id
-        // is local to the doc that holds it, so both sides own an `f1`: one
-        // `UPDATE ... SET entity = ?` collides on the primary key the moment
-        // the two have the same number of rows. **The in-memory double cannot
-        // see this** — its rows are a `Vec` with no key — so the real store is
-        // what says the addresses have to be reassigned one at a time.
-        //
-        // ⚠️ **Moving a row therefore CHANGES ITS ADDRESS**, and everything
-        // pointing at that address moves with it in the same transaction.
-        // **A field write is not moved claim by claim.** Its key is (thing, key,
-        // ordinal), so a write cannot land on the survivor until its place in the
-        // key's history is settled, and that place depends on every write of the
-        // key on both sides. The claims move here, and the id each one is given on
-        // the survivor is kept so the writes can take it when they move after.
-        let moving: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM fact WHERE entity = ? ORDER BY CAST(SUBSTRING(id, 2) AS UNSIGNED)",
-        )
-        .bind(folded_key.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+        // **A merge appends its event and moves no row.** The claims, their
+        // writes, the field writes, the pointers other records hold at the
+        // folded thing and its children all stay under the key they were stored
+        // under; every read serves them as the survivor's through the event. A
+        // fact id is local to the doc that holds it, so both sides own an `f1`:
+        // the event gives each claim the folded thing serves an id that is free
+        // on the survivor, and the survivor serves the claim under it.
+        let moving: Vec<FactId> = {
+            let mut served = self.facts_projected(&mut tx, &folded_key).await?;
+            served.sort_by_key(|fact| fact.id.ordinal());
+            served.into_iter().map(|fact| fact.id).collect()
+        };
         let rehomed = moving.len();
-        let mut renamed: std::collections::HashMap<String, String> =
-            std::collections::HashMap::with_capacity(moving.len());
-        // The old and the new local id of each claim, in the order they moved:
-        // the map the merge event keeps.
-        let mut address_map: Vec<(String, String)> = Vec::with_capacity(moving.len());
-        for was in moving {
-            let now = Self::mint(&mut tx, &survivor_key).await?;
-            renamed.insert(was.clone(), now.as_str().to_string());
-            address_map.push((was.clone(), now.as_str().to_string()));
-            for statement in [
-                "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = ?",
-                "UPDATE fact SET derived_from = ?, derived_from_id = ? \
-                 WHERE derived_from = ? AND derived_from_id = ?",
-                // **The claim's own writes move with the claim**, for the
-                // reason its field writes do: a fold that moved the row and
-                // not the substrate under it would leave a claim the
-                // projection cannot find, which is the claim gone.
-                "UPDATE fact_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = ?",
-                // 🚨 **And the lineage on the write table, not only on the
-                // claim's own row.** A claim reads back from its newest write,
-                // so the row above is the copy nobody serves: fixing the
-                // pointer there and not here leaves every reader following an
-                // address the fold has just emptied.
-                "UPDATE fact_write SET derived_from = ?, derived_from_id = ? \
-                 WHERE derived_from = ? AND derived_from_id = ?",
-                "UPDATE fact_event_metadata SET fact_home = ?, fact_id = ? \
-                 WHERE fact_home = ? AND fact_id = ?",
-                "UPDATE fact_event_ref SET fact_home = ?, fact_id = ? \
-                 WHERE fact_home = ? AND fact_id = ?",
-                // **A mark moves with the row it marks, and a mark that
-                // NAMED the moved row follows it too** — the same two
-                // directions `derived_from` gets above, just on the mark's
-                // own table.
-                "UPDATE fact_stands_for SET fact_home = ?, fact_id = ? \
-                 WHERE fact_home = ? AND fact_id = ?",
-                "UPDATE fact_stands_for SET source_home = ?, source_id = ? \
-                 WHERE source_home = ? AND source_id = ?",
-            ] {
-                sqlx::query(statement)
-                    .bind(survivor_key.as_str())
-                    .bind(now.as_str())
-                    .bind(folded_key.as_str())
-                    .bind(&was)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(store)?;
-            }
-        }
-        // **The writes move last, once every claim has its new id**, interleaved
-        // with the survivor's by the moment each was made.
-        Self::interleave_writes(
-            &mut tx,
-            folded_key.as_str(),
-            survivor_key.as_str(),
-            &renamed,
-        )
-        .await?;
-
-        // **An edge's object and a ref's entity are stored as the badge the
-        // folded side wears** (rule 268), so these compare against that
-        // badge alone and rewrite to the survivor's — never a handle, and
-        // never a former handle, because nothing but the entity's own
-        // current badge was ever written into either column.
-        for statement in [
-            "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
-            "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
-            "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
-        ] {
-            sqlx::query(statement)
-                .bind(survivor_key.as_str())
-                .bind(folded_key.as_str())
-                .execute(&mut *tx)
-                .await
-                .map_err(store)?;
-        }
-
-        // **A field naming the folded side links to the survivor now** (rule
-        // 374): a field value is stored as the permanent id the folded side
-        // wears, and the writes this sweep reads include the ones that moved
-        // above.
-        let declared = Self::types_in(&mut tx).await?;
-        Self::repoint_field_links(
-            &mut tx,
-            &declared,
-            folded_key.as_str(),
-            survivor_key.as_str(),
-        )
-        .await?;
-
-        // **`entity.parent` names a different row and is stored as the
-        // badge it wears** (rule 268), so this compares against the folded
-        // side's own badge alone and rewrites to the survivor's — the same
-        // shape the edge and ref sweeps above use, and for the same reason:
-        // nothing but the entity's own current badge was ever written into
-        // this column.
-        sqlx::query("UPDATE entity SET parent = ? WHERE parent = ?")
-            .bind(survivor_key.as_str())
-            .bind(folded_key.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
+        // The account of the merge, written below, takes the id after the last
+        // claim's: the event that holds the map is appended after the account.
+        let mut minted = Self::mint_many(&mut tx, &survivor_key, moving.len() + 1).await?;
+        let account_id = minted.pop().expect("one more id than claims was asked for");
+        let address_map: Vec<(String, String)> = moving
+            .iter()
+            .zip(&minted)
+            .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
+            .collect();
 
         // **The duplicate's names go to the survivor**: every alias it had and
         // the name it was displayed under, so a name it was known by now finds
@@ -6528,7 +6311,7 @@ impl Memory for DoltMemory {
 
         let record = Fact {
             sets: Default::default(),
-            id: Self::mint(&mut tx, &survivor_key).await?,
+            id: account_id,
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
             content: account.content,

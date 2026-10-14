@@ -745,6 +745,77 @@ pub async fn a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold<
     );
 }
 
+/// **A claim of the folded thing is found under the survivor after a fold, and
+/// the folded handle is found by nothing.**
+///
+/// The fold writes an event and moves no row, so the index has to be read
+/// through it: a word only the folded thing's claim carried leads to a claim
+/// that belongs to the survivor now. **Paired**: the word finds the claim under
+/// the folded thing before the fold, and the survivor's own claim keeps its hit
+/// after it, so a fold that dropped the claims or the survivor's own cannot pass.
+pub async fn a_claim_of_the_folded_thing_is_found_under_the_survivor_after_a_fold<
+    M: Memory,
+    S: Search,
+>(
+    store: &M,
+    search: &S,
+) {
+    let kept = EntityId("thing:contract-search-claim-kept".into());
+    let spare = EntityId("thing:contract-search-claim-spare".into());
+    for (id, name) in [(&kept, "Claim Kept"), (&spare, "Claim Spare")] {
+        add(store, NewEntity::new(id.clone(), name, "user-named")).await;
+    }
+    capture(
+        store,
+        NewFact::about(kept.clone(), "collects ornate teaspoons", date(2026, 7, 1)),
+    )
+    .await;
+    capture(
+        store,
+        NewFact::about(
+            spare.clone(),
+            "restores quillfeather lamps",
+            date(2026, 7, 1),
+        ),
+    )
+    .await;
+
+    let homes = |hits: &[Hit], word: &str| -> Vec<EntityId> {
+        hits.iter()
+            .filter_map(|h| match h {
+                Hit::Fact { fact, home, .. } if fact.content.contains(word) => {
+                    Some(home.id.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let before = found(search, SearchQuery::text("quillfeather")).await;
+    assert_eq!(
+        homes(&before, "quillfeather"),
+        vec![spare.clone()],
+        "the claim is found under the folded thing before the fold: {before:?}"
+    );
+
+    store
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller(), None)
+        .await
+        .expect("the fold lands");
+
+    let after = found(search, SearchQuery::text("quillfeather")).await;
+    assert_eq!(
+        homes(&after, "quillfeather"),
+        vec![kept.clone()],
+        "the folded thing's claim is found under the survivor, and only there: {after:?}"
+    );
+    let own = found(search, SearchQuery::text("teaspoons")).await;
+    assert_eq!(
+        homes(&own, "teaspoons"),
+        vec![kept.clone()],
+        "the survivor's own claim kept its hit: {own:?}"
+    );
+}
+
 /// **No bare hits.** A fact hit names the entity it is about and the entity
 /// whose page it sits on — handle, kind AND display name — so a reader knows
 /// what came back without spending a call per handle to find out.
@@ -1224,6 +1295,7 @@ macro_rules! retrieval_cases {
             $store, $search
         ));
         $m!(a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold($store, $search));
+        $m!(a_claim_of_the_folded_thing_is_found_under_the_survivor_after_a_fold($store, $search));
         $m!(search_finds_things_that_answer_a_type_structurally(
             $store, $search
         ));
