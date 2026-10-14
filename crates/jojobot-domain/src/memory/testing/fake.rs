@@ -6,6 +6,7 @@ use super::*;
 use crate::memory::claim_walk::{
     ClaimMove, ClaimWalk, MergeLoop, folded_into_walk, follow_claim, follow_thing,
 };
+use crate::memory::forward_field_value;
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
@@ -77,9 +78,38 @@ impl World {
         }
     }
 
+    /// **Every field value served as the thing each link in it became**, through
+    /// the one rule for a value ([`forward_field_value`]) over the one thing walk,
+    /// so a value naming a thing folded in a chain names the end of it.
+    fn forward_values(
+        &mut self,
+        merges: &[StoredMerge],
+        declared: &[crate::memory::types::DeclaredType],
+    ) {
+        let survivor_of = survivor_in(merges);
+        let expected = "the fake merges nothing into itself, so its merges never loop";
+        for fact in self.facts.iter_mut() {
+            for (key, value) in fact.fields.iter_mut() {
+                if let Some(now) =
+                    forward_field_value(key, value, declared, &survivor_of).expect(expected)
+                {
+                    *value = now;
+                }
+            }
+        }
+        for write in self.writes.iter_mut() {
+            if let Some(value) = &write.value
+                && let Some(now) =
+                    forward_field_value(&write.key, value, declared, &survivor_of).expect(expected)
+            {
+                write.value = Some(now);
+            }
+        }
+    }
+
     /// **One merge applied to what points at the folded thing**: an edge drawn at
     /// it, a ref and a field value naming it all read as the survivor's.
-    fn repoint(&mut self, merge: &StoredMerge, declared: &[crate::memory::types::DeclaredType]) {
+    fn repoint(&mut self, merge: &StoredMerge) {
         let (folded_key, survivor_key) = (&merge.folded, &merge.survivor);
         for fact in self.facts.iter_mut() {
             if let Some(edge) = &mut fact.edge
@@ -91,30 +121,6 @@ impl World {
                 if *target == *folded_key {
                     *target = survivor_key.clone();
                 }
-            }
-            for (key, value) in fact.fields.iter_mut() {
-                if let Some(repointed) = super::super::repoint_field_value(
-                    key,
-                    value,
-                    declared,
-                    folded_key.as_str(),
-                    survivor_key.as_str(),
-                ) {
-                    *value = repointed;
-                }
-            }
-        }
-        for write in self.writes.iter_mut() {
-            if let Some(value) = &write.value
-                && let Some(repointed) = super::super::repoint_field_value(
-                    &write.key,
-                    value,
-                    declared,
-                    folded_key.as_str(),
-                    survivor_key.as_str(),
-                )
-            {
-                write.value = Some(repointed);
             }
         }
         for (_, _, write) in self.claim_writes.iter_mut() {
@@ -937,8 +943,9 @@ impl InMemoryMemory {
         let merges = self.merges.lock().expect("fake mutex poisoned");
         world.relocate(&merges);
         for merge in merges.iter() {
-            world.repoint(merge, &declared);
+            world.repoint(merge);
         }
+        world.forward_values(&merges, &declared);
         drop(merges);
         let world = std::sync::Arc::new(world);
         *self.world_cache.lock().expect("fake mutex poisoned") = Some((key, world.clone()));

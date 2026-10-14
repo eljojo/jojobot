@@ -3900,6 +3900,36 @@ pub fn repoint_field_value(
     )
 }
 
+/// **The value of one stored field write with every link in it served as the
+/// thing it became**, or `None` when no link in it names a folded thing.
+///
+/// Each link is followed to the end of the merges by the one thing walk, so a
+/// survivor folded in its turn is followed, and a loop among the merges is the
+/// walk's [`claim_walk::MergeLoop`] and not an answer. The value is rewritten by
+/// the rule [`repoint_field_value`] gives a merge: an item keeps its own
+/// spelling and a list never names the same thing twice. `survivor_of` is asked
+/// for the survivor of one thing and answers `None` when nothing folded it.
+pub fn forward_field_value<E: From<claim_walk::MergeLoop>>(
+    key: &str,
+    value: &str,
+    declared: &[types::DeclaredType],
+    mut survivor_of: impl FnMut(&EntityId) -> Result<Option<EntityId>, E>,
+) -> Result<Option<String>, E> {
+    let mut forwarded = value.to_string();
+    let mut changed = false;
+    for target in field_link_targets(key, value, declared) {
+        let end = claim_walk::follow_thing(EntityId(target.clone()), &mut survivor_of)?;
+        if end.as_str() == target {
+            continue;
+        }
+        if let Some(now) = repoint_field_value(key, &forwarded, declared, &target, end.as_str()) {
+            forwarded = now;
+            changed = true;
+        }
+    }
+    Ok(changed.then_some(forwarded))
+}
+
 /// **Whether any field of a record names `target`**, the question
 /// [`Memory::referring_to`] asks of every record.
 ///

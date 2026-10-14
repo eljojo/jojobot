@@ -2435,6 +2435,57 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     );
 }
 
+/// **A field value is served as the thing each link in it became.** The links are
+/// followed to the end of the merges by the one thing walk, a list that comes to
+/// name a thing twice names it once, and a value naming no folded thing is left
+/// as it was. A loop among the merges is the one error.
+#[test]
+fn a_field_value_is_forwarded_to_the_end_of_the_merges() {
+    use claim_walk::MergeLoop;
+    let survivor_of = |pairs: &'static [(&'static str, &'static str)]| {
+        move |thing: &EntityId| -> Result<Option<EntityId>, MergeLoop> {
+            Ok(pairs
+                .iter()
+                .find(|(folded, _)| *folded == thing.as_str())
+                .map(|(_, survivor)| EntityId((*survivor).into())))
+        }
+    };
+    let marked = |ids: &[&str]| {
+        ids.iter()
+            .map(|id| marked_stored_handle(id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let chain: &'static [(&str, &str)] = &[("a", "b"), ("b", "c")];
+
+    assert_eq!(
+        forward_field_value("friends", &marked(&["a"]), &[], survivor_of(chain)),
+        Ok(Some(marked(&["c"]))),
+        "a link is followed through a survivor folded in its turn"
+    );
+    assert_eq!(
+        forward_field_value(
+            "friends",
+            &marked(&["a", "c", "z"]),
+            &[],
+            survivor_of(chain)
+        ),
+        Ok(Some(marked(&["c", "z"]))),
+        "a list that comes to name a thing twice names it once"
+    );
+    assert_eq!(
+        forward_field_value("friends", &marked(&["c", "z"]), &[], survivor_of(chain)),
+        Ok(None),
+        "a value naming no folded thing is left as it was"
+    );
+    let looped: &'static [(&str, &str)] = &[("a", "b"), ("b", "a")];
+    assert_eq!(
+        forward_field_value("friends", &marked(&["a"]), &[], survivor_of(looped)),
+        Err(MergeLoop),
+        "a loop among the merges is the one error"
+    );
+}
+
 /// **A survivor is named the folded display name and then its aliases, once
 /// each, leaving out a name the survivor already answers to, whatever its case,
 /// and a name repeated within the list.** Through a survivor folded in its turn,

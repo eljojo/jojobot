@@ -1477,14 +1477,24 @@ impl DoltMemory {
             return Ok(());
         }
         let declared = Self::types_in(tx).await?;
+        // The newest merge that folded a thing is where it went, as in every
+        // other read of the events.
+        let survivors: std::collections::HashMap<&str, &str> = merges
+            .iter()
+            .map(|(folded, survivor)| (folded.as_str(), survivor.as_str()))
+            .collect();
         for (key, value) in writes.iter_mut() {
             let Some(held) = value else { continue };
-            for (folded, survivor) in &merges {
-                if let Some(now) = jojobot_domain::memory::repoint_field_value(
-                    key, held, &declared, folded, survivor,
-                ) {
-                    *held = now;
-                }
+            if let Some(now) =
+                jojobot_domain::memory::forward_field_value(key, held, &declared, |thing| {
+                    Ok::<_, MemoryError>(
+                        survivors
+                            .get(thing.as_str())
+                            .map(|survivor| EntityId((*survivor).to_string())),
+                    )
+                })?
+            {
+                *held = now;
             }
         }
         Ok(())
