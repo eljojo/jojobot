@@ -511,6 +511,14 @@ impl Memory for IndexedMemory {
         self.inner.moved_address(address).await
     }
 
+    /// **Straight through**, for the same reason.
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
+        self.inner.unmapped_claims(entity).await
+    }
+
     /// **Straight through, and it does not touch the index**, for the reason
     /// [`claim_history`](Self::claim_history) does not. A decorator that
     /// leaves this to the trait default serves the default in production.

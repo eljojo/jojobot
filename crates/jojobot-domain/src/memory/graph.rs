@@ -3182,6 +3182,9 @@ where
     // already projected away — so a walk that folded them for itself would answer
     // with a value the store does not hold.
     let fields = store.fields(&entity.id).await?;
+    // **The claims this thing cannot serve are named, not dropped.** A read that
+    // asks for the records says so, and the store is what knows which are left.
+    let unmapped = store.unmapped_claims(&entity.id).await?;
     Ok(DocScan {
         doc_id: entity.id.to_string(),
         title: entity.name.clone(),
@@ -3190,7 +3193,7 @@ where
         fields,
         entity: Some(entity.clone()),
         owner: None,
-        unmapped: Vec::new(),
+        unmapped,
     })
 }
 

@@ -572,6 +572,13 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     ) -> Result<Option<FactAddress>, MemoryError> {
         self.inner.moved_address(address).await
     }
+    /// **Straight through**: a left-over default here answers that nothing is unserved.
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
+        self.inner.unmapped_claims(entity).await
+    }
     /// **Straight through**: a left-over default here would answer from this
     /// layer's own `history` and walk the store one key at a time.
     async fn key_trails(

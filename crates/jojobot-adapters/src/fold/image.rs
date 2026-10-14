@@ -323,6 +323,24 @@ impl Image {
         self.docs.get(&entity.id).map(|doc| doc.scan.clone())
     }
 
+    /// **The claims of a thing that cannot be served**, as the store named them
+    /// when it filled the image: stored under a folded key, listed in no event.
+    pub fn unmapped(&self, id: &EntityId) -> Vec<jojobot_domain::memory::unmapped::UnmappedClaim> {
+        self.scan_one(id)
+            .map(|doc| doc.unmapped)
+            .unwrap_or_default()
+    }
+
+    /// **Whether some thing names this address as a claim it cannot serve.**
+    pub fn names_as_unmapped(&self, address: &FactAddress) -> bool {
+        self.docs.values().any(|doc| {
+            doc.scan
+                .unmapped
+                .iter()
+                .any(|claim| &claim.address == address)
+        })
+    }
+
     /// `claim_history`: the writes of one claim, or the miss the store gives —
     /// a claim that stands has at least one write, so none is no record.
     pub fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {

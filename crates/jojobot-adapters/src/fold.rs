@@ -395,6 +395,18 @@ impl Memory for Folded {
         }
     }
 
+    /// **Answered from the image**, which holds what the store named when it
+    /// filled the thing's document; no read goes to the store.
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
+        match self.held(|image| image.unmapped(entity)) {
+            Some(answer) => Ok(answer),
+            None => self.inner.unmapped_claims(entity).await,
+        }
+    }
+
     /// **An address from before a merge is moved by the image's own copy of the
     /// events**, so a claim read costs the store nothing: the image names no
     /// claim of a folded thing, and the event's map says where the claim went.
@@ -406,6 +418,11 @@ impl Memory for Folded {
                         Some(answer) => answer,
                         None => self.inner.claim_history(address).await,
                     },
+                    // **A claim the survivor names as one it cannot serve** is
+                    // read where it is stored, which only the store holds.
+                    _ if self.held(|image| image.names_as_unmapped(address)) == Some(true) => {
+                        self.inner.claim_history(address).await
+                    }
                     _ => Err(merged),
                 }
             }

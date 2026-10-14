@@ -1577,6 +1577,14 @@ impl super::Memory for Mentioning {
         self.inner.moved_address(address).await
     }
 
+    /// **Straight through**: a claim's address holds handles and no text.
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<super::unmapped::UnmappedClaim>, super::MemoryError> {
+        self.inner.unmapped_claims(entity).await
+    }
+
     async fn claim_histories(
         &self,
         entity: &EntityId,

@@ -219,6 +219,13 @@ impl Memory for Counted {
         self.hit("moved_address");
         self.inner.moved_address(address).await
     }
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
+        self.hit("unmapped_claims");
+        self.inner.unmapped_claims(entity).await
+    }
     async fn key_trails(
         &self,
         entity: &EntityId,

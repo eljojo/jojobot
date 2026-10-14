@@ -6839,6 +6839,20 @@ pub trait Memory: Send + Sync {
         Ok(None)
     }
 
+    /// **The claims of a thing that cannot be served**: stored under a key a merge
+    /// folded into it and listed in no merge event. Each is named with the
+    /// address that reads it, never dropped without a word. A thing nobody merged
+    /// into has none.
+    ///
+    /// Defaulted to none. ⚠️ **A decorator must forward it.**
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<unmapped::UnmappedClaim>, MemoryError> {
+        let _ = entity;
+        Ok(Vec::new())
+    }
+
     /// **The answers of [`history`](Memory::history) and
     /// [`keys_kept_off_the_thing`](Memory::keys_kept_off_the_thing) for one
     /// thing, in one read.** See [`KeyTrails`].

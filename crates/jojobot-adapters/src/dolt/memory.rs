@@ -5270,6 +5270,17 @@ impl Memory for DoltMemory {
         Ok(moved)
     }
 
+    async fn unmapped_claims(&self, entity: &EntityId) -> Result<Vec<UnmappedClaim>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+            tx.commit().await.map_err(store)?;
+            return Ok(Vec::new());
+        };
+        let found = self.unmapped_under(&mut tx, &key).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(found)
+    }
+
     async fn entity_history(
         &self,
         entity: &EntityId,

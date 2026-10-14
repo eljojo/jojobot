@@ -160,6 +160,10 @@ pub trait StoredMemory: Send + Sync {
         &self,
         address: &super::FactAddress,
     ) -> Result<Option<super::FactAddress>, super::MemoryError>;
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<super::unmapped::UnmappedClaim>, super::MemoryError>;
     async fn claim_histories(
         &self,
         entity: &EntityId,
@@ -383,6 +387,12 @@ impl StoredMemory for Unrendered {
         address: &super::FactAddress,
     ) -> Result<Option<super::FactAddress>, super::MemoryError> {
         self.0.moved_address(address).await
+    }
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<super::unmapped::UnmappedClaim>, super::MemoryError> {
+        self.0.unmapped_claims(entity).await
     }
     async fn claim_histories(
         &self,
