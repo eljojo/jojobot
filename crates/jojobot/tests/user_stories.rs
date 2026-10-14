@@ -23,9 +23,6 @@ mod support;
 mod acting_session;
 #[path = "user_stories/age_of_a_value.rs"]
 mod age_of_a_value;
-/// How big an answer is allowed to get, and what a list does at the edge.
-#[path = "user_stories/answer_ceiling.rs"]
-mod answer_ceiling;
 #[path = "user_stories/archiving.rs"]
 mod archiving;
 #[path = "user_stories/around_a_day.rs"]
@@ -53,9 +50,6 @@ mod chart;
 /// A rule settled by reading it at its address, not by taking somebody's word.
 #[path = "user_stories/citing.rs"]
 mod citing;
-/// A claim must fit one ordinary answer, or it is refused when written.
-#[path = "user_stories/claim_room.rs"]
-mod claim_room;
 #[path = "user_stories/clearing_a_key.rs"]
 mod clearing_a_key;
 #[path = "user_stories/colleagues.rs"]
@@ -67,6 +61,18 @@ mod compaction;
 /// The days jojobot computes for a loop can be asked of every kind.
 #[path = "user_stories/computed_dates.rs"]
 mod computed_dates;
+/// How big an answer is allowed to get, and what a list does at the edge.
+#[path = "user_stories/contract_answer_ceiling.rs"]
+mod contract_answer_ceiling;
+/// How much the boot may weigh, and what it names when it leaves something out.
+#[path = "user_stories/contract_boot_budget.rs"]
+mod contract_boot_budget;
+/// A claim must fit one ordinary answer, or it is refused when written.
+#[path = "user_stories/contract_claim_room.rs"]
+mod contract_claim_room;
+/// The line a write ends with when it sets a due moment.
+#[path = "user_stories/contract_owed_receipt.rs"]
+mod contract_owed_receipt;
 #[path = "user_stories/contracts.rs"]
 mod contracts;
 #[path = "user_stories/coordinating.rs"]

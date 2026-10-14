@@ -1,3 +1,10 @@
+//! **This file is a contract, not a story.** It pins where the served surface
+//! stops accepting a record. Each case finds the largest write that lands by
+//! bisection and checks that it reads back whole, so the limit is whatever the
+//! surface enforces and no number is written here. The question below is the
+//! title of the contract; a person asks it once, and no beat follows from the
+//! answer.
+//!
 //! "Can I write down a claim nobody could read back?"
 //!
 //! A read serves a record whole or not at all, and an answer has a ceiling. A

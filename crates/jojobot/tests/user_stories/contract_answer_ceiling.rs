@@ -1,3 +1,9 @@
+//! **This file is a contract, not a story.** It measures the widest call of
+//! each read verb against the one ceiling an answer is allowed, on a fixture
+//! built to be hostile. The retelling below is the fixture's reason; the
+//! assertions are sizes and counts, and a verb that starts passing the ceiling
+//! fails here.
+//!
 //! "I kept notes all year, hundreds on the same few subjects, and a long report
 //! comes in every day. When I ask my assistant for all of it, do I get it in
 //! parts I can follow, with nothing lost and nothing twice?"
