@@ -3128,9 +3128,16 @@ where
                         .filter(|e| !hidden.contains(&e.id))
                         .cloned()
                         .collect();
+                    // **A miss on `<collection>/<N>` offers the numbers held**,
+                    // when its collection numbers its members.
+                    let held = store.numbers_held(subject).await.unwrap_or_default();
                     return Err(MemoryError::UnknownEntity {
                         attempted: subject.to_string(),
-                        nearest: guard::screen(subject, &[], &readable),
+                        nearest: if held.is_empty() {
+                            guard::screen(subject, &[], &readable)
+                        } else {
+                            held
+                        },
                     });
                 }
             }

@@ -467,7 +467,7 @@ attributed, never journalled.
 #### `capture` — description
 
 ```text
-Remember one claim about an entity: the words, when they became true, and who backs them.
+Remember one claim about an entity (a handle, or `<collection>/<N>` for the member of a numbered collection holding N): the words, when they became true, and who backs them.
 PROVENANCE: testimony (the operator said it), observation (you READ it in a system of record, so `read_from` in fields must name the system or the call is refused) or inference (you worked it out; the default, and a hypothesis, not a finding).
 STANDING (settled or open) is a separate question — how sure anyone is — and follows the provenance unless you set it; the operator hedging their own words is testimony with standing open.
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
@@ -1088,7 +1088,8 @@ standing to `settled`, which takes a `receipt`.
 
 ```text
 The entity the fact is about — any `kind:slug` id (a bare handle is read
-as a person). **It must already exist**: a subject jojobot doesn't know
+as a person), or `<collection>/<N>` for the member of a numbered
+collection holding the number N. **It must already exist**: a subject jojobot doesn't know
 comes back with candidates and nothing is written. Create it with
 `add_entity` first if it is genuinely new.
 ```
@@ -2632,7 +2633,7 @@ attributed, never journalled.
 The graph query: say the shape you want and get that shape back.
 Use it for a handle, a kind, a type, a key and its value; use search when you only have words for it.
 THREE AXES COMBINE INTO ONE QUESTION.
-WHICH OBJECTS: subject (one handle; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question already worked out, asked by name, so start with one if it fits).
+WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question already worked out, asked by name, so start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields or where, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied the keys).
@@ -3805,6 +3806,12 @@ whole, whatever this argument says.
 
 ```text
 One entity, as `kind:slug` (a bare handle is read as a person).
+
+**A member of a numbered collection answers to `<collection>/<N>`**, as
+`topic:contract-ordinances/32`: the descendant holding the number N under the key the
+collection numbers by. A number nobody holds comes back blocked with the
+numbers that exist. A collection says `next_number`, the number its next
+member takes.
 
 **A named subject always comes back**, even when the filters below keep
 none of its records: naming a handle asks for that object, and a filter

@@ -340,6 +340,53 @@ mod tests {
         }
     }
 
+    /// **A numbered handle is a handle to read, write to and point at, and it
+    /// is never a handle to make.** A thing created or renamed to one would
+    /// shadow the member the number names, because a direct match wins.
+    #[test]
+    fn a_numbered_handle_is_a_handle_to_take_and_never_one_to_make() {
+        use crate::memory::testing::InMemoryMemory;
+        use crate::memory::{validate_entity, validate_new_handle, validate_subject};
+        // A booted store is what loads the kinds a handle's kind is asked of.
+        let _booted = InMemoryMemory::booted();
+        for taken in [
+            "topic:contract-ordinances/2",
+            "topic:contract-ordinances/2/3",
+            "topic:contract-ordinances/12",
+        ] {
+            assert!(validate_subject(&handle(taken)).is_ok(), "{taken}");
+            assert!(validate_new_handle(&handle(taken)).is_err(), "{taken}");
+            assert!(
+                validate_entity(&handle(taken), "Name", &[], "test", None, None).is_err(),
+                "{taken} is not a handle to make"
+            );
+        }
+        for refused in [
+            "topic:contract-ordinances/0",
+            "topic:contract-ordinances/07",
+            "topic:contract-ordinances/",
+            "topic:contract-ordinances//2",
+            "topic:contract-ordinances/two",
+            "topic:/2",
+            "topic:contract-ordinances/2/",
+        ] {
+            assert!(validate_subject(&handle(refused)).is_err(), "{refused}");
+        }
+        assert!(validate_new_handle(&handle("topic:contract-ordinances")).is_ok());
+        assert!(
+            validate_entity(
+                &handle("topic:contract-ordinances"),
+                "Name",
+                &[],
+                "test",
+                None,
+                Some(&handle("topic:contract-ordinances/2")),
+            )
+            .is_ok(),
+            "a numbered handle may be a parent"
+        );
+    }
+
     #[test]
     fn a_handle_ending_in_a_number_is_taken_apart_and_no_other_is() {
         assert_eq!(

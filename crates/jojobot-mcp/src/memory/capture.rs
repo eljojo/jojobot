@@ -23,7 +23,8 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CaptureArgs {
     /// The entity the fact is about — any `kind:slug` id (a bare handle is read
-    /// as a person). **It must already exist**: a subject jojobot doesn't know
+    /// as a person), or `<collection>/<N>` for the member of a numbered
+    /// collection holding the number N. **It must already exist**: a subject jojobot doesn't know
     /// comes back with candidates and nothing is written. Create it with
     /// `add_entity` first if it is genuinely new.
     pub(crate) subject: String,
@@ -759,8 +760,9 @@ impl Jojobot {
 #[tool_router(router = capture_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Remember one claim about an entity: the words, when they became true, \
-                       and who backs them. PROVENANCE: testimony (the operator said it), \
+        description = "Remember one claim about an entity (a handle, or `<collection>/<N>` \
+                       for the member of a numbered collection holding N): the words, when \
+                       they became true, and who backs them. PROVENANCE: testimony (the operator said it), \
                        observation (you READ it in a system of record, so `read_from` in \
                        fields must name the system or the call is refused) or inference (you \
                        worked it out; the default, and a hypothesis, not a finding). STANDING \

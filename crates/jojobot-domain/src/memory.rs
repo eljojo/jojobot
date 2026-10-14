@@ -1496,6 +1496,32 @@ impl Fact {
     }
 }
 
+/// **A slug**: `[a-z0-9-]+`, or such a slug followed by `/` and a whole number,
+/// once or more — `<collection>/<N>`, the handle a member of a numbered
+/// collection answers to ([`numbered`]). The number is in its one spelling.
+fn slug_shaped(slug: &str) -> bool {
+    match slug.rsplit_once('/') {
+        Some((head, number)) => {
+            numbered::whole_number(number).is_some() && number.trim() == number && slug_shaped(head)
+        }
+        None => !slug.is_empty() && slug.bytes().all(is_slug_byte),
+    }
+}
+
+/// **A handle a new thing may be given**: the plain grammar, with no slash. A
+/// `<collection>/<N>` handle names a member that already holds a number; a
+/// thing made or renamed to one would be found before the member (a direct
+/// match wins), so nothing may be given one.
+pub fn validate_new_handle(id: &EntityId) -> Result<(), MemoryError> {
+    if id.slug().contains('/') {
+        return Err(MemoryError::InvalidEntity(format!(
+            "'{id}' cannot be made: a slash and a number is how a member of a numbered \
+             collection is read, not a handle to give a thing. Use letters, digits and hyphens"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate an entity id before it is written anywhere. Ids are **structured**
 /// (`kind:slug`, slug `[a-z0-9-]+`), never free text — so an adversarial
 /// subject can neither forge markdown nor invent a kind. This is the primary
@@ -1507,8 +1533,7 @@ impl Fact {
 /// most ordinary handle in the system has no way forward from it (rule 68).
 pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
     let s = subject.as_str();
-    let shaped =
-        s.len() <= 128 && !subject.slug().is_empty() && subject.slug().bytes().all(is_slug_byte);
+    let shaped = s.len() <= 128 && slug_shaped(subject.slug());
     if !shaped {
         return Err(MemoryError::InvalidSubject(format!(
             "'{s}' is no handle: a handle is kind:slug, slug [a-z0-9-]+, at most 128 characters"
@@ -1676,6 +1701,7 @@ pub fn validate_entity(
     parent: Option<&EntityId>,
 ) -> Result<(), MemoryError> {
     validate_write_subject(id)?;
+    validate_new_handle(id)?;
     validate_field("name", name)?;
     validate_aliases(aliases)?;
     validate_field("source", source)?;
@@ -6595,15 +6621,65 @@ pub trait Memory: Send + Sync {
                 nearest: guard::screen(entity, &[], &all),
             });
         };
-        let mut fields = BTreeMap::new();
-        fields.insert(resolved.id.clone(), self.fields(&resolved.id).await?);
-        if !fields[&resolved.id].contains_key(numbered::NUMBERS_BY) {
-            return Ok(None);
+        Ok(self
+            .numbered_scope(&resolved.id, &all)
+            .await?
+            .as_ref()
+            .map(numbered::Numbering::from))
+    }
+
+    /// **The numbers a collection holds, as handles, for a miss on
+    /// `<collection>/<N>`**: one match for each number held, each with the
+    /// member's name. Empty when the handle is no numbered handle or its
+    /// collection numbers nothing, so the ordinary near-miss screen answers.
+    /// Defaulted off the same reads as [`numbering_of`](Memory::numbering_of).
+    async fn numbers_held(&self, asked: &EntityId) -> Result<Vec<guard::EntityMatch>, MemoryError> {
+        let Some((collection, number)) = numbered::numbered_handle(asked) else {
+            return Ok(Vec::new());
+        };
+        let all = self.list_entities(None).await?;
+        let former = self.former_handles().await?;
+        let Some(resolved) = resolve_handle(&collection, &all, &former) else {
+            return Ok(Vec::new());
+        };
+        let Some(scope) = self.numbered_scope(&resolved.id, &all).await? else {
+            return Ok(Vec::new());
+        };
+        let mut fields: BTreeMap<EntityId, BTreeMap<String, String>> = BTreeMap::new();
+        fields.insert(
+            resolved.id.clone(),
+            BTreeMap::from([(numbered::NUMBERS_BY.to_string(), scope.key.clone())]),
+        );
+        for member in &scope.members {
+            if let Some(value) = &member.value {
+                fields.insert(
+                    member.handle.clone(),
+                    BTreeMap::from([(scope.key.clone(), value.clone())]),
+                );
+            }
         }
-        let key = fields[&resolved.id][numbered::NUMBERS_BY]
-            .trim()
-            .to_string();
-        for member in all.iter().filter(|e| e.id != resolved.id) {
+        let asked = EntityId(format!("{}/{number}", resolved.id));
+        Ok(numbered::nearest_numbers(&asked, &all, &fields).unwrap_or_default())
+    }
+
+    /// **The numbered collection a thing is**, read through the trait: the key
+    /// it carries and every descendant's value under that key. The one read
+    /// both defaults above stand on.
+    async fn numbered_scope(
+        &self,
+        collection: &EntityId,
+        all: &[Entity],
+    ) -> Result<Option<numbered::Numbered>, MemoryError> {
+        let held = self.fields(collection).await?;
+        let Some(key) = held
+            .get(numbered::NUMBERS_BY)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        else {
+            return Ok(None);
+        };
+        let mut fields = BTreeMap::from([(collection.clone(), held)]);
+        for member in numbered::descendants(collection, all) {
             if let Some(value) = self.fields(&member.id).await?.get(&key) {
                 fields.insert(
                     member.id.clone(),
@@ -6611,9 +6687,7 @@ pub trait Memory: Send + Sync {
                 );
             }
         }
-        Ok(numbered::collection_of(&resolved.id, &all, &fields)
-            .as_ref()
-            .map(numbered::Numbering::from))
+        Ok(numbered::collection_of(collection, all, &fields))
     }
 
     /// Every entity jojobot knows, optionally filtered to one kind.

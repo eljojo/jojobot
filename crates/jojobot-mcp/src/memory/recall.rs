@@ -181,6 +181,12 @@ pub struct FollowArgs {
 pub struct RecallArgs {
     /// One entity, as `kind:slug` (a bare handle is read as a person).
     ///
+    /// **A member of a numbered collection answers to `<collection>/<N>`**, as
+    /// `topic:contract-ordinances/32`: the descendant holding the number N under the key the
+    /// collection numbers by. A number nobody holds comes back blocked with the
+    /// numbers that exist. A collection says `next_number`, the number its next
+    /// member takes.
+    ///
     /// **A named subject always comes back**, even when the filters below keep
     /// none of its records: naming a handle asks for that object, and a filter
     /// asks which objects. A handle that names nothing comes back blocked with
@@ -2381,8 +2387,9 @@ impl Jojobot {
         description = "The graph query: say the shape you want and get that shape back. Use \
                        it for a handle, a kind, a type, a key and its value; use search when \
                        you only have words for it. THREE AXES COMBINE INTO ONE QUESTION. \
-                       WHICH OBJECTS: subject (one handle; a named subject always comes back, \
-                       and a handle that names nothing is blocked with the nearest), kind, \
+                       WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named \
+                       subject always comes back, and a handle that names nothing is blocked with the \
+                       nearest), kind, \
                        parent, answers_type, fields (a key and the value it holds), where (one \
                        line over keys, status != done && due <= today+7d, with order for \
                        the sequence) or view (a question already worked out, asked by name, \
@@ -3445,6 +3452,21 @@ impl Jojobot {
                 elided_bot_charters.insert(object.entity.id.clone(), has_charter);
             }
         }
+        // **A numbered collection says the number its next member takes**, read
+        // for each object that carries `numbers_by`. The largest number held in
+        // the whole subtree, archived members included, plus one: a read, not
+        // an allocation.
+        let mut numbering_views: std::collections::HashMap<EntityId, u64> =
+            std::collections::HashMap::new();
+        for object in &found {
+            if object
+                .fields
+                .contains_key(jojobot_domain::memory::numbered::NUMBERS_BY)
+                && let Ok(Some(numbering)) = self.memory.numbering_of(&object.entity.id).await
+            {
+                numbering_views.insert(object.entity.id.clone(), numbering.next_number);
+            }
+        }
         // **A bot's own room, read without writing.** A capacity refusal
         // already says how many of a bot's own thoughts aged out
         // (`MemoryError::RoomFull`); a caller that only reads its own
@@ -3623,6 +3645,9 @@ impl Jojobot {
                         narrowing,
                         day_frame,
                     );
+                    if let Some(next) = numbering_views.get(&o.entity.id) {
+                        rendered["next_number"] = (*next).into();
+                    }
                     if let Some(thread) = &o.standing_for {
                         rendered[STANDING_DECISION_OF] = thread.as_str().into();
                     }

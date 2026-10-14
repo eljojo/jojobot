@@ -398,10 +398,53 @@ pub async fn a_number_nobody_holds_is_unknown_and_offers_the_numbers_held<M: Mem
     }
 }
 
+/// **A numbered handle is never given to a thing.** It names the member that
+/// holds the number, so a thing made or renamed to one would be found before
+/// the member. Refused for both, and the member still answers beside it.
+pub async fn a_numbered_handle_is_never_given_to_a_new_thing<M: Memory>(store: &M) {
+    let o = ordinances(
+        store,
+        "Council rulings",
+        [
+            "topic:contract-ordinances-given",
+            "decision:contract-ordinance-given-curfew",
+            "decision:contract-ordinance-given-parking",
+            "decision:contract-ordinance-given-leaves",
+            "decision:contract-ordinance-given-fireworks",
+        ],
+    )
+    .await;
+    let taken = numbered(&o.collection, 2);
+    let made = store
+        .add_entity(NewEntity::new(
+            taken.clone(),
+            "Impostor",
+            "contract-fixture",
+        ))
+        .await;
+    assert!(
+        matches!(made, Err(MemoryError::InvalidEntity(_))),
+        "a numbered handle is not a handle to make: {made:?}"
+    );
+    let renamed = store
+        .rename_entity(&o.curfew, &taken, None, date(2026, 5, 6), None, None)
+        .await;
+    assert!(
+        matches!(renamed, Err(MemoryError::InvalidEntity(_))),
+        "nor one to rename a thing to: {renamed:?}"
+    );
+    let still = store
+        .fields(&taken)
+        .await
+        .expect("the member still answers to its number");
+    assert_eq!(still.get("title").map(String::as_str), Some("Parking"));
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_numbered<M: Memory>(store: &M) {
     a_member_is_named_by_its_number_and_the_collection_says_the_next(store).await;
     a_number_is_held_by_one_member_and_a_bad_value_is_refused(store).await;
     the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(store).await;
     a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(store).await;
+    a_numbered_handle_is_never_given_to_a_new_thing(store).await;
 }

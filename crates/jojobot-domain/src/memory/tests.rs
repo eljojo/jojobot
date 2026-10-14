@@ -1659,6 +1659,11 @@ async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
 }
 
 #[tokio::test]
+async fn fake_gives_a_numbered_handle_to_no_new_numbered_thing() {
+    contract::a_numbered_handle_is_never_given_to_a_new_thing(&InMemoryMemory::booted()).await;
+}
+
+#[tokio::test]
 async fn fake_offers_the_numbers_held_by_a_numbered_collection_when_a_number_is_nobodys() {
     contract::a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(
         &InMemoryMemory::booted(),
