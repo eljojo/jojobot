@@ -589,7 +589,7 @@ impl DoltMemory {
         // **The badges a stored handle has ever named**: the row wearing it now
         // and every row that wore it before. One badge places the forward; none
         // or several do not, and the pass does not guess between them.
-        let placed = |name: &str| -> Result<&str, String> {
+        let placed = |name: &str| -> Result<&str, Option<String>> {
             let mut named: std::collections::BTreeSet<&str> = rows
                 .iter()
                 .filter(|(id, _, _)| id == name)
@@ -604,8 +604,8 @@ impl DoltMemory {
             let mut named = named.into_iter();
             match (named.next(), named.next()) {
                 (Some(only), None) => Ok(only),
-                (None, _) => Err("no thing has ever worn that handle".to_string()),
-                _ => Err("more than one thing has worn that handle".to_string()),
+                (None, _) => Err(Some("no thing has ever worn that handle".to_string())),
+                _ => Err(None),
             }
         };
         for (badge, (handle, into)) in &by_badge {
@@ -618,21 +618,37 @@ impl DoltMemory {
             let mut walk = ThingWalk::new(*badge);
             let mut unplaced = None;
             let mut at = *into;
+            // The row whose forward is being placed, for the moment it was folded.
+            let mut folding: &str = handle;
             while let Some(name) = at {
                 let next = match placed(name) {
-                    Ok(next) => next,
-                    Err(why) => {
-                        unplaced = Some(format!("{handle} forwards to {name}: {why}"));
+                    Ok(next) => next.to_string(),
+                    // More than one thing has worn the handle: the one that wore it
+                    // when this row was folded is the one it meant.
+                    Err(None) => match Self::wearer_when_folded(&mut tx, folding, name).await? {
+                        Some(wearer) => wearer,
+                        None => {
+                            unplaced = Some(format!(
+                                "{folding} forwards to {name}: more than one thing has worn that \
+                                 handle"
+                            ));
+                            break;
+                        }
+                    },
+                    Err(Some(why)) => {
+                        unplaced = Some(format!("{folding} forwards to {name}: {why}"));
                         break;
                     }
                 };
-                let Some((_, onward)) = by_badge.get(next) else {
+                let Some((&key, &(next_handle, onward))) = by_badge.get_key_value(next.as_str())
+                else {
                     break;
                 };
-                if !walk.step(Some(next)) {
+                if !walk.step(Some(key)) {
                     break;
                 }
-                at = *onward;
+                folding = next_handle;
+                at = onward;
             }
             if let Some(line) = unplaced {
                 tracing::warn!(handle, "store: {line}; its links are left");
@@ -659,6 +675,87 @@ impl DoltMemory {
             super::finish_pass(&self.pool, FORWARDED_LINKS_PASS).await;
         }
         Ok(report)
+    }
+
+    /// **Of the two things that have worn a handle, the one that wore it when a
+    /// row was folded.** A forwarding row names the handle its survivor wore at
+    /// the fold, and a rename moves no other row. A handle the rename freed may
+    /// since have been taken by a new thing, so the text names two things and
+    /// says nothing about which.
+    ///
+    /// **The order of two moments decides.** The survivor left the handle when its
+    /// first write under the handle it wears now was made; the row was folded at
+    /// its newest write. A row folded before the survivor left meant the
+    /// survivor, and a row folded after meant the thing that wears the handle.
+    /// Only that case is answered: one thing that wears the handle, one that wore
+    /// it and wears one other handle now, and the two moments told apart. Anything
+    /// else is left to the caller as ambiguous.
+    async fn wearer_when_folded(
+        tx: &mut Transaction<'_, MySql>,
+        folded: &str,
+        name: &str,
+    ) -> Result<Option<String>, MemoryError> {
+        let wearing: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, badge FROM entity WHERE id = ?")
+                .bind(name)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        let Some((id, badge)) = wearing else {
+            return Ok(None);
+        };
+        let wearer_now = badge.unwrap_or(id);
+        let left: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT badge FROM entity_former_handle WHERE former_handle = ?",
+        )
+        .bind(name)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let [wore] = left.as_slice() else {
+            return Ok(None);
+        };
+        if *wore == wearer_now {
+            return Ok(None);
+        }
+        // The handle the survivor wears now, if it wears one other than this and
+        // has worn no other since.
+        let handles: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM entity WHERE badge = ?
+             UNION SELECT former_handle FROM entity_former_handle WHERE badge = ?",
+        )
+        .bind(wore)
+        .bind(wore)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut others = handles.iter().filter(|handle| handle.as_str() != name);
+        let (Some(now), None) = (others.next(), others.next()) else {
+            return Ok(None);
+        };
+        let moment = |text: Option<String>| -> Option<jiff::Timestamp> {
+            text.and_then(|text| text.parse().ok())
+        };
+        let left_at: Option<String> =
+            sqlx::query_scalar("SELECT MIN(written_at) FROM entity_write WHERE entity = ?")
+                .bind(now)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(store)?;
+        let folded_at: Option<String> =
+            sqlx::query_scalar("SELECT MAX(written_at) FROM entity_write WHERE entity = ?")
+                .bind(folded)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(store)?;
+        let (Some(left_at), Some(folded_at)) = (moment(left_at), moment(folded_at)) else {
+            return Ok(None);
+        };
+        Ok(match folded_at.cmp(&left_at) {
+            std::cmp::Ordering::Less => Some(wore.clone()),
+            std::cmp::Ordering::Greater => Some(wearer_now),
+            std::cmp::Ordering::Equal => None,
+        })
     }
 
     /// **A forwarding row that names the handle its survivor wore at the fold,
@@ -708,25 +805,30 @@ impl DoltMemory {
                     .map(|(_, badge)| badge.as_str()),
             );
             let mut named = named.into_iter();
-            let badge = match (named.next(), named.next()) {
-                (Some(only), None) => only,
+            let badge: String = match (named.next(), named.next()) {
+                (Some(only), None) => only.to_string(),
                 (None, _) => {
                     report.skipped.push(format!(
                         "{id} forwards to {into}: no thing has ever worn that handle"
                     ));
                     continue;
                 }
-                _ => {
-                    report.skipped.push(format!(
-                        "{id} forwards to {into}: more than one thing has worn that handle"
-                    ));
-                    continue;
-                }
+                // More than one thing has worn the handle: the one that wore it when
+                // this row was folded is the one it meant.
+                _ => match Self::wearer_when_folded(&mut tx, id, into).await? {
+                    Some(wearer) => wearer,
+                    None => {
+                        report.skipped.push(format!(
+                            "{id} forwards to {into}: more than one thing has worn that handle"
+                        ));
+                        continue;
+                    }
+                },
             };
             let Some(now) = rows
                 .iter()
                 .find(|(handle, row_badge, _)| {
-                    row_badge.as_deref().unwrap_or(handle.as_str()) == badge
+                    row_badge.as_deref().unwrap_or(handle.as_str()) == badge.as_str()
                 })
                 .map(|(handle, _, _)| handle)
             else {
