@@ -3088,6 +3088,87 @@ pub mod contract {
         }
     }
 
+    /// **Replacements of one message that arrive at the same moment land
+    /// exactly one.** Four posts from the sender each replace the same message
+    /// and are in flight together: one is written, and each of the others is
+    /// refused as already replaced, naming the one that landed. The box then
+    /// holds the original and that one replacement, and no more.
+    ///
+    /// The paired positive is the sequential case above: one replacement at a
+    /// time is written, and the second is refused.
+    pub async fn simultaneous_replacements_of_one_message_land_exactly_one(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let original = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+
+        let (first, second, third, fourth) = tokio::join!(
+            superseding(
+                store,
+                "inbox",
+                "alpha",
+                "ship it on monday",
+                1,
+                &original.id
+            ),
+            superseding(
+                store,
+                "inbox",
+                "alpha",
+                "ship it on tuesday",
+                2,
+                &original.id
+            ),
+            superseding(
+                store,
+                "inbox",
+                "alpha",
+                "ship it on sunday",
+                3,
+                &original.id
+            ),
+            superseding(
+                store,
+                "inbox",
+                "alpha",
+                "ship it on wednesday",
+                4,
+                &original.id
+            ),
+        );
+        let answers = [first, second, third, fourth];
+        let written: Vec<&Message> = answers
+            .iter()
+            .filter_map(|answer| match answer {
+                Ok(Guarded::Written(message)) => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            written.len(),
+            1,
+            "exactly one replacement of a message lands: {answers:?}"
+        );
+        for answer in &answers {
+            match answer {
+                Ok(Guarded::Written(_)) => {}
+                Err(MailboxError::CannotSupersede(SupersedeRefusal::AlreadySuperseded {
+                    by,
+                    ..
+                })) => assert_eq!(
+                    by,
+                    written[0].id.as_str(),
+                    "a refused replacement names the one that landed"
+                ),
+                other => panic!("the others are refused as already replaced: {other:?}"),
+            }
+        }
+        let counted = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            (counted.total(), counted.superseded),
+            (2, 1),
+            "the box holds the original and the one replacement: {counted:?}"
+        );
+    }
+
     /// **A message's history keeps each change of state, in order, naming the
     /// run that made it.** One run reads the message, then two runs retire it
     /// with two notes: the history is read, processed, processed, with the state
@@ -3403,6 +3484,7 @@ pub mod contract {
         a_replaced_message_the_reader_already_has_is_still_delivered(&fresh().await).await;
         a_replaced_message_is_readable_by_id_on_request(&fresh().await).await;
         a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(&fresh().await).await;
+        simultaneous_replacements_of_one_message_land_exactly_one(&fresh().await).await;
         a_messages_history_keeps_each_change_of_state_in_order(&fresh().await).await;
         a_retirement_with_no_notes_is_recorded_with_none(&fresh().await).await;
         a_delivery_records_one_read_per_message_it_moved(&fresh().await).await;

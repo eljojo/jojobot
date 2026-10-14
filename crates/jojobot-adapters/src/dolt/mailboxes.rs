@@ -56,6 +56,11 @@ pub struct DoltMailboxes {
     /// transaction. Off unless the instance is set up to push, so an instance
     /// with no push service keeps no outbox rows nobody will send.
     pushing: bool,
+    /// **Held from the check that a message has no replacement to the commit of
+    /// the one that replaces it.** Two transactions that each find no replacement
+    /// would both write one, and the table has nothing that stops the second.
+    /// This process is the only writer, so one gate settles it.
+    replacing: Arc<tokio::sync::Mutex<()>>,
     /// What the board reads have loaded so far, so a case can say which rows a
     /// verb asked the store for.
     #[cfg(test)]
@@ -83,6 +88,7 @@ impl DoltMailboxes {
             owners,
             draw: ids::drawing(),
             pushing: false,
+            replacing: Arc::default(),
             #[cfg(test)]
             loaded: Arc::default(),
         }
@@ -203,6 +209,7 @@ impl DoltMailboxes {
             owners,
             draw,
             pushing: false,
+            replacing: Arc::default(),
             loaded: Arc::default(),
         }
     }
@@ -1019,6 +1026,10 @@ impl Mailboxes for DoltMailboxes {
             });
         }
 
+        let _one_replacement_at_a_time = match message.supersedes {
+            Some(_) => Some(self.replacing.lock().await),
+            None => None,
+        };
         let mut tx = self.pool.begin().await.map_err(store)?;
 
         // Everything a write names must already exist — a reply link included.
