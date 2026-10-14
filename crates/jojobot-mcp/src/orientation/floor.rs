@@ -95,7 +95,9 @@ pub(crate) fn floor_parts(
     let named = [
         ("charter", json_len(&identity["charter"])),
         ("snapshot", json_len(snapshot)),
-        ("carried rules", json_len(&identity["rules"])),
+        // `get`, not an index: an identity without `rules` ships no key, and an
+        // index would read it as the four characters of `null`.
+        ("carried rules", identity.get("rules").map_or(0, json_len)),
     ];
     let rest = total.saturating_sub(named.iter().map(|(_, n)| n).sum::<usize>());
     let mut parts: Vec<(String, usize)> = named
@@ -529,6 +531,34 @@ mod tests {
     use crate::harness::*;
     use crate::mailboxes::testing::mailbox_handler;
     use crate::memory::testing::*;
+
+    /// **A part that is not in the answer weighs nothing.** The answer to the
+    /// offer has no `rules` key, and indexing an object for a key it lacks reads
+    /// `null`, which is four characters the answer never carried. **Paired**: an
+    /// identity that holds its rules is counted by what they serialize to.
+    #[test]
+    fn carried_rules_that_are_not_in_the_identity_weigh_nothing() {
+        let size_of = |parts: &[(String, usize)], name: &str| {
+            parts
+                .iter()
+                .find(|(part, _)| part == name)
+                .map(|(_, n)| *n)
+                .unwrap_or_else(|| panic!("{name} is named: {parts:?}"))
+        };
+        let without = serde_json::json!({"bot": {"id": "bot:gamma"}, "charter": null});
+        let parts = floor_parts(100, &serde_json::Value::Null, &without);
+        assert_eq!(size_of(&parts, "carried rules"), 0, "{parts:?}");
+        assert_eq!(parts.iter().map(|(_, n)| n).sum::<usize>(), 100, "{parts:?}");
+
+        let rules = serde_json::json!([{"address": "bot:gamma#f1"}]);
+        let with = serde_json::json!({"bot": {"id": "bot:gamma"}, "charter": null, "rules": rules});
+        let parts = floor_parts(100, &serde_json::Value::Null, &with);
+        assert_eq!(
+            size_of(&parts, "carried rules"),
+            rules.to_string().chars().count(),
+            "{parts:?}"
+        );
+    }
 
     /// **The floor reads a rule's staleness on the day the boot serves.** The
     /// boot reads it in the run's zone, else the instance's, so a floor read in

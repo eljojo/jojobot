@@ -774,6 +774,7 @@ async fn a_read_answers_in_the_day_the_run_states() {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),

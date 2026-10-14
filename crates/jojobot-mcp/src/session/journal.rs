@@ -1086,6 +1086,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1249,6 +1250,7 @@ mod tests {
                             ask_for_code: None,
                             challenge: None,
                             code: None,
+                            offer_code: None,
                         }))
                         .await
                         .expect("start_here ok"),

@@ -239,35 +239,56 @@ pub(crate) fn unseated_rules(
     Some(block)
 }
 
-/// **What a boot is an answer to.** A wrap code and an answer to the
-/// resume-or-new offer both send `resume`, and they are not the same call: a
-/// wrap code has no offer behind it, so only the offer's answer can leave out
-/// what the offering call just shipped.
+/// **What a boot is an answer to.** A wrap code, an answer to the offer and a
+/// bare `resume` all send `resume`, and they are not the same call: only an
+/// answer that presents the code its offer carried has an offering call behind
+/// it that shipped the parts, so only that answer may leave them out.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Answering {
     /// An ordinary boot, which makes the offer when there is one to make.
     Nothing,
     /// A wrap code, which reopens one wrapped run.
     WrapCode,
-    /// A run's name or `new`, the two answers to the offer.
-    Offer,
+    /// A run's name or `new` with no live offer code behind it: the full boot,
+    /// less the charter, which every `resume` leaves out.
+    Resume,
+    /// A run's name or `new` with the live code of an offer made at this
+    /// moment: the one answer that carries only what is new.
+    Offer(jiff::Timestamp),
 }
 
 impl Answering {
-    /// Classified by the `resume` argument the door was sent.
-    pub(crate) fn of(resume: Option<&str>) -> Self {
+    /// Classified by the `resume` argument the door was sent and the moment of
+    /// the offer whose live code came with it, if one did.
+    pub(crate) fn of(resume: Option<&str>, offered_at: Option<jiff::Timestamp>) -> Self {
         match resume {
             None => Self::Nothing,
             Some(answer) if jojobot_domain::session::is_wrap_code(answer) => Self::WrapCode,
-            Some(_) => Self::Offer,
+            Some(_) => match offered_at {
+                Some(at) => Self::Offer(at),
+                None => Self::Resume,
+            },
         }
     }
 
-    /// **Only the offer's answer leaves out the offer's own parts.**
+    /// **Only the answer to a live offer leaves out the offer's own parts.**
     pub(crate) fn is_offer(self) -> bool {
-        self == Self::Offer
+        matches!(self, Self::Offer(_))
+    }
+
+    /// The moment of the offer this answer answers.
+    pub(crate) fn offered_at(self) -> Option<jiff::Timestamp> {
+        match self {
+            Self::Offer(at) => Some(at),
+            _ => None,
+        }
     }
 }
+
+/// Said beside the rules an answer to the offer carries.
+const RULES_SINCE_THE_OFFER: &str = "These rules were written or rewritten after the offer was \
+     made. The rules the offer carried, and the map of those at home, are left out of this \
+     answer.";
 
 impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
@@ -428,13 +449,31 @@ impl Jojobot {
         // built above so the offering boot and this one cannot disagree about
         // what a rule is. `rules_elided` says less came back; the answer's
         // `left_out` names the parts and the call that returns them.
-        if answering.is_offer()
-            && let Some(obj) = body.as_object_mut()
-        {
-            for part in ["rules", "rules_note", "unseated_rules"] {
-                obj.remove(part);
+        //
+        // **A rule written or rewritten after the offer was made stays**: the
+        // offering call could not have shipped it.
+        if let Answering::Offer(offered_at) = answering {
+            let mut since = Vec::new();
+            for rule in &in_force {
+                let last_write = match self.memory.claim_history(&rule.address()).await {
+                    Ok(chain) => chain.last().and_then(|write| write.written_at),
+                    Err(_) => None,
+                }
+                .or(rule.inserted_at);
+                if last_write.is_some_and(|at| at > offered_at) {
+                    since.push(fact_json(rule, as_of, None));
+                }
             }
-            obj.insert("rules_elided".into(), true.into());
+            if let Some(obj) = body.as_object_mut() {
+                for part in ["rules", "rules_note", "unseated_rules"] {
+                    obj.remove(part);
+                }
+                if !since.is_empty() {
+                    obj.insert("rules".into(), since.into());
+                    obj.insert("rules_note".into(), RULES_SINCE_THE_OFFER.into());
+                }
+                obj.insert("rules_elided".into(), true.into());
+            }
         }
         if answering != Answering::Nothing
             && let Some(obj) = body.as_object_mut()
@@ -442,7 +481,7 @@ impl Jojobot {
             obj.insert(
                 "note".into(),
                 "your charter is not in this answer. To read it, call start_here with your bot \
-                 name and no `resume`: that boot writes nothing and starts nothing."
+                 name and no `resume`."
                     .into(),
             );
         }
@@ -805,6 +844,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -835,6 +875,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok");
@@ -856,6 +897,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1033,6 +1075,7 @@ mod tests {
                         ask_for_code: None,
                         challenge: None,
                         code: None,
+                        offer_code: None,
                     }))
                     .await
                     .expect("the boot call is ok"),
@@ -1264,6 +1307,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect_err("this door boots bots");
@@ -1347,12 +1391,17 @@ mod tests {
             note.contains("resume"),
             "the way back is the boot that does not answer an offer: {note}"
         );
+        // **Said once, about the charter only.** What that boot does to the
+        // store depends on whether a run is waiting, so the note claims neither
+        // that it writes nor that it starts.
+        for claim in ["writes", "starts"] {
+            assert!(!note.contains(claim), "{claim}: {note}");
+        }
 
-        // Everything a resume is for survives it. The rules are not among them:
-        // the offering call shipped them, and the answer's `left_out` names them.
+        // Everything a resume is for survives it. The rules are among them: no
+        // offer code came with this answer, so nothing says the caller holds them.
         assert_eq!(resumed["identity"]["bot"]["id"], "bot:gamma");
-        assert!(resumed["identity"].get("rules").is_none(), "{resumed}");
-        assert_eq!(resumed["identity"]["rules_elided"], true, "{resumed}");
+        assert!(resumed["identity"]["rules"].is_array(), "{resumed}");
         assert_eq!(resumed["identity"]["owned_mailbox"]["name"], "gamma");
     }
 

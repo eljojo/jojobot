@@ -241,6 +241,7 @@ async fn the_role_keys_a_claim_writes_reach_the_role_object() {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok"),

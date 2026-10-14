@@ -238,6 +238,7 @@ async fn boot(doc: &mut Doc, label: &str, bot: Option<&str>) {
             ask_for_code: None,
             challenge: None,
             code: None,
+            offer_code: None,
         }))
         .await
         .expect("start_here answers");

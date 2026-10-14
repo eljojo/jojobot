@@ -650,6 +650,7 @@ mod tests {
             ask_for_code: None,
             challenge: Some(challenge.into()),
             code: Some(code.into()),
+            offer_code: None,
         }
     }
 

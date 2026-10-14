@@ -444,6 +444,7 @@ pub(crate) async fn a_claimed_role(jojobot: &Jojobot) -> String {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok"),

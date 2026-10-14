@@ -483,6 +483,7 @@ mod tests {
             ask_for_code: None,
             challenge: None,
             code: None,
+            offer_code: None,
         }
     }
 

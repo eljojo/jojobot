@@ -178,6 +178,12 @@ pub struct OrientArgs {
     /// and the third wrong code voids the challenge.
     #[serde(default)]
     pub(crate) code: Option<String>,
+    /// **The `offer_code` the resume-or-new offer carried**, sent beside `resume`.
+    /// With it, and only with it, the answer to that offer carries what is new.
+    /// Without it, or with a code for another bot or one already used, the answer
+    /// is the full boot.
+    #[serde(default)]
+    pub(crate) offer_code: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model
@@ -466,6 +472,11 @@ impl Jojobot {
             claim,
             sid: args.sid.as_deref(),
             compacted,
+            offer_code: args
+                .offer_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|code| !code.is_empty()),
         })
         .await
     }
@@ -509,6 +520,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok");
@@ -539,6 +551,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok");
@@ -585,6 +598,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -644,6 +658,7 @@ mod tests {
                         ask_for_code: None,
                         challenge: None,
                         code: None,
+                        offer_code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -724,6 +739,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok");
@@ -810,6 +826,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -833,6 +850,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -905,6 +923,7 @@ mod tests {
                         ask_for_code: None,
                         challenge: None,
                         code: None,
+                        offer_code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -925,6 +944,7 @@ mod tests {
                         ask_for_code: None,
                         challenge: None,
                         code: None,
+                        offer_code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -979,6 +999,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("boot ok"),
@@ -1009,6 +1030,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("orientation still lands");
@@ -1045,6 +1067,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("a misuse is an answer, not a protocol failure");
@@ -1095,6 +1118,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect_err("another kind must be refused");
@@ -1139,6 +1163,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -1164,6 +1189,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -1239,6 +1265,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -1273,6 +1300,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1308,6 +1336,7 @@ mod tests {
             ask_for_code: None,
             challenge: None,
             code: None,
+            offer_code: None,
         };
 
         // The boot claims nothing and hands the session its sid.
@@ -1396,6 +1425,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1420,6 +1450,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1481,6 +1512,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1503,6 +1535,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1530,6 +1563,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1599,6 +1633,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok"),
@@ -1629,6 +1664,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1709,6 +1745,7 @@ mod tests {
             ask_for_code: None,
             challenge: None,
             code: None,
+            offer_code: None,
         };
         let poll = |sid: &str, counts_only: bool| ReadMailboxArgs {
             counts_only: Some(counts_only),
@@ -1845,6 +1882,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1891,6 +1929,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1928,6 +1967,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("an unknown section is an answer, not a protocol failure"),
@@ -1963,6 +2003,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("start_here ok");

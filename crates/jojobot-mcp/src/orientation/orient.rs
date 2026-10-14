@@ -407,6 +407,9 @@ pub(crate) struct OrientRequest<'a> {
     /// this call answers as that running session rather than offering or
     /// starting one.
     pub(crate) compacted: bool,
+    /// **The code the resume-or-new offer carried**, sent beside `resume`. Taken
+    /// once, by the bot it was made for; see [`Answering`].
+    pub(crate) offer_code: Option<&'a str>,
 }
 
 impl Jojobot {
@@ -427,6 +430,7 @@ impl Jojobot {
             sid: arrived_with,
             redeem,
             compacted,
+            offer_code,
         } = req;
         // **The zone this call resolves days in:** the one the session sent,
         // else the zone a resumed run already holds, else the instance's, else
@@ -455,9 +459,19 @@ impl Jojobot {
         // **A wrap code takes no role.** It reopens a wrapped run for one last
         // change, so neither the named claim nor the bot's own is decided.
         let by_wrap_code = resume.is_some_and(jojobot_domain::session::is_wrap_code);
-        // **Only the answer to the offer leaves out the offer's parts.** A wrap
-        // code also sends `resume`, but no offer stands behind it.
-        let answering = Answering::of(resume);
+        // **Only the answer that presents its offer's live code leaves out the
+        // offer's parts.** A wrap code also sends `resume`, but no offer stands
+        // behind it, and a bare `resume` carries nothing that says the caller
+        // holds what an offering call shipped. The code is taken here, once, by
+        // the bot it was made for. **A run that reports a compaction takes none:
+        // it is owed the whole orientation, whatever else the call sends.**
+        let offered_at = match (bot, resume, offer_code) {
+            (Some(bot), Some(_), Some(code)) if !by_wrap_code && !compacted => {
+                self.registry.take_offer(code, bot)
+            }
+            _ => None,
+        };
+        let answering = Answering::of(resume, offered_at);
         // **The essay is one of those parts**, so the answer to the offer sends
         // none, as a caller that asked for `brief` gets none.
         let brief = brief || answering.is_offer();
@@ -587,7 +601,7 @@ impl Jojobot {
                 }
                 running
             }
-            Some(bot) => match self.attach(bot, resume, timezone, today).await {
+            Some(bot) => match self.attach(bot, resume, answering, timezone, today).await {
                 Ok(session) => session,
                 // A handle that addresses nothing stops the whole answer.
                 // Handing back orientation around it would bury the one thing
@@ -768,7 +782,15 @@ impl Jojobot {
         // anonymous, exactly like the charter — it always ships and is
         // never ranked, so its true cost is counted here, once, rather than
         // competing with the rules' `details` or the remainder's own units.**
-        let floor_len = floor_len(
+        // **The block naming what the answer left out is part of what ships**, so
+        // it is counted with the floor, under its key.
+        let left_out = bot
+            .filter(|_| answering.is_offer())
+            .map(offer_answer_left_out);
+        let floor_len = left_out
+            .as_ref()
+            .map_or(0, |block| answer::under_key("left_out", block))
+            + floor_len(
             brief,
             &snapshot,
             &floor_identity,
@@ -853,8 +875,8 @@ impl Jojobot {
         if let (Some(notice), Some(obj)) = (over_the_ceiling, answer.as_object_mut()) {
             obj.insert("over_the_ceiling".into(), notice);
         }
-        if let (true, Some(bot), Some(obj)) = (answering.is_offer(), bot, answer.as_object_mut()) {
-            obj.insert("left_out".into(), offer_answer_left_out(bot));
+        if let (Some(left_out), Some(obj)) = (left_out, answer.as_object_mut()) {
+            obj.insert("left_out".into(), left_out);
         }
         json_result(&answer)
     }
@@ -1257,6 +1279,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1304,6 +1327,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1345,6 +1369,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1459,6 +1484,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1582,6 +1608,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1679,6 +1706,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1766,6 +1794,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1890,6 +1919,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await;
 
@@ -1953,6 +1983,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2010,6 +2041,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2062,6 +2094,7 @@ mod tests {
                         ask_for_code: None,
                         challenge: None,
                         code: None,
+                        offer_code: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -2169,6 +2202,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2771,6 +2805,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2847,6 +2882,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2919,6 +2955,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2985,6 +3022,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -3160,6 +3198,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -3271,6 +3310,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -3420,6 +3460,7 @@ mod skills_are_indexed_not_shipped {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -3483,6 +3524,7 @@ mod skills_are_indexed_not_shipped {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -3524,6 +3566,7 @@ mod skills_are_indexed_not_shipped {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -3571,6 +3614,7 @@ mod skills_are_indexed_not_shipped {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here answers"),

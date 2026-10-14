@@ -463,6 +463,7 @@ pub(crate) async fn boot_on(jojobot: &Jojobot, name: &str, today: &str) -> serde
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -493,6 +494,7 @@ pub(crate) async fn boot_in_zone(
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -516,6 +518,7 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -545,6 +548,7 @@ pub(crate) async fn boot_answering(
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -591,6 +595,7 @@ pub(crate) async fn boot_answering_dated(
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -653,6 +658,7 @@ pub(crate) async fn booted_in(
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }))
             .await
             .expect("the boot call is ok"),

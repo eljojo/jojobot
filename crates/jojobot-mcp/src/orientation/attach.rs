@@ -46,6 +46,9 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         resume: Option<&str>,
+        // **What this boot is an answer to.** Only the answer to a live offer
+        // leaves out the handover story the offering call shipped.
+        answering: Answering,
         // **The zone this run resolves days in**, already validated by the
         // door: an unresolvable name never reaches here. `None` is a boot that
         // supplied none, and on a RESUME that means keep what the run carries
@@ -307,10 +310,16 @@ impl Jojobot {
                     "resumed": false,
                     "session": serde_json::Value::Null,
                     "choices": choices,
+                    // **The proof that the caller holds this answer.** Sent
+                    // back beside `resume`, once, it is what lets the answer
+                    // leave out what this boot shipped.
+                    "offer_code": self.registry.mint_offer(bot, swept_at),
                     "how_to_proceed": "This identity has work already in flight. Call start_here \
                                        again with resume: the name of the run you are picking up, \
-                                       or resume: \"new\" for a fresh session. That answer \
-                                       carries only what is new. Only a run that has been quiet for 45 \
+                                       or resume: \"new\" for a fresh session, and send \
+                                       offer_code beside it to get an answer that carries only \
+                                       what is new. Without the code the answer is the full boot. \
+                                       Only a run that has been quiet for 45 \
                                        minutes can be picked up by its name; a run still writing \
                                        is continued with its own key. Nothing was closed and \
                                        nothing was written; choosing new leaves the runs above \
@@ -350,7 +359,7 @@ impl Jojobot {
             // sitting that most needs a handover is the one with nothing to
             // resume. The answer to the offer is the other one: the offering
             // call shipped the story, and `left_out` names it.
-            if resume.is_none() {
+            if !answering.is_offer() {
                 obj.insert("handover".into(), Self::handover(handover.as_ref()));
             }
         }
@@ -1046,6 +1055,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -1941,6 +1951,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("a dead handle is an answer, not a protocol failure"),
@@ -1981,6 +1992,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("an unreadable handle is an answer too"),
@@ -2018,6 +2030,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("somebody else's handle is an answer, not a protocol failure"),
@@ -2281,6 +2294,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("a wrapped run is an answer, not a protocol failure"),
@@ -2415,6 +2429,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("the boot call is ok"),
@@ -2459,6 +2474,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2484,6 +2500,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -2623,6 +2640,7 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -3173,6 +3191,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
@@ -3258,6 +3277,7 @@ mod tests {
                 ask_for_code: None,
                 challenge: None,
                 code: None,
+                offer_code: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat, which is what mints the card".into(),
@@ -3467,30 +3487,21 @@ mod tests {
             .await;
         }
 
-        // The boot that makes the offer carries the core whole, whatever the
-        // chronology weighs. The answer to the offer leaves the essay out.
-        let offering = boot(&jojobot, "gamma").await;
-        let orientation = offering["orientation"]
-            .as_str()
-            .unwrap_or_else(|| panic!("a rules-free bot still gets the essay's core: {offering}"));
-        assert_eq!(
-            orientation,
-            crate::orientation::essay::ORIENTATION_CORE.as_str(),
-            "the core must ride whole even when the remainder is declined entirely",
-        );
-        let whole = offering.to_string().chars().count();
-        assert!(
-            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
-            "the whole offering boot must fit the one declared ceiling: {whole} chars"
-        );
-
         let resumed = boot_answering(&jojobot, "gamma", &sid).await;
         let whole = resumed.to_string().chars().count();
         assert!(
             whole <= jojobot_domain::text::BOOT_ANSWER.budget,
             "the whole answer must fit the one declared ceiling: {whole} chars"
         );
-        assert!(resumed["orientation"].is_null(), "{resumed}");
+
+        let orientation = resumed["orientation"]
+            .as_str()
+            .expect("a rules-free bot still gets the essay's core: {resumed}");
+        assert_eq!(
+            orientation,
+            crate::orientation::essay::ORIENTATION_CORE.as_str(),
+            "the core must ride whole even when the remainder is declined entirely",
+        );
     }
 
     /// …and a chronology that fits comes back whole, with the marker saying so.
@@ -4309,11 +4320,24 @@ mod tests {
             .expect("begin ok");
     }
 
-    /// An answer to the offer, naming a role and a zone on the same call.
+    /// An answer to the offer, naming a role and a zone on the same call, and
+    /// sending the code the offer carried when it is given one.
     async fn answer_the_offer(
         jojobot: &Jojobot,
         answer: &str,
         brief: Option<bool>,
+        offer_code: Option<&str>,
+    ) -> serde_json::Value {
+        answer_the_offer_of(jojobot, "gamma", answer, brief, offer_code).await
+    }
+
+    /// The same, as the named bot.
+    async fn answer_the_offer_of(
+        jojobot: &Jojobot,
+        bot: &str,
+        answer: &str,
+        brief: Option<bool>,
+        offer_code: Option<&str>,
     ) -> serde_json::Value {
         json_of(
             &jojobot
@@ -4322,7 +4346,7 @@ mod tests {
                     claim: Some("dev-dispatch".into()),
                     timezone: Some("America/Toronto".into()),
                     today: None,
-                    bot: Some("gamma".into()),
+                    bot: Some(bot.into()),
                     brief,
                     skill: None,
                     section: None,
@@ -4331,10 +4355,19 @@ mod tests {
                     ask_for_code: None,
                     challenge: None,
                     code: None,
+                    offer_code: offer_code.map(str::to_string),
                 }))
                 .await
                 .expect("start_here ok"),
         )
+    }
+
+    /// The code an offering boot carries, beside its choices.
+    fn the_offer_code(offering: &serde_json::Value) -> String {
+        offering["session"]["offer_code"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the offer carries a code to send back: {offering}"))
+            .to_string()
     }
 
     /// Everything an answer to the offer leaves out is present in the boot that
@@ -4376,7 +4409,8 @@ mod tests {
             .expect("one option")
             .to_string();
 
-        let answer = answer_the_offer(&jojobot, &run, None).await;
+        let code = the_offer_code(&offering);
+        let answer = answer_the_offer(&jojobot, &run, None, Some(&code)).await;
         // What the answer exists to deliver.
         assert_eq!(answer["session"]["resumed"], true, "{answer}");
         assert!(answer["session"]["sid"].is_string(), "{answer}");
@@ -4436,9 +4470,11 @@ mod tests {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
-        assert_every_part_shipped(&boot(&jojobot, "gamma").await);
+        let offering = boot(&jojobot, "gamma").await;
+        assert_every_part_shipped(&offering);
+        let code = the_offer_code(&offering);
 
-        let answer = answer_the_offer(&jojobot, "new", Some(true)).await;
+        let answer = answer_the_offer(&jojobot, "new", Some(true), Some(&code)).await;
         assert!(answer["session"]["sid"].is_string(), "{answer}");
         assert!(answer["snapshot"].is_null(), "{answer}");
         assert!(answer["identity"].get("rules").is_none(), "{answer}");
@@ -4473,7 +4509,7 @@ mod tests {
         .await;
         let (_wrapped, code) = wrapped_with_a_code(&store, 1, "t002").await;
 
-        let opened = answer_the_offer(&jojobot, &code, None).await;
+        let opened = answer_the_offer(&jojobot, &code, None, None).await;
         assert_eq!(opened["session"]["resumed"], true, "{opened}");
         assert!(opened["orientation"].is_string(), "{opened}");
         assert!(opened["snapshot"]["entities"].is_object(), "{opened}");
@@ -4484,5 +4520,233 @@ mod tests {
             "{opened}"
         );
         assert!(opened.get("left_out").is_none(), "{opened}");
+    }
+
+    /// **An answer that sends no code is a full boot.** `resume` is an ordinary
+    /// argument and a client that kept no offer can send it on its first call,
+    /// so the answer cannot claim that an offering call shipped anything. Every
+    /// part ships, `left_out` is absent, and the charter keeps its own note.
+    ///
+    /// **Paired** with the answer that sends the code, which leaves the same
+    /// parts out on the same bot.
+    #[tokio::test]
+    async fn an_answer_with_no_code_is_the_full_boot() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        let offering = boot(&jojobot, "gamma").await;
+        let run = offering["session"]["choices"][0]["run"]
+            .as_str()
+            .expect("one option")
+            .to_string();
+
+        for answer in [run.as_str(), "new"] {
+            let whole = answer_the_offer(&jojobot, answer, None, None).await;
+            assert!(whole["session"]["sid"].is_string(), "{answer}: {whole}");
+            assert_every_part_shipped(&whole);
+            assert_eq!(whole["identity"]["charter_elided"], true, "{whole}");
+        }
+
+        // The code was never presented, so it is still good for its owner.
+        let code = the_offer_code(&offering);
+        let short = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        assert!(short["snapshot"].is_null(), "{short}");
+        assert!(short.get("left_out").is_some(), "{short}");
+    }
+
+    /// **A code binds one bot and one answer.** A code another bot's offer gave
+    /// is not this bot's, a code already spent is gone, and each answer is the
+    /// full boot. **Paired**: the owner's code, untouched by the other bot's
+    /// try, still gives the short answer, and a second use of it does not.
+    #[tokio::test]
+    async fn a_code_of_another_bot_or_one_already_used_gives_the_full_boot() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        make_bot(&jojobot, "delta").await;
+        let code = the_offer_code(&boot(&jojobot, "gamma").await);
+
+        let other = answer_the_offer_of(&jojobot, "delta", "new", None, Some(&code)).await;
+        assert!(other["session"]["sid"].is_string(), "{other}");
+        assert!(other["orientation"].is_string(), "{other}");
+        assert!(other["snapshot"]["entities"].is_object(), "{other}");
+        assert!(other.get("left_out").is_none(), "{other}");
+
+        let owner = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        assert!(owner["snapshot"].is_null(), "{owner}");
+        assert!(owner.get("left_out").is_some(), "{owner}");
+
+        let reused = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        assert!(reused["orientation"].is_string(), "{reused}");
+        assert!(reused["snapshot"]["entities"].is_object(), "{reused}");
+        assert!(reused.get("left_out").is_none(), "{reused}");
+    }
+
+    /// **A run that reports a compaction is owed the whole orientation, whatever
+    /// else the call sends**, a `resume` and a live code included. **Paired**:
+    /// the same code on a call that reports no compaction gives the short
+    /// answer, so the whole boot comes from the report and not from the code.
+    #[tokio::test]
+    async fn a_compaction_report_gets_the_full_boot_even_with_resume_and_a_live_code() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        let code = the_offer_code(&boot(&jojobot, "gamma").await);
+        let live = answer_the_offer(&jojobot, "new", None, None).await;
+        let sid = live["session"]["sid"].as_str().expect("a key").to_string();
+
+        let compacted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    compacted: Some(true),
+                    claim: None,
+                    timezone: None,
+                    today: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(true),
+                    skill: None,
+                    section: None,
+                    resume: Some("new".into()),
+                    sid: Some(sid),
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: Some(code.clone()),
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert!(compacted["orientation"].is_string(), "{compacted}");
+        assert!(compacted["snapshot"]["entities"].is_object(), "{compacted}");
+        assert!(compacted.get("left_out").is_none(), "{compacted}");
+
+        let short = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        assert!(short["snapshot"].is_null(), "{short}");
+    }
+
+    /// **A rule written after the offer rides the short answer**, because the
+    /// offering call could not have shipped it. **Paired**: a rule written before
+    /// the offer does not ride, and the answer says that rules were left out.
+    #[tokio::test]
+    async fn a_rule_written_after_the_offer_rides_the_answer() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        let code = the_offer_code(&boot(&jojobot, "gamma").await);
+        capture_ok(
+            &jojobot,
+            capture_args("bot:gamma", "asks the operator before it deletes a branch"),
+        )
+        .await;
+
+        let answer = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        let rules: Vec<&str> = answer["identity"]["rules"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the newer rule rides: {answer}"))
+            .iter()
+            .filter_map(|rule| rule["content"].as_str())
+            .collect();
+        assert_eq!(
+            rules,
+            ["asks the operator before it deletes a branch"],
+            "{answer}"
+        );
+        assert_eq!(answer["identity"]["rules_elided"], true, "{answer}");
+        assert!(answer["snapshot"].is_null(), "{answer}");
+    }
+
+    /// **A rule rewritten after the offer rides the short answer as well**: the
+    /// offering call shipped its earlier words.
+    #[tokio::test]
+    async fn a_rule_rewritten_after_the_offer_rides_the_answer() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        let offering = boot(&jojobot, "gamma").await;
+        let address = offering["identity"]["rules"][0]["address"]
+            .as_str()
+            .expect("a carried rule")
+            .to_string();
+        let code = the_offer_code(&offering);
+        let rewritten = jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("checks the board twice before starting".into()),
+                ..update_args(&address)
+            }))
+            .await
+            .expect("update_fact ok");
+        assert_ne!(json_of(&rewritten)["status"], "blocked");
+
+        let answer = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        let rules: Vec<&str> = answer["identity"]["rules"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the rewritten rule rides: {answer}"))
+            .iter()
+            .filter_map(|rule| rule["content"].as_str())
+            .collect();
+        assert_eq!(rules, ["checks the board twice before starting"], "{answer}");
+    }
+
+    /// **The block naming what the answer left out is counted in the ceiling.**
+    /// It ships whatever the ranking decides, so it belongs to what cannot be
+    /// cut. A newer rule is padded until the answer, less the notice about the
+    /// ceiling, is over the ceiling by less than that block: the floor without
+    /// the block fits and the floor with it does not. The answer must then say
+    /// it is over.
+    ///
+    /// **Paired**: the same bot's answer with a short rule fits, says nothing
+    /// about the ceiling, and sizes the padding.
+    #[tokio::test]
+    async fn the_left_out_block_of_the_answer_to_the_offer_counts_toward_the_ceiling() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+
+        let code = the_offer_code(&boot(&jojobot, "gamma").await);
+        for _ in 0..2 {
+            capture_ok(&jojobot, capture_args("bot:gamma", "w")).await;
+        }
+        let fitting = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        let base = fitting.to_string().chars().count();
+        assert!(base < budget, "{base}");
+        assert!(fitting.get("over_the_ceiling").is_none(), "{fitting}");
+
+        // Over the ceiling by half the block, so the block alone decides it. A
+        // long rule serializes with more than its words, so the padding is
+        // corrected by what the last round overshot until it lands in the
+        // window.
+        let block = crate::answer::under_key("left_out", &fitting["left_out"]);
+        let target = budget + block / 2;
+        let mut padding = target - base;
+        let mut landed = None;
+        for _ in 0..4 {
+            let code = the_offer_code(&boot(&jojobot, "gamma").await);
+            // Two rules, since one record can carry only so much.
+            for share in [padding / 2, padding - padding / 2] {
+                capture_ok(
+                    &jojobot,
+                    capture_args("bot:gamma", &format!("w{}", "w".repeat(share))),
+                )
+                .await;
+            }
+            let answer = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+            let mut without_notice = answer.clone();
+            without_notice
+                .as_object_mut()
+                .expect("an object")
+                .remove("over_the_ceiling");
+            let shipped = without_notice.to_string().chars().count();
+            if shipped > budget && shipped - block <= budget {
+                landed = Some((answer, shipped));
+                break;
+            }
+            padding = (padding + target).saturating_sub(shipped);
+        }
+        let (answer, shipped) = landed.expect("the padding reached the window");
+        assert!(
+            answer.get("over_the_ceiling").is_some(),
+            "an answer over the ceiling says so: {shipped} characters"
+        );
     }
 }

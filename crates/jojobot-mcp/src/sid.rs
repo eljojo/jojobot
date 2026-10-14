@@ -46,6 +46,9 @@ pub use jojobot_domain::session::{Sid, is_readable_sid as is_readable};
 /// a name would mean minting one for a session that may never be written.
 pub const NEW: &str = "new";
 
+/// How many characters an offer's code has.
+const OFFER_CODE_LEN: usize = 8;
+
 /// How many collisions minting will ride out before giving up.
 ///
 /// Reaching it means the registry holds a large fraction of a billion live
@@ -320,7 +323,19 @@ pub struct SessionRegistry {
     /// of the code to the spending of it, so two boots presenting one code cannot
     /// both be given a voucher.
     redeem_lock: tokio::sync::Mutex<()>,
+    /// **The offers a boot has made and nobody has answered with their code**,
+    /// by code: the bot each was made for and the moment it was made. An answer
+    /// to the resume-or-new offer that sends its code is shorter than a full
+    /// boot, and this is how the server knows the offering call happened. Only
+    /// the newest [`OFFERS_KEPT`] are held, and a restart empties them: a code
+    /// nobody holds gives a full boot, which is the safe answer. Nothing in it
+    /// is stored.
+    offers: std::sync::Mutex<HashMap<String, (EntityId, jiff::Timestamp)>>,
 }
+
+/// How many unanswered offers the registry holds. Past it the oldest goes, so a
+/// bot that boots and never answers cannot grow the map.
+const OFFERS_KEPT: usize = 256;
 
 /// The key a code is hashed with. Drawn from OS entropy when made, and its
 /// `Debug` says nothing of it, so a log line holding a registry holds no key.
@@ -347,6 +362,43 @@ impl SessionRegistry {
     /// The lock a coded boot holds from checking the code to spending it.
     pub(crate) fn redeem_lock(&self) -> &tokio::sync::Mutex<()> {
         &self.redeem_lock
+    }
+
+    /// **Make an offer's code**, bound to `bot` and to `at`, the moment the
+    /// offer was made. The code opens nothing: it only tells the server that the
+    /// caller holds what the offering call shipped.
+    pub(crate) fn mint_offer(&self, bot: &EntityId, at: jiff::Timestamp) -> String {
+        let mut offers = self.offers.lock().expect("the offers are poisoned");
+        let code = loop {
+            let code = jojobot_domain::handle::draw(OFFER_CODE_LEN);
+            if !offers.contains_key(&code) {
+                break code;
+            }
+        };
+        if offers.len() >= OFFERS_KEPT
+            && let Some(oldest) = offers
+                .iter()
+                .min_by_key(|(_, (_, made))| *made)
+                .map(|(code, _)| code.clone())
+        {
+            offers.remove(&oldest);
+        }
+        offers.insert(code.clone(), (bot.clone(), at));
+        code
+    }
+
+    /// **Take an offer's code, once.** Answers the moment of the offer when the
+    /// code was made for `bot` and has not been taken. A code made for another
+    /// bot is left in place for its owner, and a code nobody made answers
+    /// nothing.
+    pub(crate) fn take_offer(&self, code: &str, bot: &EntityId) -> Option<jiff::Timestamp> {
+        let mut offers = self.offers.lock().expect("the offers are poisoned");
+        match offers.get(code) {
+            Some((made_for, _)) if made_for == bot => {
+                offers.remove(code).map(|(_, made)| made)
+            }
+            _ => None,
+        }
     }
 
     /// An empty registry — one per process.
@@ -811,6 +863,50 @@ mod tests {
 
     fn bot(slug: &str) -> EntityId {
         EntityId(format!("bot:{slug}"))
+    }
+
+    #[test]
+    fn an_offer_code_is_taken_once_by_the_bot_it_was_minted_for() {
+        let registry = SessionRegistry::new();
+        let at: jiff::Timestamp = "2026-10-09T10:00:00Z".parse().expect("a moment");
+        let code = registry.mint_offer(&bot("gamma"), at);
+
+        // Another bot's try takes nothing and leaves the code for its owner.
+        assert_eq!(registry.take_offer(&code, &bot("delta")), None);
+        // The owner takes the moment of the offer, once.
+        assert_eq!(registry.take_offer(&code, &bot("gamma")), Some(at));
+        assert_eq!(registry.take_offer(&code, &bot("gamma")), None);
+        // A code nobody minted is nothing.
+        assert_eq!(registry.take_offer("not-a-code", &bot("gamma")), None);
+    }
+
+    #[test]
+    fn two_offers_carry_two_codes() {
+        let registry = SessionRegistry::new();
+        let at: jiff::Timestamp = "2026-10-09T10:00:00Z".parse().expect("a moment");
+        let (first, second) = (
+            registry.mint_offer(&bot("gamma"), at),
+            registry.mint_offer(&bot("gamma"), at),
+        );
+        assert_ne!(first, second);
+        assert_eq!(registry.take_offer(&second, &bot("gamma")), Some(at));
+        assert_eq!(registry.take_offer(&first, &bot("gamma")), Some(at));
+    }
+
+    #[test]
+    fn the_registry_keeps_the_newest_offers_and_no_more() {
+        let registry = SessionRegistry::new();
+        let start: jiff::Timestamp = "2026-10-09T10:00:00Z".parse().expect("a moment");
+        let codes: Vec<String> = (0..OFFERS_KEPT + 1)
+            .map(|i| {
+                let at = start + jiff::SignedDuration::from_secs(i as i64);
+                registry.mint_offer(&bot("gamma"), at)
+            })
+            .collect();
+        // The oldest is gone; the newest is held.
+        assert_eq!(registry.take_offer(&codes[0], &bot("gamma")), None);
+        assert!(registry.take_offer(&codes[OFFERS_KEPT], &bot("gamma")).is_some());
+        assert!(registry.take_offer(&codes[1], &bot("gamma")).is_some());
     }
 
     fn card(name: &str, key_hash: Option<&str>) -> Session {
