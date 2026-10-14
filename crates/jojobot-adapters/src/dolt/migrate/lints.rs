@@ -50,7 +50,7 @@ fn asked_by(leaves: Leaves) -> Touch {
         Leaves::NoTable(t) => Touch::NoTable(t.into()),
         Leaves::Column(t, c) => Touch::Column(t.into(), c.into()),
         Leaves::ColumnType(t, c, _) => Touch::ColumnType(t.into(), c.into()),
-        Leaves::Index(t, i) => Touch::Index(t.into(), i.into()),
+        Leaves::Index(t, i) | Leaves::IndexIfMissing(t, i) => Touch::Index(t.into(), i.into()),
         Leaves::NoIndex(t, i) => Touch::NoIndex(t.into(), i.into()),
         Leaves::NoRows(t, _) => Touch::Rows(t.into()),
     }
