@@ -99,8 +99,8 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
         // to, long after anybody remembers doing it.
         .says("one person, filed twice");
 
-    // **The address a caller was holding is stale**, exactly as the answer
-    // warned: the claim moved and took a new one.
+    // **The address a caller was holding names a claim that now sits under a
+    // new number on the survivor.**
     assert!(
         second.starts_with("person:nelson-2#"),
         "the fixture did not capture the second claim under the spare handle: {second}",
@@ -138,6 +138,54 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
 
     s.wrap("one person again, and the repair is on the record")
         .await;
+
+    story.finish().await;
+}
+
+/// **An address held from before a merge still reaches its claim, and the verb
+/// that merges does not tell a caller otherwise.**
+///
+/// The merge moves nothing: the survivor serves the duplicate's claims under
+/// new numbers, and an address a caller kept names the claim where it is now.
+/// A description that called the held address stale would send a caller to
+/// re-find a claim it already holds. The behaviour and the sentence ride in one
+/// case, so a description changed without the behaviour, or the behaviour
+/// without the description, fails it.
+#[tokio::test]
+async fn an_address_held_from_before_a_merge_still_reaches_its_claim() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("person:nelson", "Nelson").await;
+    s.add("person:milhouse", "Milhouse").await;
+    let held = s.fact("person:milhouse", "reads the sleeve notes").await;
+    assert!(held.starts_with("person:milhouse#"), "{held}");
+
+    s.merge_entities("person:milhouse", "person:nelson", "one person", None)
+        .await;
+
+    // The held address names the claim: its history reads through it, and the
+    // write in it is the one that was made.
+    let history = s
+        .call("recall", json!({"history_record": held}))
+        .await
+        .json();
+    let writes = &history["objects"][0]["record_history"]["writes"];
+    assert_eq!(
+        writes[0]["content"], "reads the sleeve notes",
+        "the held address reads the claim it named: {history}"
+    );
+
+    // The verb that did the merge says nothing of a stale address.
+    let said = s.description("merge_entities").await;
+    assert!(
+        !said.contains("stale"),
+        "the description calls an address stale that still reaches its claim: {said}"
+    );
+    assert!(
+        said.contains("update_fact"),
+        "and it names a verb the held address still works with: {said}"
+    );
 
     story.finish().await;
 }

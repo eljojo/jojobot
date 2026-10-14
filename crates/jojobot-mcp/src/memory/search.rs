@@ -125,7 +125,7 @@ pub struct SearchArgs {
     /// what jojobot has written since this server started) or `stale` (the index
     /// holds an older version of one entity than the store, so a hit may be a
     /// version the store has moved past). The hits are real either way, and
-    /// `recall` reads the store itself.
+    /// `recall` is complete.
     #[serde(default)]
     pub(crate) include_mail: Option<bool>,
     /// **Whether matching also reaches a claim's earlier wordings.** Defaults
@@ -465,14 +465,13 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
 /// the store — a boot scan that failed, or a document jojobot wrote and could
 /// not re-read afterwards. The write landed either way. What a caller loses is
 /// the guarantee that this answer reflects it, and the way back is `recall`,
-/// which reads the store.
+/// which is complete.
 fn memory_coverage(coverage: Coverage) -> serde_json::Value {
     match coverage {
         Coverage::Unread => serde_json::json!({
             "searched": false,
             "note": "NO entity, fact or prose is searchable right now — this is not 'nothing \
-                     matched'. The memory verbs are unaffected: recall reads the store directly \
-                     and is complete.",
+                     matched'. The memory verbs are unaffected: recall is complete.",
         }),
         // **Two states, two notes.** They differ in how much is missing, which
         // is the whole of what a caller does with the answer: one says trust an
@@ -485,13 +484,12 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
                 Behind::Unscanned =>
                     "PARTIAL: the index holds only what jojobot has written since this server \
                      started, so anything older may be missing. Any hit here is real — this is \
-                     not a complete answer over memory. recall reads the store directly and is \
-                     complete.",
+                     not a complete answer over memory. recall is complete.",
                 Behind::Stale =>
                     "PARTIAL: the index holds an OLDER version of at least one entity than the \
                      store does. Every hit here is real, but one of them may be a version the \
-                     store has moved past, and a fact written since may be missing. recall reads \
-                     the store directly and is complete — use it when the answer matters.",
+                     store has moved past, and a fact written since may be missing. recall is \
+                     complete — use it when the answer matters.",
             },
         }),
         Coverage::Loaded => serde_json::json!({ "searched": true }),
@@ -512,15 +510,14 @@ fn session_coverage(coverage: Coverage) -> serde_json::Value {
         Coverage::Unread => serde_json::json!({
             "searched": false,
             "note": "NO session is searchable right now — this is not 'nothing matched'. \
-                     list_runs reads a bot's own runs directly and is complete.",
+                     list_runs is complete.",
         }),
         Coverage::Partial(behind) => serde_json::json!({
             "searched": true,
             "behind": behind.as_token(),
             "note": "PARTIAL: the last read of the sessions store could not reach it, so the \
                      index is serving whatever it last read. Any hit here is real — this is not \
-                     a complete answer over sessions. list_runs reads the store directly and is \
-                     complete.",
+                     a complete answer over sessions. list_runs is complete.",
         }),
         Coverage::Loaded => serde_json::json!({ "searched": true }),
     }
@@ -2360,7 +2357,7 @@ mod tests {
                 .as_str()
                 .expect("an absence says why")
                 .contains("recall"),
-            "…and names the verb that reads the store instead: {unread}"
+            "…and names the verb to use instead: {unread}"
         );
     }
 
@@ -2560,7 +2557,7 @@ mod tests {
             );
             assert!(
                 text.contains("recall"),
-                "{surface} has to name the verb that reads the store instead: {text}"
+                "{surface} has to name the verb to use instead: {text}"
             );
             for mechanism in ["re-read", "could not"] {
                 assert!(
@@ -2673,6 +2670,77 @@ mod tests {
                     !text.contains(mechanism),
                     "{surface} narrates an attempt the server made ({mechanism:?}) instead of \
                      what the caller holds: {text}"
+                );
+            }
+        }
+    }
+
+    /// **No coverage note says where `recall` or `list_runs` reads from.** Both
+    /// answer from what the process holds, so a note that says they read the
+    /// store is false. What a caller acts on is that the verb is complete, and
+    /// each note still names the verb to use instead.
+    ///
+    /// The needles are the claim about the mechanism, and the positive half is
+    /// that every note names its verb and says it is complete. The tool
+    /// description and the argument schema are served beside the notes, so they
+    /// are held to the same.
+    #[tokio::test]
+    async fn no_coverage_note_says_where_recall_or_list_runs_reads_from() {
+        let memory = |coverage| {
+            memory_coverage(coverage)["note"]
+                .as_str()
+                .map(str::to_string)
+        };
+        let session = |coverage| {
+            session_coverage(coverage)["note"]
+                .as_str()
+                .map(str::to_string)
+        };
+        let tools = Jojobot::tool_router().list_all();
+        let search = tools
+            .iter()
+            .find(|t| t.name == "search")
+            .expect("search is a tool");
+        let served = format!(
+            "{} {}",
+            search.description.as_deref().unwrap_or_default(),
+            serde_json::to_string(&*search.input_schema).expect("the schema serializes")
+        );
+        let surfaces = [
+            ("memory, never read", memory(Coverage::Unread), "recall"),
+            (
+                "memory, unscanned",
+                memory(Coverage::Partial(Behind::Unscanned)),
+                "recall",
+            ),
+            (
+                "memory, stale",
+                memory(Coverage::Partial(Behind::Stale)),
+                "recall",
+            ),
+            (
+                "sessions, never read",
+                session(Coverage::Unread),
+                "list_runs",
+            ),
+            (
+                "sessions, partial",
+                session(Coverage::Partial(Behind::Stale)),
+                "list_runs",
+            ),
+            ("the search description", Some(served), "recall"),
+        ];
+        for (surface, text, verb) in surfaces {
+            let text = text.unwrap_or_else(|| panic!("{surface} carries no note"));
+            assert!(
+                text.contains(verb) && text.contains("complete"),
+                "{surface} has to send a caller to {verb} and say it is complete: {text}"
+            );
+            for mechanism in ["reads the store", "directly"] {
+                assert!(
+                    !text.contains(mechanism),
+                    "{surface} says where {verb} reads from ({mechanism:?}), and it reads from \
+                     what the process holds: {text}"
                 );
             }
         }

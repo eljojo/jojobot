@@ -1782,14 +1782,16 @@ attributed, never journalled.
 ```text
 Merge a duplicate into the thing it duplicates — the repair for one thing named twice.
 A deliberate act rather than a flag on an edit, because there is no way back.
-Everything the duplicate held moves to the survivor: its claims, the edges drawn at it, the history under its keys; the survivor answers to its names, which a recall lists as `foldedNames`.
+The survivor answers for everything the duplicate held: its claims, the edges drawn at it, the history under its keys, and its names, which a recall lists as `foldedNames`.
 Beside them lands a dated record of the merge itself, naming the handle that went and the reason if you give one.
 NOTHING IS DELETED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves, but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
 It does not answer as the survivor: recall the survivor to read everything.
 USE IT WHEN TWO HANDLES ARE ONE THING.
 It does not ask whether they really are: that is your judgement, so putting two unrelated things together is allowed and is recorded exactly as legibly.
 If you are unsure, read both with recall first.
-THE CLAIMS THAT MOVE GET NEW ADDRESSES, because an address is local to the thing that holds it: any address you were holding for the duplicate's claims is stale afterwards, and the answer says how many moved.
+THE SURVIVOR SERVES THE DUPLICATE'S CLAIMS UNDER ITS OWN HANDLE, each under a new address.
+An address you were holding for one of them still names it: update_fact, retract and recall with history_record act on the claim where it is now.
+The answer's claims_moved counts the claims the survivor serves under its own handle now.
 A refusal is status: blocked with nothing moved: one handle named as both sides; a handle already merged away (the answer names the handle to use instead); a role object (kind role), on either side, merged by anyone but the bot it belongs to or a bot heading the chart (the answer tells you who may); a merge into your own bot of a duplicate carrying thought_capacity or thought_body_cap; a thought room that would go over capacity, or a thought over its body cap; or a result that could not be read back whole in one answer.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
@@ -1851,8 +1853,8 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
 
 ```text
 **The handle that stops being a thing of its own** — the duplicate.
-Everything it holds moves to the survivor, and the handle itself goes on
-resolving.
+The survivor answers for everything it holds, and the handle itself goes
+on resolving.
 
 A merge into your own bot is refused when the duplicate carries
 thought_capacity OR thought_body_cap, because the merge would raise your own
@@ -1899,7 +1901,8 @@ wrote nothing spends no id.
 #### `merge_entities` — argument `/inputSchema.survivor`
 
 ```text
-**The handle that survives.** Everything ends up here.
+**The handle that survives.** Everything the duplicate held is read from
+here.
 ```
 
 ### Tool `ping`
@@ -4330,7 +4333,7 @@ the store, where `behind` says how much: `unscanned` (the index holds only
 what jojobot has written since this server started) or `stale` (the index
 holds an older version of one entity than the store, so a hit may be a
 version the store has moved past). The hits are real either way, and
-`recall` reads the store itself.
+`recall` is complete.
 ```
 
 #### `search` — argument `/inputSchema.kind`

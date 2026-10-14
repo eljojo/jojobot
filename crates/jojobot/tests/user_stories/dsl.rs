@@ -1528,6 +1528,21 @@ impl Session {
         );
     }
 
+    /// **What a served verb tells its reader**: the verb's own description,
+    /// whole, as the verb list serves it.
+    pub async fn description(&self, verb: &str) -> String {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        listed
+            .tools
+            .iter()
+            .find(|t| t.name == verb)
+            .unwrap_or_else(|| panic!("the verb list must carry {verb:?}"))
+            .description
+            .as_deref()
+            .unwrap_or_else(|| panic!("{verb} publishes no description"))
+            .to_string()
+    }
+
     /// **What a served argument tells its reader**, read out of the verb's own
     /// schema: the description of one argument, whole.
     pub async fn argument_description(&self, verb: &str, argument: &str) -> String {
