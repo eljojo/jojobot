@@ -53,6 +53,32 @@ pub fn value_words(text: &str) -> Result<Vec<ValueWord>, MemoryError> {
     read(text, Date::constant(2000, 1, 1)).map(|(_, values)| values)
 }
 
+/// **A day as a caller spells it, resolved**: a date written out, or `today` with
+/// days or weeks added, against the day it is handed. The one place a day a call
+/// sends is read, so it means what the same word means in an expression.
+pub fn date_word(word: &str, today: Date) -> Result<String, MemoryError> {
+    let reader = Reader {
+        tokens: Vec::new(),
+        at: 0,
+        depth: 0,
+        today,
+        values: Vec::new(),
+    };
+    let token = Token {
+        kind: Kind::Word(word.to_string()),
+        position: 1,
+        end: word.chars().count() + 1,
+    };
+    match reader.read(word, &token)? {
+        Operand::Day(day) => Ok(day),
+        Operand::Text(text) if text.parse::<Date>().is_ok() => Ok(text),
+        Operand::Text(_) => Err(refused(format!(
+            "'{word}' is not a date. Accepted: a date such as 2026-10-09, or today with days or \
+             weeks added: today, today+3d, today-2w"
+        ))),
+    }
+}
+
 fn read(text: &str, today: Date) -> Result<(Filter, Vec<ValueWord>), MemoryError> {
     // **Checked before anything is read**, so text a caller makes huge costs
     // one count and no tokens.

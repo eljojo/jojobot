@@ -40,6 +40,7 @@ pub mod stored;
 pub mod text_edit;
 pub mod types;
 pub mod unmapped;
+pub mod view_inputs;
 pub mod words;
 
 #[cfg(any(test, feature = "testing"))]
