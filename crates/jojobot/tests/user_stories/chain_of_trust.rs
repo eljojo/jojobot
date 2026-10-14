@@ -404,6 +404,19 @@ async fn a_code_goes_to_the_operator_alone_and_a_boot_that_presents_it_is_given_
     let (challenge, code) = ask_and_read(&story, "marge").await;
 
     // ── the code is in the operator's box and in no bot's reach ─────────────
+    // **The positive the count of zero depends on**: the same search, run with
+    // mail on, finds a word that sits in a bot's box. Without it, zero would
+    // read the same on a search that reached no mail at all.
+    s.call(
+        "post_message",
+        json!({"to": "marge", "subject": "a note for marge",
+               "body": "the ladder is behind the kestrelnine shed"}),
+    )
+    .await;
+    s.find_including_mail("kestrelnine")
+        .await
+        .number("/count", 1)
+        .says("kestrelnine");
     s.find_including_mail(&code).await.number("/count", 0);
     s.call("recall", json!({"subject": challenge, "facts": true}))
         .await
