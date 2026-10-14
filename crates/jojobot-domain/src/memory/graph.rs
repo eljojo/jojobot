@@ -312,6 +312,12 @@ pub struct Selection {
     /// rather than a check on one. `None` is a caller with no identity, which
     /// reaches everything unowned and nothing owned.
     pub asked_by: Option<EntityId>,
+    /// **The selection is every kind that owes something**, because the call
+    /// asks what is owed and a view's overdue question names no kind: the
+    /// overdue pass keeps only the kinds a carrier speaks for. It counts as
+    /// naming what to recall, so a view that asks `overdue` need not select a
+    /// kind.
+    pub owed: bool,
 }
 
 impl Selection {
@@ -327,6 +333,7 @@ impl Selection {
         self.subject.is_none()
             && self.kind.is_none()
             && self.parent.is_none()
+            && !self.owed
             && !self.filters_facts()
     }
 
@@ -826,6 +833,12 @@ pub struct Asked {
     /// **Only the direct children of this thing**, from the view's `parent`: a
     /// handle, or an input written `$name`.
     pub parent: Option<String>,
+    /// **The day an overdue ask is asked about**, from the view's `as_of`: an input
+    /// written `$name`. As the view stores it until [`Asked::filled`] runs, and as
+    /// the day the call bound it to after: `None` when the view names none, or
+    /// when the input was left out and has no default, which leaves the question
+    /// to the run's own day.
+    pub as_of: Option<String>,
 }
 
 impl Asked {
@@ -855,6 +868,18 @@ impl Asked {
                     }
                 })?;
         }
+        // **The day of an overdue ask is an input's value**, or nothing when the
+        // input was left out and has no default.
+        self.as_of = self
+            .as_of
+            .take()
+            .map(|word| word.trim().to_string())
+            .and_then(|word| match word.strip_prefix('$') {
+                Some(name) => bound
+                    .get(name)
+                    .and_then(|value| value.map(|value| value.text.clone())),
+                None => Some(word),
+            });
         let parent = match self
             .parent
             .as_deref()
@@ -1028,6 +1053,7 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
         answers_type: held.get("answers_type").cloned(),
         inputs: held.get("inputs").cloned().filter(|i| !i.trim().is_empty()),
         parent: held.get("parent").cloned().filter(|p| !p.trim().is_empty()),
+        as_of: held.get("as_of").cloned().filter(|d| !d.trim().is_empty()),
         follow,
         // **A list of blanks names no key**, so it narrows nothing, the same
         // as a view that names none.

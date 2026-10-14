@@ -7347,7 +7347,10 @@ async fn a_key_filtered_recall_over_the_shipped_views_names_every_one_through_th
     let supplied = crate::provisions();
     let shipped: Vec<String> = supplied
         .records()
-        .filter(|(entity, _)| entity.kind == EntityKind::VIEW)
+        .filter(|(entity, fields)| {
+            // A view that asks `overdue` selects no kind, so it holds no `selects`.
+            entity.kind == EntityKind::VIEW && fields.contains_key("selects")
+        })
         .map(|(entity, _)| entity.id.to_string())
         .collect();
     assert!(
@@ -9858,5 +9861,174 @@ async fn a_folded_child_is_neither_counted_nor_listed_and_a_live_sibling_is_both
         listed(&listed_under),
         ["work:kappa", "work:sigma"],
         "{listed_under}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// view:due — what is coming up by a day, and what is already late
+// ---------------------------------------------------------------------------
+
+/// A run of a bot that states the day it works in, and the key that opens it.
+async fn run_on(jojobot: &Jojobot, day: &str) -> String {
+    make_bot(jojobot, "otto").await;
+    sid_of(&json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                compacted: None,
+                claim: None,
+                bot: Some("otto".into()),
+                today: Some(day.into()),
+                resume: Some("new".into()),
+                brief: Some(true),
+                timezone: None,
+                skill: None,
+                section: None,
+                sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
+                offer_code: None,
+            }))
+            .await
+            .expect("the boot call is ok"),
+    ))
+    .expect("a boot that states a day hands back a handle")
+}
+
+/// A promise under something, due on a day.
+async fn a_promise_due(jojobot: &Jojobot, slug: &str, day: &str) {
+    ensure(jojobot, "thing:kettle").await;
+    let made = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            sets: Some([("promised_by".to_string(), day.to_string())].into()),
+            ..add_args("promise", slug, slug)
+        }))
+        .await
+        .expect("add ok");
+    assert_ne!(json_of(&made)["status"], "blocked", "{}", json_of(&made));
+}
+
+/// A view asked by name, with the inputs sent and the run's key.
+async fn view_asked(
+    jojobot: &Jojobot,
+    view: &str,
+    acting: &str,
+    inputs: &[(&str, &str)],
+) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some(view.into()),
+                subject: None,
+                facts: None,
+                inputs: (!inputs.is_empty()).then(|| {
+                    inputs
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), serde_json::json!(value)))
+                        .collect()
+                }),
+                sid: Some(acting.to_string()),
+                ..recall_args("work:phi")
+            }))
+            .await
+            .expect("recall ok"),
+    )
+}
+
+/// The object an answer lists under a handle.
+fn listed_object<'a>(body: &'a serde_json::Value, handle: &str) -> &'a serde_json::Value {
+    body["objects"]
+        .as_array()
+        .and_then(|objects| objects.iter().find(|object| object["id"] == handle))
+        .unwrap_or_else(|| panic!("{handle} is not listed: {body}"))
+}
+
+/// **What is coming up by a day, and what is already late, in one honest list.**
+/// A promise due in three days, a loop gone quiet a week ago and a promise due next
+/// month, on a run that states its day. With no input `due` looks a week ahead:
+/// the loop and the near promise, the loop first, each saying how late or how soon
+/// it is from the run's day; not the far promise. A `by` past next month brings
+/// all three.
+#[tokio::test]
+async fn the_due_view_lists_what_is_coming_by_a_day_and_what_is_late() {
+    let jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&jojobot, "2026-03-15").await;
+    a_rhythm(&jojobot, "descale", "7", "2026-03-01").await;
+    a_promise_due(&jojobot, "delta", "2026-03-18").await;
+    a_promise_due(&jojobot, "gamma", "2026-04-20").await;
+
+    let week = view_asked(&jojobot, "due", &acting, &[]).await;
+    assert_ne!(week["status"], "blocked", "{week}");
+    assert_eq!(
+        handles(&week),
+        ["rhythm:descale", "promise:delta"],
+        "a week ahead, the late one first: {week}"
+    );
+    assert_eq!(week["overdue_as_of"], "2026-03-22", "{week}");
+    let late = listed_object(&week, "rhythm:descale");
+    assert_eq!(late["overdue_by_days"], 7, "{late}");
+    assert!(late.get("due_in_days").is_none(), "{late}");
+    let coming = listed_object(&week, "promise:delta");
+    assert_eq!(coming["due_in_days"], 3, "{coming}");
+    assert!(coming.get("overdue_by_days").is_none(), "{coming}");
+
+    let all = view_asked(&jojobot, "due", &acting, &[("by", "2026-05-01")]).await;
+    assert_eq!(
+        handles(&all),
+        ["rhythm:descale", "promise:delta", "promise:gamma"],
+        "{all}"
+    );
+    assert_eq!(
+        listed_object(&all, "promise:gamma")["due_in_days"],
+        36,
+        "{all}"
+    );
+
+    // A day already past: only what is late, measured from the run's day.
+    let past = view_asked(&jojobot, "due", &acting, &[("by", "2026-03-10")]).await;
+    assert_eq!(handles(&past), ["rhythm:descale"], "{past}");
+    assert_eq!(
+        listed_object(&past, "rhythm:descale")["overdue_by_days"],
+        7,
+        "{past}"
+    );
+}
+
+/// **An input with no default still drops its terms, and a view that asks what is
+/// overdue needs no `selects`.** The same promises and loop, a view the operator
+/// declares whose `by` has no default: left out, the question is asked as of the
+/// run's own day, so only the loop is late; with a `by`, the near promise joins it.
+#[tokio::test]
+async fn a_view_whose_input_has_no_default_still_drops_its_term() {
+    let jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&jojobot, "2026-03-15").await;
+    a_rhythm(&jojobot, "descale", "7", "2026-03-01").await;
+    a_promise_due(&jojobot, "delta", "2026-03-18").await;
+    let made = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            sets: Some(
+                [
+                    ("asks", "overdue"),
+                    ("inputs", "by: date?"),
+                    ("as_of", "$by"),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            ),
+            ..add_args("view", "my-bikes", "my-bikes")
+        }))
+        .await
+        .expect("add ok");
+    assert_ne!(json_of(&made)["status"], "blocked", "{}", json_of(&made));
+
+    let left_out = view_asked(&jojobot, "my-bikes", &acting, &[]).await;
+    assert_eq!(handles(&left_out), ["rhythm:descale"], "{left_out}");
+    let given = view_asked(&jojobot, "my-bikes", &acting, &[("by", "2026-03-22")]).await;
+    assert_eq!(
+        handles(&given),
+        ["rhythm:descale", "promise:delta"],
+        "{given}"
     );
 }

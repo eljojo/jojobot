@@ -10,12 +10,12 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Six views ship, and that is deliberate rather than a first instalment of
+//! **Seven views ship, and that is deliberate rather than a first instalment of
 //! a catalogue.** Two are the ones the operator named, three ask about work
-//! (what can be started, what a plan holds and what a project's board shows) and
-//! one asks which things answer a type. A rich set is generated once the shape is
-//! settled. If this file starts growing a query per question somebody asks, it has
-//! taken the wrong turn.
+//! (what can be started, what a plan holds and what a project's board shows),
+//! one asks which things answer a type and one asks what falls due. A rich set
+//! is generated once the shape is settled. If this file starts growing a query
+//! per question somebody asks, it has taken the wrong turn.
 
 use std::collections::BTreeMap;
 
@@ -106,6 +106,21 @@ pub fn provisions() -> Vec<Provision> {
                 // out, the question is every piece of ready work.
                 ("inputs", "project: kind project?"),
                 ("parent", "$project"),
+            ],
+        ),
+        // **What is coming up by a day, and what is already late**, whatever
+        // kinds owe something. The overdue question already answers only the kinds
+        // that owe, so the view names no kind. `by` is the day asked about and
+        // leaves a week ahead when a call sends none; each object says how late
+        // it is from the run's own day (`overdue_by_days`) or how soon it falls due
+        // (`due_in_days`), the oldest due first.
+        view(
+            "view:due",
+            "Due",
+            &[
+                ("asks", "overdue"),
+                ("inputs", "by: date? = today+7d"),
+                ("as_of", "$by"),
             ],
         ),
         // **A whole plan in one call.** The work that is not finished, each

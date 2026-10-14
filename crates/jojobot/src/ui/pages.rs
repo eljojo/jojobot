@@ -742,26 +742,31 @@ async fn view_section(
     // **A view short of what it selects is a question nobody can ask**, and it
     // says which key it lacks. Rendering it as an empty answer would send a
     // reader looking for the records instead of for the key.
-    let Some(selects) = asked
+    let selects = asked
         .selects
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return cannot_run(
-            "it holds no <code>selects</code>, so it does not say which kind it looks at.",
-        );
-    };
-    let kind = match kinds::resolve(selects) {
-        Ok(kind) => kind,
-        // **The resolver's own answer**, which already names the value and the
-        // kinds this instance holds. A sentence of this page's own beside it
-        // would be a second account of one refusal.
-        Err(why) => return cannot_run(&escape(&why.to_string())),
+        .filter(|s| !s.is_empty());
+    let kind = match selects {
+        Some(selects) => match kinds::resolve(selects) {
+            Ok(kind) => Some(kind),
+            // **The resolver's own answer**, which already names the value and the
+            // kinds this instance holds. A sentence of this page's own beside it
+            // would be a second account of one refusal.
+            Err(why) => return cannot_run(&escape(&why.to_string())),
+        },
+        // **A view that asks what is overdue needs none**: the question already
+        // answers only the kinds that owe something.
+        None if asked.overdue => None,
+        None => {
+            return cannot_run(
+                "it holds no <code>selects</code>, so it does not say which kind it looks at.",
+            );
+        }
     };
     // **Readiness is a question about work, and only work answers it** — the
     // refusal the verb gives a view that asks it of another kind.
-    if asked.ready.is_some() && kind != EntityKind::WORK {
+    if asked.ready.is_some() && kind != Some(EntityKind::WORK) {
         return cannot_run("it asks what is ready, which only work answers.");
     }
     // **The server's own day, in the instance's zone.** A browser states no

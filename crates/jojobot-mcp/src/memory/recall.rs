@@ -657,7 +657,11 @@ pub struct RecallArgs {
     /// "plan"` lists all the work that is not finished, ready or not, each piece
     /// with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
     /// set to a project to read that project's whole plan in one call. A view
-    /// carries its own `shows_keys`, and a `keys` you send wins over it.
+    /// carries its own `shows_keys`, and a `keys` you send wins over it. `view:
+    /// "due"` lists what is coming up by the day `inputs: {by: ...}` names (a week
+    /// ahead when you send none) and what is already late, whatever kinds owe
+    /// something: an object past due carries `overdue_by_days`, one not
+    /// yet due `due_in_days`.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **The values a view takes**, as `{name: value}`, beside `view`.
@@ -670,8 +674,9 @@ pub struct RecallArgs {
     /// <kind>` (a handle of that kind), `date`, `number` or `text`, and a `?`
     /// after it means the input may be left out. A value is checked as a write
     /// is: a handle must exist and be of that kind, a date takes the relative
-    /// days `where` takes, a number must parse. An input left out drops the part
-    /// of the question that uses it. **A call with a required input missing, an
+    /// days `where` takes, a number must parse. An input left out takes its
+    /// default when the view declares one (`by: date? = today+7d`) and otherwise
+    /// drops the part of the question that uses it. **A call with a required input missing, an
     /// input the view does not declare, or a value of the wrong type is refused,
     /// and the refusal names every input the view takes**, so you can ask a view
     /// you have never seen and read its shape from the answer.
@@ -1356,8 +1361,7 @@ impl Jojobot {
         named: &str,
         args: RecallArgs,
         today: jiff::civil::Date,
-    ) -> Result<(RecallArgs, Vec<graph::FieldFilter>, Option<readiness::Ask>), Box<CallToolResult>>
-    {
+    ) -> Result<ViewFilled, Box<CallToolResult>> {
         let handle = match named.trim().split_once(':') {
             Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
                 EntityId(named.trim().to_string())
@@ -1501,9 +1505,11 @@ impl Jojobot {
                 facts: args.facts.or(asked.facts.then_some(true)),
                 prose: args.prose.or(asked.prose.then_some(true)),
                 charter: args.charter.or(asked.charter.then_some(true)),
-                overdue: args
-                    .overdue
-                    .or_else(|| asked.overdue.then_some(OverdueArgs { as_of: None })),
+                overdue: args.overdue.or_else(|| {
+                    asked.overdue.then(|| OverdueArgs {
+                        as_of: asked.as_of.clone(),
+                    })
+                }),
                 answers_type: args.answers_type.or(asked.answers_type),
                 keys: args.keys.or(asked.keys),
                 follow: args.follow.or_else(|| {
@@ -1520,9 +1526,19 @@ impl Jojobot {
             },
             view_filters,
             asked.ready,
+            asked.overdue,
         ))
     }
 }
+
+/// **A view read into the call it was named in**: the call, the view's own
+/// filters, the readiness it asks and whether it asks what is overdue.
+type ViewFilled = (
+    RecallArgs,
+    Vec<graph::FieldFilter>,
+    Option<readiness::Ask>,
+    bool,
+);
 
 /// **The values of a call's `inputs` as the text a view reads them as.** A string
 /// is itself and a number or a boolean is what it prints as; an object, a list
@@ -2427,7 +2443,7 @@ impl Jojobot {
         let view_named = args.view.clone();
         let caller_named_scope = args.scope.is_some();
         let where_is_the_views = args.expression.is_none();
-        let (args, view_filters, readiness_asked) = match args.view.clone() {
+        let (args, view_filters, readiness_asked, view_overdue) = match args.view.clone() {
             None if args.inputs.is_some() => {
                 return memory_declined(
                     "recall",
@@ -2438,7 +2454,7 @@ impl Jojobot {
                     ),
                 );
             }
-            None => (args, Vec::new(), None),
+            None => (args, Vec::new(), None, false),
             Some(named) => {
                 let day = self.dated(None, args.sid.as_deref()).await?;
                 match self.asked_by_name(&named, args, day).await {
@@ -2798,6 +2814,7 @@ impl Jojobot {
                 order,
                 near,
                 asked_by,
+                owed: view_overdue,
             },
             include,
             follow,
@@ -3276,6 +3293,10 @@ impl Jojobot {
         // call that does.
         let asks = view_run::Asks {
             overdue: as_of,
+            // **A view measures from the run's own day**, so a thing not yet due
+            // says how far off it is; a `recall` of its own measures from the day
+            // it asked about.
+            measure_from: (view_overdue && as_of.is_some()).then_some(today),
             ready: readiness_asked.map(|ask| view_run::Readiness {
                 ask,
                 named: query.select.subject.clone(),
@@ -3626,11 +3647,16 @@ impl Jojobot {
                     // cannot measure — never absent.** Absent would read as
                     // "you did not ask", which is a different claim from
                     // "nothing here can say".
+                    //
+                    // **A thing not yet due says how far off it is** (`due_in_days`),
+                    // never a lateness below zero. Only a view that asks about a
+                    // later day than the run's own can reach it.
                     if let Some(distances) = &overdue_by_days {
-                        rendered["overdue_by_days"] = match distances[idx] {
-                            Some(days) => days.into(),
-                            None => serde_json::Value::Null,
-                        };
+                        match distances[idx] {
+                            Some(days) if days < 0 => rendered["due_in_days"] = (-days).into(),
+                            Some(days) => rendered["overdue_by_days"] = days.into(),
+                            None => rendered["overdue_by_days"] = serde_json::Value::Null,
+                        }
                     }
                     if let Some(all) = &readiness {
                         crate::memory::ready::render(&mut rendered, &all[idx]);

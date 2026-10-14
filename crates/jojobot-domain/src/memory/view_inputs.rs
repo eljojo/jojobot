@@ -29,6 +29,10 @@ use super::{Entity, EntityId, FormerHandle};
 /// **The view's key that declares its inputs.**
 pub const KEY: &str = "inputs";
 
+/// **The view's key that names the day an overdue ask is asked about**: an input
+/// written `$name`.
+pub const AS_OF: &str = "as_of";
+
 /// **The names an input cannot have**, because the page of a view reads them for
 /// itself: the key of a page's own query. A URL gives such a key to the page, so an
 /// input of that name could never be filled from it.
@@ -56,6 +60,10 @@ pub struct InputDecl {
     pub ty: InputType,
     /// Whether a call may leave it out.
     pub optional: bool,
+    /// **What a call that leaves it out gets**, written after an `=` and read as a
+    /// value of the input's own type: `by: date? = today+7d`. An input with one is
+    /// never unbound, so the terms that use it are not dropped.
+    pub default: Option<String>,
 }
 
 /// What a declaration or a call was refused for, and the nearest things when a
@@ -116,7 +124,8 @@ pub fn breaks_a_view(
     const PARENT: &str = "parent";
     const ANSWERS_TYPE: &str = "answers_type";
     let same = |key: &str| before.get(key) == after.get(key);
-    if same(KEY) && same(WHERE) && same(PARENT) && same(ANSWERS_TYPE) {
+    if same(KEY) && same(WHERE) && same(PARENT) && same(ANSWERS_TYPE) && same(AS_OF) && same("asks")
+    {
         return None;
     }
     let declared = match parse(after.get(KEY).map_or("", String::as_str)) {
@@ -171,6 +180,43 @@ pub fn breaks_a_view(
         .filter(|name| is_a_name(name))
     {
         uses.push((ANSWERS_TYPE, name.to_string()));
+    }
+    // **The day of an overdue ask is an input, and only an overdue ask has a day.**
+    if let Some(day) = after.get(AS_OF) {
+        if after.get("asks").map(String::as_str) != Some("overdue") {
+            return Some((
+                AS_OF.to_string(),
+                "the view names a day and does not ask what is overdue: `as_of` belongs to a \
+                 view with `asks: overdue`"
+                    .to_string(),
+            ));
+        }
+        let Some(name) = day.trim().strip_prefix('$').filter(|n| is_a_name(n)) else {
+            return Some((
+                AS_OF.to_string(),
+                "the view's `as_of` is an input written `$name`, and a day is the value a \
+                 call sends: declare `by: date? = today+7d` and write `as_of: $by`"
+                    .to_string(),
+            ));
+        };
+        match declared.iter().find(|d| d.name == name) {
+            None => {
+                return Some((
+                    AS_OF.to_string(),
+                    format!("the view uses ${name}, which its `inputs` do not declare. {says}"),
+                ));
+            }
+            Some(decl) if decl.ty != InputType::Date => {
+                return Some((
+                    AS_OF.to_string(),
+                    format!(
+                        "the view's `as_of` is the input ${name}, and a day is a date: declare \
+                         it as `{name}: date`"
+                    ),
+                ));
+            }
+            Some(_) => {}
+        }
     }
     for (key, name) in uses {
         let Some(decl) = declared.iter().find(|d| d.name == name) else {
@@ -233,6 +279,34 @@ fn is_a_kind(word: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// **The day a default is read against when it is declared**, only to see that it
+/// reads: a relative day names a different day every time it is bound.
+const DECLARING_DAY: Date = jiff::civil::date(2000, 1, 1);
+
+/// **A default has to be a value of the input's own type**, checked when the view
+/// is written, so a view cannot be saved whose left-out input would fail to bind.
+fn check_default(name: &str, ty: &InputType, default: &str) -> Result<(), Refusal> {
+    let unreadable = |why: String| {
+        refusal(format!(
+            "the default of the input '{name}' is '{default}', and {why}. A default is written \
+             after an `=` as a value of the input's own type: `by: date? = today+7d`"
+        ))
+    };
+    match ty {
+        _ if default.is_empty() => Err(unreadable("it is empty".to_string())),
+        InputType::Kind(_) => Err(unreadable(
+            "a `kind` input names a thing, and no default can stand for one".to_string(),
+        )),
+        InputType::Number if !super::filter::expression::is_a_number(default) => {
+            Err(unreadable("it is not a number".to_string()))
+        }
+        InputType::Date => super::filter::expression::date_word(default, DECLARING_DAY)
+            .map(|_| ())
+            .map_err(|why| unreadable(why.to_string())),
+        _ => Ok(()),
+    }
+}
+
 /// **Read a view's `inputs`.** An empty list declares none.
 pub fn parse(list: &str) -> Result<Vec<InputDecl>, Refusal> {
     let mut read: Vec<InputDecl> = Vec::new();
@@ -250,7 +324,10 @@ pub fn parse(list: &str) -> Result<Vec<InputDecl>, Refusal> {
                  and _, and starts with a letter"
             )));
         }
-        let ty = ty.trim();
+        let (ty, default) = match ty.split_once('=') {
+            Some((ty, default)) => (ty.trim(), Some(default.trim().to_string())),
+            None => (ty.trim(), None),
+        };
         let (ty, optional) = match ty.strip_suffix('?') {
             Some(rest) => (rest.trim(), true),
             None => (ty, false),
@@ -280,10 +357,14 @@ pub fn parse(list: &str) -> Result<Vec<InputDecl>, Refusal> {
                 "the input '{name}' is declared twice. Each input has one name and one type"
             )));
         }
+        if let Some(default) = &default {
+            check_default(name, &ty, default)?;
+        }
         read.push(InputDecl {
             name: name.to_string(),
             ty,
             optional,
+            default,
         });
     }
     Ok(read)
@@ -295,10 +376,13 @@ pub fn spelled(decls: &[InputDecl]) -> String {
         .iter()
         .map(|d| {
             format!(
-                "{}: {}{}",
+                "{}: {}{}{}",
                 d.name,
                 spelling(&d.ty),
-                if d.optional { "?" } else { "" }
+                if d.optional { "?" } else { "" },
+                d.default
+                    .as_ref()
+                    .map_or_else(String::new, |default| format!(" = {default}"))
             )
         })
         .collect::<Vec<_>>()
@@ -334,7 +418,13 @@ pub fn bind(
     }
     let mut values = BTreeMap::new();
     for decl in decls {
-        let Some(sent) = given.get(&decl.name).map(|v| v.trim()) else {
+        // **A value left out is the default when the input has one**, read like a
+        // value a call sent, so a relative day is the asker's own.
+        let Some(sent) = given
+            .get(&decl.name)
+            .map(|v| v.trim())
+            .or(decl.default.as_deref())
+        else {
             if decl.optional {
                 values.insert(decl.name.clone(), None);
                 continue;
@@ -449,22 +539,26 @@ mod tests {
                 InputDecl {
                     name: "project".into(),
                     ty: InputType::Kind("project".into()),
-                    optional: true
+                    optional: true,
+                    default: None
                 },
                 InputDecl {
                     name: "due".into(),
                     ty: InputType::Date,
-                    optional: false
+                    optional: false,
+                    default: None
                 },
                 InputDecl {
                     name: "count".into(),
                     ty: InputType::Number,
-                    optional: true
+                    optional: true,
+                    default: None
                 },
                 InputDecl {
                     name: "note".into(),
                     ty: InputType::Text,
-                    optional: false
+                    optional: false,
+                    default: None
                 },
             ]
         );
@@ -474,6 +568,61 @@ mod tests {
         );
         assert!(decls("").is_empty());
         assert!(decls("  ,  ").is_empty());
+    }
+
+    /// **A default is written after an `=`, spelled back as written, and bound when
+    /// a call leaves the input out.** A relative day is read against the asker's
+    /// day, so the same declaration names a different day on a different run.
+    #[test]
+    fn an_input_with_a_default_binds_it_when_left_out() {
+        let read = decls("by: date? = today+7d, count: number? = 3, note: text? = none");
+        assert_eq!(read[0].default.as_deref(), Some("today+7d"));
+        assert_eq!(
+            spelled(&read),
+            "by: date? = today+7d, count: number? = 3, note: text? = none"
+        );
+        let text_of = |bound: &Bound, name: &str| {
+            bound
+                .get(name)
+                .expect("declared")
+                .map(|value| value.text.clone())
+        };
+        let left_out = bind("view:due", &read, &given(&[]), &[], &[], TODAY).expect("binds");
+        assert_eq!(text_of(&left_out, "by").as_deref(), Some("2026-10-21"));
+        assert_eq!(text_of(&left_out, "count").as_deref(), Some("3"));
+        assert_eq!(text_of(&left_out, "note").as_deref(), Some("none"));
+        // Paired: a value that was sent wins over the default.
+        let sent = bind(
+            "view:due",
+            &read,
+            &given(&[("by", "2026-12-01")]),
+            &[],
+            &[],
+            TODAY,
+        )
+        .expect("binds");
+        assert_eq!(text_of(&sent, "by").as_deref(), Some("2026-12-01"));
+        // Paired: an optional input with no default still binds to no value.
+        let plain = decls("by: date?");
+        let none = bind("view:due", &plain, &given(&[]), &[], &[], TODAY).expect("binds");
+        assert_eq!(none.get("by"), Some(None));
+    }
+
+    /// **A default that is not a value of the input's type is refused when the
+    /// view is declared**, naming the input and the default. **Paired** with the
+    /// case above: the same lists, with a default that reads.
+    #[test]
+    fn a_default_that_does_not_read_is_refused() {
+        for (list, why) in [
+            ("by: date? = next-tuesday", "by"),
+            ("count: number? = many", "not a number"),
+            ("owner: kind project? = project:atlas", "kind"),
+            ("by: date? =", "empty"),
+        ] {
+            let refused = parse(list).expect_err(list);
+            assert!(refused.words.contains(why), "{list}: {}", refused.words);
+        }
+        assert!(parse("by: date? = today-2w, count: number? = 2.5").is_ok());
     }
 
     /// **A declaration that does not read is refused, naming what it found.**

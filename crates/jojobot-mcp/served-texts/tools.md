@@ -3502,8 +3502,9 @@ them) and its `inputs` field reads `name: type`, where a type is `kind
 <kind>` (a handle of that kind), `date`, `number` or `text`, and a `?`
 after it means the input may be left out. A value is checked as a write
 is: a handle must exist and be of that kind, a date takes the relative
-days `where` takes, a number must parse. An input left out drops the part
-of the question that uses it. **A call with a required input missing, an
+days `where` takes, a number must parse. An input left out takes its
+default when the view declares one (`by: date? = today+7d`) and otherwise
+drops the part of the question that uses it. **A call with a required input missing, an
 input the view does not declare, or a value of the wrong type is refused,
 and the refusal names every input the view takes**, so you can ask a view
 you have never seen and read its shape from the answer.
@@ -3779,7 +3780,11 @@ with `where` set to your board's not-started status, for example
 "plan"` lists all the work that is not finished, ready or not, each piece
 with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
 set to a project to read that project's whole plan in one call. A view
-carries its own `shows_keys`, and a `keys` you send wins over it.
+carries its own `shows_keys`, and a `keys` you send wins over it. `view:
+"due"` lists what is coming up by the day `inputs: {by: ...}` names (a week
+ahead when you send none) and what is already late, whatever kinds owe
+something: an object past due carries `overdue_by_days`, one not
+yet due `due_in_days`.
 ```
 
 #### `recall` — argument `/inputSchema.where`

@@ -236,3 +236,72 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
     s.wrap("declared a view with inputs and asked it by name")
         .await;
 }
+
+/// "What is coming up, and what is already late?" A cold session lists the views,
+/// finds `due` and the one input it takes, and asks it with nothing for the week
+/// ahead and with a `by` for further out. **It names no kind**: a loop and a
+/// promise come back in one list, the late one with how late it is and the one
+/// not yet due with how soon.
+#[tokio::test]
+async fn a_session_asks_the_due_view_what_is_coming_and_what_is_late() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-03-15").await;
+    let s = story.session().await;
+
+    s.add("thing:kettle", "The kettle").await;
+    s.add_under("thing:kettle", "rhythm:descale", "Descale the kettle")
+        .await;
+    s.event_with(
+        "rhythm:descale",
+        "descaled it",
+        json!({
+            "name": "Descale the kettle",
+            "last_check_in": "2026-03-01",
+            "counts_from": "2026-03-01",
+            "advances_from": "due_date",
+            "cadence_days": "7",
+        }),
+        &[],
+    )
+    .await;
+    s.add("project:atlas", "Atlas").await;
+    let promise = |slug: &str, day: &str| {
+        json!({"kind": "promise", "handle": slug, "name": slug, "parent": "project:atlas",
+               "source": "user-named", "sets": {"promised_by": day}})
+    };
+    s.call("add_entity", promise("delta", "2026-03-18")).await;
+    s.call("add_entity", promise("gamma", "2026-04-20")).await;
+
+    // ── the cold session finds the view and the input it takes ──────────────
+    let views = s.call("recall", json!({"kind": "view"})).await;
+    views.says("view:due");
+    views.says("by: date? = today+7d");
+
+    // ── asked with nothing, a week ahead: the late loop, then the near promise
+    let week = s.call("recall", json!({"view": "due"})).await;
+    assert_eq!(
+        listed(&week),
+        ["rhythm:descale", "promise:delta"],
+        "{}",
+        week.raw()
+    );
+    let objects = week.json()["objects"].as_array().expect("objects").clone();
+    assert_eq!(objects[0]["overdue_by_days"], 7, "{}", week.raw());
+    assert_eq!(objects[1]["due_in_days"], 3, "{}", week.raw());
+
+    // ── asked as of a later day, the far promise joins them ─────────────────
+    let later = s
+        .call(
+            "recall",
+            json!({"view": "due", "inputs": {"by": "2026-05-01"}}),
+        )
+        .await;
+    assert_eq!(
+        listed(&later),
+        ["rhythm:descale", "promise:delta", "promise:gamma"],
+        "{}",
+        later.raw()
+    );
+
+    s.wrap("asked the due view what is coming and what is late")
+        .await;
+}

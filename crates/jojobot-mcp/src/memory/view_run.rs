@@ -32,6 +32,12 @@ use super::ready::{self, Verdict};
 pub struct Asks {
     /// **Only what is owed on this day**, oldest due first.
     pub overdue: Option<jiff::civil::Date>,
+    /// **The day each kept object's lateness is measured from**, when it is not
+    /// the day asked about. A view that asks what falls due by a later day
+    /// measures from the run's own day, so an object not yet due says how many
+    /// days away it is instead of a lateness below zero. `None` measures from the
+    /// day asked about, as a `recall` of its own does.
+    pub measure_from: Option<jiff::civil::Date>,
     /// **What of the work to keep, by readiness**: only what can be started, or
     /// the whole plan.
     pub ready: Option<Readiness>,
@@ -87,7 +93,7 @@ impl Question {
     /// date in `where` and an overdue ask are read against.
     pub fn of_view(
         asked: &graph::Asked,
-        kind: EntityKind,
+        kind: Option<EntityKind>,
         answers_type: Option<DeclaredType>,
         parent: Option<EntityId>,
         today: jiff::civil::Date,
@@ -95,11 +101,12 @@ impl Question {
         let (fields, order) = (asked.filters(today)?, asked.ordering()?);
         let mut question = Question::new(
             graph::Selection {
-                kind: Some(kind),
+                kind,
                 answers_type,
                 parent,
                 fields,
                 order,
+                owed: asked.overdue,
                 ..graph::Selection::default()
             },
             graph::Include {
@@ -111,7 +118,16 @@ impl Question {
             None,
         );
         question.asks = Asks {
-            overdue: asked.overdue.then_some(today),
+            // The day the view's input named, or the run's own when the view
+            // names none or the input was left out.
+            overdue: asked.overdue.then(|| {
+                asked
+                    .as_of
+                    .as_deref()
+                    .and_then(|day| day.parse().ok())
+                    .unwrap_or(today)
+            }),
+            measure_from: asked.overdue.then_some(today),
             ready: asked.ready.map(|ask| Readiness { ask, named: None }),
         };
         Ok(question)
@@ -154,9 +170,15 @@ pub async fn narrow(
     asks: &Asks,
     context: &Context<'_>,
 ) -> Result<Narrowed, MemoryError> {
-    let owed = asks
-        .overdue
-        .map(|as_of| keep_owed(found, context.carriers, context.instance, as_of));
+    let owed = asks.overdue.map(|as_of| {
+        keep_owed(
+            found,
+            context.carriers,
+            context.instance,
+            as_of,
+            asks.measure_from.unwrap_or(as_of),
+        )
+    });
     let ready = match &asks.ready {
         Some(asked) => Some(keep_ready(memory, found, asked).await?),
         None => None,
@@ -250,9 +272,9 @@ pub(crate) fn owed_by(
 pub struct OwedPass {
     /// How many objects the pass dropped.
     pub excluded: usize,
-    /// How many days past the day asked about each kept object fell due, read
-    /// off the same `Due` the order came from, so the number cannot disagree
-    /// with the position it is in.
+    /// How many days past the day it is measured from each kept object fell
+    /// due (below zero: how many days ahead), read off the same `Due` the order
+    /// came from, so the number cannot disagree with the position it is in.
     pub by_days: Vec<Option<i64>>,
     /// Why each kept object that cannot say when it falls due cannot.
     pub unreadable_because: Vec<Option<attention::Unreadable>>,
@@ -270,6 +292,7 @@ pub fn keep_owed(
     carriers: &[&dyn attention::Carrier],
     instance: &BTreeMap<String, String>,
     as_of: jiff::civil::Date,
+    measured_from: jiff::civil::Date,
 ) -> OwedPass {
     let before = found.len();
     found.retain(|object| owed_by(carriers, object, instance).owed_on(as_of));
@@ -277,7 +300,7 @@ pub fn keep_owed(
     found.sort_by_key(|object| owed_by(carriers, object, instance).staleness());
     let by_days = found
         .iter()
-        .map(|object| owed_by(carriers, object, instance).days_overdue(as_of))
+        .map(|object| owed_by(carriers, object, instance).days_overdue(measured_from))
         .collect();
     let unreadable_because = found
         .iter()
