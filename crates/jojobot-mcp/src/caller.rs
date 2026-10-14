@@ -677,9 +677,11 @@ impl Jojobot {
     /// rather than a 500.
     pub(crate) fn mint_or_say_why(&self, bot: &EntityId) -> Result<sid::Minted, CallToolResult> {
         let minted = self.registry.mint(bot).inspect(|run| {
-            // A session is handed its bot's charter by the boot that mints it.
-            self.registry
-                .note_charter_told(run.name.as_str(), self.clock().now());
+            let now = self.clock().now();
+            // A session is handed its bot's charter by the boot that mints it,
+            // and that boot is the moment the run begins.
+            self.registry.note_charter_told(run.name.as_str(), now);
+            self.registry.note_began(run.name.as_str(), now);
         });
         minted.map_err(|_| {
             handle_declined(
@@ -746,7 +748,16 @@ impl Jojobot {
                     .lookup_name(caller.sid.as_str())
                     .and_then(|held| held.key.to_stored()),
                 focus,
-                started_at: self.clock().now(),
+                // **The run begins when it was minted, not when its first
+                // write made the record.** The write that makes the record is
+                // stamped before the record exists, so a start taken here would
+                // fall after that write and a thought it kept would read as
+                // older than the run that kept it. The clock never moves back,
+                // so the boot moment is at or before now.
+                started_at: self
+                    .registry
+                    .began_at(caller.sid.as_str())
+                    .map_or_else(|| self.clock().now(), |began| began.min(self.clock().now())),
                 timezone: caller.zone.clone(),
                 started_on: caller.day,
             })

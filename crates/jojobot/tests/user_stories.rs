@@ -203,6 +203,9 @@ mod rhythms;
 mod role_owner;
 #[path = "user_stories/rule_seats.rs"]
 mod rule_seats;
+/// A write is never stamped before the run that made it.
+#[path = "user_stories/run_start.rs"]
+mod run_start;
 /// Search keeps the archive below the live claims, like a mail client.
 #[path = "user_stories/search_like_a_mail_client.rs"]
 mod search_like_a_mail_client;

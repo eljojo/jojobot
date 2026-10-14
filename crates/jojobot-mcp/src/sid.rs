@@ -314,6 +314,12 @@ pub struct SessionRegistry {
     /// session that already read the change is then told once more, which is a
     /// repeat and never a miss.
     charter_told: std::sync::Mutex<HashMap<String, jiff::Timestamp>>,
+    /// **When each session began**, on the server's clock: the boot that minted
+    /// it. A run's record is made by its first write, so this is the moment the
+    /// record keeps as the run's start. A write made before the record exists is
+    /// then never stamped as earlier than the run it belongs to. Process-local:
+    /// a session this process did not mint begins when its record is made.
+    began: std::sync::Mutex<HashMap<String, jiff::Timestamp>>,
     /// **The key a challenge's code is hashed with**, drawn when this registry is
     /// made and never stored, so a restart voids every outstanding challenge.
     /// Here because the server builds a handler per connection and this is the
@@ -415,6 +421,23 @@ impl SessionRegistry {
             .lock()
             .expect("the seen ledger is poisoned")
             .tick(name);
+    }
+
+    /// Record that this run began at `at`.
+    pub(crate) fn note_began(&self, name: &str, at: jiff::Timestamp) {
+        self.began
+            .lock()
+            .expect("the began ledger is poisoned")
+            .insert(name.to_string(), at);
+    }
+
+    /// When this process minted the run, if it did.
+    pub(crate) fn began_at(&self, name: &str) -> Option<jiff::Timestamp> {
+        self.began
+            .lock()
+            .expect("the began ledger is poisoned")
+            .get(name)
+            .copied()
     }
 
     /// Record that this run was handed its charter at `at`.
