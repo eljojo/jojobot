@@ -898,6 +898,84 @@ impl InMemoryMemory {
     /// `former_handles` is pushed to in chronological order, so reversing it
     /// here is what makes the first match the newest one, exactly as the
     /// real store's `ORDER BY ordinal DESC` does.
+    /// **Whether any thing here numbers its members.** A scan of the writes for
+    /// the key, so a store that never wrote it pays nothing for the feature.
+    fn carries_numbering(&self) -> bool {
+        self.with_writes(|writes| {
+            writes
+                .iter()
+                .any(|w| w.key == super::super::numbered::NUMBERS_BY && w.value.is_some())
+        })
+    }
+
+    /// **Each thing's folded fields, by handle**, over the claims given.
+    fn fields_by_handle(
+        &self,
+        entities: &[Entity],
+        facts: &[Fact],
+    ) -> std::collections::BTreeMap<EntityId, std::collections::BTreeMap<String, String>> {
+        let declared = self.declarations();
+        entities
+            .iter()
+            .map(|e| {
+                let key = match &e.badge {
+                    Some(badge) => EntityId(badge.clone()),
+                    None => e.id.clone(),
+                };
+                (
+                    e.id.clone(),
+                    super::super::folded_fields(&self.writes_on(&key, facts), &declared),
+                )
+            })
+            .collect()
+    }
+
+    /// The handles a number makes, served as former handles — see
+    /// [`numbered::derived_formers`](super::super::numbered::derived_formers).
+    fn numbered_formers(&self) -> Vec<FormerHandle> {
+        if !self.carries_numbering() {
+            return Vec::new();
+        }
+        let known = self.known();
+        let facts = self.facts_view();
+        super::super::numbered::derived_formers(&known, &self.fields_by_handle(&known, &facts))
+    }
+
+    /// **What a miss offers**: the numbers a collection holds when the handle
+    /// asked for is `<collection>/<N>`, else the ordinary near-miss screen.
+    fn nearest_for(&self, asked: &EntityId, index: &[Entity]) -> Vec<guard::EntityMatch> {
+        if super::super::numbered::numbered_handle(asked).is_some() && self.carries_numbering() {
+            let facts = self.facts_view();
+            let fields = self.fields_by_handle(index, &facts);
+            if let Some(held) = super::super::numbered::nearest_numbers(asked, index, &fields)
+                && !held.is_empty()
+            {
+                return held;
+            }
+        }
+        guard::screen(asked, &[], index)
+    }
+
+    /// **Refuse a write that would give a numbered member a bad number or one
+    /// another member holds**, over the claims the write sees.
+    fn guards_numbering(
+        &self,
+        subject: &EntityId,
+        after: &std::collections::BTreeMap<String, String>,
+        facts: &[Fact],
+    ) -> Result<(), MemoryError> {
+        if !self.carries_numbering() {
+            return Ok(());
+        }
+        let known = self.known();
+        let fields = self.fields_by_handle(&known, facts);
+        let scopes = super::super::numbered::scopes_of(subject, &known, &fields);
+        match super::super::numbered::refuses_numbering(subject, after, &scopes) {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
+    }
+
     fn former(&self) -> Vec<FormerHandle> {
         let mut events = self
             .former_handles
@@ -905,6 +983,7 @@ impl InMemoryMemory {
             .expect("fake mutex poisoned")
             .clone();
         events.reverse();
+        events.extend(self.numbered_formers());
         events
     }
 
@@ -2259,7 +2338,7 @@ impl Memory for InMemoryMemory {
         let Some(entity) = entities.iter_mut().find(|e| &e.id == handle) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
-                nearest: guard::screen(handle, &[], &entities),
+                nearest: self.nearest_for(handle, &entities),
             });
         };
         // Changing what an entity is CALLED is an entity-touching write, so it
@@ -2319,7 +2398,7 @@ impl Memory for InMemoryMemory {
             }
             return Err(MemoryError::UnknownEntity {
                 attempted: id.to_string(),
-                nearest: guard::screen(id, &[], &entities),
+                nearest: self.nearest_for(id, &entities),
             });
         };
         if let Some(into) = &entity.merged_into {
@@ -2365,7 +2444,7 @@ impl Memory for InMemoryMemory {
             }
             return Err(MemoryError::UnknownEntity {
                 attempted: id.to_string(),
-                nearest: guard::screen(id, &[], &entities),
+                nearest: self.nearest_for(id, &entities),
             });
         };
         if let Some(into) = &entity.merged_into {
@@ -2431,7 +2510,7 @@ impl Memory for InMemoryMemory {
             }
             return Err(MemoryError::UnknownEntity {
                 attempted: from.to_string(),
-                nearest: guard::screen(from, &[], &stored),
+                nearest: self.nearest_for(from, &stored),
             });
         };
         // A forwarding row is not a thing to rename, for the same reason it
@@ -2694,7 +2773,7 @@ impl Memory for InMemoryMemory {
             let Some((source_key, source_handle)) = self.resolve(&source.home) else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
-                    nearest: guard::screen(&source.home, &[], &index),
+                    nearest: self.nearest_for(&source.home, &index),
                 });
             };
             if !facts
@@ -2923,6 +3002,7 @@ impl Memory for InMemoryMemory {
             &after,
             &governs,
         )?;
+        self.guards_numbering(&subject_entity.id, &after, &facts)?;
         // **The write spends the id of the call that carries one**, under the
         // lock the write is made under, so a second call with the same id finds
         // it spent and stores nothing.
@@ -2978,7 +3058,7 @@ impl Memory for InMemoryMemory {
         let Some(entity) = super::resolve_handle(subject, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: subject.to_string(),
-                nearest: guard::screen(subject, &[], &index),
+                nearest: self.nearest_for(subject, &index),
             });
         };
         let key = match &entity.badge {
@@ -3047,7 +3127,7 @@ impl Memory for InMemoryMemory {
         let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest_for(entity, &index),
             });
         };
         let mut held = self.held(&key);
@@ -3060,7 +3140,7 @@ impl Memory for InMemoryMemory {
         let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest_for(entity, &index),
             });
         };
         let facts = self.facts_view();
@@ -3168,7 +3248,7 @@ impl Memory for InMemoryMemory {
         let Some(row) = index.iter().find(|e| &e.id == entity) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest_for(entity, &index),
             });
         };
         let key = match &row.badge {
@@ -3219,7 +3299,7 @@ impl Memory for InMemoryMemory {
         let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest_for(&address.home, &index),
             });
         };
         let key = match &entity.badge {
@@ -3306,7 +3386,7 @@ impl Memory for InMemoryMemory {
         let Some(resolved) = super::resolve_handle(entity, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest_for(entity, &index),
             });
         };
         let storage_key = match &resolved.badge {
@@ -3354,7 +3434,7 @@ impl Memory for InMemoryMemory {
         let Some(resolved) = super::resolve_handle(entity, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest_for(entity, &index),
             });
         };
         let storage_key = match &resolved.badge {
@@ -3438,7 +3518,7 @@ impl Memory for InMemoryMemory {
         let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest_for(&address.home, &index),
             });
         };
         let key = match &entity.badge {
@@ -3547,7 +3627,7 @@ impl Memory for InMemoryMemory {
             let Some((source_key, handle)) = self.resolve(&source.home) else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
-                    nearest: guard::screen(&source.home, &[], &self.known()),
+                    nearest: self.nearest_for(&source.home, &self.known()),
                 });
             };
             if !facts
@@ -3577,7 +3657,7 @@ impl Memory for InMemoryMemory {
                 let Some((named_key, handle)) = self.resolve(&named.home) else {
                     return Err(MemoryError::UnknownEntity {
                         attempted: named.home.to_string(),
-                        nearest: guard::screen(&named.home, &[], &self.known()),
+                        nearest: self.nearest_for(&named.home, &self.known()),
                     });
                 };
                 let Some(named_fact) = facts
@@ -3725,6 +3805,7 @@ impl Memory for InMemoryMemory {
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
         super::super::guard_fit(kind.as_token(), &before, &after, &governs)?;
+        self.guards_numbering(&handle, &after, &facts)?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind** — the same check the real store runs, atomically with the
         // write it gates.
@@ -3891,7 +3972,7 @@ impl Memory for InMemoryMemory {
                 }
                 return Err(MemoryError::UnknownEntity {
                     attempted: side.to_string(),
-                    nearest: guard::screen(side, &[], &self.known()),
+                    nearest: self.nearest_for(side, &self.known()),
                 });
             }
         }
@@ -4115,7 +4196,7 @@ impl Memory for InMemoryMemory {
         let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest_for(&address.home, &index),
             });
         };
         let key = match &entity.badge {
@@ -4261,7 +4342,7 @@ impl Memory for InMemoryMemory {
         if !index.iter().any(|e| &e.id == entity) {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest_for(entity, &index),
             });
         }
         // Normalized here as the real store normalizes it, so the fake cannot

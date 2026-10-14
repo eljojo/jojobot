@@ -32,6 +32,7 @@ pub use guard::Override;
 pub mod kinds;
 pub mod list;
 pub mod mention;
+pub mod numbered;
 pub mod order;
 pub mod owned;
 pub mod readiness;
@@ -5721,6 +5722,37 @@ pub enum MemoryError {
         /// The values the missing key takes, when it takes a closed set.
         accepts: Vec<String>,
     },
+    /// **A number in a numbered collection is already held.** The collection
+    /// numbers its members by `key`, and a member of it already holds this
+    /// number, archived or not: a number is never reused. There is no override:
+    /// the way forward is the next free number, which this names.
+    #[error("'{collection}' numbers its members by '{key}', and {holder} already holds {number}")]
+    NumberTaken {
+        /// The collection that numbers its members.
+        collection: String,
+        /// The key the members are numbered by.
+        key: String,
+        /// The number the write asked for.
+        number: u64,
+        /// The member that holds it.
+        holder: String,
+        /// The number the next member takes.
+        next: u64,
+    },
+    /// **The value is no number, under a key a collection numbers by.** A
+    /// numbered member holds a positive whole number in its one spelling.
+    #[error(
+        "'{collection}' numbers its members by '{key}', and '{value}' is no positive whole \
+         number"
+    )]
+    NotANumber {
+        /// The collection that numbers its members.
+        collection: String,
+        /// The key the members are numbered by.
+        key: String,
+        /// What the write put under the key.
+        value: String,
+    },
     /// **The write would leave a bot's boot over its size ceiling.**
     ///
     /// What a boot cannot cut — the essay's core, the snapshot, the charter,
@@ -6539,6 +6571,49 @@ pub trait Memory: Send + Sync {
         Err(MemoryError::InvalidFact(
             "this store cannot edit a thing and write a claim about it in one act".into(),
         ))
+    }
+
+    /// **What a numbered collection adds to a read of it**: the key its members
+    /// are numbered by and the number the next member takes (the largest held,
+    /// archived members included, plus one). `None` for a thing that numbers
+    /// nothing. An unknown handle is [`MemoryError::UnknownEntity`].
+    ///
+    /// Defaulted off [`list_entities`](Memory::list_entities) and
+    /// [`fields`](Memory::fields), like [`children`](Memory::children): a layer
+    /// over a store inherits an answer from its own reads, and an adapter that
+    /// can do better overrides it.
+    async fn numbering_of(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Option<numbered::Numbering>, MemoryError> {
+        validate_subject(entity)?;
+        let all = self.list_entities(None).await?;
+        let former = self.former_handles().await?;
+        let Some(resolved) = resolve_handle(entity, &all, &former) else {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &all),
+            });
+        };
+        let mut fields = BTreeMap::new();
+        fields.insert(resolved.id.clone(), self.fields(&resolved.id).await?);
+        if !fields[&resolved.id].contains_key(numbered::NUMBERS_BY) {
+            return Ok(None);
+        }
+        let key = fields[&resolved.id][numbered::NUMBERS_BY]
+            .trim()
+            .to_string();
+        for member in all.iter().filter(|e| e.id != resolved.id) {
+            if let Some(value) = self.fields(&member.id).await?.get(&key) {
+                fields.insert(
+                    member.id.clone(),
+                    BTreeMap::from([(key.clone(), value.clone())]),
+                );
+            }
+        }
+        Ok(numbered::collection_of(&resolved.id, &all, &fields)
+            .as_ref()
+            .map(numbered::Numbering::from))
     }
 
     /// Every entity jojobot knows, optionally filtered to one kind.

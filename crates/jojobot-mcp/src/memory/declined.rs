@@ -382,6 +382,8 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksSchedule { .. }
+        | MemoryError::NumberTaken { .. }
+        | MemoryError::NotANumber { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
         | MemoryError::ThingTooLarge { .. }
@@ -880,6 +882,35 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                         .join(" or "),
                 )
             },
+        )),
+        // **The number is held and stays held**, archived or not, so the way
+        // forward is a different number, and the refusal hands the caller the
+        // next free one and the handle that reads the holder. There is no
+        // override: this is an integrity guard (rule 472).
+        MemoryError::NumberTaken {
+            ref collection,
+            ref holder,
+            number,
+            next,
+            ..
+        } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. A number is never reused, even when its holder is \
+                 archived, and no token overrides this. The next free number is {next}: send \
+                 that. To read the holder, recall {collection}/{number} (it is {holder})."
+            ),
+        )),
+        MemoryError::NotANumber { ref collection, .. } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Members of {collection} hold a positive whole \
+                 number written in digits, with no sign, no point and no leading zero, such as \
+                 5. Send one. To see which number is free, recall {collection}: it says \
+                 next_number."
+            ),
         )),
         // **The key stays and the value has to change**, which is what makes
         // this a different way forward from the one above. The caller is told
@@ -1622,6 +1653,8 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::BreaksType { .. }
         | MemoryError::RemapsShippedWord { .. }
         | MemoryError::BreaksSchedule { .. }
+        | MemoryError::NumberTaken { .. }
+        | MemoryError::NotANumber { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
         | MemoryError::ThingTooLarge { .. }

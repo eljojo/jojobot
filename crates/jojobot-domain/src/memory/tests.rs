@@ -1636,6 +1636,36 @@ async fn fake_does_not_owe_a_person_for_a_deadline_on_one_claim() {
     .await;
 }
 
+/// **Numbered collections**, against the fake, one test to a spec so a break
+/// names the rule it broke. The real store and the fold run the same specs.
+#[tokio::test]
+async fn fake_names_a_numbered_member_by_its_number_and_says_the_next() {
+    contract::a_member_is_named_by_its_number_and_the_collection_says_the_next(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn fake_holds_a_number_to_one_numbered_member_and_refuses_a_bad_value() {
+    contract::a_number_is_held_by_one_member_and_a_bad_value_is_refused(&InMemoryMemory::booted())
+        .await;
+}
+
+#[tokio::test]
+async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
+    contract::the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(&InMemoryMemory::booted())
+        .await;
+}
+
+#[tokio::test]
+async fn fake_offers_the_numbers_held_by_a_numbered_collection_when_a_number_is_nobodys() {
+    contract::a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
 /// The mark's own contract against the fake — the same suite the gated
 /// integration test runs against real Dolt.
 #[tokio::test]

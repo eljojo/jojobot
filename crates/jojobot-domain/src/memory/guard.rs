@@ -56,6 +56,10 @@ pub enum MatchReason {
     Contains,
     /// Same kind, names within a typo of each other (edit distance ≤ 2).
     NearName,
+    /// A member of a numbered collection holding a number, offered when the
+    /// number asked for is held by nobody: `<collection>/<N>` for each N that
+    /// is.
+    HeldNumber,
 }
 
 impl MatchReason {
