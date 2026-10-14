@@ -3050,6 +3050,118 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
     );
 }
 
+/// 🚨 **A borrow whose receipt cannot read the bot's runs still says the room is
+/// over its ceiling.** The write has landed by then and cannot be taken back, so
+/// the receipt does not decline. It counts the room without ageing and says the
+/// runs could not be read, so a reader knows a quiet thought may be counted live.
+///
+/// Paired with the same borrow when the runs read cleanly: the receipt carries the
+/// numbers and no such sentence. The store answers the one read the write itself
+/// makes and refuses the next.
+#[tokio::test]
+async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read() {
+    let counting = Arc::new(crate::session::testing::CountingSessions::new(
+        jojobot_domain::session::testing::InMemorySessions::new(),
+    ));
+    let (jojobot, _memory) =
+        crate::session::testing::with_sessions_port_and_memory(counting.clone());
+    let bot = "bot:mcp-thought-borrow";
+    ensure(&jojobot, bot).await;
+    ensure(&jojobot, "thing:jukebox").await;
+    ensure(&jojobot, "thing:battery").await;
+    ensure(&jojobot, "thing:the-fern").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [(
+                    jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                    "1".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args(bot, "capacity is one")
+        },
+    )
+    .await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:jukebox".into()),
+            ..capture_args(bot, "the jukebox needs a needle")
+        },
+    )
+    .await;
+    let borrow = |object: &str, content: &str| CaptureArgs {
+        shape: Some("connection".into()),
+        object: Some(object.into()),
+        borrow: Some(true),
+        ..capture_args(bot, content)
+    };
+
+    let clean = capture_ok(
+        &jojobot,
+        borrow("thing:battery", "the battery needs replacing"),
+    )
+    .await;
+    let clean_receipt = clean["postcondition"].as_str().expect("a postcondition");
+    assert!(clean_receipt.contains("2 of 1"), "{clean_receipt}");
+    assert!(
+        !clean_receipt.contains("could not be read"),
+        "a readable store was reported unreadable: {clean_receipt}"
+    );
+
+    // A fresh bot in the same state, so the second borrow is the first on its room.
+    let other = "bot:mcp-seats-update";
+    ensure(&jojobot, other).await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [(
+                    jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                    "1".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args(other, "capacity is one")
+        },
+    )
+    .await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:jukebox".into()),
+            ..capture_args(other, "the jukebox needs a needle")
+        },
+    )
+    .await;
+    counting.refuse_runs_after(1);
+    let unread = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:the-fern".into()),
+            borrow: Some(true),
+            ..capture_args(other, "the fern needs water")
+        },
+    )
+    .await;
+    let unread_receipt = unread["postcondition"].as_str().expect("a postcondition");
+    assert!(
+        unread_receipt.contains("2 of 1"),
+        "the reserve notice vanished with the runs: {unread_receipt}"
+    );
+    assert!(
+        unread_receipt.contains("could not be read"),
+        "the notice did not say it was counted without the runs: {unread_receipt}"
+    );
+}
+
 /// **A thought over its container's body cap is refused through the
 /// served surface**, and the way forward names the repair the brief
 /// itself describes — move the substance onto what the thought points

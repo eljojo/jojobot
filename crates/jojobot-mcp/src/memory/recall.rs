@@ -326,8 +326,10 @@ pub struct RecallArgs {
     /// aged_out on the fact, excluded from the count rather than hidden). The block
     /// names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
     /// the bot's own thought_ages_after_runs gave it or the default did) and is
-    /// sent only when at least one thought has gone quiet. A write that would go
-    /// over the capacity is refused the same way.
+    /// sent when at least one thought has gone quiet or the room is over its
+    /// capacity (`over`). When one has gone quiet it names the call that brings
+    /// it back (`bring_back`). A write that would go over the capacity is
+    /// refused the same way.
     #[serde(default)]
     pub(crate) facts: Option<bool>,
     /// **Serve a shape's sources alongside it**, on the same listing of
@@ -3179,62 +3181,20 @@ impl Jojobot {
         // erroring — leaves the object unenriched rather than failing the
         // read: this is an addition to an ordinary recall, never a
         // condition of one.
-        struct RoomView {
-            capacity: usize,
-            live: usize,
-            aged: std::collections::HashSet<jojobot_domain::memory::FactId>,
-            /// The runs a thought may go untouched, and whether the bot's own
-            /// setting said so (else the default did).
-            ages_after: usize,
-            from_setting: bool,
-        }
-        let mut room_views: std::collections::HashMap<EntityId, RoomView> =
+        let mut room_views: std::collections::HashMap<EntityId, super::room::RoomView> =
             std::collections::HashMap::new();
         if include.facts {
             for object in &found {
                 if object.entity.id.kind() != Some(EntityKind::BOT) {
                     continue;
                 }
-                let Some(capacity) = object
-                    .fields
-                    .get(jojobot_domain::memory::THOUGHT_CAPACITY)
-                    .and_then(|v| v.trim().parse::<usize>().ok())
-                else {
-                    continue;
-                };
-                let nominal_room = jojobot_domain::memory::thought_room(&object.facts);
-                if nominal_room.is_empty() {
-                    continue;
-                }
-                let mut touched = std::collections::HashMap::new();
-                for fact in &nominal_room {
-                    if let Ok(chain) = self.memory.claim_history(&fact.address()).await
-                        && let Some(at) = chain.last().and_then(|w| w.written_at)
-                    {
-                        touched.insert(fact.id.clone(), at);
-                    }
-                }
-                let Ok(runs) = self.sessions.summaries_of(&object.entity.id).await else {
-                    continue;
-                };
-                let setting = jojobot_domain::memory::ages_after_runs_setting(&object.fields);
-                let ages_after = setting.unwrap_or(jojobot_domain::memory::AGES_AFTER_RUNS);
-                let cutoff = jojobot_domain::memory::aging_cutoff(
-                    &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
-                    ages_after,
-                );
-                let split = jojobot_domain::memory::split_by_age(nominal_room, &touched, cutoff);
-                if !split.aged_out.is_empty() {
-                    room_views.insert(
-                        object.entity.id.clone(),
-                        RoomView {
-                            capacity,
-                            live: split.live.len(),
-                            aged: split.aged_out.iter().map(|f| f.id.clone()).collect(),
-                            ages_after,
-                            from_setting: setting.is_some(),
-                        },
-                    );
+                if let Some(view) = self
+                    .count_room_of(&object.entity.id, &object.facts, &object.fields)
+                    .await
+                    && !view.ages_unread
+                    && view.count.worth_a_block()
+                {
+                    room_views.insert(object.entity.id.clone(), view);
                 }
             }
         }
@@ -3440,20 +3400,10 @@ impl Jojobot {
                     // names which one, alongside the same total a capacity
                     // refusal already reports.
                     if let Some(view) = room_views.get(&o.entity.id) {
-                        rendered["room"] = serde_json::json!({
-                            "capacity": view.capacity,
-                            "live": view.live,
-                            "aged_out": view.aged.len(),
-                            "ages_after_runs": view.ages_after,
-                            "ages_after_from": if view.from_setting {
-                                jojobot_domain::memory::THOUGHT_AGES_AFTER_RUNS
-                            } else {
-                                "default"
-                            },
-                        });
+                        rendered["room"] = view.block();
                         if let Some(facts) = rendered["facts"].as_array_mut() {
                             for (fact, raw) in facts.iter_mut().zip(&o.facts) {
-                                if view.aged.contains(&raw.id) {
+                                if view.count.aged_out.iter().any(|aged| aged.id == raw.id) {
                                     fact["aged_out"] = serde_json::Value::Bool(true);
                                 }
                             }

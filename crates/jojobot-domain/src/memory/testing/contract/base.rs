@@ -6452,6 +6452,118 @@ pub async fn an_edit_into_a_room_counts_it_the_way_a_capture_does<M: Memory>(sto
     }
 }
 
+/// 🚨 **A thought that has aged out of a full room cannot be touched back into
+/// it.** Touching a quiet thought (a keep, or any edit) puts it inside the window
+/// again, so it is weighed against the room as a new thought is: refused when the
+/// room is full, naming the live thoughts and how many it left out of the count,
+/// and landed when a slot is free. A thought that is still live is never judged:
+/// keeping it in a full room is an ordinary edit. Without the last half, the
+/// first passes on a store that refuses every edit to a full room.
+pub async fn touching_an_aged_thought_into_a_full_room_is_refused<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-keep-aged-room".into());
+    let a = EntityId("thing:the-couch".into());
+    let b = EntityId("thing:the-air-filter".into());
+    let c = EntityId("thing:the-furnace".into());
+    ensure(store, &bot).await;
+    ensure(store, &a).await;
+    ensure(store, &b).await;
+    ensure(store, &c).await;
+
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is two", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let thought = |object: &EntityId, words: &str, aged_before| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, object.clone())),
+        aged_before,
+        ..NewFact::about(bot.clone(), words, date(2026, 7, 2))
+    };
+    let quiet = capture(store, thought(&a, "the couch needs a leg fixed", None)).await;
+    // Everything written after this moment is inside the window.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let cutoff = jiff::Timestamp::now();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let first = capture(
+        store,
+        thought(&b, "the filter is in the hall", Some(cutoff)),
+    )
+    .await;
+    let second = capture(
+        store,
+        thought(&c, "the furnace is in the cellar", Some(cutoff)),
+    )
+    .await;
+    let touch = |aged_before| FactPatch {
+        aged_before,
+        session: Some("keeper".to_string()),
+        ..Default::default()
+    };
+
+    // The room is full of live thoughts and the old one is outside the count.
+    let refused = store
+        .update_fact(&quiet.address(), touch(Some(cutoff)), &other_caller())
+        .await
+        .expect_err("a full room refuses the quiet thought back");
+    match refused {
+        MemoryError::RoomFull {
+            live,
+            capacity,
+            aged_out,
+            ..
+        } => {
+            assert_eq!(live, 2, "the room as it stands is the two live thoughts");
+            assert_eq!(capacity, 2);
+            assert_eq!(
+                aged_out, 0,
+                "the thought being touched is not its own neighbour"
+            );
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
+
+    // A live thought is never judged: keeping it in the full room lands.
+    store
+        .update_fact(&first.address(), touch(Some(cutoff)), &other_caller())
+        .await
+        .expect("a live thought is kept in a full room")
+        .written()
+        .expect("not blocked");
+
+    // With a slot free the same touch lands, and nothing was archived by ageing.
+    store
+        .update_fact(
+            &second.address(),
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                details: Some("the furnace was moved".into()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a live thought is archived")
+        .written()
+        .expect("not blocked");
+    store
+        .update_fact(&quiet.address(), touch(Some(cutoff)), &other_caller())
+        .await
+        .expect("a free slot takes the quiet thought back")
+        .written()
+        .expect("not blocked");
+    let after = store.recall(&bot).await.expect("recall ok");
+    assert_eq!(
+        after.iter().find(|f| f.id == quiet.id).map(|f| f.status),
+        Some(FactStatus::Active),
+        "the quiet thought was never archived"
+    );
+}
+
 /// 🚨 **An archived thought stops occupying a slot the moment it is
 /// archived** — proven on its own, not assumed from the status filter a
 /// capacity check happens to also use. An ordinary `update_fact` archive,
@@ -17432,6 +17544,7 @@ macro_rules! all_cases {
         $m!(a_borrow_crosses_the_ceiling_exactly_once($store));
         $m!(an_aged_thought_frees_the_room($store));
         $m!(an_edit_into_a_room_counts_it_the_way_a_capture_does($store));
+        $m!(touching_an_aged_thought_into_a_full_room_is_refused($store));
         $m!(an_archived_thought_frees_its_slot($store));
         $m!(a_dropped_thoughts_edge_survives_the_pointers_own_rename($store));
         $m!(every_edge_shape_reads_back($store));

@@ -248,7 +248,9 @@ pub struct UpdateFactArgs {
     /// it was last touched without changing anything else.** Worth reaching
     /// for on a thought (`capture`'s `connection` on your own bot handle):
     /// one nobody touches for long enough goes quiet on its own, and this is
-    /// how you say, on purpose, that one still matters. The one call
+    /// how you say, on purpose, that one still matters. A quiet thought is
+    /// outside the room's count, so keeping it into a full room is refused
+    /// like a new thought, until a live thought is archived. The one call
     /// this verb refuses when nothing else is named: naming no change at all
     /// is refused unless this is `true`, and this is refused if anything
     /// else here would actually change the claim. There is no partial keep —
@@ -714,9 +716,7 @@ impl Jojobot {
             return memory_declined("update_fact", refused);
         }
         // **The ageing cutoff, computed here and never inside `Memory`**, for
-        // the reason `capture`'s own copy is. Asked only when this edit could
-        // newly make the record a thought: it draws a connection edge or
-        // brings the record back to active. Set after the empty-patch check
+        // the reason `capture`'s own copy is. Set after the empty-patch check
         // above, because it names no change.
         let mut patch = patch;
         patch.session = Some(caller.sid.as_str().to_string());
@@ -724,25 +724,31 @@ impl Jojobot {
             .expected_revision
             .map(|revision| revision as usize)
             .or(revision_read);
-        if address.home.kind() == Some(EntityKind::BOT)
-            && (patch
-                .edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-                || patch.status == Some(FactStatus::Active))
-        {
-            let ages_after = match self.ages_after_runs_of(&address.home).await {
-                Ok(runs) => runs,
+        // **Asked only when the edit could put a thought into a room**: the bot
+        // has a capacity, and the record either becomes a thought by this edit
+        // (it draws a connection edge or comes back to active) or already is one.
+        // A thought gone quiet is outside the count, and any edit to it touches
+        // it, so it rejoins the room and the store weighs it as it weighs a new
+        // one. Every other edit reads no runs.
+        if address.home.kind() == Some(EntityKind::BOT) {
+            let fields = match self.memory.fields(&address.home).await {
+                Ok(fields) => fields,
                 Err(e) => return memory_declined("update_fact", e),
             };
-            match self.sessions.summaries_of(&address.home).await {
-                Ok(runs) => {
-                    patch.aged_before = jojobot_domain::memory::aging_cutoff(
-                        &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
-                        ages_after,
-                    );
+            if fields
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .is_some_and(|v| v.trim().parse::<usize>().is_ok())
+                && self.could_join_a_room(&address, &patch).await
+            {
+                match self.sessions.summaries_of(&address.home).await {
+                    Ok(runs) => {
+                        patch.aged_before = jojobot_domain::memory::aging_cutoff(
+                            &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                            jojobot_domain::memory::ages_after_runs_of(&fields),
+                        );
+                    }
+                    Err(e) => return session_declined(e, caller.sid.as_str()),
                 }
-                Err(e) => return session_declined(e, caller.sid.as_str()),
             }
         }
         // **Whether this edit takes the star off a rule of a bot's own**, read

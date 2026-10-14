@@ -3320,8 +3320,10 @@ many have gone quiet from being untouched too long (still there, marked
 aged_out on the fact, excluded from the count rather than hidden). The block
 names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
 the bot's own thought_ages_after_runs gave it or the default did) and is
-sent only when at least one thought has gone quiet. A write that would go
-over the capacity is refused the same way.
+sent when at least one thought has gone quiet or the room is over its
+capacity (`over`). When one has gone quiet it names the call that brings
+it back (`bring_back`). A write that would go over the capacity is
+refused the same way.
 ```
 
 #### `recall` — argument `/inputSchema.fields`
@@ -5512,7 +5514,9 @@ days rather than one. Leaving it off keeps whatever the record says.
 it was last touched without changing anything else.** Worth reaching
 for on a thought (`capture`'s `connection` on your own bot handle):
 one nobody touches for long enough goes quiet on its own, and this is
-how you say, on purpose, that one still matters. The one call
+how you say, on purpose, that one still matters. A quiet thought is
+outside the room's count, so keeping it into a full room is refused
+like a new thought, until a live thought is archived. The one call
 this verb refuses when nothing else is named: naming no change at all
 is refused unless this is `true`, and this is refused if anything
 else here would actually change the claim. There is no partial keep —

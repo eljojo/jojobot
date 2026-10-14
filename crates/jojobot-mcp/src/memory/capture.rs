@@ -472,27 +472,36 @@ impl Jojobot {
             .as_ref()
             .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
-            let capacity = self
-                .memory
-                .fields(&fact.subject)
-                .await
-                .ok()
-                .and_then(|f| f.get(jojobot_domain::memory::THOUGHT_CAPACITY).cloned())
-                .and_then(|v| v.trim().parse::<usize>().ok());
-            match (capacity, &after) {
-                (Some(capacity), Some(facts)) => {
-                    let live = jojobot_domain::memory::thought_room(facts).len();
-                    if live > capacity {
-                        format!(
-                            " This used {}'s emergency reserve: its room now holds {live} of \
-                             {capacity}, over its own ceiling. Bring it back by archiving a live \
-                             thought with update_fact — the priority now is steering back to a \
-                             clean state, not borrowing again.",
-                            fact.subject.as_str()
-                        )
+            let fields = self.memory.fields(&fact.subject).await.ok();
+            // **The room is counted the way a room read counts it**, so a thought
+            // gone quiet is outside the count here as it is there, and a write
+            // that needed no reserve does not claim one.
+            let counted = match (&fields, &after) {
+                (Some(fields), Some(facts)) => {
+                    self.count_room_of(&fact.subject, facts, fields).await
+                }
+                _ => None,
+            };
+            match counted {
+                Some(view) if view.count.over() => {
+                    // **The write has landed, so an unreadable run list is told
+                    // and never declined** (rule 130): the count then leaves no
+                    // thought out as quiet, and the receipt says so.
+                    let unread = if view.ages_unread {
+                        " The bot's runs could not be read, so no thought was counted as \
+                         quiet: the room may hold fewer live thoughts than this."
                     } else {
-                        String::new()
-                    }
+                        ""
+                    };
+                    format!(
+                        " This used {}'s emergency reserve: its room now holds {} of \
+                         {}, over its own ceiling.{unread} Bring it back by archiving a live \
+                         thought with update_fact — the priority now is steering back to a \
+                         clean state, not borrowing again.",
+                        fact.subject.as_str(),
+                        view.count.live.len(),
+                        view.count.capacity,
+                    )
                 }
                 _ => String::new(),
             }

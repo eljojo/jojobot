@@ -816,6 +816,9 @@ pub(crate) struct CountingSessions {
     reads: std::sync::atomic::AtomicUsize,
     /// How many times every run on the board was asked for as summaries.
     board_summaries: std::sync::atomic::AtomicUsize,
+    /// How many more reads of a bot's runs are answered before the store
+    /// refuses them. A store that never refuses holds `usize::MAX`.
+    reads_left: std::sync::atomic::AtomicUsize,
 }
 
 impl CountingSessions {
@@ -824,7 +827,15 @@ impl CountingSessions {
             inner,
             reads: std::sync::atomic::AtomicUsize::new(0),
             board_summaries: std::sync::atomic::AtomicUsize::new(0),
+            reads_left: std::sync::atomic::AtomicUsize::new(usize::MAX),
         }
+    }
+
+    /// **Answer this many more reads of a bot's runs, then refuse every one**,
+    /// the way a store that went away between two steps of one call does.
+    pub(crate) fn refuse_runs_after(&self, reads: usize) {
+        self.reads_left
+            .store(reads, std::sync::atomic::Ordering::Release);
     }
 
     /// The store the fixtures stage runs in; staging is not counted by the
@@ -855,6 +866,18 @@ impl CountingSessions {
 #[async_trait]
 impl Sessions for CountingSessions {
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        let answered = self.reads_left.fetch_update(
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+            |left| match left {
+                usize::MAX => Some(left),
+                0 => None,
+                left => Some(left - 1),
+            },
+        );
+        if answered.is_err() {
+            return Err(SessionError::Store("the runs could not be read".into()));
+        }
         self.inner.sessions_of(bot).await.map(|r| self.counted(r))
     }
     async fn all_summaries(

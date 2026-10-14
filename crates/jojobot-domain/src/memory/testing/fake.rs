@@ -2743,10 +2743,14 @@ impl Memory for InMemoryMemory {
                 // pays for a touch-moment lookup on every write.
                 if nominal_room.len() >= capacity {
                     let touched = self.touched_moments(&home, &nominal_room);
-                    let split =
-                        super::super::split_by_age(nominal_room, &touched, fact.aged_before);
-                    if split.live.len() >= capacity {
-                        let aged_out = split.aged_out.len();
+                    let counted = super::super::count_room(
+                        nominal_room,
+                        &touched,
+                        fact.aged_before,
+                        capacity,
+                    );
+                    if counted.full() {
+                        let aged_out = counted.aged_out.len();
                         let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
                             // **The handle the caller reached this thing
                             // by, never `home`** — `home` is the badge
@@ -2779,7 +2783,7 @@ impl Memory for InMemoryMemory {
                                 // shown.
                                 let victim_home = self.storage_key(&victim.home);
                                 let in_room = victim_home.filter(|key| *key == home).is_some()
-                                    && split.live.iter().any(|f| f.id == victim.local);
+                                    && counted.live.iter().any(|f| f.id == victim.local);
                                 let Some(victim_index) = in_room
                                     .then(|| {
                                         facts
@@ -2788,7 +2792,7 @@ impl Memory for InMemoryMemory {
                                     })
                                     .flatten()
                                 else {
-                                    return Err(refuse(split.live));
+                                    return Err(refuse(counted.live));
                                 };
                                 // **A thought that carries a key only its own
                                 // relation may change is not droppable.** A
@@ -2800,7 +2804,7 @@ impl Memory for InMemoryMemory {
                                 )
                                 .is_empty()
                                 {
-                                    return Err(refuse(split.live));
+                                    return Err(refuse(counted.live));
                                 }
                                 // **Archived, through the one writer every
                                 // archive goes through** — `append_claim_write`
@@ -2824,8 +2828,8 @@ impl Memory for InMemoryMemory {
                             // copy carries. Only honoured at the exact
                             // threshold: a room already over capacity means
                             // a borrow already landed and was not repaid.
-                            _ if fact.borrow && split.live.len() == capacity => {}
-                            _ => return Err(refuse(split.live)),
+                            _ if fact.borrow && !counted.over() => {}
+                            _ => return Err(refuse(counted.live)),
                         }
                     }
                 }
@@ -3702,25 +3706,40 @@ impl Memory for InMemoryMemory {
                 return Err(err);
             }
         }
-        // **The room only grows when a record newly joins it** — see the
-        // real store's identical comment on its own copy of this check.
-        if becomes_thought && !was_thought {
+        // **The room only grows when a record newly joins it, or comes back into
+        // it** — see the real store's identical comment on its own copy of this
+        // check. A thought gone quiet is outside the count, and any edit to it
+        // touches it, so it rejoins the room and meets the same check.
+        let was_aged = was_thought
+            && super::super::is_quiet(
+                self.touched_moments(&home, std::slice::from_ref(fact))
+                    .get(&fact.id)
+                    .copied(),
+                patch.aged_before,
+            );
+        if becomes_thought
+            && (!was_thought || was_aged)
+            && let Some(capacity) = capacity
+        {
             let others: Vec<Fact> = facts
                 .iter()
                 .filter(|f| f.home == home && f.id != edited.id)
                 .cloned()
                 .collect();
-            let mut room = super::super::thought_room(&others);
-            let mut aged_out = 0;
-            if capacity.is_some_and(|capacity| room.len() >= capacity) {
-                let touched = self.touched_moments(&home, &room);
-                let split = super::super::split_by_age(room, &touched, patch.aged_before);
-                aged_out = split.aged_out.len();
-                room = split.live;
-            }
+            let nominal = super::super::thought_room(&others);
+            // **Ageing's cost is paid only when the room might be full**, as
+            // `capture` pays it. With no touch recorded nothing is quiet.
+            let touched = if nominal.len() >= capacity {
+                self.touched_moments(&home, &nominal)
+            } else {
+                Default::default()
+            };
+            let mut counted =
+                super::super::count_room(nominal, &touched, patch.aged_before, capacity);
             // **Served under the handle**, as the real store serves them: the
             // refusal's way forward is to archive one of these by address.
-            let room = room
+            counted.live = counted
+                .live
                 .into_iter()
                 .map(|f| Fact {
                     home: handle.clone(),
@@ -3728,9 +3747,7 @@ impl Memory for InMemoryMemory {
                     ..f
                 })
                 .collect();
-            if let Some(err) =
-                super::super::refuses_room_overflow(&handle, room, capacity, aged_out)
-            {
+            if let Some(err) = super::super::refuses_room_overflow(&handle, counted) {
                 return Err(err);
             }
         }

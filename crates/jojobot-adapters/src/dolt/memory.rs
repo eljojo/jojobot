@@ -2569,13 +2569,14 @@ impl DoltMemory {
                 if nominal_room.len() >= capacity {
                     let ids: Vec<FactId> = nominal_room.iter().map(|f| f.id.clone()).collect();
                     let touched = Self::touched_moments(tx, &home, &ids).await?;
-                    let split = jojobot_domain::memory::split_by_age(
+                    let counted = jojobot_domain::memory::count_room(
                         nominal_room,
                         &touched,
                         fact.aged_before,
+                        capacity,
                     );
-                    if split.live.len() >= capacity {
-                        let aged_out = split.aged_out.len();
+                    if counted.full() {
+                        let aged_out = counted.aged_out.len();
                         let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
                             // **The handle the caller reached this thing
                             // by, never `home`** — `home` is the badge every
@@ -2588,7 +2589,8 @@ impl DoltMemory {
                             room,
                             aged_out,
                         };
-                        let room = split.live;
+                        let over = counted.over();
+                        let room = counted.live;
                         match (&fact.drop, &fact.drop_because) {
                             (Some(victim), Some(reason)) => {
                                 // **The victim must resolve to a live thought IN
@@ -2645,7 +2647,7 @@ impl DoltMemory {
                             // a borrow already landed and was not repaid,
                             // and the ceiling's answer to that is steering
                             // back, not borrowing again.
-                            _ if fact.borrow && room.len() == capacity => {}
+                            _ if fact.borrow && !over => {}
                             _ => return Err(refuse(room)),
                         }
                     }
@@ -6038,8 +6040,7 @@ impl Memory for DoltMemory {
         // **The ceiling and the room, both on the state this edit leaves
         // behind, atomically with the write that would leave it.** See
         // `refuses_unlicensed_change` and `refuses_room_overflow` in the
-        // domain crate for why the fold rather than the raw patch, and why
-        // no ageing here.
+        // domain crate for why the fold rather than the raw patch.
         let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
         let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
         let lineage =
@@ -6086,11 +6087,27 @@ impl Memory for DoltMemory {
                 return Err(err);
             }
         }
-        // **The room only grows when a record newly joins it.** An edit to
-        // a thought already in the room does not grow it, whatever else the
-        // edit changes — a room already over capacity (a borrow, or seeded
-        // that way) is an allowed state an unrelated edit must not re-judge.
-        if becomes_thought && !was_thought {
+        // **The room only grows when a record newly joins it, or comes back into
+        // it.** An edit to a thought already in the room does not grow it,
+        // whatever else the edit changes — a room already over capacity (a
+        // borrow, or seeded that way) is an allowed state an unrelated edit
+        // must not re-judge. A thought gone quiet is outside the count, and any
+        // edit to it touches it, so it rejoins the room and meets the same check
+        // a new thought does.
+        let was_aged = was_thought && {
+            let ids = [fact.id.clone()];
+            jojobot_domain::memory::is_quiet(
+                Self::touched_moments(&mut tx, &key, &ids)
+                    .await?
+                    .get(&fact.id)
+                    .copied(),
+                patch.aged_before,
+            )
+        };
+        if becomes_thought
+            && (!was_thought || was_aged)
+            && let Some(capacity) = capacity
+        {
             // **The storage key, not the display handle** — `facts_of` reads
             // by the badge a row is filed under (see its own doc comment),
             // exactly as `writes_on` above is called with `fact.home` rather
@@ -6101,20 +6118,18 @@ impl Memory for DoltMemory {
                 .into_iter()
                 .filter(|f| f.id != fact.id)
                 .collect();
-            let mut room = jojobot_domain::memory::thought_room(&others);
-            let mut aged_out = 0;
+            let nominal = jojobot_domain::memory::thought_room(&others);
             // **Ageing's cost is paid only when the room might be full**,
             // exactly as `capture` pays it, and the cutoff is the caller's.
-            if capacity.is_some_and(|capacity| room.len() >= capacity) {
-                let ids: Vec<FactId> = room.iter().map(|f| f.id.clone()).collect();
-                let touched = Self::touched_moments(&mut tx, &key, &ids).await?;
-                let split = jojobot_domain::memory::split_by_age(room, &touched, patch.aged_before);
-                aged_out = split.aged_out.len();
-                room = split.live;
-            }
-            if let Some(err) =
-                jojobot_domain::memory::refuses_room_overflow(&handle, room, capacity, aged_out)
-            {
+            let touched = if nominal.len() >= capacity {
+                let ids: Vec<FactId> = nominal.iter().map(|f| f.id.clone()).collect();
+                Self::touched_moments(&mut tx, &key, &ids).await?
+            } else {
+                Default::default()
+            };
+            let counted =
+                jojobot_domain::memory::count_room(nominal, &touched, patch.aged_before, capacity);
+            if let Some(err) = jojobot_domain::memory::refuses_room_overflow(&handle, counted) {
                 return Err(err);
             }
         }

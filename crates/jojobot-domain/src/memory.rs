@@ -3028,33 +3028,27 @@ pub fn refuses_merge_carrying_by(
     })
 }
 
-/// **Whether an edit that makes a claim a thought has no slot to take.**
+/// **Whether a thought that joins a room, or comes back into it, has no slot to
+/// take.**
 ///
-/// `room` is the room as it stands: every OTHER active connection-edged
-/// fact the subject carries, with the ones [`split_by_age`] left out of the
-/// count already removed and counted in `aged_out`. The edited record is not
-/// in it, so a refusal lists only thoughts a caller could archive to make
-/// way, and `live` is what the room holds now, exactly as a capture's
-/// refusal reports it.
+/// `count` is the room as it stands, from [`count_room`]: every OTHER active
+/// connection-edged fact the subject carries, with the quiet ones outside the
+/// count and counted in `aged_out`. The edited record is not in it, so a refusal
+/// lists only thoughts a caller could archive to make way, and `live` is what the
+/// room holds now, exactly as a capture's refusal reports it.
 ///
 /// An edit has no drop and no borrow: an edit that finds the room full is
 /// refused outright, and the way forward is archiving a live thought or
 /// writing the thought through [`capture`](crate::memory::Memory::capture),
 /// which can name a drop.
-pub fn refuses_room_overflow(
-    home: &EntityId,
-    room: Vec<Fact>,
-    capacity: Option<usize>,
-    aged_out: usize,
-) -> Option<MemoryError> {
-    let capacity = capacity?;
-    if room.len() >= capacity {
+pub fn refuses_room_overflow(home: &EntityId, count: RoomCount) -> Option<MemoryError> {
+    if count.full() {
         Some(MemoryError::RoomFull {
             subject: home.to_string(),
-            live: room.len(),
-            capacity,
-            room,
-            aged_out,
+            live: count.live.len(),
+            capacity: count.capacity,
+            aged_out: count.aged_out.len(),
+            room: count.live,
         })
     } else {
         None
@@ -3297,6 +3291,58 @@ pub fn aging_cutoff(
     Some(starts[ages_after_runs - 1])
 }
 
+/// **A bot's room, counted once.** What the room holds that counts against its
+/// capacity, what has gone quiet and is outside the count, and the capacity they
+/// are weighed against. Every reader that says how full a room is (the receipt
+/// of a write, the room read, the check that admits a thought) takes the answer
+/// from [`count_room`], so no two of them can count it two ways.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomCount {
+    pub capacity: usize,
+    /// Active, connection-edged and touched within the window.
+    pub live: Vec<Fact>,
+    /// Active, connection-edged and untouched past the window: still there,
+    /// still active, outside the count.
+    pub aged_out: Vec<Fact>,
+}
+
+impl RoomCount {
+    /// **Whether a thought that joins the room, or comes back into it, finds no
+    /// slot:** the live count has reached the ceiling. The same count is
+    /// [`over`](Self::over) only once it passes it.
+    pub fn full(&self) -> bool {
+        self.live.len() >= self.capacity
+    }
+
+    /// **Whether the room holds more than its ceiling.** A borrow, or a room
+    /// seeded that way, leaves it so; the count says it.
+    pub fn over(&self) -> bool {
+        self.live.len() > self.capacity
+    }
+
+    /// **Whether a room read has something to say about the room:** a thought has
+    /// gone quiet, or the room is over its ceiling.
+    pub fn worth_a_block(&self) -> bool {
+        !self.aged_out.is_empty() || self.over()
+    }
+}
+
+/// **Count a room.** `nominal` is [`thought_room`] of the bot's claims; the
+/// others are as [`split_by_age`] takes them.
+pub fn count_room(
+    nominal: Vec<Fact>,
+    touched: &std::collections::HashMap<FactId, jiff::Timestamp>,
+    aged_before: Option<jiff::Timestamp>,
+    capacity: usize,
+) -> RoomCount {
+    let split = split_by_age(nominal, touched, aged_before);
+    RoomCount {
+        capacity,
+        live: split.live,
+        aged_out: split.aged_out,
+    }
+}
+
 /// **A bot's own room, split by age.**
 ///
 /// An aged-out thought is neither archived nor written — see
@@ -3327,16 +3373,17 @@ pub fn split_by_age(
     touched: &std::collections::HashMap<FactId, jiff::Timestamp>,
     aged_before: Option<jiff::Timestamp>,
 ) -> ThoughtRoom {
-    let Some(cutoff) = aged_before else {
-        return ThoughtRoom {
-            live: room,
-            aged_out: Vec::new(),
-        };
-    };
     let (aged_out, live) = room
         .into_iter()
-        .partition(|f| touched.get(&f.id).is_some_and(|at| *at < cutoff));
+        .partition(|f| is_quiet(touched.get(&f.id).copied(), aged_before));
     ThoughtRoom { live, aged_out }
+}
+
+/// **Whether a thought has gone quiet:** its last write is before the cutoff.
+/// A thought with no recorded touch is never quiet, and no cutoff quiets
+/// nothing. Every place that weighs a thought against a room asks this.
+pub fn is_quiet(touched_at: Option<jiff::Timestamp>, aged_before: Option<jiff::Timestamp>) -> bool {
+    matches!((touched_at, aged_before), (Some(at), Some(cutoff)) if at < cutoff)
 }
 
 /// **Which bag a write of a key was made under**, stored with the write.

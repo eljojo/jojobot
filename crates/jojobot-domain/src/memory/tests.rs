@@ -806,6 +806,79 @@ fn more_than_the_threshold_answers_the_nth_newest_not_the_oldest() {
     );
 }
 
+/// 🚨 **A room is counted once, and "over" means over the ceiling, not at it.**
+/// A room that holds exactly its capacity is full and within it. A quiet thought
+/// is outside the count whatever else is true of the room. Paired: the same room
+/// counted with and without a cutoff gives different live counts, so a counter
+/// that ignored ageing would fail the first half.
+#[test]
+fn a_room_is_over_only_past_its_capacity_and_a_quiet_thought_is_outside_the_count() {
+    let cutoff = at("2026-03-10T00:00:00Z");
+    let old = thought("f1", "thing:contract-thought-pointer-v1");
+    let live_a = thought("f2", "thing:contract-thought-pointer-v2");
+    let live_b = thought("f3", "thing:contract-thought-pointer-v3");
+    let touched = std::collections::HashMap::from([
+        (old.id.clone(), at("2026-03-09T00:00:00Z")),
+        (live_a.id.clone(), at("2026-03-11T00:00:00Z")),
+        (live_b.id.clone(), at("2026-03-11T00:00:00Z")),
+    ]);
+    let room = vec![old.clone(), live_a.clone(), live_b.clone()];
+
+    // Two live of two: full, not over; the old one is outside the count.
+    let counted = count_room(room.clone(), &touched, Some(cutoff), 2);
+    assert_eq!(counted.live.len(), 2);
+    assert_eq!(counted.aged_out.len(), 1);
+    assert!(!counted.over(), "a room at its ceiling is not over it");
+    assert!(counted.worth_a_block(), "a quiet thought is worth saying");
+
+    // With no cutoff nothing is quiet, and the same three thoughts are over two.
+    let nothing_quiet = count_room(room.clone(), &touched, None, 2);
+    assert_eq!(nothing_quiet.live.len(), 3);
+    assert!(nothing_quiet.over());
+    assert!(
+        nothing_quiet.worth_a_block(),
+        "an over room is worth saying"
+    );
+
+    // A room that is neither has nothing to say.
+    let plain = count_room(vec![live_a, live_b], &touched, Some(cutoff), 3);
+    assert!(!plain.over());
+    assert!(!plain.worth_a_block());
+}
+
+/// **One predicate says a thought is quiet**, and the boundary is part of it:
+/// touched before the cutoff is quiet, touched at the cutoff is not. A thought
+/// with no recorded touch, or a room with no cutoff, is never quiet.
+#[test]
+fn is_quiet_is_true_only_for_a_touch_before_a_cutoff() {
+    let cutoff = at("2026-03-10T00:00:00Z");
+    assert!(is_quiet(Some(at("2026-03-09T23:59:59Z")), Some(cutoff)));
+    assert!(!is_quiet(Some(cutoff), Some(cutoff)));
+    assert!(!is_quiet(None, Some(cutoff)));
+    assert!(!is_quiet(Some(at("2020-01-01T00:00:00Z")), None));
+}
+
+/// **A room is full for a thought that joins it when its live count reaches the
+/// ceiling, and over its ceiling only when it passes it.** The two differ by one,
+/// and a quiet thought counts toward neither.
+#[test]
+fn a_room_is_full_at_its_ceiling_and_over_only_past_it() {
+    let cutoff = at("2026-03-10T00:00:00Z");
+    let live = thought("f1", "thing:contract-thought-pointer-v1");
+    let quiet = thought("f2", "thing:contract-thought-pointer-v2");
+    let touched = std::collections::HashMap::from([(quiet.id.clone(), at("2026-03-01T00:00:00Z"))]);
+    let room = vec![live, quiet];
+    let one_of_two = count_room(room.clone(), &touched, Some(cutoff), 2);
+    assert!(
+        !one_of_two.full(),
+        "a quiet thought fills no slot: {one_of_two:?}"
+    );
+    let at_ceiling = count_room(room.clone(), &touched, Some(cutoff), 1);
+    assert!(at_ceiling.full() && !at_ceiling.over(), "{at_ceiling:?}");
+    let over = count_room(room, &std::collections::HashMap::new(), None, 1);
+    assert!(over.full() && over.over(), "{over:?}");
+}
+
 /// 🚨 **A thought touched before the cutoff is aged out, and one touched
 /// at or after it stays live** — the boundary itself counts as live, so
 /// a run that touches something in its own window never ages it.

@@ -318,6 +318,7 @@ const ORDINARY: &[&str] = &[
     "bot:contract-ceiling-room-via-edit",
     "bot:contract-ceiling-room-with-space",
     "bot:contract-edit-ages-room",
+    "bot:contract-keep-aged-room",
     "bot:upgrade-fixture-heavy",
     "bot:upgrade-fixture-lead",
     "bot:upgrade-fixture-wrapper",

@@ -3434,6 +3434,105 @@ async fn an_edit_ages_a_thought_on_the_bots_own_ageing_setting() {
     );
 }
 
+/// 🚨 **An edit reads a bot's runs only when it could put a thought into a room.**
+/// The cutoff that ageing needs comes from the runs, so an edit that can join no
+/// room must not pay for them: a bot with no capacity has no room at all, and a
+/// plain claim of a bot that has one stays outside it.
+///
+/// Paired with an edit that draws a connection edge on the roomy bot's plain
+/// claim, which does read them: without that half this passes on a build that
+/// never reads the runs.
+#[tokio::test]
+async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
+    let counting = Arc::new(crate::session::testing::CountingSessions::new(
+        jojobot_domain::session::testing::InMemorySessions::new(),
+    ));
+    let (jojobot, _memory) =
+        crate::session::testing::with_sessions_port_and_memory(counting.clone());
+    let bare = "bot:mcp-seats-update";
+    ensure(&jojobot, bare).await;
+    let rule = address_of(
+        &capture_ok(
+            &jojobot,
+            capture_args(bare, "a rule with no room behind it"),
+        )
+        .await,
+    );
+    let roomy = "bot:mcp-thought-aging";
+    let plain = a_full_room_and_a_claim_that_would_join_it(&jojobot, roomy).await;
+
+    let before = counting.reads();
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            content: Some("the rule now says something else".into()),
+            ..update_args(&rule)
+        },
+    )
+    .await;
+    assert_eq!(
+        counting.reads(),
+        before,
+        "an edit to a rule of a bot with no capacity read its runs"
+    );
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:the-couch".into()),
+            ..update_args(&rule)
+        },
+    )
+    .await;
+    assert_eq!(
+        counting.reads(),
+        before,
+        "an edit that draws a connection on a bot with no capacity read its runs"
+    );
+    // And with the runs unreadable it still lands: nothing in it asks for them.
+    counting.refuse_runs_after(0);
+    let landed = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            content: Some("the rule says it once more".into()),
+            ..update_args(&rule)
+        },
+    )
+    .await;
+    assert_eq!(landed["content_head"], "the rule says it once more");
+    counting.refuse_runs_after(usize::MAX);
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            content: Some("the filter is in the cupboard".into()),
+            ..update_args(&plain)
+        },
+    )
+    .await;
+    assert_eq!(
+        counting.reads(),
+        before,
+        "an edit to a plain claim of a bot with a room read its runs"
+    );
+
+    blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-air-filter".into()),
+                ..update_args(&plain)
+            }))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert!(
+        counting.reads() > before,
+        "an edit that joins a room never read the runs, so it was judged on no cutoff"
+    );
+}
+
 /// **A store that cannot be read refuses an archive of a role's own record.**
 /// The guard reads the record to see whether it carries a role field, and a
 /// read that failed used to read as "carries none". Paired with the healthy
