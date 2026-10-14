@@ -1,0 +1,34 @@
+# The check bar, run when an implementer line pushes its working branch.
+#
+# A line pushes and keeps working while the runners take the bar, so the full
+# bar never runs on the line's own host. The branches are the lines' working
+# branches, `dev-work`, `dev2-work` and so on.
+#
+# One job, named `check` like the pull-request job, running the same `make`
+# target. The rooms and the year room run on a pull request and before a push
+# to main, not on every push to a working branch.
+name: branch
+
+on:
+  push:
+    branches:
+      - 'dev*-work'
+
+# A run that has started always finishes and reports. A newer push to the same
+# branch replaces only the run still queued. The group is keyed on the ref, so
+# two lines never share one.
+concurrency:
+  group: branch-${{ forgejo.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # A host executor: see pull-request.yml for what the runner sees.
+    runs-on: nix
+    steps:
+      # The whole history, for the same reason as the pull-request jobs: the
+      # fixture roster test reads the commit range.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make check
