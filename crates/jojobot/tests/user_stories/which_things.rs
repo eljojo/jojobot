@@ -230,7 +230,9 @@ async fn a_scope_says_whether_a_term_asks_the_thing_or_a_record() {
             json!({ "kind": "thing", "where": "verdict = open" }),
         )
         .await;
-    refused.says("verdict");
+    // **The refusal names the argument that would find it**, which the call did
+    // not send; the key's own name is the call's echo and proves nothing.
+    refused.says("scope: \\\"record\\\"");
 
     story.finish().await;
 }
@@ -312,19 +314,23 @@ async fn a_comparison_needs_the_declaration_of_the_kind_named_and_every_mistake_
     broken.says("'='");
     refused("status = done &").await.says("position 15");
     refused("(status = done").await.says("')'");
-    refused("size > banana").await.says("banana");
+    // The refusal names the type the value had to be, which the line does not say.
+    refused("size > banana").await.says("number");
     refused("   ").await.says("empty");
 
     // ── a comparison no declaration licenses is refused by name ─────────────
     //
     // `rank` holds numbers and nobody said so.
+    //
+    // Each refusal names the call that would license it and the type it needs,
+    // neither of which the line holds.
     let unlicensed = refused("rank > 1").await;
-    unlicensed.says("rank");
+    unlicensed.says("declare_type");
     unlicensed.says("number");
-    refused("rank contains 10").await.says("rank");
+    refused("rank contains 10").await.says("list:text");
     // A relative date is a date, and only a key declared one is asked as one.
     let undated = refused("rank <= today").await;
-    undated.says("rank");
+    undated.says("declare_type");
     undated.says("date");
 
     // …and a declaration named for ANOTHER kind belongs to that kind: a person's
@@ -340,7 +346,7 @@ async fn a_comparison_needs_the_declaration_of_the_kind_named_and_every_mistake_
     )
     .await
     .says("\"name\":\"person\"");
-    refused("rank > 1").await.says("rank");
+    refused("rank > 1").await.says("declare_type");
     let by_kind = s
         .shape(
             "everything ranked above one, naming no kind",
@@ -377,8 +383,9 @@ async fn a_comparison_needs_the_declaration_of_the_kind_named_and_every_mistake_
 
     // ── a key nothing holds is not an empty answer ──────────────────────────
     let misspelt = refused("sttaus = done").await;
-    misspelt.says("sttaus");
-    misspelt.says("status");
+    // The refusal lists, in order, the keys the things do hold: words the line
+    // never sent. (`status` alone would match the answer's own `"status"` field.)
+    misspelt.says("due, note, owner, rank, size, status, touches");
 
     story.finish().await;
 }
