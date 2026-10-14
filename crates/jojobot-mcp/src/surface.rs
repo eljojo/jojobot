@@ -2164,7 +2164,7 @@ fn recall_names_the_keys_argument_and_what_an_answer_says_it_left_out() {
         schema["properties"].get("keys").is_some(),
         "recall publishes no `keys`: {schema}"
     );
-    for word in ["fields_left_out", "shows_keys"] {
+    for word in ["narrowed", "fields_left_out", "shows_keys"] {
         assert!(
             description.contains(word),
             "recall's description does not name `{word}`: {description}"

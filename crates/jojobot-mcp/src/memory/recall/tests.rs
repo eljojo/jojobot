@@ -9479,3 +9479,65 @@ async fn a_narrowed_read_of_many_things_is_smaller_than_one_that_asks_for_held()
     assert!(narrowed["narrowed"]["held"].is_string(), "{narrowed}");
     assert!(with_held["narrowed"].get("held").is_none(), "{with_held}");
 }
+
+/// **The answer-level note says only what is true of the answer.** A read that
+/// names keys of a thing with no record on it does not say records were left
+/// out; with a record that holds no field it does, and still does not say who
+/// backs a value, because there is none; with a field it says all of it.
+#[tokio::test]
+async fn the_narrowed_note_says_only_what_is_true_of_the_answer() {
+    let jojobot = handler();
+    jojobot
+        .add_entity(Parameters(add_args("person", "homer", "Homer")))
+        .await
+        .expect("add_entity ok");
+    let narrowed = |jojobot: &Jojobot| {
+        let asked = RecallArgs {
+            keys: Some(vec!["nick".into()]),
+            facts: None,
+            ..recall_args("person:homer")
+        };
+        let jojobot = jojobot.clone();
+        async move {
+            json_of(&jojobot.recall(Parameters(asked)).await.expect("recall ok"))["narrowed"]
+                .clone()
+        }
+    };
+
+    // Nothing recorded on the thing: no records, no values, nothing left out.
+    let empty = narrowed(&jojobot).await;
+    assert_eq!(empty["keys"][0], "nick", "{empty}");
+    assert!(empty["held"].is_string(), "{empty}");
+    for claim in ["records", "backing", "fields", "left_out_keys"] {
+        assert!(
+            empty.get(claim).is_none(),
+            "{claim} claimed of nothing: {empty}"
+        );
+    }
+
+    // A record that holds no field: the record is left out, no value is unbacked.
+    capture_ok(&jojobot, capture_args("person:homer", "likes donuts")).await;
+    let record_only = narrowed(&jojobot).await;
+    assert!(record_only["records"].is_string(), "{record_only}");
+    for claim in ["backing", "fields", "left_out_keys"] {
+        assert!(
+            record_only.get(claim).is_none(),
+            "{claim} claimed with no field: {record_only}"
+        );
+    }
+
+    // A field the read did not ask for: all of it is true.
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("mood".to_string(), "calm".to_string())].into()),
+            ..capture_args("person:homer", "was calm today")
+        },
+    )
+    .await;
+    let with_field = narrowed(&jojobot).await;
+    for claim in ["records", "backing", "fields", "held"] {
+        assert!(with_field[claim].is_string(), "{claim}: {with_field}");
+    }
+    assert_eq!(with_field["left_out_keys"][0], "mood", "{with_field}");
+}

@@ -380,11 +380,14 @@ pub struct RecallArgs {
     /// the keys you want, and every object in the answer — the ones a walk
     /// reaches included — carries just those of its fields.
     ///
-    /// **Eliding is never silent.** An object that holds other keys says so in
-    /// `fields_left_out`, naming them, and asking again without `keys` reads
-    /// them all. When a view supplied the keys, ask again without the view,
-    /// sending its kind, or with `keys` naming the ones left out. A key an
-    /// object does not hold is simply not there.
+    /// **Eliding is never silent.** The answer says once, in `narrowed`, what
+    /// the objects left out: the keys they hold that were not brought
+    /// (`left_out_keys`) and, where it is true, that their records, their `held`
+    /// block and who backs each value are not here, each with the argument that
+    /// returns it; asking again without `keys` reads them all. When a view
+    /// supplied the keys, each object says so in `fields_left_out`, naming them:
+    /// ask again without the view, sending its kind, or with `keys` naming the
+    /// ones left out. A key an object does not hold is simply not there.
     ///
     /// Omit it and every key comes back, which is the normal read. This
     /// narrows what each object says, never which objects come back, and it
@@ -1614,6 +1617,19 @@ struct KeyNarrowing<'a> {
     by_view: bool,
 }
 
+impl KeyNarrowing<'_> {
+    /// Whether `key` is one of the keys the read kept.
+    fn wants(&self, key: &str) -> bool {
+        self.keys.iter().any(|kept| kept == key)
+    }
+}
+
+/// **Whether `key` comes back**: every key does when nothing narrowed the read.
+/// The one test every place that narrows by keys asks.
+fn wants_key(only: Option<KeyNarrowing<'_>>, key: &str) -> bool {
+    only.is_none_or(|narrowing| narrowing.wants(key))
+}
+
 /// **Whether a read names its keys itself**, as opposed to a view that supplied
 /// them. The caller who names keys has said which of an object it wants, so what
 /// else rows would carry is left out and said once for the answer.
@@ -1629,23 +1645,29 @@ fn ships_held(asked_held: Option<bool>, facts: bool, names_keys: bool) -> bool {
     !names_keys || asked_held == Some(true) || facts
 }
 
-/// **The keys the objects of an answer hold that a read naming `keys` did not
-/// bring**, across the objects and everything walked from them, sorted and once
-/// each.
-fn keys_left_out(
-    objects: &[graph::Object],
-    asked: &[String],
-    into: &mut std::collections::BTreeSet<String>,
-) {
+/// **What is true of the objects of an answer** that a note about a read naming
+/// keys may say: the keys they hold that were not brought, and whether any holds
+/// a record or a field, across the objects and everything walked from them.
+#[derive(Default)]
+struct Held {
+    left_out_keys: std::collections::BTreeSet<String>,
+    any_record: bool,
+    any_field: bool,
+}
+
+/// Read [`Held`] off `objects` and what was walked from them.
+fn held_by(objects: &[graph::Object], narrowing: KeyNarrowing<'_>, into: &mut Held) {
     for object in objects {
-        into.extend(
+        into.left_out_keys.extend(
             object
                 .fields
                 .keys()
-                .filter(|key| !asked.iter().any(|asked| asked == *key))
+                .filter(|key| !narrowing.wants(key))
                 .cloned(),
         );
-        keys_left_out(&object.connected, asked, into);
+        into.any_record |= object.facts_held > 0;
+        into.any_field |= !object.fields.is_empty();
+        held_by(&object.connected, narrowing, into);
     }
 }
 
@@ -2027,7 +2049,7 @@ fn object_json(
     // chart is not handed the operational keys of each node. **What it left out
     // is named**, never dropped silently: a reader who had to infer
     // narrowed-from-empty would infer wrong.
-    let wanted = |key: &str| only.is_none_or(|narrowed| narrowed.keys.iter().any(|k| k == key));
+    let wanted = |key: &str| wants_key(only, key);
     fields.insert(
         "fields".into(),
         object
@@ -2309,11 +2331,12 @@ impl Jojobot {
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing and stood_for ask for more, each off \
                        by default and each saying what it left out; `keys` asks for less \
-                       (fields_left_out names what it hid, and a view's shows_keys yields to \
-                       it). A merged thing's object can carry `claims_left_out`: claims \
-                       stored under a thing folded into it that it cannot serve, each with \
-                       a reason and an address. Read one with history_record set to that \
-                       address, and give no subject. A thing others were folded into lists \
+                       (the answer's `narrowed` names what it hid, once, and each object's \
+                       fields_left_out does when a view's shows_keys supplied the keys; the \
+                       keys you send win over a view's shows_keys). A merged thing's object \
+                       can carry `claims_left_out`: claims stored under a thing folded into it \
+                       that it cannot serve, each with a reason and an address. Read one with \
+                       history_record set to that address, and give no subject. A thing others were folded into lists \
                        their names as `foldedNames`, apart from its `alternateName`. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
@@ -3529,10 +3552,7 @@ impl Jojobot {
                         o,
                         include,
                         today,
-                        only_keys.as_deref().map(|keys| KeyNarrowing {
-                            keys,
-                            by_view: keys_from_view,
-                        }),
+                        narrowing,
                         day_frame,
                     );
                     if let Some(thread) = &o.standing_for {
@@ -3627,11 +3647,7 @@ impl Jojobot {
                         Some(backing) => {
                             // **Backing obeys the keys the call kept, exactly
                             // as the fields do**, and names what it left out.
-                            let wanted = |key: &str| {
-                                only_keys
-                                    .as_deref()
-                                    .is_none_or(|keys| keys.iter().any(|k| k == key))
-                            };
+                            let wanted = |key: &str| wants_key(narrowing, key);
                             let mut kept = serde_json::Map::new();
                             // **A claim's note is shipped once, found by the
                             // claim that carries it.** A claim that backs
@@ -3668,7 +3684,7 @@ impl Jojobot {
                                 .filter(|key| !wanted(key))
                                 .collect();
                             if !left_out.is_empty() && !names_keys(narrowing) {
-                                let way_back = if keys_from_view {
+                                let way_back = if narrowing.is_some_and(|narrowing| narrowing.by_view) {
                                     "the view named the ones it shows; ask again without view, \
                                      sending its kind yourself, or with keys naming these"
                                 } else {
@@ -3704,16 +3720,16 @@ impl Jojobot {
         // **What a read that names keys left out is said here, once**, not on
         // every row; the argument that returns each is named beside it.
         if names_keys(narrowing)
-            && let Some(keys) = only_keys.as_deref()
+            && let Some(narrowing) = narrowing
         {
-            let mut left_out_keys = std::collections::BTreeSet::new();
-            keys_left_out(&found, keys, &mut left_out_keys);
+            let mut held = Held::default();
+            held_by(&found, narrowing, &mut held);
             body["narrowed"] = narrowed_note(
-                keys,
-                &left_out_keys,
-                !include.facts,
+                narrowing.keys,
+                &held.left_out_keys,
+                !include.facts && held.any_record,
                 !ships_held,
-                !args.backing.unwrap_or(false),
+                !args.backing.unwrap_or(false) && held.any_field,
             );
         }
         // **An empty selection names what it looked through.** A filter that
