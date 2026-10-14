@@ -8295,6 +8295,43 @@ async fn a_write_past_the_port_made_before_a_verb_is_read_from_the_board() {
     );
 }
 
+/// **Two decorators over one index share one order, so a board copy taken by one
+/// cannot erase what the other published.** The first decorator copies the board
+/// and is held. A post through the second one has to wait for it. Without a shared
+/// order the post finishes first, the held copy then evicts its message, and the
+/// second decorator still reports the board as current.
+#[tokio::test]
+async fn two_decorators_over_one_index_cannot_both_publish_over_each_other() {
+    let (metered, counted, second, index) = booted_mail().await;
+    let first = IndexedMailboxes::new(counted.clone(), index.clone());
+    metered
+        .hold_scan
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let rebuilding = first.rebuild();
+    let in_the_gap = async {
+        metered.scan_started.notified().await;
+        let post = mail_contract::post(&second, "pm", "dev", "the glaze is mixed", 2);
+        tokio::pin!(post);
+        let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut post).await;
+        assert!(
+            early.is_err(),
+            "the post did not wait for the other decorator"
+        );
+        metered.scan_release.notify_one();
+        post.await;
+    };
+    let (rebuilt, _) = tokio::join!(rebuilding, in_the_gap);
+    rebuilt.expect("the held rebuild finishes");
+    second.refresh().await;
+
+    assert_eq!(
+        mail_hits(&index, "glaze").len(),
+        1,
+        "the second decorator's message was erased by the first one's older board"
+    );
+}
+
 /// **A message gone from the store by hand is gone from search after a restart.**
 /// The boot rebuild reads the whole board and evicts what the board no longer
 /// holds.

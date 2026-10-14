@@ -807,13 +807,6 @@ pub struct IndexedMailboxes {
     /// handle a thing wears now, so a rename changes the text the index should
     /// hold without a single write to mail.
     board_seen_epoch: std::sync::atomic::AtomicU64,
-    /// **The order of the writes to the index and of the board reads.** A verb
-    /// holds it from the call that changes the store to the end of its re-index
-    /// and its publication; a board read holds it from the count it captures to
-    /// its publication. So no index write is older than a count published after
-    /// it, and no board copy is older than a change that a later count covers.
-    /// A search that finds the count current takes no part in it.
-    ordering: tokio::sync::Mutex<()>,
 }
 
 /// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
@@ -822,20 +815,26 @@ const NOT_SEEN: u64 = u64::MAX;
 impl IndexedMailboxes {
     /// Wrap a store, writing into the index the Memory half already uses. **One
     /// index, not two** — that is what makes one ranked list possible at all.
+    ///
+    /// **A verb holds the index's mail order from the call that changes the store
+    /// to the end of its re-index and its publication; a board read holds it from
+    /// the count it captures to its publication.** So no index write is older than
+    /// a count published after it, and no board copy is older than a change that a
+    /// later count covers. The order is the index's, so two decorators over one
+    /// index share it. A search that finds the count current takes no part in it.
     pub fn new(inner: Arc<dyn Mailboxes>, index: Arc<FullTextIndex>) -> Self {
         IndexedMailboxes {
             inner,
             index,
             board_seen_at: std::sync::atomic::AtomicU64::new(NOT_SEEN),
             board_seen_epoch: std::sync::atomic::AtomicU64::new(NOT_SEEN),
-            ordering: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Load the mail half from a full board read — the boot path. Returns how
     /// many messages were indexed.
     pub async fn rebuild(&self) -> Result<usize, MailboxError> {
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         // Before the read, never after — the point has to predate the board
         // read it will be handed back with.
         let began = self.index.reading_begins();
@@ -933,7 +932,7 @@ impl IndexedMailboxes {
 
     /// **The one place the count of the board the index holds is published.**
     /// The refresh, the rebuild and the four verbs that re-index their own change
-    /// all end here, and each holds [`Self::ordering`] when it does. `epoch` is
+    /// all end here, and each holds the index's mail order when it does. `epoch` is
     /// given by the readers of the whole board, which are the only ones that
     /// know the names they read under.
     fn publish(&self, count: Option<u64>, epoch: Option<u64>) {
@@ -962,7 +961,7 @@ impl IndexedMailboxes {
     }
 
     /// **End a verb that put its own change in the index.** Called with
-    /// [`Self::ordering`] held. The count moves to the port's only when the index
+    /// the index's mail order held. The count moves to the port's only when the index
     /// held the whole board before the verb and the verb is the only change the
     /// port has counted since (`before` was read under the same hold). Any other
     /// state leaves the count where it is, and the next refresh reads the board.
@@ -1134,7 +1133,7 @@ impl Refresh for IndexedMailboxes {
         // publication checks in `settle` already refuse the interleavings a case can
         // pause. It closes the window no case can pause in: a board ingest that lands
         // between a verb's last index write and its publication.
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         if self.board_held() {
             return;
         }
@@ -1180,7 +1179,7 @@ impl Mailboxes for IndexedMailboxes {
         // lands in it. It can change which messages the index may hold, so it
         // publishes nothing: the port counts it, and the next refresh reads the
         // board.
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         self.inner.create_mailbox(name, owner, override_token).await
     }
 
@@ -1191,7 +1190,7 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         // Same reason as create_mailbox: a box holds no text of its own, so
         // there is nothing here to reindex.
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         self.inner.repoint_owner(from, to).await
     }
 
@@ -1218,7 +1217,7 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         message: jojobot_domain::mailbox::NewMessage,
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         let before = self.inner.changes();
         let written = self.inner.post_message(message).await?;
         let indexed = match &written {
@@ -1261,7 +1260,7 @@ impl Mailboxes for IndexedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         let before = self.inner.changes();
         let delivered = self.inner.read_mailbox(name, taken_by, acting).await?;
         let indexed = match &delivered {
@@ -1285,7 +1284,7 @@ impl Mailboxes for IndexedMailboxes {
         // publication checks in `settle` already refuse the interleavings a case can
         // pause. It closes the window no case can pause in: a board ingest that lands
         // between this verb's last index write and its publication.
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         let before = self.inner.changes();
         let delivered = self.inner.read_message(id, acting).await?;
         let indexed = self.reindex(&[&delivered.message]).await;
@@ -1303,7 +1302,7 @@ impl Mailboxes for IndexedMailboxes {
         // publication checks in `settle` already refuse the interleavings a case can
         // pause. It closes the window no case can pause in: a board ingest that lands
         // between this verb's last index write and its publication.
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         let before = self.inner.changes();
         let processed = self.inner.mark_processed(id, notes, acting).await?;
         let indexed = self.reindex(&[&processed]).await;
@@ -1324,7 +1323,7 @@ impl Mailboxes for IndexedMailboxes {
         reason: &str,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        let _ordered = self.ordering.lock().await;
+        let _ordered = self.index.mail_order().lock().await;
         self.inner.quarantine(id, by, reason, acting).await
     }
 

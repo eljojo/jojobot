@@ -420,6 +420,11 @@ pub struct FullTextIndex {
     /// moving the sessions store's own write signal. The session half compares
     /// this beside that signal, and a rename reaches it without a session write.
     names_epoch: std::sync::atomic::AtomicU64,
+    /// **The order of the writes to the mail half of the index and of the board
+    /// reads that fill it.** It lives on the index, not on a decorator, so every
+    /// decorator over one index takes the same one: two of them over one index
+    /// cannot each publish over what the other did.
+    mail_order: tokio::sync::Mutex<()>,
     /// The entities whose documents the index knows it is holding an old version
     /// of: a refresh after a committed write that could not be run.
     ///
@@ -531,6 +536,7 @@ impl FullTextIndex {
             memory_loaded: std::sync::atomic::AtomicBool::new(false),
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             names_epoch: std::sync::atomic::AtomicU64::new(0),
+            mail_order: tokio::sync::Mutex::new(()),
             behind: RwLock::new(std::collections::BTreeMap::new()),
             mark_seq: std::sync::atomic::AtomicU64::new(0),
             memory_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
@@ -663,6 +669,11 @@ impl FullTextIndex {
     pub fn names_changed(&self) {
         self.names_epoch
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The order every writer to the mail half takes; see the `mail_order` field.
+    pub(crate) fn mail_order(&self) -> &tokio::sync::Mutex<()> {
+        &self.mail_order
     }
 
     /// The count [`names_changed`](Self::names_changed) advances.
