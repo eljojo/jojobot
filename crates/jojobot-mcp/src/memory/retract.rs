@@ -96,7 +96,8 @@ impl Jojobot {
                        what it takes back. Retracting a record that is already archived is \
                        refused too, and says so, because the state you asked for is the state \
                        jojobot holds. An address that names no record is refused with the \
-                       addresses that do exist. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       addresses that do exist. The receipt's `changed` lists what this call \
+                       changed, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn retract(
         &self,
@@ -166,6 +167,9 @@ impl Jojobot {
             None => None,
         };
 
+        // **The thing as it stands before the write**, for the receipt's account
+        // of what the write changed.
+        let before = self.as_it_stands(&address.home).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (taken_back, fold_behind) = match jojobot_domain::request::armed(self.memory.retract(
@@ -214,6 +218,14 @@ impl Jojobot {
                 }))
                 .collect::<Vec<_>>(),
         });
+        let changed = match fold_behind {
+            Some(_) => crate::changed::Changed::not_read(),
+            None => {
+                self.changed_on(&before, &taken_back.retracted.subject)
+                    .await
+            }
+        };
+        crate::changed::note_changed(&mut body, changed);
         if let Some(behind) = fold_behind {
             crate::answer::note_fold_behind(&mut body, behind);
         }
@@ -829,6 +841,9 @@ mod tests {
         // **The positive half.** The retraction still landed, exactly as an
         // ordinary retract does.
         assert_eq!(body["retracted"]["status"], "archived", "{body}");
+        // **What it changed could not be read**, said as such and not as
+        // `nothing`.
+        assert_eq!(body["changed"], "not_read", "{body}");
     }
 
     /// **Retracting is archiving by another name**, so it faces the same
@@ -1099,6 +1114,53 @@ mod tests {
             store.listings(),
             before,
             "the retraction listed every entity in the store"
+        );
+    }
+
+    /// **A retraction names the claim's status and the record it left**, the
+    /// two writes it made, and nothing else on the thing.
+    #[tokio::test]
+    async fn a_retraction_lists_the_claim_status_and_the_retraction_record() {
+        use crate::memory::testing::{capture_args, capture_ok};
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let captured = capture_ok(&jojobot, capture_args("person:bart", "was at the party")).await;
+        let address = captured["address"]
+            .as_str()
+            .expect("an address")
+            .to_string();
+
+        let taken_back = json_of(
+            &jojobot
+                .retract(Parameters(RetractArgs {
+                    request_id: None,
+                    address: address.clone(),
+                    reason: Some("never happened".into()),
+                    recorded_at: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("retract ok"),
+        );
+        let record = taken_back["retraction"]["address"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the retraction has an address: {taken_back}"));
+        let changed = taken_back["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {taken_back}"));
+        assert_eq!(changed.len(), 2, "{taken_back}");
+        let status = changed
+            .iter()
+            .find(|c| c["what"] == "status")
+            .unwrap_or_else(|| panic!("the status is named: {taken_back}"));
+        assert_eq!(status["on"], address.as_str(), "{taken_back}");
+        assert_eq!(status["from"], "active", "{taken_back}");
+        assert_eq!(status["to"], "archived", "{taken_back}");
+        assert!(
+            changed
+                .iter()
+                .any(|c| c["what"] == "created" && c["on"] == record),
+            "the retraction record is named by its address: {taken_back}"
         );
     }
 }

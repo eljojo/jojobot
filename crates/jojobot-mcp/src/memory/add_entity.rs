@@ -263,7 +263,8 @@ impl Jojobot {
                        (testimony), or one you read in a system of record (observation), is \
                        written with capture. Answers with the entity as stored and says what it \
                        changed on the way in; with sets it also returns first_claim, the claim \
-                       written with it. If its handle or any of its names \
+                       written with it. The receipt's `changed` lists what this call changed, \
+                       or says nothing. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \
@@ -357,6 +358,9 @@ impl Jojobot {
         };
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
+        // **The thing as it stands before the write** (none, for a creation),
+        // for the receipt's account of what the write changed.
+        let before = self.as_it_stands(&creating).await;
         let (added, first_claim) = match first_fields {
             None => {
                 // **A bot is measured as the boot it will have, whatever the call
@@ -551,6 +555,11 @@ impl Jojobot {
                     self.note_status_word(fact, &mut body).await;
                     self.note_depends_on_read(fact, &caller, &mut body).await;
                 }
+                let changed = match fold_behind {
+                    Some(_) => crate::changed::Changed::not_read(),
+                    None => self.changed_on(&before, &entity.id).await,
+                };
+                crate::changed::note_changed(&mut body, changed);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }
@@ -2023,5 +2032,66 @@ mod tests {
         assert_ne!(placed["status"], "blocked", "placed as itself: {placed}");
         let held = fields_of(&jojobot, "bot:sigma").await;
         assert_eq!(held["reports_to"], "bot:omega", "{held}");
+    }
+
+    /// **A creation names the thing it made, and with `sets` the first claim
+    /// and each key**; a key has no `from`, because nothing was there before.
+    #[tokio::test]
+    async fn a_creation_lists_the_thing_and_with_sets_its_first_claim_and_keys() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+
+        let bare = json_of(
+            &jojobot
+                .add_entity(Parameters(add_args("person", "bart", "Bart")))
+                .await
+                .expect("add ok"),
+        );
+        let changed = bare["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {bare}"));
+        assert_eq!(changed.len(), 1, "{bare}");
+        assert_eq!(changed[0]["on"], "person:bart", "{bare}");
+        assert_eq!(changed[0]["what"], "created", "{bare}");
+
+        let with_sets = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sets: Some(
+                        [("mood".to_string(), "cheerful".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..add_args("person", "lisa", "Lisa")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        let changed = with_sets["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {with_sets}"));
+        let address = with_sets["first_claim"]["address"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a first claim: {with_sets}"));
+        assert!(
+            changed
+                .iter()
+                .any(|c| c["on"] == "person:lisa" && c["what"] == "created"),
+            "the thing is named: {with_sets}"
+        );
+        assert!(
+            changed
+                .iter()
+                .any(|c| c["on"] == address && c["what"] == "created"),
+            "the first claim is named by its address: {with_sets}"
+        );
+        let key = changed
+            .iter()
+            .find(|c| c["what"] == "key")
+            .unwrap_or_else(|| panic!("the key is named: {with_sets}"));
+        assert_eq!(key["on"], "person:lisa", "{with_sets}");
+        assert_eq!(key["key"], "mood", "{with_sets}");
+        assert_eq!(key["to"], "cheerful", "{with_sets}");
+        assert!(key.get("from").is_none(), "nothing was there: {with_sets}");
     }
 }

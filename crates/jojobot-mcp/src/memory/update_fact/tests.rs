@@ -2415,6 +2415,8 @@ async fn an_update_whose_fold_could_not_refresh_answers_landed_not_failed() {
     // **The positive half.** The edited record still comes back, exactly
     // as an ordinary update does.
     assert_eq!(edited["content_head"], "works at the new place", "{edited}");
+    // **What it changed could not be read**, said as such and not as `nothing`.
+    assert_eq!(edited["changed"], "not_read", "{edited}");
 }
 
 /// 🚨 **A record can carry a caller-chosen mark, riding the fields bag it
@@ -4434,4 +4436,51 @@ async fn clear_fields_on_the_carrying_record_takes_a_key_off_the_thing() {
         history.to_string().contains("project:atlas"),
         "the key's history keeps the value it held: {history}"
     );
+}
+
+/// **An edit of a claim's words names the claim and the size of the words on
+/// each side, never the words**, and a `keep` that changes nothing says so.
+#[tokio::test]
+async fn an_edit_names_the_words_by_size_and_a_keep_changes_nothing() {
+    let jojobot = handler();
+    let captured = capture_ok(&jojobot, capture_args("person:bart", "skates")).await;
+    let address = captured["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+
+    let edited = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            content: Some("skates to school".into()),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    let changed = edited["changed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of changes: {edited}"));
+    assert_eq!(changed.len(), 1, "{edited}");
+    assert_eq!(changed[0]["on"], address.as_str(), "{edited}");
+    assert_eq!(changed[0]["what"], "words", "{edited}");
+    assert_eq!(changed[0]["bytes_before"], "skates".len(), "{edited}");
+    assert_eq!(
+        changed[0]["bytes_after"],
+        "skates to school".len(),
+        "{edited}"
+    );
+    assert!(
+        changed[0].get("to").is_none(),
+        "no words come back: {edited}"
+    );
+
+    let kept = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            keep: Some(true),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert_eq!(kept["changed"], "nothing", "{kept}");
 }

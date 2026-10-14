@@ -348,8 +348,8 @@ impl Jojobot {
                        is taken at its word. It answers with a receipt, not the record (read back from the store first); recall the subject \
                        reads the record. A call naming no change is refused; keep: true alone touches a claim unchanged. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with the addresses that exist. Each argument's \
-                       own description holds its rules."
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with the addresses that exist. The receipt's \
+                       `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(
         &self,
@@ -775,6 +775,9 @@ impl Jojobot {
                  parts. Nothing was written. Send the call without request_id.",
             ));
         }
+        // **The thing as it stands before the write**, for the receipt's account
+        // of what the write changed.
+        let before = self.as_it_stands(&address.home).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) = match jojobot_domain::request::armed(self.memory.update_fact(
@@ -864,6 +867,11 @@ impl Jojobot {
                 .await;
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+                let changed = match fold_behind {
+                    Some(_) => crate::changed::Changed::not_read(),
+                    None => self.changed_on(&before, &fact.subject).await,
+                };
+                crate::changed::note_changed(&mut body, changed);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

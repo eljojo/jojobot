@@ -258,7 +258,8 @@ impl Jojobot {
                        never be forced; a collision on the name alone also needs \
                        override_reason, shown beside the name. A `handle` that names nothing jojobot ever held is \
                        blocked with the nearest handles; one that named something BEFORE an \
-                       earlier rename moved it is told what it is called now. Each argument's \
+                       earlier rename moved it is told what it is called now. The receipt's \
+                       `changed` lists what this call changed, or says nothing. Each argument's \
                        own description holds the rest."
     )]
     pub(crate) async fn rename_entity(
@@ -318,6 +319,9 @@ impl Jojobot {
         let date = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
             .await?;
+        // **The thing as it stands under its old handle**, for the receipt's
+        // account of what the write changed.
+        let before = self.as_it_stands(&from).await;
         let renamed = match self
             .memory
             .rename_entity(
@@ -401,6 +405,7 @@ impl Jojobot {
                         );
                     }
                 }
+                crate::changed::note_changed(&mut body, self.changed_on(&before, &entity.id).await);
                 crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
                 json_result(&body)
             }
@@ -1665,5 +1670,30 @@ mod tests {
         assert_ne!(moved["status"], "blocked", "{moved}");
         let followed = fields_of(&jojobot, "topic:instance").await;
         assert_eq!(followed["operator"], "person:lisa", "{followed}");
+    }
+
+    /// **A rename names the new handle with the old one beside it**, and
+    /// nothing else: the claims the thing holds move with it and did not
+    /// change.
+    #[tokio::test]
+    async fn a_rename_lists_the_handle_from_and_to_and_nothing_else() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        capture_ok(&jojobot, capture_args("thing:red-bike", "has a bell")).await;
+
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("thing:red-bike", "thing:road-bike", &sid)))
+                .await
+                .expect("rename ok"),
+        );
+        let changed = renamed["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {renamed}"));
+        assert_eq!(changed.len(), 1, "{renamed}");
+        assert_eq!(changed[0]["on"], "thing:road-bike", "{renamed}");
+        assert_eq!(changed[0]["what"], "handle", "{renamed}");
+        assert_eq!(changed[0]["from"], "thing:red-bike", "{renamed}");
+        assert_eq!(changed[0]["to"], "thing:road-bike", "{renamed}");
     }
 }

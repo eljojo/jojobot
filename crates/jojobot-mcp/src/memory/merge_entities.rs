@@ -81,7 +81,9 @@ impl Jojobot {
                        your own bot of a duplicate carrying thought_capacity or \
                        thought_body_cap; a thought room that would go over capacity, or a \
                        thought over its body cap; or a result that could not be read back \
-                       whole in one answer. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       whole in one answer. The receipt's `changed` lists what this call \
+                       changed, or says nothing. Each argument's own description holds the \
+                       rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn merge_entities(
         &self,
@@ -126,6 +128,10 @@ impl Jojobot {
         // onto it, and the store decides that in the same act as the merge.**
         // A check made here, before the merge, left a gap a second session of
         // the same bot could write a ceiling into.
+        // **Both things as they stand before the write**, for the receipt's
+        // account of what the write changed on each.
+        let duplicate_before = self.as_it_stands(&duplicate).await;
+        let survivor_before = self.as_it_stands(&survivor).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (done, fold_behind) = match jojobot_domain::request::armed(self.memory.merge(
@@ -179,6 +185,14 @@ impl Jojobot {
                 done.survivor.id.as_str(),
             ),
         });
+        let changed = match fold_behind {
+            Some(_) => crate::changed::Changed::not_read(),
+            None => self
+                .changed_on(&duplicate_before, &done.folded)
+                .await
+                .and(self.changed_on(&survivor_before, &done.survivor.id).await),
+        };
+        crate::changed::note_changed(&mut body, changed);
         if let Some(behind) = fold_behind {
             crate::answer::note_fold_behind(&mut body, behind);
         }
@@ -821,6 +835,9 @@ mod tests {
         // **The positive half.** The merge still landed, exactly as an
         // ordinary merge does.
         assert_eq!(body["merged"], "person:bart", "{body}");
+        // **What it changed could not be read**, said as such and not as
+        // `nothing`.
+        assert_eq!(body["changed"], "not_read", "{body}");
     }
 
     /// **A ceiling that lands between the guard's read and the merge must not
@@ -894,5 +911,61 @@ mod tests {
         );
         assert_ne!(landed["status"], "blocked", "{landed}");
         assert_eq!(landed["merged"], "bot:sigma", "{landed}");
+    }
+
+    /// **A merge names both things it changed**: the duplicate, which now
+    /// points at the survivor, and the survivor, which gains the duplicate's
+    /// claim and the account of the merge.
+    #[tokio::test]
+    async fn a_merge_lists_the_duplicate_and_the_survivor() {
+        use crate::memory::testing::{capture_args, capture_ok};
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        capture_ok(&jojobot, capture_args("person:homer", "likes donuts")).await;
+        capture_ok(&jojobot, capture_args("person:lisa", "likes baking")).await;
+
+        let merged = json_of(
+            &jojobot
+                .merge_entities(Parameters(MergeArgs {
+                    request_id: None,
+                    duplicate: "person:homer".into(),
+                    survivor: "person:lisa".into(),
+                    reason: Some("one person".into()),
+                    recorded_at: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("merge ok"),
+        );
+        let changed = merged["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {merged}"));
+        let folded = changed
+            .iter()
+            .find(|c| c["what"] == "merged_into")
+            .unwrap_or_else(|| panic!("the duplicate is named: {merged}"));
+        assert_eq!(folded["on"], "person:homer", "{merged}");
+        assert_eq!(folded["to"], "person:lisa", "{merged}");
+        // **Neither thing changed its handle**, so no entry says one did.
+        assert!(
+            changed.iter().all(|c| c["what"] != "handle"),
+            "a merge moves no handle: {merged}"
+        );
+        let record = merged["record"]["address"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the account has an address: {merged}"));
+        assert!(
+            changed
+                .iter()
+                .any(|c| c["what"] == "created" && c["on"] == record),
+            "the survivor gains the account of the merge: {merged}"
+        );
+        assert!(
+            changed.iter().any(|c| c["what"] == "created"
+                && c["on"]
+                    .as_str()
+                    .is_some_and(|on| on.starts_with("person:lisa#"))),
+            "the survivor is named by its own claims: {merged}"
+        );
     }
 }

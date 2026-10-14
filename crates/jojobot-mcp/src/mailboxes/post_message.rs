@@ -337,7 +337,8 @@ impl Jojobot {
                        by id (read_mailbox with new_only: false returns them all). The sender \
                        is the bot behind the `sid` you pass, never one you declare, and a sid \
                        jojobot is not holding comes back status: blocked with nothing \
-                       written. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       written. The receipt's `changed` lists what this call changed, or \
+                       says nothing. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn post_message(
         &self,
@@ -508,6 +509,10 @@ impl Jojobot {
                         "you wrote this body, so it is not shipped back to you. list_sent with \
                          include_bodies: true returns it, and takes no delivery",
                     ),
+                );
+                crate::changed::note_changed(
+                    &mut body,
+                    crate::changed::Changed::created(message.id.as_str()),
                 );
                 // **Posting takes delivery of your own box, in the same call.**
                 // The moment an agent posts is the moment a reply is most
@@ -707,6 +712,32 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
+
+    /// **A post names the message it made, by its id and nothing of its words**
+    /// (card 1333). Two posts name two ids, so the entry is the message and not
+    /// a constant.
+    #[tokio::test]
+    async fn a_post_names_the_message_it_created() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+
+        let first = send(&jojobot, "otto", "epsilon", "the urn is descaled").await;
+        let second = send(&jojobot, "otto", "epsilon", "the urn is empty").await;
+        for posted in [&first, &second] {
+            let changed = posted["changed"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a list of changes: {posted}"));
+            assert_eq!(changed.len(), 1, "{posted}");
+            assert_eq!(changed[0]["on"], posted["id"], "{posted}");
+            assert_eq!(changed[0]["what"], "created", "{posted}");
+            assert!(
+                changed[0].get("to").is_none(),
+                "no words come back: {posted}"
+            );
+        }
+        assert_ne!(first["changed"][0]["on"], second["changed"][0]["on"]);
+    }
 
     /// **Posting says where the message got to, and what the same call did to
     /// the caller's own box.**

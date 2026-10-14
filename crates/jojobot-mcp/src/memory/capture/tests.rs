@@ -2356,6 +2356,8 @@ async fn a_capture_whose_fold_could_not_refresh_answers_landed_not_failed() {
     // allowed to swallow what the write actually produced.
     assert_eq!(receipt["subject"], "person:alpha", "{receipt}");
     assert_ne!(receipt["status"], "blocked", "{receipt}");
+    // **What it changed could not be read**, said as such and not as `nothing`.
+    assert_eq!(receipt["changed"], "not_read", "{receipt}");
 }
 
 /// **Ageing frees a room's slot through `capture`'s own served path** —
@@ -3602,4 +3604,62 @@ async fn a_promise_the_deployed_code_left_without_its_due_moment_is_healed_by_it
         "{by_key:?}",
     );
     assert_eq!(by_kind, by_key, "the two reads agree once both are healed");
+}
+
+/// **A capture names the claim it created, and the keys it moved.** A key
+/// written for the first time has no `from`, a key written again with a new
+/// value has both sides, and a key written again with the same value is not
+/// listed. A capture is never `nothing`: the claim is always new.
+#[tokio::test]
+async fn a_capture_lists_its_claim_and_only_the_keys_that_moved() {
+    let jojobot = handler();
+    let setting = |value: &str| CaptureArgs {
+        sets: Some(
+            [("mood".to_string(), value.to_string())]
+                .into_iter()
+                .collect(),
+        ),
+        ..capture_args("person:bart", "was in a mood")
+    };
+
+    let first = capture_ok(&jojobot, setting("cheerful")).await;
+    let address = first["address"].as_str().expect("an address").to_string();
+    let changed = first["changed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of changes: {first}"));
+    assert!(
+        changed
+            .iter()
+            .any(|c| c["on"] == address.as_str() && c["what"] == "created"),
+        "the claim is named by its address: {first}"
+    );
+    let key = changed
+        .iter()
+        .find(|c| c["what"] == "key")
+        .unwrap_or_else(|| panic!("the key is named: {first}"));
+    assert_eq!(key["on"], "person:bart", "{first}");
+    assert_eq!(key["key"], "mood", "{first}");
+    assert_eq!(key["to"], "cheerful", "{first}");
+    assert!(key.get("from").is_none(), "nothing was there: {first}");
+
+    let moved = capture_ok(&jojobot, setting("grumpy")).await;
+    let key = moved["changed"]
+        .as_array()
+        .and_then(|list| list.iter().find(|c| c["what"] == "key"))
+        .unwrap_or_else(|| panic!("the key is named: {moved}"));
+    assert_eq!(key["from"], "cheerful", "{moved}");
+    assert_eq!(key["to"], "grumpy", "{moved}");
+
+    let same = capture_ok(&jojobot, setting("grumpy")).await;
+    let changed = same["changed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a capture is never nothing: {same}"));
+    assert!(
+        changed.iter().all(|c| c["what"] != "key"),
+        "a key that did not move is not listed: {same}"
+    );
+    assert!(
+        changed.iter().any(|c| c["what"] == "created"),
+        "the claim is still new: {same}"
+    );
 }

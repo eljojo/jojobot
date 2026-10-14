@@ -68,7 +68,8 @@ impl Jojobot {
                        Archiving something already archived comes back blocked, saying the \
                        entity is already in the state you asked for — that answer means jojobot \
                        holds what you wanted, not that nothing happened. Restoring something that is not archived says the same. A handle that names \
-                       nothing comes back blocked with the nearest handles. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       nothing comes back blocked with the nearest handles. The receipt's \
+                       `changed` lists what this call changed, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn archive_entity(
         &self,
@@ -95,6 +96,9 @@ impl Jojobot {
         if args.restore.unwrap_or(false) {
             return self.restore(&handle, &args, caller.sid.as_str()).await;
         }
+        // **The thing as it stands before the write**, for the receipt's account
+        // of what the write changed.
+        let before = self.as_it_stands(&handle).await;
         let entity = match jojobot_domain::request::armed(self.memory.archive_entity(
             &handle,
             &args.reason,
@@ -117,6 +121,7 @@ impl Jojobot {
                 .into_iter()
                 .collect(),
         );
+        crate::changed::note_changed(&mut body, self.changed_on(&before, &entity.id).await);
         crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
         json_result(&body)
     }
@@ -136,6 +141,9 @@ impl Jojobot {
         args: &ArchiveEntityArgs,
         session: &str,
     ) -> Result<CallToolResult, McpError> {
+        // **The thing as it stands before the write**, for the receipt's account
+        // of what the write changed.
+        let before = self.as_it_stands(handle).await;
         let (entity, was) =
             match jojobot_domain::request::armed(self.memory.restore_entity(handle, Some(session)))
                 .await
@@ -170,6 +178,9 @@ impl Jojobot {
                 ..NewFact::about(entity.id.clone(), content, day)
             })
             .await;
+        // **A claim whose fold is behind landed, and what it changed cannot be
+        // read.**
+        let fold_behind = matches!(recorded, Err(MemoryError::FoldBehind { .. }));
         self.beat("archive_entity", entity.id.as_str(), args.sid.as_deref())
             .await;
         let mut body = entity_json(&entity);
@@ -183,6 +194,11 @@ impl Jojobot {
             };
             object.insert("recorded_as".into(), recorded_as.into());
         }
+        let changed = match fold_behind {
+            true => crate::changed::Changed::not_read(),
+            false => self.changed_on(&before, &entity.id).await,
+        };
+        crate::changed::note_changed(&mut body, changed);
         crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
         json_result(&body)
     }
@@ -407,5 +423,60 @@ mod tests {
         );
         assert_eq!(body["status"], "blocked", "{body}");
         assert_eq!(body["wrote"], false, "{body}");
+    }
+
+    /// **An archive names the status it moved, and a restore names the status
+    /// it moved back and the claim it wrote.** Neither lists the thing's
+    /// claims, which stand as recorded.
+    #[tokio::test]
+    async fn an_archive_and_a_restore_list_the_status_and_the_restore_claim() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        capture_ok(&jojobot, capture_args("person:bart", "skates")).await;
+
+        let archived = json_of(
+            &jojobot
+                .archive_entity(Parameters(archive("person:bart", "not relevant", &sid)))
+                .await
+                .expect("archive ok"),
+        );
+        let changed = archived["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {archived}"));
+        assert_eq!(changed.len(), 1, "{archived}");
+        assert_eq!(changed[0]["on"], "person:bart", "{archived}");
+        assert_eq!(changed[0]["what"], "status", "{archived}");
+        assert_eq!(changed[0]["from"], "active", "{archived}");
+        assert_eq!(changed[0]["to"], "archived", "{archived}");
+
+        let restored = json_of(
+            &jojobot
+                .archive_entity(Parameters(ArchiveEntityArgs {
+                    restore: Some(true),
+                    ..archive("person:bart", "it was real", &sid)
+                }))
+                .await
+                .expect("restore ok"),
+        );
+        let recorded = restored["recorded_as"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the restore records itself: {restored}"));
+        let changed = restored["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {restored}"));
+        assert_eq!(changed.len(), 2, "{restored}");
+        let status = changed
+            .iter()
+            .find(|c| c["what"] == "status")
+            .unwrap_or_else(|| panic!("the status is named: {restored}"));
+        assert_eq!(status["on"], "person:bart", "{restored}");
+        assert_eq!(status["from"], "archived", "{restored}");
+        assert_eq!(status["to"], "active", "{restored}");
+        assert!(
+            changed
+                .iter()
+                .any(|c| c["what"] == "created" && c["on"] == recorded),
+            "the restore claim is named by its address: {restored}"
+        );
     }
 }

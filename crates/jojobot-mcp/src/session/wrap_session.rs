@@ -34,10 +34,8 @@ impl Jojobot {
                        wrap_code below, and a later journal, amend_journal or \
                        wrap_session on that id comes back status: blocked. A retried \
                        wrap finishes what the first attempt started instead of \
-                       repeating it. Write the story for somebody with none of your \
-                       context: what this run was for, what actually happened, what is \
-                       left. The next boot of this identity is handed it as the \
-                       handover, so it is not private. A session that stops without \
+                       repeating it. The next boot of this identity is handed the story \
+                       as the handover, so it is not private. A session that stops without \
                        wrapping is not lost: the next boot sweeps it to `abandoned` \
                        after a day, its chronology stays readable and it is offered \
                        back to resume for {{offer}}, but its story was never told. \
@@ -59,7 +57,8 @@ impl Jojobot {
                        record (`entry_count` is the whole length; `chronology_elided` \
                        and `entries_omitted` say how much is not here, and nothing was \
                        dropped). The closing entry carries the focus as it stood as \
-                       `closing_focus`. Pass your `sid` on every call."
+                       `closing_focus`. The receipt's `changed` lists what this call changed, \
+                       or says nothing. Pass your `sid` on every call."
     )]
     pub(crate) async fn wrap_session(
         &self,
@@ -74,6 +73,7 @@ impl Jojobot {
         // A run that never wrote anything can still tell its story: the card is
         // created here, exactly as a first journal entry would create it, so
         // "I booted, did the work elsewhere, and I am done" is not a dead end.
+        let record_is_new = caller.card.is_none();
         let session = self
             .session_for(&_serialized, &caller, None, Some(&args.story))
             .await?;
@@ -147,6 +147,7 @@ impl Jojobot {
             // verb's own words rather than this guard's.
             Err(_) => None,
         };
+        let story_is_new = already.is_none();
         let entry = match already {
             Some(told) => told,
             None => match self
@@ -259,6 +260,32 @@ impl Jojobot {
             "session": session_json(&wrapped),
             "entry": entry_receipt_json(&entry),
         });
+        // **Only what this call did.** A retry that finds the story already
+        // told adds no entry, and one that finds the run already closed moves
+        // no state.
+        let mut changed = if record_is_new {
+            crate::changed::Changed::created(session.as_str())
+        } else {
+            crate::changed::Changed::default()
+        };
+        if story_is_new {
+            changed = changed.and(crate::changed::Changed::value(
+                session.as_str(),
+                "entry",
+                None,
+                Some(entry.id.as_str()),
+            ));
+        }
+        changed = changed.and(match &before {
+            Some(read) => crate::changed::Changed::value(
+                session.as_str(),
+                "state",
+                Some(read.state.as_token()),
+                Some(wrapped.state.as_token()),
+            ),
+            None => crate::changed::Changed::not_read(),
+        });
+        crate::changed::note_changed(&mut receipt, changed);
         if vouchers_voided > 0
             && let Some(obj) = receipt.as_object_mut()
         {
@@ -319,6 +346,73 @@ mod tests {
     };
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
+
+    /// **A wrap names the state the run left, the closing entry it added and,
+    /// when the wrap is the run's first write, the record it brought into
+    /// being** (card 1333), all on the run's public name.
+    ///
+    /// Paired: a run that wrote before has no `created`, a run whose first
+    /// write is the wrap has one.
+    #[tokio::test]
+    async fn a_wrap_names_the_state_and_the_closing_entry() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let wrap = |sid: String| {
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .wrap_session(Parameters(WrapSessionArgs {
+                            story: "Read the plan and stopped.".into(),
+                            sid,
+                        }))
+                        .await
+                        .expect("wrap_session ok"),
+                )
+            }
+        };
+        let named = |body: &serde_json::Value, what: &str| -> Option<serde_json::Value> {
+            body["changed"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a list of changes: {body}"))
+                .iter()
+                .find(|c| c["what"] == what)
+                .cloned()
+        };
+
+        let sid = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &sid, "set out to read the plan").await;
+        let wrapped = wrap(sid).await;
+        let run = wrapped["session"]["id"].clone();
+        assert_eq!(
+            wrapped["changed"].as_array().map(Vec::len),
+            Some(2),
+            "{wrapped}"
+        );
+        let state = named(&wrapped, "state").unwrap_or_else(|| panic!("state: {wrapped}"));
+        assert_eq!(state["on"], run, "{wrapped}");
+        assert_eq!(state["from"], "active", "{wrapped}");
+        assert_eq!(state["to"], "wrapped", "{wrapped}");
+        let entry = named(&wrapped, "entry").unwrap_or_else(|| panic!("entry: {wrapped}"));
+        assert_eq!(entry["on"], run, "{wrapped}");
+        assert_eq!(entry["to"], wrapped["entry"]["id"], "{wrapped}");
+        assert!(named(&wrapped, "created").is_none(), "{wrapped}");
+
+        let first_write = wrap(booted(&jojobot, "delta").await).await;
+        let run = first_write["session"]["id"].clone();
+        assert_eq!(
+            first_write["changed"].as_array().map(Vec::len),
+            Some(3),
+            "{first_write}"
+        );
+        let created =
+            named(&first_write, "created").unwrap_or_else(|| panic!("created: {first_write}"));
+        assert_eq!(created["on"], run, "{first_write}");
+        let state = named(&first_write, "state").unwrap_or_else(|| panic!("state: {first_write}"));
+        assert_eq!(state["from"], "active", "{first_write}");
+        assert_eq!(state["to"], "wrapped", "{first_write}");
+    }
 
     /// **Wrapping releases every role the wrapping session held, and a fresh
     /// claimant is granted the same role at once** — through the served

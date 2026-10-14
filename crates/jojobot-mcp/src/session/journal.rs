@@ -54,7 +54,8 @@ impl Jojobot {
                        was stored and the opening line. You wrote the entry; start_here returns \
                        the whole chronology when you resume. IF YOUR SESSION HOLDS A CLAIMED \
                        ROLE, this beat renews it, exactly as any other write does — the lease is \
-                       not journal's alone to keep fresh."
+                       not journal's alone to keep fresh. The receipt's `changed` lists what \
+                       this call changed, or says nothing."
     )]
     pub(crate) async fn journal(
         &self,
@@ -85,6 +86,20 @@ impl Jojobot {
                 return session_declined(e, caller.sid.as_str());
             }
         }
+        // **What the receipt's `changed` needs from before the write.** Whether
+        // this beat brings the record into being, and the focus it holds now: a
+        // focus is read only when the call sends one, because only then can it
+        // move.
+        let record_is_new = caller.card.is_none();
+        let focus_was: Result<Option<String>, ()> = match (&caller.card, focus) {
+            (Some(card), Some(_)) => self
+                .sessions
+                .read_session(card)
+                .await
+                .map(|read| Some(read.focus))
+                .map_err(|_| ()),
+            _ => Ok(None),
+        };
         let session = self
             .session_for(&_serialized, &caller, focus, Some(&args.entry))
             .await?;
@@ -194,11 +209,35 @@ impl Jojobot {
                 }
             },
         };
+        let focus_now = moved.map(|s| s.focus);
         let mut body = serde_json::json!({
             "session": session.as_str(),
             "entry": entry_receipt_json(&entry),
-            "focus": moved.map(|s| s.focus),
+            "focus": focus_now,
         });
+        let mut changed = if record_is_new {
+            crate::changed::Changed::created(session.as_str())
+        } else {
+            crate::changed::Changed::default()
+        }
+        .and(crate::changed::Changed::value(
+            session.as_str(),
+            "entry",
+            None,
+            Some(entry.id.as_str()),
+        ));
+        if let Some(now) = focus_now.as_deref() {
+            changed = changed.and(match &focus_was {
+                Ok(was) => crate::changed::Changed::value(
+                    session.as_str(),
+                    "focus",
+                    was.as_deref(),
+                    Some(now),
+                ),
+                Err(()) => crate::changed::Changed::not_read(),
+            });
+        }
+        crate::changed::note_changed(&mut body, changed);
         crate::answer::note_postcondition(
             &mut body,
             self.what_a_beat_left_standing(&session).await,
@@ -372,6 +411,79 @@ mod tests {
     use crate::session::testing::*;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::session::Sid;
+
+    /// **A beat names the entry it added, the focus it moved and the record it
+    /// brought into being** (card 1333), all on the run's public name.
+    ///
+    /// The first beat of a run creates its record; a later one does not. A beat
+    /// that sends the focus the run already holds moves nothing, so it names no
+    /// focus; one that sends a new focus names what it was and what it is.
+    #[tokio::test]
+    async fn a_beat_names_the_entry_the_focus_and_the_record_it_made() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let beat = |entry: &str, focus: Option<&str>| {
+            let (jojobot, sid) = (&jojobot, sid.clone());
+            let (entry, focus) = (entry.to_string(), focus.map(str::to_string));
+            async move {
+                json_of(
+                    &jojobot
+                        .journal(Parameters(JournalArgs { entry, focus, sid }))
+                        .await
+                        .expect("journal call ok"),
+                )
+            }
+        };
+        let named = |body: &serde_json::Value, what: &str| -> Option<serde_json::Value> {
+            body["changed"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a list of changes: {body}"))
+                .iter()
+                .find(|c| c["what"] == what)
+                .cloned()
+        };
+
+        let first = beat("set out to read the plan", Some("reading the plan")).await;
+        let run = first["session"].clone();
+        assert_eq!(
+            first["changed"].as_array().map(Vec::len),
+            Some(3),
+            "{first}"
+        );
+        let created = named(&first, "created").unwrap_or_else(|| panic!("created: {first}"));
+        assert_eq!(created["on"], run, "{first}");
+        let entry = named(&first, "entry").unwrap_or_else(|| panic!("entry: {first}"));
+        assert_eq!(entry["on"], run, "{first}");
+        assert_eq!(entry["to"], first["entry"]["id"], "{first}");
+        assert!(entry.get("from").is_none(), "{first}");
+        let focus = named(&first, "focus").unwrap_or_else(|| panic!("focus: {first}"));
+        assert_eq!(focus["on"], run, "{first}");
+        assert_eq!(focus["to"], "reading the plan", "{first}");
+        assert!(focus.get("from").is_none(), "{first}");
+
+        // The same focus again: the entry is new, the record and the focus are not.
+        let second = beat("read the first page", Some("reading the plan")).await;
+        assert_eq!(
+            second["changed"].as_array().map(Vec::len),
+            Some(1),
+            "{second}"
+        );
+        let entry = named(&second, "entry").unwrap_or_else(|| panic!("entry: {second}"));
+        assert_eq!(entry["to"], second["entry"]["id"], "{second}");
+        assert_ne!(entry["to"], first["entry"]["id"], "{second}");
+
+        let third = beat("moved on to the budget", Some("reading the budget")).await;
+        assert_eq!(
+            third["changed"].as_array().map(Vec::len),
+            Some(2),
+            "{third}"
+        );
+        let focus = named(&third, "focus").unwrap_or_else(|| panic!("focus: {third}"));
+        assert_eq!(focus["from"], "reading the plan", "{third}");
+        assert_eq!(focus["to"], "reading the budget", "{third}");
+        assert!(named(&third, "created").is_none(), "{third}");
+    }
 
     /// **A beat says what now stands and what it left alone.**
     ///

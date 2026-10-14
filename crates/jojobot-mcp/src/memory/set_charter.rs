@@ -59,7 +59,8 @@ impl Jojobot {
                        many bytes were stored — compare it with what you sent and you learn \
                        the store trimmed it — and the opening line, so you can tell which \
                        charter this was. You wrote the prose; start_here with this bot returns \
-                       it in full. A bot that \
+                       it in full. The receipt's `changed` lists what this call changed, or says \
+                       nothing. A bot that \
                        does not exist comes back status: blocked with the nearest handles — \
                        add_entity first; nothing is created here. Rules are not written here \
                        either: a rule is a fact about the bot, so capture it. Neither is a short \
@@ -96,6 +97,7 @@ impl Jojobot {
         {
             return memory_declined("set_charter", refused);
         }
+        let before = self.as_it_stands(&bot).await;
         let stored = match jojobot_domain::request::armed(self.memory.set_prose(
             &bot,
             &args.prose,
@@ -152,6 +154,7 @@ impl Jojobot {
             "you wrote this charter. recall this bot with prose: true returns what you wrote \
              here, in full.",
         );
+        crate::changed::note_changed(&mut body, self.changed_on(&before, &bot).await);
         json_result(&body)
     }
 }

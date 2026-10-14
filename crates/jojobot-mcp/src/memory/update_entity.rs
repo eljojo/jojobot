@@ -105,7 +105,8 @@ impl Jojobot {
                        on its claim, so it is not set here: update_fact on the rule's address \
                        with fields {starred: \"true\"} or {starred: \"false\"} stars or unstars it. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
-                       be read back whole in one answer are refused with nothing written. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       be read back whole in one answer are refused with nothing written. The \
+                       receipt's `changed` lists what this call changed, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn update_entity(
         &self,
@@ -160,6 +161,9 @@ impl Jojobot {
         {
             return memory_declined("update_entity", refused);
         }
+        // **The thing as it stands before the write**, for the receipt's account
+        // of what the write changed.
+        let before = self.as_it_stands(&handle).await;
         let sets = {
             let mut sets = args.sets.clone().unwrap_or_default();
             if let Some(reason) = override_reason {
@@ -316,6 +320,11 @@ impl Jojobot {
                     self.note_status_word(fact, &mut body).await;
                     self.note_depends_on_read(fact, &caller, &mut body).await;
                 }
+                let changed = match fold_behind {
+                    Some(_) => crate::changed::Changed::not_read(),
+                    None => self.changed_on(&before, &entity.id).await,
+                };
+                crate::changed::note_changed(&mut body, changed);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

@@ -75,8 +75,9 @@ impl Jojobot {
                        to retire — one in another bot's box, or in the operator's, which no \
                        bot reads. TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a \
                        decision, not damage — pass `quarantine` with your reason and leave \
-                       `notes` unset; there is no verb that lifts a quarantine. Each \
-                       argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       `notes` unset; there is no verb that lifts a quarantine. The \
+                       receipt's `changed` lists what this call changed, or says nothing. \
+                       Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn mark_processed(
         &self,
@@ -159,7 +160,20 @@ impl Jojobot {
                 Ok(quarantined) => {
                     self.beat("quarantine", quarantined.id.as_str(), args.sid.as_deref())
                         .await;
-                    json_result(&quarantine_receipt_json(&quarantined))
+                    let mut body = quarantine_receipt_json(&quarantined);
+                    crate::changed::note_changed(
+                        &mut body,
+                        match &located {
+                            Some(before) => crate::changed::Changed::value(
+                                quarantined.id.as_str(),
+                                "state",
+                                Some(before.state.as_token()),
+                                Some(mailbox::QUARANTINE_STATE_TOKEN),
+                            ),
+                            None => crate::changed::Changed::not_read(),
+                        },
+                    );
+                    json_result(&body)
                 }
                 Err(e) => mailbox_declined(e),
             };
@@ -220,6 +234,25 @@ impl Jojobot {
                     &mut body,
                     what_a_retirement_left_standing(&processed),
                 );
+                crate::changed::note_changed(
+                    &mut body,
+                    match &located {
+                        Some(before) => crate::changed::Changed::value(
+                            processed.id.as_str(),
+                            "state",
+                            Some(before.state.as_token()),
+                            Some(processed.state.as_token()),
+                        )
+                        .and(crate::changed::Changed::text(
+                            processed.id.as_str(),
+                            "notes",
+                            None,
+                            before.notes.as_deref(),
+                            processed.notes.as_deref(),
+                        )),
+                        None => crate::changed::Changed::not_read(),
+                    },
+                );
                 json_result(&body)
             }
             // Both misses here are answers, not failures: an id that names
@@ -270,6 +303,7 @@ fn what_a_retirement_left_standing(processed: &Message) -> String {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::mailboxes::read_message::ReadMessageArgs;
     use crate::mailboxes::testing::*;
 
     /// The same, for the terminal verb — whose caller got the body from the
@@ -309,6 +343,109 @@ mod tests {
                 .expect("a pointer")
                 .contains("read_message")
         );
+    }
+
+    /// **Retiring a message names the state it moved through and the notes it
+    /// stored by their size** (card 1333). A message already read moves from
+    /// `read`; processing the same message again with the same notes changes
+    /// nothing; a retirement that stores no notes has no notes entry.
+    #[tokio::test]
+    async fn retiring_a_message_names_the_state_and_the_notes() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let sid = as_bot(&jojobot, "inbox");
+        let process = |id: String, notes: Option<&str>| {
+            let (jojobot, sid) = (&jojobot, sid.clone());
+            let notes = notes.map(str::to_string);
+            async move {
+                json_of(
+                    &jojobot
+                        .mark_processed(Parameters(MarkProcessedArgs {
+                            request_id: None,
+                            message_id: id,
+                            notes,
+                            sid: Some(sid),
+                            quarantine: None,
+                        }))
+                        .await
+                        .expect("mark_processed ok"),
+                )
+            }
+        };
+
+        let first = send(&jojobot, "inbox", "epsilon", "the first crate").await;
+        let id = first["id"].as_str().expect("an id").to_string();
+        let done = process(id.clone(), Some("filed under crates")).await;
+        let changed = done["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {done}"));
+        assert_eq!(changed.len(), 2, "{done}");
+        assert_eq!(changed[0]["on"], id.as_str(), "{done}");
+        assert_eq!(changed[0]["what"], "state", "{done}");
+        assert_eq!(changed[0]["from"], "new", "{done}");
+        assert_eq!(changed[0]["to"], "processed", "{done}");
+        assert_eq!(changed[1]["on"], id.as_str(), "{done}");
+        assert_eq!(changed[1]["what"], "notes", "{done}");
+        assert!(changed[1].get("bytes_before").is_none(), "{done}");
+        assert_eq!(
+            changed[1]["bytes_after"],
+            "filed under crates".len(),
+            "{done}"
+        );
+        assert!(changed[1].get("to").is_none(), "no words come back: {done}");
+
+        let again = process(id.clone(), Some("filed under crates")).await;
+        assert_eq!(again["changed"], "nothing", "{again}");
+
+        let second = send(&jojobot, "inbox", "epsilon", "the second crate").await;
+        let id = second["id"].as_str().expect("an id").to_string();
+        jojobot
+            .read_message(Parameters(ReadMessageArgs {
+                history: None,
+                message_id: id.clone(),
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("read_message ok");
+        let bare = process(id.clone(), None).await;
+        let changed = bare["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {bare}"));
+        assert_eq!(changed.len(), 1, "{bare}");
+        assert_eq!(changed[0]["what"], "state", "{bare}");
+        assert_eq!(changed[0]["from"], "read", "{bare}");
+        assert_eq!(changed[0]["to"], "processed", "{bare}");
+    }
+
+    /// **A quarantine names the state the message left**, to `quarantined`
+    /// (card 1333), and writes no notes entry: a quarantine records none.
+    #[tokio::test]
+    async fn a_quarantine_names_the_state_it_left() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let target = send(&jojobot, "inbox", "epsilon", "the third crate").await;
+        let id = target["id"].as_str().expect("an id").to_string();
+
+        let receipt = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
+                    message_id: id.clone(),
+                    notes: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
+                    quarantine: Some("the count cannot be trusted".into()),
+                }))
+                .await
+                .expect("quarantining is an answer"),
+        );
+        let changed = receipt["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {receipt}"));
+        assert_eq!(changed.len(), 1, "{receipt}");
+        assert_eq!(changed[0]["on"], id.as_str(), "{receipt}");
+        assert_eq!(changed[0]["what"], "state", "{receipt}");
+        assert_eq!(changed[0]["from"], "new", "{receipt}");
+        assert_eq!(changed[0]["to"], "quarantined", "{receipt}");
     }
 
     /// **Retiring a message confirms the move and does not restate the

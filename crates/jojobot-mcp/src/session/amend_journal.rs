@@ -37,7 +37,8 @@ impl Jojobot {
                        STARTS a session: there is nothing to amend in one that does not exist \
                        yet. IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it \
                        was stamped, the byte count of what was stored and the opening line. You \
-                       wrote the text; start_here returns the chronology when you resume."
+                       wrote the text; start_here returns the chronology when you resume. The \
+                       receipt's `changed` lists what this call changed, or says nothing."
     )]
     pub(crate) async fn amend_journal(
         &self,
@@ -60,12 +61,28 @@ impl Jojobot {
         };
         // The guard exists to be held across the amend, not merely taken.
         let _ = &_serialized;
+        // **The newest entry as it stands, read before the rewrite**, so the
+        // receipt can name its size on each side.
+        let before = newest_entry(self.sessions.read_session(&session).await.ok());
         match self.sessions.amend_last(&session, &args.entry).await {
             Ok(entry) => {
                 let mut body = serde_json::json!({
                     "session": session.as_str(),
                     "entry": entry_receipt_json(&entry),
                 });
+                crate::changed::note_changed(
+                    &mut body,
+                    match before {
+                        Some(before) => crate::changed::Changed::text(
+                            session.as_str(),
+                            "words",
+                            Some(entry.id.as_str()),
+                            Some(before.as_str()),
+                            Some(entry.text.as_str()),
+                        ),
+                        None => crate::changed::Changed::not_read(),
+                    },
+                );
                 if self
                     .first_contact(crate::teaching::SESSION_ID_DOMAIN, Some(&caller))
                     .await
@@ -85,11 +102,69 @@ impl Jojobot {
     }
 }
 
+/// **The words of a session's newest entry**, or nothing when the record could
+/// not be read or holds none.
+fn newest_entry(read: Option<jojobot_domain::session::Session>) -> Option<String> {
+    read?.entries.last().map(|entry| entry.text.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::testing::ensure;
     use crate::session::testing::*;
+
+    /// **An amendment names the entry it rewrote by the size of its words**
+    /// (card 1333), never by the words, on the run's public name. Amending to
+    /// the text the entry already holds changes nothing and says so.
+    #[tokio::test]
+    async fn an_amendment_names_the_size_of_the_entry_and_the_same_text_is_nothing() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let first = journal_entry(&jojobot, &sid, "set out to read the box").await;
+        let amend = |entry: &str| {
+            let (jojobot, sid) = (&jojobot, sid.clone());
+            let entry = entry.to_string();
+            async move {
+                json_of(
+                    &jojobot
+                        .amend_journal(Parameters(AmendJournalArgs { entry, sid }))
+                        .await
+                        .expect("amend ok"),
+                )
+            }
+        };
+
+        let amended_text = "read the hand-off and scoped the slice";
+        let body = amend(amended_text).await;
+        let changed = body["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {body}"));
+        assert_eq!(changed.len(), 1, "{body}");
+        assert_eq!(changed[0]["on"], first["session"], "{body}");
+        assert_eq!(changed[0]["what"], "words", "{body}");
+        assert_eq!(changed[0]["key"], first["entry"]["id"], "{body}");
+        assert_eq!(
+            changed[0]["bytes_before"],
+            "set out to read the box".len(),
+            "{body}"
+        );
+        assert_eq!(changed[0]["bytes_after"], amended_text.len(), "{body}");
+        assert!(changed[0].get("to").is_none(), "no words come back: {body}");
+
+        let again = amend(amended_text).await;
+        assert_eq!(again["changed"], "nothing", "{again}");
+
+        // A handle in the words is stored as the id it names, and the same
+        // words again are still the same words.
+        ensure(&jojobot, "person:milhouse").await;
+        let linked = amend("met @person:milhouse about the plan").await;
+        assert_eq!(linked["changed"][0]["what"], "words", "{linked}");
+        let linked_again = amend("met @person:milhouse about the plan").await;
+        assert_eq!(linked_again["changed"], "nothing", "{linked_again}");
+    }
 
     /// **The amendment is receipted, and the receipt is what says it landed.**
     ///

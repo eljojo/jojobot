@@ -777,7 +777,8 @@ impl Jojobot {
                        edit it through, what was recorded, and how many keys landed; the \
                        write is read back from the store before it is called a success. \
                        recall the subject to read it back. A claim too big to be read back \
-                       whole is refused with nothing written. Each argument's own description \
+                       whole is refused with nothing written. The receipt's `changed` lists \
+                       what this call changed, or says nothing. Each argument's own description \
                        holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn capture(
@@ -1045,6 +1046,7 @@ impl Jojobot {
         // succeeded, and that failure must not read as this capture having
         // failed. `fold_behind` carries what to note on the receipt; the
         // written record itself is unpacked exactly as an ordinary success.
+        let before = self.as_it_stands(&new.subject).await;
         let (captured, fold_behind) =
             match jojobot_domain::request::armed(self.memory.capture(new)).await {
                 Ok(captured) => (captured, None),
@@ -1071,6 +1073,11 @@ impl Jojobot {
                 // claim's day contradicts it inside one session.
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+                let changed = match fold_behind {
+                    Some(_) => crate::changed::Changed::not_read(),
+                    None => self.changed_on(&before, &fact.subject).await,
+                };
+                crate::changed::note_changed(&mut body, changed);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

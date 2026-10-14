@@ -185,7 +185,8 @@ impl Jojobot {
                        caller cannot extend, shrink or replace a type the software owns — \
                        declare a name of your own instead. Every type you declare is yours. \
                        The answer names every type that exists, by name only, so you can see \
-                       what is there without asking a second time. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       what is there without asking a second time. The receipt's `changed` \
+                       lists what this call changed in the type, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn declare_type(
         &self,
@@ -241,6 +242,12 @@ impl Jojobot {
             });
         }
 
+        // **The declaration as it stood, read before the write replaces it.**
+        let before = self
+            .memory
+            .declared_types()
+            .await
+            .map(|types| types.into_iter().find(|t| t.name == args.name.trim()));
         let declared = match jojobot_domain::request::armed(self.memory.declare_type(
             DeclaredType::new(&args.name, fields),
             caller.as_ref().map(|caller| caller.sid.as_str()),
@@ -290,6 +297,13 @@ impl Jojobot {
             })
             .collect();
         crate::answer::note_delta(&mut body, trimmed);
+        crate::changed::note_changed(
+            &mut body,
+            match &before {
+                Ok(before) => crate::changed::Changed::of_type(before.as_ref(), &declared),
+                Err(_) => crate::changed::Changed::not_read(),
+            },
+        );
         json_result(&body)
     }
 }
@@ -374,6 +388,64 @@ mod tests {
             memory.type_write_sessions("recipe"),
             vec![Some(TEST_RUN.to_string()), None]
         );
+    }
+
+    /// **A declaration names what it changed in the type** (card 1333). A new
+    /// type is `created`; the same declaration again changes nothing; a
+    /// redeclaration names each key added, dropped or changed, with a short
+    /// token for what the key held and holds.
+    ///
+    /// Paired in one case so the `nothing` depends on the `created` before it,
+    /// and the key entries on the declaration they replace.
+    #[tokio::test]
+    async fn a_declaration_names_what_it_changed_in_the_type() {
+        let jojobot = handler();
+        let declare = |args: DeclareTypeArgs| {
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .declare_type(Parameters(args))
+                        .await
+                        .expect("declare_type answers"),
+                )
+            }
+        };
+
+        let first = declare(declare_args("rota", &["starts", "ends"])).await;
+        let changed = first["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {first}"));
+        assert_eq!(changed.len(), 1, "{first}");
+        assert_eq!(changed[0]["on"], "rota", "{first}");
+        assert_eq!(changed[0]["what"], "created", "{first}");
+
+        let again = declare(declare_args("rota", &["starts", "ends"])).await;
+        assert_eq!(again["changed"], "nothing", "{again}");
+
+        let mut redeclared = declare_args("rota", &["ends", "weight"]);
+        redeclared.fields[0].holds = Some("date".into());
+        redeclared.fields[1].holds = Some("number".into());
+        redeclared.fields[1].folds = Some("sum".into());
+        redeclared.fields[1].required = true;
+        let second = declare(redeclared).await;
+        let changed = second["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {second}"));
+        assert_eq!(changed.len(), 3, "{second}");
+        for entry in changed {
+            assert_eq!(entry["on"], "rota", "{second}");
+            assert_eq!(entry["what"], "key", "{second}");
+        }
+        assert_eq!(changed[0]["key"], "ends", "{second}");
+        assert_eq!(changed[0]["from"], "text, newest", "{second}");
+        assert_eq!(changed[0]["to"], "date, newest", "{second}");
+        assert_eq!(changed[1]["key"], "starts", "{second}");
+        assert_eq!(changed[1]["from"], "text, newest", "{second}");
+        assert!(changed[1].get("to").is_none(), "a dropped key: {second}");
+        assert_eq!(changed[2]["key"], "weight", "{second}");
+        assert!(changed[2].get("from").is_none(), "an added key: {second}");
+        assert_eq!(changed[2]["to"], "number, sum, required", "{second}");
     }
 
     /// **A caller cannot declare a key that describes its record** (rule 360).

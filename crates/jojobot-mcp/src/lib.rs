@@ -34,6 +34,7 @@ mod arguments;
 mod beat;
 mod boundary;
 mod caller;
+mod changed;
 mod clock;
 pub mod mailboxes;
 pub mod memory;

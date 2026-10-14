@@ -438,6 +438,9 @@ async fn a_fold_that_falls_behind_does_not_make_the_put_a_failure() {
     let answered = put_ok(&jojobot, "document:homer", "# One\n\na\n\n# Two\n\nb\n").await;
     assert_eq!(answered["sections"], 2);
     assert_eq!(answered["fold"]["behind"], "stale");
+    // **A write that landed whose fold is behind cannot say what it changed**,
+    // and says so rather than listing nothing.
+    assert_eq!(answered["changed"], "not_read", "{answered}");
     assert_eq!(
         read_all(&jojobot, "document:homer").await,
         "# One\n\na\n\n# Two\n\nb\n"
@@ -1748,4 +1751,43 @@ async fn a_fenced_block_bigger_than_a_record_is_refused_naming_the_section_and_t
         read_all(&jojobot, "document:marge").await,
         "# Small\n\nfits\n"
     );
+}
+
+/// **A put names each section it wrote by its address**, so a caller knows
+/// which sections moved. A second put names only its own sections, and the
+/// ones already there are not listed.
+#[tokio::test]
+async fn a_put_lists_one_created_entry_per_section_it_wrote() {
+    let jojobot = handler();
+    let first = put_ok(
+        &jojobot,
+        "document:krusty",
+        "# One\n\nThe first part.\n\n# Two\n\nThe second part.\n",
+    )
+    .await;
+    let changed = first["changed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of changes: {first}"));
+    assert_eq!(changed.len(), 2, "{first}");
+    assert!(changed.iter().all(|c| c["what"] == "created"), "{first}");
+    assert_eq!(changed[0]["on"], first["first"], "{first}");
+    assert_eq!(changed[1]["on"], first["last"], "{first}");
+
+    let more = json_of(
+        &put(
+            &jojobot,
+            PutDocumentArgs {
+                after: first["last"].as_str().map(str::to_string),
+                ..put_args("document:krusty", "# Three\n\nThe third part.\n").await
+            },
+        )
+        .await,
+    );
+    let changed = more["changed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of changes: {more}"));
+    assert_eq!(changed.len(), 1, "{more}");
+    assert_eq!(changed[0]["what"], "created", "{more}");
+    assert_eq!(changed[0]["on"], more["first"], "{more}");
+    assert_ne!(changed[0]["on"], first["last"], "{more}");
 }

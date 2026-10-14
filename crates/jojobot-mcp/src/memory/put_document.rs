@@ -78,7 +78,8 @@ impl Jojobot {
                        address, so an edited file put twice cannot double the text. Every \
                        section is checked before any is written; a write that stops midway \
                        answers with the addresses that landed and where the rest begins. \
-                       Answers with a receipt, not the text. A refusal before any section \
+                       Answers with a receipt, not the text. The receipt's `changed` lists \
+                       what this call changed, or says nothing. A refusal before any section \
                        lands is an answer with status: blocked and nothing written; one after \
                        some landed also carries what landed and where the rest begins."
     )]
@@ -280,6 +281,9 @@ impl Jojobot {
             }
         }
 
+        // **The document as it stands before the first section is written**,
+        // for the receipt's account of which sections the write added.
+        let before = self.as_it_stands(&subject).await;
         let mut landed: Vec<FactAddress> = Vec::new();
         let mut landed_bytes = 0;
         let mut fold_behind = None;
@@ -342,6 +346,11 @@ impl Jojobot {
         if cut_for_size > 0 {
             body["cut_for_size"] = cut_for_size.into();
         }
+        let changed = match fold_behind {
+            Some(_) => crate::changed::Changed::not_read(),
+            None => self.changed_on(&before, &subject).await,
+        };
+        crate::changed::note_changed(&mut body, changed);
         if let Some(behind) = fold_behind {
             crate::answer::note_fold_behind(&mut body, behind);
         }
