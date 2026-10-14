@@ -53,9 +53,10 @@ async fn answers(pool: &MySqlPool, sql: &str, binds: &[&str]) -> Vec<Option<i64>
         .unwrap_or_else(|why| panic!("the store answers {sql}: {why}"))
 }
 
-/// The ordinal reads the code makes, each over a table of the real schema and the
-/// key prefix the code binds. Copied from the reads in `dolt/memory.rs`, because
-/// what the store is held to is the shape, not a wrapper around it.
+/// The ordinal reads the code made, each over a table of the real schema and the
+/// key prefix the code binds. Spelled as they were in `dolt/memory.rs`,
+/// `dolt/mailboxes.rs` and `dolt/sessions.rs`, before `dolt/ordinal.rs` took them
+/// over, because what the store is held to is the shape, not a wrapper around it.
 const PREFIX_READS: &[(&str, &[&str])] = &[
     (
         "SELECT MAX(ordinal) FROM field_write WHERE entity = ? AND `key` = ?",
