@@ -7895,19 +7895,30 @@ async fn an_ordinary_read_of_work_carries_no_readiness() {
 async fn hostile_dependencies(jojobot: &Jojobot, count: u64) -> Vec<String> {
     let mut handles = Vec::new();
     for n in 0..count {
-        let mut state = 0x9e37_79b9_u64.wrapping_mul(n + 1);
-        let slug: String = (0..110)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                char::from(b'a' + ((state >> 33) % 26) as u8)
-            })
-            .collect();
+        let slug = unlike_slug(n, None);
         work_with_slug(jojobot, &slug, &[("status", "next")]).await;
         handles.push(format!("work:{slug}"));
     }
     handles
+}
+
+/// A 110-letter slug no other `n` shares a long run with, so the near-slug screen
+/// lets each through. `first` fixes the opening letter, which fixes where the
+/// handle sorts.
+fn unlike_slug(n: u64, first: Option<char>) -> String {
+    let mut state = 0x9e37_79b9_u64.wrapping_mul(n + 1);
+    let mut slug: String = (0..110)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            char::from(b'a' + ((state >> 33) % 26) as u8)
+        })
+        .collect();
+    if let Some(first) = first {
+        slug.replace_range(..1, &first.to_string());
+    }
+    slug
 }
 
 /// **A piece of work naming hundreds of unfinished dependencies still answers
@@ -8071,6 +8082,97 @@ async fn the_blockers_share_the_ceiling_with_the_row_they_ride_on() {
         tight.to_string().len() <= jojobot_domain::text::ANSWER_CEILING,
         "the answer is {} characters",
         tight.to_string().len()
+    );
+}
+
+/// **The ready view spends its window on ready work.** Forty finished pieces of
+/// work, each carrying a long note, fill an answer by themselves; the one piece
+/// of work that can be started sorts after all of them. It is on the first page
+/// all the same, the work that cannot start is left out and counted, and the
+/// answer holds nothing it would have to page to.
+#[tokio::test]
+async fn the_ready_view_spends_its_window_on_ready_work_only() {
+    let jojobot = crate::harness::handler_shipped();
+    let note = "x".repeat(1_000);
+    for n in 0..40 {
+        let slug = unlike_slug(n, Some('a'));
+        work_with_slug(&jojobot, &slug, &[("status", "done"), ("notes", &note)]).await;
+    }
+    work_with(&jojobot, "work:phi", &[("status", "next")]).await;
+    work_with(
+        &jojobot,
+        "work:sigma",
+        &[("status", "next"), ("depends_on", "work:phi")],
+    )
+    .await;
+
+    let body = ready_view(&jojobot, None).await;
+
+    assert_eq!(listed(&body), ["work:phi"], "{body}");
+    assert!(
+        body["not_shown"].is_null(),
+        "the window is spent on ready work, so nothing ready waits on a later page: {body}"
+    );
+    assert!(
+        !listed(&body).contains(&"work:sigma".to_string()),
+        "work behind an unfinished dependency is still left out: {body}"
+    );
+    assert!(
+        body["ready_left_out"]["count"].as_u64() >= Some(1),
+        "and the work left out is still counted: {body}"
+    );
+}
+
+/// **Paging through the ready view counts ready work.** Forty finished pieces of
+/// work and forty ready ones, each with a long note, so the ready ones take
+/// several pages. Following the offset the answer names serves every ready piece
+/// once, in handle order, and no finished one.
+#[tokio::test]
+async fn paging_the_ready_view_walks_ready_work_only() {
+    let jojobot = crate::harness::handler_shipped();
+    let note = "x".repeat(1_000);
+    let mut ready = Vec::new();
+    for n in 0..40 {
+        let done = unlike_slug(n, Some('a'));
+        work_with_slug(&jojobot, &done, &[("status", "done"), ("notes", &note)]).await;
+        let open = unlike_slug(n + 1_000, Some('b'));
+        work_with_slug(&jojobot, &open, &[("status", "next"), ("notes", &note)]).await;
+        ready.push(format!("work:{open}"));
+    }
+    ready.sort();
+
+    let mut served: Vec<String> = Vec::new();
+    let mut next = Some(0_u64);
+    let mut pages = 0;
+    while let Some(offset) = next {
+        pages += 1;
+        assert!(pages < 20, "the pages never ended: served {}", served.len());
+        let part = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    view: Some("ready".into()),
+                    subject: None,
+                    offset: Some(offset as u32),
+                    facts: None,
+                    sid: Some(writing_as(&jojobot)),
+                    ..recall_args("work:phi")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let objects = listed(&part);
+        assert!(!objects.is_empty(), "page at {offset} was empty: {part}");
+        served.extend(objects);
+        next = part["not_shown"]["offset"].as_u64();
+    }
+
+    assert!(
+        pages > 1,
+        "the ready work fits one page; the case proves nothing"
+    );
+    assert_eq!(
+        served, ready,
+        "every ready piece once, in handle order, none finished"
     );
 }
 

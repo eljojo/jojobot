@@ -152,6 +152,61 @@ pub async fn narrow(
     Ok(Narrowed { owed, ready })
 }
 
+/// **The part of an already-narrowed answer a window serves**, with the same
+/// arithmetic [`graph::walk_in_window`] applies while it reads.
+///
+/// A window cut during the walk is spent on what the selection found, and a
+/// narrowing that runs after it removes objects the window already paid for:
+/// a page of finished work crowds out the one ready piece behind it. When the
+/// question narrows by readiness the walk is run whole, the narrowing runs, and
+/// the window is applied here, so it is spent on the objects that remain.
+///
+/// `offset` objects stand before the window and are dropped. Of the rest each
+/// adds `size_of` to the room, and the object that takes the total past the room
+/// is kept, as the walk keeps it. `aligned` are lists with one entry per object,
+/// cut the same way. Returns how many stood before the window and how many stand
+/// after it.
+pub fn cut_to_window<T>(
+    found: &mut Vec<graph::Object>,
+    aligned: &mut [&mut Vec<T>],
+    window: &graph::Window<'_>,
+) -> (usize, usize) {
+    let sizes: Vec<usize> = found
+        .iter()
+        .map(|object| (window.size_of)(object))
+        .collect();
+    let total = sizes.len();
+    let (skipped, passed) = window_bounds(&sizes, window.offset, window.budget);
+    found.truncate(passed);
+    found.drain(..skipped);
+    for list in aligned {
+        list.truncate(passed);
+        list.drain(..skipped);
+    }
+    (skipped, total - passed)
+}
+
+/// **Where a window starts and ends over objects of these sizes**: how many
+/// stand before it, and the index one past the last it serves.
+///
+/// `offset` objects are skipped (all of them, when there are fewer). Of the
+/// rest each adds its size to the room, and the first to take the total past
+/// `budget` is served and is the last, as the walk serves it: it is the first
+/// the caller finds does not fit, and the ones behind it cannot.
+fn window_bounds(sizes: &[usize], offset: usize, budget: usize) -> (usize, usize) {
+    let skipped = offset.min(sizes.len());
+    let mut passed = skipped;
+    let mut spent = 0usize;
+    for size in &sizes[skipped..] {
+        passed += 1;
+        spent += size;
+        if spent > budget {
+            break;
+        }
+    }
+    (skipped, passed)
+}
+
 /// **Where a question failed**, because a caller says different things about a
 /// selection it could not read and a dependency it could not read.
 pub enum Failed {
@@ -295,4 +350,37 @@ pub async fn keep_ready(
         verdicts: kept_verdicts,
         left_out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_bounds;
+
+    #[test]
+    fn the_object_that_takes_the_total_past_the_room_is_served_and_is_the_last() {
+        // 10 + 10 = 20 fits in 25; the third takes it to 30 and is served.
+        assert_eq!(window_bounds(&[10, 10, 10, 10], 0, 25), (0, 3));
+    }
+
+    #[test]
+    fn a_window_that_fits_everything_serves_everything() {
+        assert_eq!(window_bounds(&[10, 10, 10], 0, 30), (0, 3));
+        assert_eq!(window_bounds(&[], 0, 30), (0, 0));
+    }
+
+    #[test]
+    fn an_offset_skips_objects_before_the_room_is_counted() {
+        // Two objects stand before the window; the room is spent on the rest.
+        assert_eq!(window_bounds(&[50, 50, 10, 10, 10], 2, 15), (2, 4));
+    }
+
+    #[test]
+    fn an_offset_past_the_end_skips_all_and_serves_nothing() {
+        assert_eq!(window_bounds(&[10, 10], 9, 100), (2, 2));
+    }
+
+    #[test]
+    fn a_room_smaller_than_one_object_still_serves_that_object() {
+        assert_eq!(window_bounds(&[40, 40], 0, 5), (0, 1));
+    }
 }

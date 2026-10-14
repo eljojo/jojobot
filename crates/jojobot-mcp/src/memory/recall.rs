@@ -2686,6 +2686,15 @@ impl Jojobot {
                 .saturating_sub(crate::answer::widest_not_shown("objects")),
             size_of: &floor,
         });
+        // **A readiness question is narrowed before the window cuts.** A window
+        // spent during the walk is spent on finished work and on work that is
+        // blocked, and the ready work behind them never reaches the answer; the
+        // window is applied after the narrowing, over what is ready.
+        let (walk_window, deferred_window) = if asks_ready {
+            (None, window)
+        } else {
+            (window, None)
+        };
         let graph::Selected {
             objects: mut found,
             ordered,
@@ -2695,9 +2704,9 @@ impl Jojobot {
             archived_excluded,
             merged_excluded,
             decisions_archived,
-            skipped,
-            left_over,
-        } = match view_run::select(self.memory.as_ref(), &session_docs, &query, window).await {
+            skipped: walked_past,
+            left_over: walked_left,
+        } = match view_run::select(self.memory.as_ref(), &session_docs, &query, walk_window).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", through_view(e)),
         };
@@ -2817,6 +2826,15 @@ impl Jojobot {
             readiness = Some(pass.verdicts);
             ready_left_out = Some(pass.left_out);
         }
+        let (skipped, left_over) = match &deferred_window {
+            Some(window) => {
+                let mut verdicts = readiness.take().unwrap_or_default();
+                let outside = view_run::cut_to_window(&mut found, &mut [&mut verdicts], window);
+                readiness = Some(verdicts);
+                outside
+            }
+            None => (walked_past, walked_left),
+        };
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
         // gets them in, ranked, without knowing there was anything to ask.
