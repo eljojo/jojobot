@@ -1952,6 +1952,73 @@ async fn names_an_older_merge_moved_read_cleanly_and_are_not_named_twice() {
     store.stop().await;
 }
 
+/// **Forwarding rows that lead back to each other are listed and left.** The
+/// pass that brings a link on a forwarding row to the thing the fold ended in
+/// follows the rows from one to the next; a loop has no end, so it names the row
+/// and repoints nothing. **Paired**: a forward that does end, beside the loop,
+/// is repointed as before.
+#[tokio::test]
+async fn forwarding_rows_that_loop_are_listed_and_left_by_the_link_pass() {
+    let scratch = Scratch::new("forward-loop-pass");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forward_loop_pass")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    let [homer, marge, bart] = ["homer", "marge", "bart"].map(|slug| format!("person:{slug}"));
+    let handles = [homer.as_str(), marge.as_str(), bart.as_str()];
+    for (handle, name) in handles.iter().zip(["Homer", "Marge", "Bart"]) {
+        memory
+            .add_entity(NewEntity::new(EntityId::person(*handle), name, "fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+    }
+    // Two rows forward to each other; the third forwards to the first of them.
+    for (from, to) in [(&homer, &marge), (&marge, &homer), (&bart, &homer)] {
+        sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+            .bind(to)
+            .bind(from)
+            .execute(&pool)
+            .await
+            .expect("the forward is written");
+    }
+
+    let report = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass runs");
+    assert_eq!(report.repointed, 0, "a loop repoints nothing: {report:?}");
+    assert_eq!(
+        report.skipped.len(),
+        3,
+        "each row of a loop is named, and a forward into one: {report:?}"
+    );
+    assert!(
+        report
+            .skipped
+            .iter()
+            .all(|line| line.ends_with("forwards in a loop")),
+        "{report:?}"
+    );
+    assert!(
+        !memory
+            .migrate_forwarded_links()
+            .await
+            .expect("a second pass runs")
+            .settled,
+        "a pass that skipped a forward is not marked finished"
+    );
+    store.stop().await;
+}
+
 /// **A claim stored under the folded thing that no merge event lists is named,
 /// not dropped.** The survivor serves every claim the event maps, names the one
 /// it cannot serve as left out with the reason and the address that reads it,

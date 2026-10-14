@@ -31,7 +31,7 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::claim_walk::{
-    ClaimMove, ClaimWalk, FoldedInto, follow_claim, follow_thing,
+    ClaimMove, ClaimWalk, FoldedInto, ThingWalk, follow_claim, follow_thing,
 };
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::unmapped::UnmappedClaim;
@@ -595,29 +595,26 @@ impl DoltMemory {
             if into.is_none() {
                 continue;
             }
-            let mut at = *into;
-            let mut end = None;
-            let mut looped = true;
+            // The rows are followed by the walk the domain owns: this supplies the
+            // thing each forward names, and a forward that cannot be placed ends
+            // the walk and is listed.
+            let mut walk = ThingWalk::new(*badge);
             let mut unplaced = None;
-            // A chain is as long as the rows at most; a longer walk is a loop.
-            for _ in 0..=by_badge.len() {
-                let Some(name) = at else {
-                    looped = false;
-                    break;
-                };
+            let mut at = *into;
+            while let Some(name) = at {
                 let next = match placed(name) {
                     Ok(next) => next,
                     Err(why) => {
                         unplaced = Some(format!("{handle} forwards to {name}: {why}"));
-                        looped = false;
                         break;
                     }
                 };
                 let Some((_, onward)) = by_badge.get(next) else {
-                    looped = false;
                     break;
                 };
-                end = Some(next);
+                if !walk.step(Some(next)) {
+                    break;
+                }
                 at = *onward;
             }
             if let Some(line) = unplaced {
@@ -625,13 +622,15 @@ impl DoltMemory {
                 report.skipped.push(line);
                 continue;
             }
-            let Some(to) = end else { continue };
-            if looped || to == *badge {
+            let Ok(to) = walk.finish() else {
                 tracing::warn!(
                     handle,
                     "store: a forwarding row loops back on itself; its links are left"
                 );
                 report.skipped.push(format!("{handle} forwards in a loop"));
+                continue;
+            };
+            if to == *badge {
                 continue;
             }
             report.repointed += Self::repoint_field_links(&mut tx, &declared, badge, to).await?;
