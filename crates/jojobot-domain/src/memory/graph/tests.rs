@@ -4671,6 +4671,7 @@ fn thing(handle: &str, badge: &str) -> Entity {
             .expect("a handle of a shipped kind"),
         name: handle.to_string(),
         aliases: Vec::new(),
+        folded_names: Vec::new(),
         source: "test".to_string(),
         crm: None,
         parent: None,

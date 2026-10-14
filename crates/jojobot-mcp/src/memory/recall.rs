@@ -2373,9 +2373,8 @@ impl Jojobot {
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing and stood_for ask for more, each off \
                        by default and each saying what it left out; `keys` asks for less \
-                       (the answer's `narrowed` names what it hid, once, and each object's \
-                       fields_left_out does when a view's shows_keys supplied the keys; the \
-                       keys you send win over a view's shows_keys). A merged thing's object \
+                       (the answer's `narrowed` names what it hid, once, and \
+                       fields_left_out does when a view's shows_keys supplied the keys). A merged thing's object \
                        can carry `claims_left_out`: claims stored under a thing folded into it \
                        that it cannot serve, each with a reason and an address. Read one with \
                        history_record set to that address, and give no subject. A thing others were folded into lists \
