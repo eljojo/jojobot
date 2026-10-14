@@ -84,6 +84,20 @@ pub(crate) struct MovePlan {
 }
 
 impl Jojobot {
+    /// **Where an address a caller holds reads now**: moved by the merge walk when
+    /// a merge moved its claim, and homed under the handle its thing answers to.
+    async fn served_address(&self, address: &FactAddress) -> Result<FactAddress, MemoryError> {
+        let address = self
+            .memory
+            .moved_address(address)
+            .await?
+            .unwrap_or_else(|| address.clone());
+        Ok(FactAddress::new(
+            self.current_handle(&address.home).await?,
+            address.local,
+        ))
+    }
+
     /// **Plan the move of the section at `address` behind the section `after`
     /// names.** Both have to be live sections of the same document. A section
     /// moves with the chunks that carry it on, and lands behind the target's own
@@ -100,7 +114,12 @@ impl Jojobot {
                  the same document. {what}"
             ))
         };
-        let target = FactAddress::parse(after)?;
+        // **Both addresses are read where their claims are now**: under the
+        // handle the document answers to today, and past a merge. A caller holds
+        // an address from before a rename or a merge, and the sections below
+        // are listed under the handle they wear now.
+        let address = &self.served_address(address).await?;
+        let target = self.served_address(&FactAddress::parse(after)?).await?;
         let facts = self.memory.recall(&address.home).await?;
         let live = live_sections(&facts);
         let is = |held: &Held<'_>, wanted: &FactAddress| {

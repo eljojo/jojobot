@@ -776,6 +776,47 @@ async fn a_section_moves_behind_another_and_no_other_record_is_written() {
     }
 }
 
+/// **A section addressed by a name its document wore once moves like any
+/// other**, and the section it goes behind may be addressed by the same former
+/// name. The document is renamed after it is put, so every address a caller
+/// holds from before names a handle nothing wears now. The move by the current
+/// name is the case above, and the document is read back by its current name, so
+/// the case cannot pass by moving nothing.
+#[tokio::test]
+async fn a_section_addressed_by_a_former_handle_moves_behind_the_right_section() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# One\n\nfirst\n\n# Two\n\nsecond\n\n# Three\n\nthird\n",
+    )
+    .await;
+    let one = address_of(&jojobot, "document:alpha", "# One").await;
+    let three = address_of(&jojobot, "document:alpha", "# Three").await;
+    jojobot
+        .rename_entity(Parameters(crate::memory::RenameEntityArgs {
+            handle: "document:alpha".into(),
+            to: "document:beta".into(),
+            parent: None,
+            recorded_at: None,
+            override_token: None,
+            sid: Some(sid),
+        }))
+        .await
+        .expect("rename_entity answers");
+
+    // Both addresses carry the name the document wore before the rename.
+    assert!(one.starts_with("document:alpha#"), "{one}");
+    let moved = move_section(&jojobot, &one, &three).await;
+    assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
+    assert_eq!(
+        read_all(&jojobot, "document:beta").await,
+        "# Two\n\nsecond\n\n# Three\n\nthird\n# One\n\nfirst\n\n",
+        "the section landed behind the one the former name pointed at"
+    );
+}
+
 /// **A section can be moved and edited in one call.**
 #[tokio::test]
 async fn a_section_can_be_moved_and_edited_in_one_call() {
