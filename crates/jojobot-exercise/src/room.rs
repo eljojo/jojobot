@@ -36,7 +36,10 @@ const ATTEMPTS: usize = 3;
 /// child process the server brings up and migrates first, so this is minutes of
 /// patience rather than seconds — and a run that waits forever on a server that
 /// died is a run nobody can read.
-const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+///
+/// **Every test that waits for a real binary to boot uses this one value**, so
+/// a boot a busy host slows down fails the same way everywhere or nowhere.
+pub const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// **A running jojobot nobody else shares.** Its endpoint is what the driver
 /// connects to; dropping it takes the process and the directory with it.

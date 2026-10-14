@@ -2167,7 +2167,8 @@ async fn boot_current_with(
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout));
     let mut seen = Vec::new();
-    let served = tokio::time::timeout(Duration::from_secs(20), async {
+    let boot_began = std::time::Instant::now();
+    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
@@ -2186,9 +2187,11 @@ async fn boot_current_with(
 
     assert!(
         served,
-        "the current binary did not reach its own serving line on a store recorded at \
-         {git_ref} — this is the upgrade class this gate exists to catch. What it said \
-         instead:\n{}",
+        "the current binary did not reach its own serving line after {:?} (a boot is given \
+         {:?}) on a store recorded at {git_ref} — this is the upgrade class this gate exists \
+         to catch. What it said instead:\n{}",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT,
         seen.join("\n")
     );
 
