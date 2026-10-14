@@ -31,6 +31,9 @@ use jojobot_mcp::sid::SessionRegistry;
 /// How long a request may stay open before one warning says so.
 pub const SLOW_AFTER: Duration = Duration::from_secs(60);
 
+/// The MCP method of a request that the client holds open on purpose.
+const LISTEN: &str = "subscriptions/listen";
+
 /// The largest request body this layer reads to name the verb. A request over it
 /// is refused rather than passed on half read.
 const READ_AT_MOST: usize = 16 * 1024 * 1024;
@@ -135,6 +138,12 @@ impl Ticket {
             tokio::spawn(async move {
                 tokio::time::sleep(slow_after).await;
                 let for_warning = for_warning.read();
+                // **A listen held open as a POST is open by design**, as a
+                // standing GET stream is. The method is named only after the
+                // body is read, so this is asked when the timer fires.
+                if for_warning.mcp_method.as_deref() == Some(LISTEN) {
+                    return;
+                }
                 tracing::warn!(
                 http_method = %for_warning.http_method,
                 mcp_method = for_warning.mcp_method.as_deref(),
@@ -602,6 +611,71 @@ mod tests {
             kept.lines()
         );
         assert!(warnings[0].contains("http_method=POST"), "{}", warnings[0]);
+    }
+
+    /// **A listen held open as a POST is open by design and warns nothing**,
+    /// however long it stays. **Paired in the same router**: an ordinary POST
+    /// held as long warns once, so the silence is the listen's and not a layer
+    /// that never warns. The method is named after the body is read, so a check
+    /// made when the request opens would not see it.
+    #[tokio::test(start_paused = true)]
+    async fn a_listen_post_open_past_the_threshold_warns_nothing_and_a_held_call_does() {
+        let (kept, _guard) = capture();
+        let (registry, key, _run) = registry_with_a_run();
+        let log = RequestLog::new(registry).slow_after(Duration::from_secs(60));
+        let router = app(
+            log,
+            post(|| async {
+                tokio::time::sleep(Duration::from_secs(90)).await;
+                "late"
+            }),
+        );
+
+        let listen = Request::post("/mcp")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "subscriptions/listen", "params": {},
+                })
+                .to_string(),
+            ))
+            .expect("a request");
+        let listening = router.clone().oneshot(listen).await.expect("served");
+        let _ = axum::body::to_bytes(listening.into_body(), 1 << 20).await;
+        assert!(
+            kept.lines().iter().all(|l| !l.contains("WARN")),
+            "a listen warned: {:?}",
+            kept.lines()
+        );
+        assert!(
+            kept.lines()
+                .iter()
+                .any(|l| l.contains("mcp_method=\"subscriptions/listen\"")),
+            "the listen was named, so the silence is not an unnamed request: {:?}",
+            kept.lines()
+        );
+
+        let held = router
+            .oneshot(tool_call("recall", &key))
+            .await
+            .expect("served");
+        let _ = axum::body::to_bytes(held.into_body(), 1 << 20).await;
+        let warnings: Vec<String> = kept
+            .lines()
+            .into_iter()
+            .filter(|l| l.contains("WARN"))
+            .collect();
+        assert_eq!(
+            warnings.len(),
+            1,
+            "one warning, the call's: {:?}",
+            kept.lines()
+        );
+        assert!(
+            warnings[0].contains("mcp_method=\"tools/call\""),
+            "{}",
+            warnings[0]
+        );
     }
 
     /// A body that never yields and never ends: a call whose answer is still
