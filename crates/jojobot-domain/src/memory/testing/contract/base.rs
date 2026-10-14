@@ -10274,6 +10274,134 @@ pub async fn an_entity_history_returns_each_earlier_value_in_order_naming_its_se
     ));
 }
 
+/// **A merge is in the history of the thing it folded and of the children it
+/// moved.** The survivor's history holds the versions of every thing folded into
+/// it, through the things folded into those, each marked with the handle of the
+/// thing that wrote it and in the order they were written. Each child the fold
+/// serves under the survivor gains a version naming the survivor and the session
+/// that merged. A thing nothing was folded into holds only its own.
+///
+/// **Paired with the control beside it**: the lone thing is read after the
+/// merges, so a history that took every version in the store would fail it.
+pub async fn a_merge_is_in_the_history_of_the_survivor_and_of_the_children_it_moved<M: Memory>(
+    store: &M,
+) {
+    let keep = EntityId("topic:contract-hollow".into());
+    let dup = EntityId("topic:contract-brook".into());
+    let old = EntityId("topic:contract-glen".into());
+    let kid = EntityId("topic:contract-sapling".into());
+    let lone = EntityId("topic:contract-tarn".into());
+    for (id, name, parent, session) in [
+        (&keep, "Hollow Barn", None, "run-keep"),
+        (&dup, "Brook Mill", None, "run-dup"),
+        (&old, "Glen Forge", None, "run-old"),
+        (&kid, "Sapling Row", Some(old.clone()), "run-kid"),
+        (&lone, "Tarn Hut", None, "run-lone"),
+    ] {
+        add(
+            store,
+            NewEntity {
+                parent,
+                session: Some(session.into()),
+                ..NewEntity::new(id.clone(), name, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    store
+        .update_entity(
+            &dup,
+            EntityPatch {
+                name: Some("Brook Mill Two".into()),
+                session: Some("run-rename".into()),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .expect("a rename")
+        .written()
+        .expect("nothing collides");
+    for (folded, into, session) in [
+        (&old, &dup, "run-first-fold"),
+        (&dup, &keep, "run-second-fold"),
+    ] {
+        store
+            .merge(
+                folded,
+                into,
+                Some("one place under two names"),
+                date(2026, 8, 3),
+                &other_caller(),
+                Some(session),
+            )
+            .await
+            .expect("the fold lands");
+    }
+
+    let seen = |versions: &[crate::memory::EntityVersion]| -> Vec<(String, Option<String>)> {
+        versions
+            .iter()
+            .map(|v| (v.thing.to_string(), v.session.clone()))
+            .collect()
+    };
+    let expected = |rows: &[(&EntityId, &str)]| -> Vec<(String, Option<String>)> {
+        rows.iter()
+            .map(|(thing, session)| (thing.to_string(), Some(session.to_string())))
+            .collect()
+    };
+
+    let survivor = store
+        .entity_history(&keep)
+        .await
+        .expect("the survivor's history");
+    assert_eq!(
+        seen(&survivor),
+        expected(&[
+            (&keep, "run-keep"),
+            (&dup, "run-dup"),
+            (&old, "run-old"),
+            (&dup, "run-rename"),
+            (&old, "run-first-fold"),
+            (&dup, "run-second-fold"),
+        ]),
+        "the survivor's history is every version of the things folded into it, in the order written: {survivor:?}"
+    );
+    assert_eq!(
+        survivor.iter().map(|v| v.ordinal).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5, 6],
+        "counted from one over the whole list"
+    );
+
+    let child = store
+        .entity_history(&kid)
+        .await
+        .expect("the child's history");
+    assert_eq!(
+        seen(&child),
+        expected(&[
+            (&kid, "run-kid"),
+            (&kid, "run-first-fold"),
+            (&kid, "run-second-fold"),
+        ]),
+        "each fold that serves the child under a new parent is a version of the child: {child:?}"
+    );
+    assert_eq!(
+        child
+            .iter()
+            .map(|v| v.snapshot.as_ref().and_then(|s| s.parent.clone()))
+            .collect::<Vec<_>>(),
+        vec![Some(old.clone()), Some(dup.clone()), Some(keep.clone())],
+        "the parent each version held"
+    );
+
+    let alone = store.entity_history(&lone).await.expect("a lone history");
+    assert_eq!(
+        seen(&alone),
+        expected(&[(&lone, "run-lone")]),
+        "a thing nothing was folded into holds only its own: {alone:?}"
+    );
+}
+
 /// **Archiving persists the reason and the moment, and survives a read taken
 /// after the write** — the storage half of the caller-facing bar, which
 /// proves the same thing behaviourally through the served surface. Both the
@@ -18019,6 +18147,7 @@ macro_rules! all_cases {
         $m!(an_entity_history_returns_each_earlier_value_in_order_naming_its_session(
             $store
         ));
+        $m!(a_merge_is_in_the_history_of_the_survivor_and_of_the_children_it_moved($store));
         $m!(a_second_archive_is_refused_not_overwritten($store));
 
         $m!(add_entity_refuses_a_session_kind_handle($store));

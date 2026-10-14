@@ -1339,6 +1339,9 @@ pub struct EntityHistory {
     pub versions: Vec<super::EntityVersion>,
     /// **How many versions exist**, whatever came back.
     pub total: usize,
+    /// **Whether some version, shown or not, was written by a thing folded into
+    /// this one.** Each version then says which thing wrote it.
+    pub folded_in: bool,
 }
 
 impl EntityHistory {
@@ -3332,6 +3335,7 @@ where
             Trace::Entity(id) if *id == object.entity.id => {
                 let mut versions = store.entity_history(id).await?;
                 let total = versions.len();
+                let folded_in = versions.iter().any(|version| version.thing != *id);
                 if total > wanted.most {
                     versions.drain(..total - wanted.most);
                 }
@@ -3339,6 +3343,7 @@ where
                     entity: id.clone(),
                     versions,
                     total,
+                    folded_in,
                 });
             }
             Trace::Entity(_) => {}

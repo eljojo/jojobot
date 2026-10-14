@@ -428,6 +428,13 @@ impl InMemoryMemory {
     /// **Leave the moment a thing's own row was written**, under the key the
     /// real store keeps it: the badge the row wears, else its handle.
     fn touched(&self, entity: &Entity, session: Option<&str>) {
+        self.touched_naming(entity, None, session);
+    }
+
+    /// **The same moment, naming `parent` where the row still holds a folded
+    /// thing's key.** A merge moves no row; the version it appends for a child
+    /// says the child sits under the survivor.
+    fn touched_naming(&self, entity: &Entity, parent: Option<&EntityId>, session: Option<&str>) {
         let key = match &entity.badge {
             Some(badge) => EntityId(badge.clone()),
             None => entity.id.clone(),
@@ -450,6 +457,9 @@ impl InMemoryMemory {
             key,
             super::super::EntityVersion {
                 ordinal,
+                // **Filled when the history is read**, from the key: a rename
+                // since moves the handle this version is served under.
+                thing: entity.id.clone(),
                 written_at: Some(now),
                 session: session.map(str::to_string),
                 snapshot: Some(super::super::EntitySnapshot {
@@ -457,7 +467,7 @@ impl InMemoryMemory {
                     name: entity.name.clone(),
                     source: entity.source.clone(),
                     crm: entity.crm.clone(),
-                    parent: entity.parent.clone(),
+                    parent: parent.cloned().or_else(|| entity.parent.clone()),
                     boot: entity.boot.as_token().to_string(),
                     archived_reason: entity.archived.as_ref().map(|a| a.reason.clone()),
                     archived_at: entity.archived.as_ref().map(|a| a.at.to_string()),
@@ -3146,13 +3156,47 @@ impl Memory for InMemoryMemory {
             Some(badge) => EntityId(badge.clone()),
             None => row.id.clone(),
         };
-        Ok(self
+        // **The versions of every thing folded into this one are part of its
+        // history**, in the order they were written, each marked with the
+        // handle its writer answers to now.
+        let mut things = vec![key];
+        {
+            let merges = self.merges.lock().expect("fake mutex poisoned");
+            let mut at = 0;
+            while let Some(survivor) = things.get(at).cloned() {
+                at += 1;
+                for merge in merges.iter().filter(|merge| merge.survivor == survivor) {
+                    if !things.contains(&merge.folded) {
+                        things.push(merge.folded.clone());
+                    }
+                }
+            }
+        }
+        let held: Vec<(EntityId, super::super::EntityVersion)> = self
             .entity_versions
             .lock()
             .expect("fake mutex poisoned")
             .iter()
-            .filter(|(home, _)| home == &key)
-            .map(|(_, version)| version.clone())
+            .filter(|(home, _)| things.contains(home))
+            .cloned()
+            .collect();
+        Ok(held
+            .into_iter()
+            .enumerate()
+            .map(|(at, (home, mut version))| {
+                version.ordinal = at + 1;
+                version.thing = self.current_handle(&home);
+                // **Pointers are kept as keys and read as the handle each
+                // answers to now**, as the real store reads them.
+                if let Some(snapshot) = &mut version.snapshot {
+                    for pointer in [&mut snapshot.parent, &mut snapshot.merged_into] {
+                        if let Some(stored) = pointer.take() {
+                            *pointer = Some(self.current_handle(&stored));
+                        }
+                    }
+                }
+                version
+            })
             .collect())
     }
 
@@ -3996,6 +4040,27 @@ impl Memory for InMemoryMemory {
         for entity in entities.iter_mut() {
             if entity.id == *folded {
                 entity.merged_into = Some(survivor.clone());
+            }
+        }
+        // **A version for the folded row, and one for each child the fold serves
+        // under the survivor**: the children of the folded thing and of whatever
+        // was folded into it before. The merge just pushed is the last one, so
+        // the earlier merges say where a parent was served until now.
+        {
+            let merges = self.merges.lock().expect("fake mutex poisoned");
+            let before = &merges[..merges.len() - 1];
+            for entity in entities.iter() {
+                if entity.id == *folded {
+                    self.touched(entity, session);
+                }
+            }
+            for entity in entities.iter() {
+                let Some(parent) = &entity.parent else {
+                    continue;
+                };
+                if entity.merged_into.is_none() && ended_at(before, parent.clone()) == folded_key {
+                    self.touched_naming(entity, Some(&survivor_key), session);
+                }
             }
         }
         let mut survived = entities

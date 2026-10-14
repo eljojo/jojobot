@@ -5230,6 +5230,10 @@ pub struct EntitySnapshot {
 pub struct EntityVersion {
     /// **Which write this is, counting from one.**
     pub ordinal: usize,
+    /// **The thing that wrote this version**, by the handle it answers to now.
+    /// A thing's history holds the versions of every thing folded into it, and
+    /// this tells which thing each one is.
+    pub thing: EntityId,
     /// **When this write happened.**
     pub written_at: Option<jiff::Timestamp>,
     /// **The session that made this write**, when one did and the store kept

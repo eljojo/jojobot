@@ -5270,13 +5270,19 @@ impl Memory for DoltMemory {
     ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
         use jojobot_domain::memory::{EntitySnapshot, EntityVersion};
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let Some((key, handle)) = self.resolve(&mut tx, entity).await? else {
+        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
         };
+        // **Every thing folded into this one wrote versions of its own**, and
+        // they are part of this one's history as a folded claim's writes are
+        // part of its survivor's. Each is read as that thing's own history is
+        // and marked with the handle that thing answers to.
+        let mut things = vec![key.clone()];
+        things.extend(Self::folded_into(&mut tx, &key).await?);
         // **`entity_write` is filed under the handle the row was written under**,
         // so a thing renamed since holds versions under every handle it wore. A
         // version that names a badge belongs to that badge only: a handle freed
@@ -5287,79 +5293,85 @@ impl Memory for DoltMemory {
         // by badge; and it does not belong to a thing that wears the handle now
         // when another thing left it. Only a handle nobody left is read as
         // belonging to its wearer.
-        let rows = entity_writes_of(
-            &mut tx,
-            &handle,
-            &key,
-            "written_at, kind, name, source, crm, parent, boot, archived_reason, \
-             archived_at, merged_into, aliases, prose, session, badge",
-        )
-        .await?;
         let mut kept: Vec<(Option<jiff::Timestamp>, EntityVersion)> = Vec::new();
-        for row in &rows {
-            let stamp: String = row.try_get("written_at").map_err(store)?;
-            let written_at = parse_stamp(Some(stamp), key.as_str());
-            let name: Option<String> = row.try_get("name").map_err(store)?;
-            let snapshot = match name {
-                // **A row an older build appended holds no name**, and no other
-                // column either: it says that a write happened and when.
-                None => None,
-                Some(name) => {
-                    let text = |column: &str| -> Result<Option<String>, MemoryError> {
-                        row.try_get(column).map_err(store)
-                    };
-                    let aliases: Vec<String> = match text("aliases")? {
-                        None => Vec::new(),
-                        Some(raw) => serde_json::from_str(&raw).map_err(|e| {
-                            MemoryError::Store(format!("a stored alias set is not readable: {e}"))
-                        })?,
-                    };
-                    let mut pointed = Vec::new();
-                    for column in ["parent", "merged_into"] {
-                        pointed.push(match text(column)? {
-                            None => None,
-                            // **A fold's survivor is found by the merge event, not
-                            // by the handle the version stored.** The version kept
-                            // the handle as it stood at the fold; a rename since
-                            // moved it, and a new thing may wear it. The event
-                            // holds the survivor's key, which a rename leaves.
-                            Some(stored) if column == "merged_into" => {
-                                let survivor = Self::survivor_of(&mut tx, &key)
-                                    .await?
-                                    .unwrap_or(EntityId(stored));
-                                Some(self.current_handle(&mut tx, &survivor).await?)
-                            }
-                            Some(stored) => {
-                                Some(self.current_handle(&mut tx, &EntityId(stored)).await?)
-                            }
-                        });
+        for thing_key in &things {
+            let thing_handle = self.current_handle(&mut tx, thing_key).await?;
+            let rows = entity_writes_of(
+                &mut tx,
+                &thing_handle,
+                thing_key,
+                "written_at, kind, name, source, crm, parent, boot, archived_reason, \
+                 archived_at, merged_into, aliases, prose, session, badge",
+            )
+            .await?;
+            for row in &rows {
+                let stamp: String = row.try_get("written_at").map_err(store)?;
+                let written_at = parse_stamp(Some(stamp), thing_key.as_str());
+                let name: Option<String> = row.try_get("name").map_err(store)?;
+                let snapshot = match name {
+                    // **A row an older build appended holds no name**, and no other
+                    // column either: it says that a write happened and when.
+                    None => None,
+                    Some(name) => {
+                        let text = |column: &str| -> Result<Option<String>, MemoryError> {
+                            row.try_get(column).map_err(store)
+                        };
+                        let aliases: Vec<String> = match text("aliases")? {
+                            None => Vec::new(),
+                            Some(raw) => serde_json::from_str(&raw).map_err(|e| {
+                                MemoryError::Store(format!(
+                                    "a stored alias set is not readable: {e}"
+                                ))
+                            })?,
+                        };
+                        let mut pointed = Vec::new();
+                        for column in ["parent", "merged_into"] {
+                            pointed.push(match text(column)? {
+                                None => None,
+                                // **A fold's survivor is found by the merge event, not
+                                // by the handle the version stored.** The version kept
+                                // the handle as it stood at the fold; a rename since
+                                // moved it, and a new thing may wear it. The event
+                                // holds the survivor's key, which a rename leaves.
+                                Some(stored) if column == "merged_into" => {
+                                    let survivor = Self::survivor_of(&mut tx, thing_key)
+                                        .await?
+                                        .unwrap_or(EntityId(stored));
+                                    Some(self.current_handle(&mut tx, &survivor).await?)
+                                }
+                                Some(stored) => {
+                                    Some(self.current_handle(&mut tx, &EntityId(stored)).await?)
+                                }
+                            });
+                        }
+                        let merged_into = pointed.pop().flatten();
+                        let parent = pointed.pop().flatten();
+                        Some(EntitySnapshot {
+                            kind: text("kind")?.unwrap_or_default(),
+                            name,
+                            source: text("source")?.unwrap_or_default(),
+                            crm: text("crm")?,
+                            parent,
+                            boot: text("boot")?.unwrap_or_default(),
+                            archived_reason: text("archived_reason")?,
+                            archived_at: text("archived_at")?,
+                            merged_into,
+                            aliases,
+                            prose: text("prose")?.unwrap_or_default(),
+                        })
                     }
-                    let merged_into = pointed.pop().flatten();
-                    let parent = pointed.pop().flatten();
-                    Some(EntitySnapshot {
-                        kind: text("kind")?.unwrap_or_default(),
-                        name,
-                        source: text("source")?.unwrap_or_default(),
-                        crm: text("crm")?,
-                        parent,
-                        boot: text("boot")?.unwrap_or_default(),
-                        archived_reason: text("archived_reason")?,
-                        archived_at: text("archived_at")?,
-                        merged_into,
-                        aliases,
-                        prose: text("prose")?.unwrap_or_default(),
-                    })
-                }
-            };
-            kept.push((
-                written_at,
-                EntityVersion {
-                    ordinal: 0,
+                };
+                kept.push((
                     written_at,
-                    session: row.try_get("session").map_err(store)?,
-                    snapshot,
-                },
-            ));
+                    EntityVersion {
+                        ordinal: 0,
+                        thing: thing_handle.clone(),
+                        written_at,
+                        session: row.try_get("session").map_err(store)?,
+                        snapshot,
+                    },
+                ));
+            }
         }
         tx.commit().await.map_err(store)?;
         // **In the order they happened**, compared as moments because a stamp's
@@ -6401,6 +6413,14 @@ impl Memory for DoltMemory {
             &address_map,
         )
         .await?;
+
+        // **Each child the fold serves under the survivor gets a version that
+        // says so**, naming the run, because the child's own row is not
+        // rewritten and its history would otherwise show no move.
+        for child in Self::children_served_under(&mut tx, &folded_key).await? {
+            append_entity_version(&mut tx, &child, Some(&survivor_key), &self.clock, session)
+                .await?;
+        }
 
         // **The folded row stays and starts forwarding.** Written last, so a
         // failure anywhere above rolls back a row that still says it is a thing
@@ -7697,6 +7717,21 @@ async fn append_entity_write(
     clock: &Clock,
     session: Option<&str>,
 ) -> Result<(), MemoryError> {
+    append_entity_version(tx, entity, None, clock, session).await
+}
+
+/// **The same version, naming `parent` when the row still holds the key of a
+/// thing a merge folded.** A merge moves no row, so the row of a child keeps the
+/// folded parent's key and the survivor is served in its place. The version a
+/// merge appends for that child names the survivor, which is what a read of the
+/// child says from then on.
+async fn append_entity_version(
+    tx: &mut Transaction<'_, MySql>,
+    entity: &EntityId,
+    parent_served: Option<&EntityId>,
+    clock: &Clock,
+    session: Option<&str>,
+) -> Result<(), MemoryError> {
     let highest: Option<i64> =
         sqlx::query_scalar("SELECT MAX(ordinal) FROM entity_write WHERE entity = ?")
             .bind(entity.as_str())
@@ -7744,7 +7779,7 @@ async fn append_entity_write(
         name,
         source,
         crm,
-        parent,
+        mut parent,
         boot,
         archived_reason,
         archived_at,
@@ -7762,6 +7797,9 @@ async fn append_entity_write(
             .map_err(store)?;
         return Ok(());
     };
+    if let Some(served) = parent_served {
+        parent = Some(served.to_string());
+    }
     sqlx::query(
         "INSERT INTO entity_write (entity, ordinal, written_at, kind, name, source, crm, parent, \
          boot, archived_reason, archived_at, merged_into, aliases, prose, badge, session) \

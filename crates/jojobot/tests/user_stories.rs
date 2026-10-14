@@ -120,6 +120,9 @@ mod keeping_up;
 /// What a record pointed at and stood for at each write of it.
 #[path = "user_stories/kept_marks.rs"]
 mod kept_marks;
+/// A merge in the history of the survivor and of the children it moved.
+#[path = "user_stories/merge_history.rs"]
+mod merge_history;
 /// Each change of state a message went through, and the run that made it.
 #[path = "user_stories/message_history.rs"]
 mod message_history;

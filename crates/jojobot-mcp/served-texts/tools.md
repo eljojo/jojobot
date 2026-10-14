@@ -3465,7 +3465,10 @@ prose and archive state it held before somebody changed them, and the run
 that changed them. Each version holds what the thing held after that write;
 a key it held nothing for is left out. A write kept before jojobot kept
 versions carries only its place in the order and its moment, and the
-answer says the earlier values were not kept.
+answer says the earlier values were not kept. **A thing others were
+folded into carries their versions too**, in the order they were written,
+each marked with the `thing` that wrote it; a child a fold moved under it
+has a version of its own for the move.
 
 Omit it and no chain comes back, which is the normal read.
 ```

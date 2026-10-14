@@ -458,7 +458,10 @@ pub struct RecallArgs {
     /// that changed them. Each version holds what the thing held after that write;
     /// a key it held nothing for is left out. A write kept before jojobot kept
     /// versions carries only its place in the order and its moment, and the
-    /// answer says the earlier values were not kept.
+    /// answer says the earlier values were not kept. **A thing others were
+    /// folded into carries their versions too**, in the order they were written,
+    /// each marked with the `thing` that wrote it; a child a fold moved under it
+    /// has a version of its own for the move.
     ///
     /// Omit it and no chain comes back, which is the normal read.
     #[serde(default)]
@@ -1218,7 +1221,8 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
 /// made it (the run's public name, never a key), then each key the row held
 /// after that write. A key the row held nothing for is left out, so a version
 /// that never had a parent does not say `null`. A version kept before jojobot
-/// kept them carries no keys, and the answer says what that means.
+/// kept them carries no keys, and the answer says what that means. When a thing
+/// folded into this one wrote some of them, each version names that thing.
 fn entity_history_json(history: &graph::EntityHistory) -> serde_json::Value {
     let versions: Vec<serde_json::Value> = history
         .versions
@@ -1231,6 +1235,9 @@ fn entity_history_json(history: &graph::EntityHistory) -> serde_json::Value {
             if let Some(fields) = rendered.as_object_mut() {
                 if let Some(run) = &version.session {
                     fields.insert("run".into(), run.as_str().into());
+                }
+                if history.folded_in {
+                    fields.insert("thing".into(), version.thing.to_string().into());
                 }
                 if let Some(held) = &version.snapshot {
                     fields.insert("kind".into(), held.kind.as_str().into());

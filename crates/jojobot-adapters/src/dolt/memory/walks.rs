@@ -98,6 +98,58 @@ impl DoltMemory {
         }
     }
 
+    /// **The keys of every thing folded into `survivor`**, through the things
+    /// folded into those in turn, nearest fold first. The survivor itself is not
+    /// in the list.
+    pub(super) async fn folded_into(
+        tx: &mut Transaction<'_, MySql>,
+        survivor: &EntityId,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let mut found: Vec<EntityId> = Vec::new();
+        let mut next = vec![survivor.clone()];
+        while let Some(at) = next.pop() {
+            let folded: Vec<String> = sqlx::query_scalar(
+                "SELECT folded FROM merge_event WHERE ordinal = 0 AND survivor = ?
+                 ORDER BY merge_no",
+            )
+            .bind(at.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            for key in folded.into_iter().map(EntityId) {
+                if key != *survivor && !found.contains(&key) {
+                    found.push(key.clone());
+                    next.push(key);
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// **The things a read serves under `folded`'s survivor because of this
+    /// merge**: the live children of `folded` and of everything folded into it.
+    /// A merge moves no row, so each still holds the key of the parent it was
+    /// made under. Returned by the handle the row is stored under.
+    pub(super) async fn children_served_under(
+        tx: &mut Transaction<'_, MySql>,
+        folded: &EntityId,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let mut parents = Self::folded_into(tx, folded).await?;
+        parents.insert(0, folded.clone());
+        let mut children = Vec::new();
+        for parent in parents {
+            let held: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM entity WHERE parent = ? AND merged_into IS NULL ORDER BY id",
+            )
+            .bind(parent.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            children.extend(held.into_iter().map(EntityId));
+        }
+        Ok(children)
+    }
+
     /// **The thing a merge folded this one into**, by the key the merge events
     /// hold, or none when no merge folded it. One hop: the survivor of the
     /// latest fold, not the end of the chain.
