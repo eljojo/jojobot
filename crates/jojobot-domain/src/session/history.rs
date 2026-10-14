@@ -363,16 +363,17 @@ pub struct SessionHistories {
     pub wordings: Vec<(SessionId, EntryId, Vec<Wording>)>,
 }
 
-/// **The next wording of an entry**: numbered one past the highest of
-/// `held_revisions`, the revisions the entry already has.
+/// **The next wording of an entry**: numbered one past `highest_held`, the
+/// revision of the newest wording the entry already has, as [`next_change`]
+/// numbers a change.
 pub fn next_wording(
-    held_revisions: impl IntoIterator<Item = usize>,
+    highest_held: Option<usize>,
     text: &str,
     touched: Option<Timestamp>,
     at: Timestamp,
 ) -> Wording {
     Wording {
-        revision: held_revisions.into_iter().max().unwrap_or(0) + 1,
+        revision: highest_held.unwrap_or(0) + 1,
         text: text.to_string(),
         touched,
         written_at: at,
@@ -400,9 +401,9 @@ mod tests {
     /// **A wording is numbered the same way.**
     #[test]
     fn a_wording_is_numbered_one_past_the_highest_held() {
-        assert_eq!(next_wording([], "first", None, at(0)).revision, 1);
-        assert_eq!(next_wording([1, 2], "third", None, at(0)).revision, 3);
-        let moved = next_wording([1], "second", Some(at(5)), at(6));
+        assert_eq!(next_wording(None, "first", None, at(0)).revision, 1);
+        assert_eq!(next_wording(Some(2), "third", None, at(0)).revision, 3);
+        let moved = next_wording(Some(1), "second", Some(at(5)), at(6));
         assert_eq!(moved.text, "second");
         assert_eq!(moved.touched, Some(at(5)));
         assert_eq!(moved.written_at, at(6));

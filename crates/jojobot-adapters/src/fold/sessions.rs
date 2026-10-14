@@ -110,7 +110,8 @@ impl Image {
             .entry((id.clone(), written.id.clone()))
             .or_default();
         let made = next_wording(
-            held.iter().map(|w| w.revision),
+            // The wordings are held oldest first, so the newest is the highest.
+            held.last().map(|w| w.revision),
             &written.text,
             written.touched,
             at,

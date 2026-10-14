@@ -113,9 +113,10 @@ impl InMemorySessions {
         let at = self.stamp();
         let mut wordings = self.wordings.lock().expect("wording lock");
         let made = next_wording(
+            // The wordings are pushed oldest first, so the newest is the highest.
             wordings
                 .iter()
-                .filter(|(run, held, _)| run == id && held == entry)
+                .rfind(|(run, held, _)| run == id && held == entry)
                 .map(|(_, _, w)| w.revision),
             text,
             touched,
