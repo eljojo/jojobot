@@ -9,6 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+use super::words::{camel_words, is_stop_word};
+
 /// The similarity at or above which two names of one kind are alike. Set from
 /// the labelled pairs in the tests below.
 pub const TRIGRAM_THRESHOLD: f64 = 0.6;
@@ -159,6 +161,35 @@ pub fn phonetic_code(name: &str) -> String {
         .join(" ")
 }
 
+/// **How many shared words make two names of one kind alike.** One shared word
+/// is a family name or a category (`Simpson`, `bike`): measured over the rooms'
+/// things and the roster, every pair it flagged was two different things, and
+/// no pair sharing two words was. A one-line change if the answer changes.
+pub const SHARED_WORDS_NEEDED: usize = 2;
+
+/// **The words two names share that are evidence they mean one thing**: words
+/// of 4 letters or more that are no stop word and that `is_rare` says few other
+/// things of the kind carry, read through [`super::words::camel_words`] so
+/// `KwikEMart` shares `mart` with `Kwik E Mart`.
+pub fn shared_words(a: &str, b: &str, is_rare: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let (a, b) = (camel_words(a), camel_words(b));
+    a.intersection(&b)
+        .filter(|word| !is_stop_word(word) && is_rare(word))
+        .cloned()
+        .collect()
+}
+
+/// Whether two names are alike by trigram similarity.
+pub fn looks_alike(a: &str, b: &str) -> bool {
+    trigram_similarity(a, b) >= TRIGRAM_THRESHOLD
+}
+
+/// Whether two names sound alike: the same phonetic code, word for word.
+pub fn sounds_alike(a: &str, b: &str) -> bool {
+    let code = phonetic_code(a);
+    !code.is_empty() && code == phonetic_code(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +274,54 @@ mod tests {
         );
         assert_ne!(phonetic_code("Bart Simpson"), phonetic_code("Lisa Simpson"));
         assert_eq!(phonetic_code(""), "");
+    }
+
+    /// **The words two names share are the rare, real ones.** A stop word, a
+    /// short word and a word `is_rare` rejects are left out, and the camelCase
+    /// parts of a name count.
+    #[test]
+    fn shared_words_are_the_rare_real_words_two_names_have_in_common() {
+        let any = |_: &str| true;
+        assert_eq!(
+            shared_words("Springfield Nuclear Plant", "Nuclear Plant Tours", &any),
+            vec!["nuclear".to_string(), "plant".to_string()]
+        );
+        assert_eq!(
+            shared_words("Pickles With Mustard", "Bread With Mustard", &any),
+            vec!["mustard".to_string()],
+            "a stop word is not shared"
+        );
+        assert_eq!(
+            shared_words("Kwik E Mart", "KwikEMart", &any),
+            vec!["kwik".to_string(), "mart".to_string()],
+            "the parts of a camelCase name count"
+        );
+        assert!(
+            shared_words("Springfield Nuclear Plant", "Nuclear Plant Tours", &|w| w
+                != "plant")
+            .len()
+                < SHARED_WORDS_NEEDED,
+            "a word the store calls common is dropped"
+        );
+        assert_eq!(
+            SHARED_WORDS_NEEDED, 2,
+            "one word is a family name or a category"
+        );
+    }
+
+    /// Measured over the rooms' things and the roster's handles, and held out
+    /// of the guard until the operator rules: the same labelled pairs the
+    /// thresholds were set from.
+    #[test]
+    fn looking_alike_and_sounding_alike_read_the_labelled_pairs() {
+        for (a, b) in ALIKE {
+            assert!(looks_alike(a, b), "{a} / {b}");
+        }
+        for (a, b) in APART {
+            assert!(!looks_alike(a, b), "{a} / {b}");
+        }
+        assert!(sounds_alike("Homer Simpson", "Homer Sympson"));
+        assert!(!sounds_alike("Bart Simpson", "Lisa Simpson"));
+        assert!(!sounds_alike("", ""));
     }
 }

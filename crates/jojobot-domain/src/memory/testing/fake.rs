@@ -2049,7 +2049,7 @@ impl Memory for InMemoryMemory {
             new.parent.as_ref(),
         )?;
         let index = self.known();
-        if let Decision::Block(candidates) = guard::decide_under(
+        if let Decision::Block(candidates) = guard::decide_creating(
             &new.id,
             &new.labels(),
             new.parent.as_ref(),

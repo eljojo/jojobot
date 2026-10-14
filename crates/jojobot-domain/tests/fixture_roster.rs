@@ -134,6 +134,8 @@ const ROSTER: &[&str] = &[
     "person:apu",
     "person:barney-gumble",
     "person:bart",
+    "place:springfield-nuclear-plant",
+    "place:kwik-e-mart",
     "person:bart-simpson",
     "person:bartholomew",
     "person:bartholomew-simpson",
@@ -549,6 +551,18 @@ const ORDINARY: &[&str] = &[
     "person:contract-zzz",
     "person:contract-zzz-nobody",
     "place:contract-a",
+    "place:contract-nuclear-plant-tours", // made up: a company, beside the plant it shares two words with
+    "place:contract-nuclear-tours",       // made up: shares only one word with the plant
+    "person:contract-plant",              // made up: a person who shares words with a place
+    "person:contract-nuclear-plant-tours", // made up: a fixture of the shared-word reason
+    "place:contract-alpha-nuclear-plant", // made up: a fixture of the shared-word reason
+    "place:contract-beta-nuclear-plant",  // made up: a fixture of the shared-word reason
+    "place:contract-gamma-nuclear-plant", // made up: a fixture of the shared-word reason
+    "place:contract-bread-with-mustard",  // made up: a fixture of the shared-word reason
+    "place:contract-mustard-pickles-tours", // made up: a fixture of the shared-word reason
+    "place:contract-pickles-with-mustard", // made up: a fixture of the shared-word reason
+    "place:contract-plant-tours",         // made up: a fixture of the shared-word reason
+    "place:contract-with-plant",          // made up: a fixture of the shared-word reason
     "place:contract-bart-simpson", // made up: the short form of a person's name, under another kind
     "person:contract-bart-smithers", // made up: a short form beside a different surname
     "person:contract-bart-flanders", // made up: a short form beside a different surname

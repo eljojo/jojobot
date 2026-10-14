@@ -1083,7 +1083,7 @@ mod tests {
             store
                 .add_entity(jojobot_domain::memory::NewEntity::new(
                     EntityId(id.into()),
-                    id,
+                    id.split_once(':').map_or(id, |(_, slug)| slug),
                     "the operator",
                 ))
                 .await

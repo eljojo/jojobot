@@ -13,6 +13,7 @@
 //! decision here is a pure function of (handle, name, index), which is why it can
 //! live on the write path of *both* adapters and cannot be skipped.
 
+use super::words::Rarity;
 use super::{Entity, EntityId, EntityKind, likeness};
 use crate::override_token::Collision;
 
@@ -64,6 +65,11 @@ pub enum MatchReason {
     /// beside `Bartholomew`, word for word ([`likeness::same_through_nicknames`]).
     /// It rests on the name alone, so lifting it takes a reason beside the token.
     Nickname,
+    /// Same kind, and the two names share [`likeness::SHARED_WORDS_NEEDED`] or
+    /// more rare words of four letters or more that are no stop word:
+    /// `Springfield Nuclear Plant` beside `Nuclear Plant Tours`, where neither
+    /// name holds the other. It rests on the name alone.
+    SharedWord,
 }
 
 impl MatchReason {
@@ -74,7 +80,10 @@ impl MatchReason {
     /// spelling is a typo's distance and keeps the token alone.
     pub fn needs_a_reason(self) -> bool {
         match self {
-            MatchReason::SameNameOtherKind | MatchReason::Contains | MatchReason::Nickname => true,
+            MatchReason::SameNameOtherKind
+            | MatchReason::Contains
+            | MatchReason::Nickname
+            | MatchReason::SharedWord => true,
             MatchReason::ExactHandle
             | MatchReason::SelfParent
             | MatchReason::SameName
@@ -147,6 +156,17 @@ pub enum Decision {
     /// Suspicion: **nothing is written**. The caller confirms one of these
     /// candidates or re-calls with the token this refusal minted.
     Block(Vec<EntityMatch>),
+}
+
+/// **What the word-sharing reason needs beyond the folded names**: the names
+/// as written, because a camelCase name is read before it is folded, and how
+/// many things of each kind carry each word.
+struct Words<'a> {
+    written: &'a [&'a str],
+    rarity: Rarity,
+    /// Whether the weak name reasons (a nickname, shared words) apply: only a
+    /// creation asks them. A rename or a relabel keeps the older reasons.
+    likeness: bool,
 }
 
 /// The edit-distance budget for "this is probably a typo of that". Two is the
@@ -251,9 +271,35 @@ pub fn screen_under(
     parent: Option<&EntityId>,
     index: &[Entity],
 ) -> Vec<EntityMatch> {
+    screen_with(handle, labels, parent, index, false)
+}
+
+/// [`screen_under`] for a creation, which also asks the weak name reasons: a
+/// known nickname of an existing name, and two rare words shared with it.
+pub fn screen_creating(
+    handle: &EntityId,
+    labels: &[&str],
+    parent: Option<&EntityId>,
+    index: &[Entity],
+) -> Vec<EntityMatch> {
+    screen_with(handle, labels, parent, index, true)
+}
+
+fn screen_with(
+    handle: &EntityId,
+    labels: &[&str],
+    parent: Option<&EntityId>,
+    index: &[Entity],
+    likeness: bool,
+) -> Vec<EntityMatch> {
     let incoming_slug = handle.slug();
     let incoming_names = folded(labels);
     let incoming_name_slugs: Vec<String> = incoming_names.iter().map(|n| slugify(n)).collect();
+    let words = Words {
+        written: labels,
+        rarity: Rarity::of(index),
+        likeness,
+    };
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
@@ -261,10 +307,10 @@ pub fn screen_under(
             reason_for(
                 handle,
                 incoming_slug,
-                &incoming_names,
-                &incoming_name_slugs,
+                (&incoming_names, &incoming_name_slugs),
                 parent,
                 e,
+                &words,
             )
             .map(|reason| EntityMatch {
                 handle: e.id.clone(),
@@ -306,18 +352,25 @@ pub fn screen_labels(
 ) -> Vec<EntityMatch> {
     let incoming = folded(labels);
     let incoming_slugs: Vec<String> = incoming.iter().map(|n| slugify(n)).collect();
+    let words = Words {
+        written: labels,
+        rarity: Rarity::of(index),
+        likeness: false,
+    };
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
         .filter(|e| Some(&e.id) != except)
         .filter_map(|e| {
-            name_reason(kind, &incoming, &incoming_slugs, false, e).map(|reason| EntityMatch {
-                handle: e.id.clone(),
-                kind: e.kind,
-                name: e.name.clone(),
-                source: e.source.clone(),
-                reason,
-                told_apart_by: None,
+            name_reason(kind, (&incoming, &incoming_slugs), false, e, &words).map(|reason| {
+                EntityMatch {
+                    handle: e.id.clone(),
+                    kind: e.kind,
+                    name: e.name.clone(),
+                    source: e.source.clone(),
+                    reason,
+                    told_apart_by: None,
+                }
             })
         })
         .collect();
@@ -333,10 +386,10 @@ pub fn screen_labels(
 fn reason_for(
     handle: &EntityId,
     incoming_slug: &str,
-    incoming_names: &[String],
-    incoming_name_slugs: &[String],
+    (incoming_names, incoming_name_slugs): (&[String], &[String]),
     parent: Option<&EntityId>,
     existing: &Entity,
+    words: &Words,
 ) -> Option<MatchReason> {
     if &existing.id == handle {
         return Some(MatchReason::ExactHandle);
@@ -362,10 +415,10 @@ fn reason_for(
     let siblings = parent.is_some() && parent == existing.parent.as_ref();
     let by_name = name_reason(
         handle.kind(),
-        incoming_names,
-        incoming_name_slugs,
+        (incoming_names, incoming_name_slugs),
         siblings,
         existing,
+        words,
     );
     if matches!(
         by_name,
@@ -390,7 +443,11 @@ fn reason_for(
     // **The class distance cannot see: the same thing under a fuller name.**
     // Reached only after the name channels and the typo budget have said
     // nothing, because it is the weakest evidence here.
-    if by_name.is_none() && contained(incoming_slug, existing.id.slug()) {
+    if matches!(
+        by_name,
+        None | Some(MatchReason::Nickname | MatchReason::SharedWord)
+    ) && contained(incoming_slug, existing.id.slug())
+    {
         return Some(MatchReason::Contains);
     }
     by_name
@@ -472,10 +529,10 @@ fn dated_apart(a: &str, b: &str) -> bool {
 /// actually says walk straight past the guard.
 fn name_reason(
     kind: Option<EntityKind>,
-    incoming: &[String],
-    incoming_slugs: &[String],
+    (incoming, incoming_slugs): (&[String], &[String]),
     siblings: bool,
     existing: &Entity,
+    words: &Words,
 ) -> Option<MatchReason> {
     let same_kind = kind == Some(existing.kind);
     let existing_names = folded(&existing.labels());
@@ -503,17 +560,36 @@ fn name_reason(
     if near {
         return Some(MatchReason::NearName);
     }
+    if !words.likeness {
+        return None;
+    }
     // **A known short form of the same name**, the weakest evidence here: the
     // table lists `bart` under `bartholomew`, so the two are probably one person
     // written two ways. Reached only after the typo budget has said nothing.
-    incoming
+    if incoming.iter().any(|a| {
+        existing_names
+            .iter()
+            .any(|b| likeness::same_through_nicknames(a, b))
+    }) {
+        return Some(MatchReason::Nickname);
+    }
+    // **Two rare words in common**, weaker still: neither name holds the other,
+    // but they name the same part of the world (`Springfield Nuclear Plant`,
+    // `Nuclear Plant Tours`). One word is a family name or a category, so it
+    // takes [`likeness::SHARED_WORDS_NEEDED`].
+    let kind = existing.kind.as_token();
+    let existing_written = existing.labels();
+    let is_rare = |word: &str| words.rarity.is_rare(kind, word);
+    words
+        .written
         .iter()
         .any(|a| {
-            existing_names
-                .iter()
-                .any(|b| likeness::same_through_nicknames(a, b))
+            existing_written.iter().any(|b| {
+                likeness::shared_words(a, b, &is_rare).len() >= likeness::SHARED_WORDS_NEEDED
+                    && !(siblings && dated_apart(&slugify(a), &slugify(b)))
+            })
         })
-        .then_some(MatchReason::Nickname)
+        .then_some(MatchReason::SharedWord)
 }
 
 /// The refusal this write would get, as the token mechanism addresses it.
@@ -583,6 +659,23 @@ pub fn decide_under(
     override_reason: Option<&str>,
 ) -> Decision {
     let matches = screen_under(handle, labels, parent, index);
+    if matches.is_empty() || lifted(handle, &matches, override_token, override_reason) {
+        return Decision::Proceed;
+    }
+    Decision::Block(matches)
+}
+
+/// [`decide_under`] for a creation, which also asks the weak name reasons
+/// ([`screen_creating`]).
+pub fn decide_creating(
+    handle: &EntityId,
+    labels: &[&str],
+    parent: Option<&EntityId>,
+    index: &[Entity],
+    override_token: Option<&str>,
+    override_reason: Option<&str>,
+) -> Decision {
+    let matches = screen_creating(handle, labels, parent, index);
     if matches.is_empty() || lifted(handle, &matches, override_token, override_reason) {
         return Decision::Proceed;
     }
@@ -854,7 +947,9 @@ mod tests {
             "user-named",
         )];
         let bart = EntityId("person:bart-simpson".into());
-        let Decision::Block(candidates) = decide(&bart, &["Bart Simpson"], &idx, None, None) else {
+        let Decision::Block(candidates) =
+            decide_creating(&bart, &["Bart Simpson"], None, &idx, None, None)
+        else {
             panic!("a short form beside its full name must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:bartholomew-simpson");
@@ -863,15 +958,16 @@ mod tests {
         let minted = override_token(&bart, &candidates);
         assert!(
             matches!(
-                decide(&bart, &["Bart Simpson"], &idx, Some(&minted), None),
+                decide_creating(&bart, &["Bart Simpson"], None, &idx, Some(&minted), None),
                 Decision::Block(_)
             ),
             "the token alone does not lift a refusal on the name alone"
         );
         assert_eq!(
-            decide(
+            decide_creating(
                 &bart,
                 &["Bart Simpson"],
+                None,
                 &idx,
                 Some(&minted),
                 Some("a cousin of the same first name")
@@ -893,11 +989,128 @@ mod tests {
             ("person:bart", "Bart", "a different number of words"),
         ] {
             assert_eq!(
-                decide(&EntityId(handle.into()), &[name], &idx, None, None),
+                decide_creating(&EntityId(handle.into()), &[name], None, &idx, None, None),
                 Decision::Proceed,
                 "{name}: {why}"
             );
         }
+    }
+
+    /// **Two names that share two rare words, with neither holding the other,
+    /// are refused and lifted with a reason.** Each negative sits with the
+    /// positive it is the negative of: one shared word, a stop word, another
+    /// kind, and a word many things of the kind carry.
+    #[test]
+    fn two_shared_words_are_refused_and_lifted_with_a_reason() {
+        let idx = vec![entity(
+            "place:springfield-nuclear-plant",
+            "Springfield Nuclear Plant",
+            "user-named",
+        )];
+        let tours = EntityId("place:contract-nuclear-plant-tours".into());
+        let Decision::Block(candidates) =
+            decide_creating(&tours, &["Nuclear Plant Tours"], None, &idx, None, None)
+        else {
+            panic!("two shared words must block");
+        };
+        assert_eq!(
+            candidates[0].handle.as_str(),
+            "place:springfield-nuclear-plant"
+        );
+        assert_eq!(candidates[0].reason, MatchReason::SharedWord);
+        let minted = override_token(&tours, &candidates);
+        assert!(matches!(
+            decide_creating(
+                &tours,
+                &["Nuclear Plant Tours"],
+                None,
+                &idx,
+                Some(&minted),
+                None
+            ),
+            Decision::Block(_)
+        ));
+        assert_eq!(
+            decide_creating(
+                &tours,
+                &["Nuclear Plant Tours"],
+                None,
+                &idx,
+                Some(&minted),
+                Some("a tour company, not the plant")
+            ),
+            Decision::Proceed
+        );
+
+        for (handle, name, why) in [
+            (
+                "place:contract-plant-tours",
+                "Plant Tours",
+                "one shared word",
+            ),
+            (
+                "place:contract-with-plant",
+                "With Plant With",
+                "a stop word",
+            ),
+            (
+                "person:contract-nuclear-plant-tours",
+                "Nuclear Plant Tours",
+                "another kind",
+            ),
+        ] {
+            assert_eq!(
+                decide_creating(&EntityId(handle.into()), &[name], None, &idx, None, None),
+                Decision::Proceed,
+                "{name}: {why}"
+            );
+        }
+        // A stop word is no evidence even where rarity would pass it: "with" is
+        // carried once here, so it is rare, and only the list says it counts for
+        // nothing. The same pair sharing a real second word is refused.
+        let menu = vec![entity(
+            "place:contract-pickles-with-mustard",
+            "Pickles With Mustard",
+            "user-named",
+        )];
+        assert_eq!(
+            decide_creating(
+                &EntityId("place:contract-bread-with-mustard".into()),
+                &["Bread With Mustard"],
+                None,
+                &menu,
+                None,
+                None
+            ),
+            Decision::Proceed,
+            "a stop word and one real word are one shared word"
+        );
+        assert!(matches!(
+            decide_creating(
+                &EntityId("place:contract-mustard-pickles-tours".into()),
+                &["Mustard Pickles Tours"],
+                None,
+                &menu,
+                None,
+                None
+            ),
+            Decision::Block(_)
+        ));
+        // A word three other things of the kind carry is common, so two such
+        // words are no evidence.
+        let mut crowd = idx.clone();
+        for (slug, name) in [
+            ("place:contract-alpha-nuclear-plant", "Alpha Nuclear Plant"),
+            ("place:contract-beta-nuclear-plant", "Beta Nuclear Plant"),
+            ("place:contract-gamma-nuclear-plant", "Gamma Nuclear Plant"),
+        ] {
+            crowd.push(entity(slug, name, "user-named"));
+        }
+        assert_eq!(
+            decide_creating(&tours, &["Nuclear Plant Tours"], None, &crowd, None, None),
+            Decision::Proceed,
+            "words four things carry are common"
+        );
     }
 
     /// **The escape works on this channel too.** A sibling under a fuller name

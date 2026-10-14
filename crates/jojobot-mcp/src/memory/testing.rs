@@ -248,8 +248,9 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
 pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
     let id = EntityId::person(handle);
     let kind = id.kind().expect("test handles are well-formed");
-    jojobot
-        .add_entity(Parameters(AddEntityArgs {
+    add_fixture(
+        jojobot,
+        AddEntityArgs {
             request_id: None,
             kind: kind.as_token().into(),
             handle: id.slug().into(),
@@ -265,20 +266,69 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
             // The handler's own registry, for the same reason `make_bot` uses
             // it: a bare-registry test must be able to provision a subject.
             sid: Some(crate::harness::writing_as(jojobot)),
-        }))
-        .await
-        .expect("add_entity call ok");
+        },
+    )
+    .await;
 }
 
 /// [`ensure`], attributed to a session. Beats are written for whoever the
-/// handle names, so a spec about the tally has to say who is calling.
+/// session names, so a spec that reads them back must provision as that session.
 pub(crate) async fn ensure_as(jojobot: &Jojobot, sid: &str, handle: &str) {
     let id = EntityId::person(handle);
     let kind = id.kind().expect("test handles are well-formed");
-    jojobot
-        .add_entity(Parameters(AddEntityArgs {
+    add_fixture(
+        jojobot,
+        AddEntityArgs {
             sid: Some(sid.to_string()),
             ..add_args(kind.as_token(), id.slug(), id.slug())
+        },
+    )
+    .await;
+}
+
+/// **Create a fixture the way a bot that insists does.** A fixture's name is its
+/// slug, so two of one family (`contract-view-filter-routine`,
+/// `contract-view-filter-owner`) share rare words and the shared-word reason
+/// refuses the second. No case that provisions this way is about that refusal,
+/// so the refusal is lifted with the token it minted and a reason. Any other
+/// refusal is left as it came: an add that comes back blocked means the thing
+/// is already there.
+async fn add_fixture(jojobot: &Jojobot, args: AddEntityArgs) {
+    let result = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            override_token: args.override_token.clone(),
+            override_reason: args.override_reason.clone(),
+            request_id: args.request_id.clone(),
+            kind: args.kind.clone(),
+            handle: args.handle.clone(),
+            name: args.name.clone(),
+            aliases: args.aliases.clone(),
+            source: args.source.clone(),
+            crm: args.crm.clone(),
+            boot: args.boot.clone(),
+            parent: args.parent.clone(),
+            sets: args.sets.clone(),
+            sid: args.sid.clone(),
+        }))
+        .await
+        .expect("add_entity call ok");
+    let body = json_of(&result);
+    let by_shared_words = body["status"] == "blocked"
+        && body["candidates"].as_array().is_some_and(|found| {
+            !found.is_empty() && found.iter().all(|c| c["reason"] == "shared-word")
+        });
+    if !by_shared_words {
+        return;
+    }
+    let advice = body["how_to_proceed"].as_str().unwrap_or_default();
+    let marker = "override_token: \"";
+    let from = advice.find(marker).expect("the refusal names its token") + marker.len();
+    let token = &advice[from..from + advice[from..].find('"').expect("the token ends")];
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            override_token: Some(token.to_string()),
+            override_reason: Some("a fixture of the same family".into()),
+            ..args
         }))
         .await
         .expect("add_entity call ok");

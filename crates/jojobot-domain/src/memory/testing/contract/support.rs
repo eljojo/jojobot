@@ -99,14 +99,40 @@ pub(super) async fn capture<M: Memory + ?Sized>(store: &M, fact: NewFact) -> Fac
 }
 
 /// Add an entity the guard is expected to wave through.
+///
+/// **A fixture's names are its slugs, so two fixtures of one family
+/// (`contract-kind-promise-owner`, `contract-kind-promise-target`) share rare
+/// words and the shared-word reason refuses the second.** That refusal is about
+/// names a bot chose, and no case here is about it, so setup insists the way a
+/// bot does: the token the refusal minted and a reason. A refusal for any other
+/// reason still fails the case.
 pub(super) async fn add<M: Memory + ?Sized>(store: &M, new: NewEntity) -> Entity {
     let id = new.id.clone();
-    store
-        .add_entity(new)
+    let first = store
+        .add_entity(new.clone())
         .await
-        .expect("add_entity should succeed")
-        .written()
-        .unwrap_or_else(|| panic!("the guard must not block {id}"))
+        .expect("add_entity should succeed");
+    let written = match first {
+        Guarded::Blocked {
+            attempted,
+            candidates,
+        } if candidates
+            .iter()
+            .all(|m| m.reason == guard::MatchReason::SharedWord) =>
+        {
+            store
+                .add_entity(NewEntity {
+                    override_token: Some(guard::override_token(&attempted, &candidates)),
+                    override_reason: Some("a fixture of the same family".into()),
+                    ..new
+                })
+                .await
+                .expect("add_entity should succeed")
+                .written()
+        }
+        other => other.written(),
+    };
+    written.unwrap_or_else(|| panic!("the guard must not block {id}"))
 }
 
 /// **How an existing thing for a guard case comes to exist** — written

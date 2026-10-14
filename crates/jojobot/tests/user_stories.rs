@@ -149,6 +149,8 @@ mod session_key;
 mod supplied_search;
 #[path = "user_stories/supplied_sets.rs"]
 mod supplied_sets;
+#[path = "user_stories/two_shared_words.rs"]
+mod two_shared_words;
 
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]

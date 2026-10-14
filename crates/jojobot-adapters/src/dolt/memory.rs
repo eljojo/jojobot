@@ -2283,7 +2283,7 @@ impl DoltMemory {
         new: NewEntity,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let index = self.known(tx).await?;
-        if let guard::Decision::Block(candidates) = guard::decide_under(
+        if let guard::Decision::Block(candidates) = guard::decide_creating(
             &new.id,
             &new.labels(),
             new.parent.as_ref(),

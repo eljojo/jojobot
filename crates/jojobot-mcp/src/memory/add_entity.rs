@@ -270,9 +270,10 @@ impl Jojobot {
                        candidate you meant, or re-call with the override_token that refusal \
                        carries if this genuinely is a different thing sharing a name — a token \
                        lifts the one refusal that minted it and no other. A refusal on the name \
-                       alone (the same name under another kind, a name that holds another, or \
-                       a known nickname of another) also needs override_reason, shown beside \
-                       the name. An exact handle \
+                       alone (the same name under another kind, a name that holds another, a \
+                       known nickname of another, or two rare words shared with another of the \
+                       same kind) also needs override_reason, shown beside the name. An exact \
+                       handle \
                        collision can never be forced — a handle has exactly one owner. A creation whose aliases, or whose `sets` as a first claim, could not \
                        be read back whole in one answer is refused and nothing is made: send \
                        fewer or shorter aliases, or move the long text onto a claim. A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing."
@@ -1644,7 +1645,7 @@ mod tests {
         let asked = created_under(
             &jojobot,
             &sid,
-            ("work", "atlas-donut-stand-two", "Donut Stand Two"),
+            ("work", "atlas-donut-cart", "Donut Cart"),
             Some("project:atlas"),
         )
         .await;
@@ -1750,7 +1751,7 @@ mod tests {
         // The merging session was shown all three, then folds the first.
         browsed(&jojobot, &merger, "thing").await;
         merged(&jojobot, &merger, "thing:teapot", "thing:piano").await;
-        let asked = created(&jojobot, &merger, "thing", "battery", "Mill Race Road").await;
+        let asked = created(&jojobot, &merger, "thing", "battery", "Mill Lane Cross").await;
         assert!(
             teaches(&asked, "thing:canoe"),
             "the unmerged thing it was shown is no longer asked about: {asked}",
@@ -1770,7 +1771,7 @@ mod tests {
             }))
             .await
             .expect("recall ok");
-        let asked = created(&jojobot, &reader, "thing", "backup-drive", "Mill Weir Pond").await;
+        let asked = created(&jojobot, &reader, "thing", "backup-drive", "Pond Quay").await;
         // **A live thing the reader was shown, and not one in particular.** The
         // survivor carries the folded handle's name as an alias, so it shares as
         // many words with the creation as the canoe does, and the one shown most
