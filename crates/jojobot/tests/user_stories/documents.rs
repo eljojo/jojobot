@@ -591,3 +591,285 @@ async fn a_section_moved_later_reads_in_its_old_place_as_of_the_earlier_day() {
         "as of September the closing is still last: {then}"
     );
 }
+
+// --- a document restored to a day --------------------------------------------
+//
+// "Put the manual back the way it was in September." `put_document` takes
+// `restore_to`, a day or an instant, and writes that state back as new versions.
+// History is never rewritten: a section that still stands is edited, a section
+// archived since comes back as a new record that names the archived one in
+// `derived_from`, and a section made since is archived.
+
+/// The active record of a document whose words are `heading`, as recall serves it.
+async fn active_section(session: &super::dsl::Session, heading: &str) -> serde_json::Value {
+    let facts = session.recall("document:homer").await.json();
+    facts["objects"][0]["facts"]
+        .as_array()
+        .expect("the document's records")
+        .iter()
+        .find(|fact| fact["content"] == heading && fact["status"] == "active")
+        .unwrap_or_else(|| panic!("an active section {heading}: {facts}"))
+        .clone()
+}
+
+/// Build the document the restore stories share: put on a day in August, then on a
+/// day in October the opening is edited, a section is made and the closing is
+/// archived. Answers the story, the clock, the session and the opening's and the
+/// closing's addresses.
+async fn manual_changed_in_october() -> (
+    Story,
+    jojobot_domain::memory::testing::ClockHandle,
+    super::dsl::Session,
+    String,
+    String,
+) {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let addresses = manual_addresses(&session).await;
+    let (opening, closing) = (addresses[1].clone(), addresses[2].clone());
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({
+                "address": opening, "field": "details",
+                "find": "at six", "replace": "at five",
+            }),
+        )
+        .await;
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "after": closing,
+                "markdown": "## Cleaning\n\nWipe the fryer down each night.\n",
+            }),
+        )
+        .await;
+    session
+        .call(
+            "update_fact",
+            json!({"address": closing, "status": "archived"}),
+        )
+        .await;
+    (story, clock, session, opening, closing)
+}
+
+/// **A restore puts the document back as the read of that day showed it, byte for
+/// byte, and every earlier version stays readable.** The opening was edited, the
+/// closing archived and a section made since: after the restore the whole read is
+/// the September read; the opening has its edit and its restoration in its own
+/// history; the closing is a NEW record naming the archived one; the section made
+/// since is archived. A second restore to the same day changes nothing.
+#[tokio::test]
+async fn a_restore_puts_the_document_back_as_a_day_read_it_and_keeps_every_version() {
+    let (_story, _clock, session, opening, closing) = manual_changed_in_october().await;
+    let then = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_eq!(then["markdown"], MANUAL, "the September read: {then}");
+    let today = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_ne!(
+        today["markdown"], then["markdown"],
+        "the document moved since, or this story proves nothing: {today}"
+    );
+
+    let restored = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_ne!(restored["status"], "blocked", "{restored}");
+
+    let now = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        now["markdown"], then["markdown"],
+        "the whole read is the September read, byte for byte: {now}"
+    );
+
+    // The opening still stands, on its own address, with every version.
+    let history = session
+        .call("recall", json!({"history_record": opening}))
+        .await
+        .json();
+    let writes = history["objects"][0]["record_history"]["writes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the opening's writes: {history}"));
+    let said = |needle: &str| writes.iter().any(|w| w.to_string().contains(needle));
+    assert!(
+        writes.len() >= 3 && said("at six") && said("at five"),
+        "put, edit and restoration are all there: {history}"
+    );
+
+    // The closing was archived, so it comes back as a new record that names it.
+    let back = active_section(&session, "## Closing").await;
+    assert_ne!(
+        back["address"], closing,
+        "an archived claim has no un-archive, so the section is a new record: {back}"
+    );
+    assert_eq!(
+        back["derived_from"], closing,
+        "…and it names the one it restores: {back}"
+    );
+
+    // A second restore to the same day finds nothing to do.
+    let again = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_ne!(again["status"], "blocked", "{again}");
+    let after_again = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        after_again["markdown"], MANUAL,
+        "a restore to the same day twice leaves the same page: {after_again}"
+    );
+    assert_eq!(
+        again["restored"]["changed"], 0,
+        "…and says it changed nothing: {again}"
+    );
+}
+
+/// **A restore that would change a section whose wording is testimony is refused
+/// whole unless the call carries `confirmed_by_user`**, naming the sections and
+/// the flag, and nothing is written. With the flag the testimony section comes
+/// back as a new record that is still testimony and names the version restored.
+#[tokio::test]
+async fn a_restore_over_testimony_needs_the_operators_confirmation_or_changes_nothing() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "markdown": MANUAL,
+                "provenance": "testimony",
+            }),
+        )
+        .await;
+    let opening = manual_addresses(&session).await[1].clone();
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({
+                "address": opening, "field": "details",
+                "find": "at six", "replace": "at five",
+            }),
+        )
+        .await;
+    let edited = MANUAL.replace("at six", "at five");
+
+    session
+        .refused(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .says("confirmed_by_user")
+        .says(&opening);
+    let unchanged = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        unchanged["markdown"], edited,
+        "a refused restore wrote nothing: {unchanged}"
+    );
+
+    let confirmed = session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "restore_to": SEPTEMBER,
+                "confirmed_by_user": true,
+            }),
+        )
+        .await
+        .json();
+    assert_ne!(confirmed["status"], "blocked", "{confirmed}");
+    let restored = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(restored["markdown"], MANUAL, "{restored}");
+    let back = active_section(&session, "## Opening").await;
+    assert_eq!(
+        back["provenance"], "testimony",
+        "the restored wording keeps the provenance it had: {back}"
+    );
+    assert_eq!(
+        back["derived_from"], opening,
+        "…and names the version restored: {back}"
+    );
+}
+
+/// **A restore names a moment or it is refused, and it is refused for a moment the
+/// document did not exist.** Neither `markdown` nor `restore_to`, and both, are
+/// refused; a restore to a day before the first write would archive every section,
+/// which is not a restoration, and is refused with nothing written.
+#[tokio::test]
+async fn a_restore_without_a_moment_or_to_a_day_before_the_document_is_refused() {
+    let (_story, _clock, session, _opening, _closing) = manual_changed_in_october().await;
+    let before = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+
+    session
+        .refused("put_document", json!({"document": "document:homer"}))
+        .await
+        .says("restore_to");
+    session
+        .refused(
+            "put_document",
+            json!({
+                "document": "document:homer", "markdown": MANUAL,
+                "restore_to": SEPTEMBER,
+            }),
+        )
+        .await
+        .says("restore_to");
+    session
+        .refused(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": "2026-07-01"}),
+        )
+        .await
+        .says("restore_to");
+
+    let after = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        after["markdown"], before["markdown"],
+        "a refused restore wrote nothing: {after}"
+    );
+}

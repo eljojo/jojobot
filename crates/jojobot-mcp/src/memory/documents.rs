@@ -7,6 +7,7 @@
 //! ordinary claim about the document and is not part of its text.
 
 use super::*;
+use jiff::civil::Date;
 use jojobot_domain::memory::FactId;
 use jojobot_domain::memory::document::{self, Section};
 use jojobot_domain::memory::order;
@@ -84,6 +85,280 @@ pub(crate) struct MovePlan {
     pub(crate) rest: Vec<(FactAddress, String)>,
 }
 
+/// **One write a restore makes.**
+enum Step {
+    /// A section that stands is edited back to its wording.
+    Rewrite {
+        address: FactAddress,
+        patch: Box<FactPatch>,
+    },
+    /// A section that was archived since, or whose run is re-made whole, comes
+    /// back as a new record that names the one it restores. An archived claim has
+    /// no un-archive.
+    Recreate {
+        old: FactAddress,
+        new: Box<NewFact>,
+        /// `None` for a section's heading. For a chunk that carries it on: the
+        /// heading's record when that stands, or `Some(None)` for the heading
+        /// this restore has just written.
+        continues: Option<Option<String>>,
+    },
+    /// A section made since is archived.
+    Archive { address: FactAddress },
+}
+
+/// **What a restore would write**, worked out before any write, with the
+/// sections it would change whose wording is the operator's own.
+#[derive(Default)]
+struct RestorePlan {
+    steps: Vec<Step>,
+    /// The sections, by the address they have in the record of that day or now,
+    /// that a change would touch and whose current or restored wording is
+    /// testimony.
+    testimony: Vec<FactAddress>,
+    /// The records the plan touches, to name any whose state rests on a write
+    /// with no moment.
+    touched: Vec<FactId>,
+}
+
+/// Whether a record about to be written is a section's heading and not a chunk
+/// that carries one on.
+fn continues_none(new: &NewFact) -> bool {
+    !new.fields.contains_key(document::CONTINUES)
+}
+
+/// **A write's outcome as the fact it landed**, or the answer the caller gives
+/// for it. A fold that could not refresh after a landed write still landed.
+fn landed_fact(
+    outcome: Result<Guarded<Fact>, MemoryError>,
+    fold_behind: &mut Option<jojobot_domain::memory::search::Behind>,
+) -> Result<Fact, Result<CallToolResult, McpError>> {
+    match outcome {
+        Ok(Guarded::Written(fact)) => Ok(fact),
+        Err(MemoryError::FoldBehind {
+            landed: Landed::Fact(fact),
+            behind,
+            ..
+        }) => {
+            *fold_behind = Some(behind);
+            Ok(*fact)
+        }
+        Ok(Guarded::Blocked {
+            attempted,
+            candidates,
+        }) => Err(Ok(blocked_result(
+            &attempted,
+            &candidates,
+            Blocked::MustExist("put_document"),
+        ))),
+        Err(e) => Err(memory_declined("put_document", e)),
+    }
+}
+
+fn is_testimony(held: &Held<'_>) -> bool {
+    held.fact.provenance == Provenance::Testimony
+}
+
+/// The keys two records of one section are compared by. **A chunk's link to its
+/// heading is left out when the records are two: the copy of a chunk points at
+/// the copy of its heading, so the link differs and says nothing.**
+fn compared_keys(same_record: bool) -> impl Iterator<Item = &'static str> {
+    SECTION_KEYS
+        .into_iter()
+        .filter(move |key| same_record || *key != document::CONTINUES)
+}
+
+/// Whether two records of one section read the same: its words and the keys a
+/// section is read back from.
+fn same_section(then: &Fact, now: &Fact) -> bool {
+    let same_record = then.id == now.id;
+    then.content == now.content
+        && then.details.as_deref().unwrap_or("") == now.details.as_deref().unwrap_or("")
+        && compared_keys(same_record).all(|key| then.fields.get(key) == now.fields.get(key))
+}
+
+/// The edit that puts a standing section back to its wording of that day.
+fn patch_back(then: &Fact, now: &Fact, session: &str) -> FactPatch {
+    let mut patch = FactPatch {
+        session: Some(session.to_string()),
+        ..Default::default()
+    };
+    if then.content != now.content {
+        patch.content = Some(then.content.clone());
+    }
+    if then.details.as_deref().unwrap_or("") != now.details.as_deref().unwrap_or("") {
+        patch.details = Some(then.details.clone().unwrap_or_default());
+    }
+    for key in compared_keys(then.id == now.id) {
+        match (then.fields.get(key), now.fields.get(key)) {
+            (Some(was), held) if held != Some(was) => {
+                patch.fields.insert(key.to_string(), was.clone());
+            }
+            (None, Some(_)) => patch.clear_fields.push(key.to_string()),
+            _ => {}
+        }
+    }
+    patch
+}
+
+/// The new record a section comes back as: the words, provenance and keys it had,
+/// and the address of the record it restores.
+fn restored_record(subject: &EntityId, then: &Fact, session: &str, day: Date) -> NewFact {
+    let mut new = NewFact::about(subject.clone(), then.content.clone(), day);
+    new.details = then.details.clone().filter(|details| !details.is_empty());
+    new.provenance = then.provenance;
+    new.standing = Some(then.standing);
+    new.fields = then.fields.clone();
+    new.fields.remove(document::CONTINUES);
+    new.derived_from = Some(then.address());
+    new.session = Some(session.to_string());
+    new
+}
+
+/// **Work out what puts the document back as it stood.** `then` and `now` are the
+/// live sections of that day and of today, in reading order. A section's run (the
+/// heading and the chunks that carry it on) is restored whole or not at all.
+fn plan_restore(
+    subject: &EntityId,
+    then: &[Held<'_>],
+    now: &[Held<'_>],
+    session: &str,
+    day: Date,
+) -> RestorePlan {
+    let now_by_id: std::collections::HashMap<&str, usize> = now
+        .iter()
+        .enumerate()
+        .map(|(at, held)| (held.fact.id.0.as_str(), at))
+        .collect();
+    // **A section restored before stands under a new record that names the one it
+    // restores**, so a second restore to the same moment finds it there and has
+    // nothing to do. An archived claim has no un-archive, which is why the copy
+    // is a record of its own.
+    let now_by_origin: std::collections::HashMap<String, usize> = now
+        .iter()
+        .enumerate()
+        .filter_map(|(at, held)| {
+            held.fact
+                .derived_from
+                .as_ref()
+                .map(|from| (from.to_string(), at))
+        })
+        .collect();
+    let counterpart = |was: &Held<'_>| -> Option<usize> {
+        now_by_id
+            .get(was.fact.id.0.as_str())
+            .copied()
+            .or_else(|| now_by_origin.get(&was.fact.address().to_string()).copied())
+    };
+    let mut plan = RestorePlan::default();
+    let mut restored_heads = std::collections::BTreeSet::new();
+    for at in (0..then.len()).filter(|n| then[*n].head.is_none()) {
+        let run = run_of(then, at);
+        let head_id = then[at].fact.id.0.as_str();
+        restored_heads.insert(head_id);
+        let now_run: Vec<usize> = match counterpart(&then[at]) {
+            Some(head_at) => {
+                restored_heads.insert(now[head_at].fact.id.0.as_str());
+                run_of(now, head_at)
+            }
+            None => Vec::new(),
+        };
+        // A section whose wording is the operator's cannot be edited in place by
+        // another session, so a run holding one is re-made whole.
+        let remake = now_run.is_empty()
+            || run.iter().any(|n| {
+                let was = &then[*n];
+                match counterpart(was) {
+                    Some(held) => {
+                        !same_section(was.fact, now[held].fact)
+                            && (is_testimony(was) || is_testimony(&now[held]))
+                    }
+                    None => false,
+                }
+            });
+        if remake {
+            for n in &now_run {
+                let held = &now[*n];
+                plan.steps.push(Step::Archive {
+                    address: held.fact.address(),
+                });
+                plan.touched.push(held.fact.id.clone());
+                if is_testimony(held) {
+                    plan.testimony.push(held.fact.address());
+                }
+            }
+            for (place, n) in run.iter().enumerate() {
+                let was = &then[*n];
+                plan.steps.push(Step::Recreate {
+                    old: was.fact.address(),
+                    new: Box::new(restored_record(subject, was.fact, session, day)),
+                    continues: (place > 0).then_some(None),
+                });
+                plan.touched.push(was.fact.id.clone());
+                if is_testimony(was) {
+                    plan.testimony.push(was.fact.address());
+                }
+            }
+            continue;
+        }
+        for n in &run {
+            let was = &then[*n];
+            match counterpart(was) {
+                Some(held) if same_section(was.fact, now[held].fact) => {}
+                Some(held) => {
+                    plan.steps.push(Step::Rewrite {
+                        address: now[held].fact.address(),
+                        patch: Box::new(patch_back(was.fact, now[held].fact, session)),
+                    });
+                    plan.touched.push(was.fact.id.clone());
+                }
+                None => {
+                    plan.steps.push(Step::Recreate {
+                        old: was.fact.address(),
+                        new: Box::new(restored_record(subject, was.fact, session, day)),
+                        continues: Some(Some(head_id.to_string())),
+                    });
+                    plan.touched.push(was.fact.id.clone());
+                    if is_testimony(was) {
+                        plan.testimony.push(was.fact.address());
+                    }
+                }
+            }
+        }
+        let wanted: std::collections::BTreeSet<&str> = run
+            .iter()
+            .filter_map(|n| counterpart(&then[*n]))
+            .map(|held| now[held].fact.id.0.as_str())
+            .collect();
+        for n in &now_run {
+            let held = &now[*n];
+            if !wanted.contains(held.fact.id.0.as_str()) {
+                plan.steps.push(Step::Archive {
+                    address: held.fact.address(),
+                });
+                plan.touched.push(held.fact.id.clone());
+                if is_testimony(held) {
+                    plan.testimony.push(held.fact.address());
+                }
+            }
+        }
+    }
+    // A section that stands now and did not stand then is archived: its heading
+    // alone, because the chunks that carry it on go with it.
+    for held in now.iter().filter(|held| held.head.is_none()) {
+        if !restored_heads.contains(held.fact.id.0.as_str()) {
+            plan.steps.push(Step::Archive {
+                address: held.fact.address(),
+            });
+            plan.touched.push(held.fact.id.clone());
+            if is_testimony(held) {
+                plan.testimony.push(held.fact.address());
+            }
+        }
+    }
+    plan
+}
+
 /// **A document's records as they stood at one moment**, rebuilt so the same
 /// reading code that serves today's page serves that one.
 pub(crate) struct AsOf {
@@ -140,6 +415,202 @@ impl Jojobot {
         })
     }
 
+    /// **Put a document back as it stood at a moment.** Every section that
+    /// differs gets a new write carrying its old wording, through the writes the
+    /// verbs make; a section archived since comes back as a new record that names
+    /// the archived one; a section made since is archived. Nothing is rewritten
+    /// in the history.
+    ///
+    /// **All is checked before any is written.** A restore that would change a
+    /// section whose wording is testimony is refused whole unless the call is
+    /// confirmed, one to a moment the document held nothing is refused, and one
+    /// that rests on a write with no moment is refused naming it. A store that
+    /// stops partway leaves what landed, and a second call finishes: it works out
+    /// what is left from what is stored.
+    pub(crate) async fn restore_document(
+        &self,
+        subject: &EntityId,
+        asked: &str,
+        confirmed: bool,
+        day: Date,
+        caller: &crate::caller::Caller,
+    ) -> Result<CallToolResult, McpError> {
+        let refuse = |why: String| memory_declined("put_document", MemoryError::InvalidFact(why));
+        let moment = match self.moment_of(asked, Some(caller)).await {
+            Ok(moment) => moment,
+            Err(e) => return memory_declined("put_document", e),
+        };
+        // Held from the read to the last write, for the reason a put holds it.
+        let _placing = match self.hold_placing(subject).await {
+            Ok(guard) => guard,
+            Err(e) => return memory_declined("put_document", e),
+        };
+        let then = match self.facts_as_of(subject, moment).await {
+            Ok(then) => then,
+            Err(e) => return memory_declined("put_document", e),
+        };
+        let now_facts = match self.memory.recall(subject).await {
+            Ok(facts) => facts,
+            Err(e) => return memory_declined("put_document", e),
+        };
+        let then_live = live_sections(&then.facts);
+        if then_live.is_empty() {
+            return refuse(format!(
+                "restore_to '{asked}' names a moment at which {subject} held no sections: it \
+                 did not exist yet, or held none. A restore to it would archive every section, \
+                 which is not a restoration. Name a later moment, and read it first with \
+                 read_document and as_of"
+            ));
+        }
+        let now_live = live_sections(&now_facts);
+        let plan = plan_restore(subject, &then_live, &now_live, caller.sid.as_str(), day);
+
+        let unplaced: Vec<String> = plan
+            .touched
+            .iter()
+            .filter(|id| then.unplaced.contains(id))
+            .map(|id| format!("{subject}#{}", id.0))
+            .collect();
+        if !unplaced.is_empty() {
+            return refuse(format!(
+                "restore_to '{asked}' would place {}, whose state at that moment rests on a \
+                 write the store kept before it stamped its writes, so no moment places it. \
+                 Nothing was written. Restore the others by editing those sections with \
+                 update_fact",
+                unplaced.join(", ")
+            ));
+        }
+        let mut testimony: Vec<String> = plan.testimony.iter().map(ToString::to_string).collect();
+        testimony.sort();
+        testimony.dedup();
+        if !testimony.is_empty() && !confirmed {
+            return refuse(format!(
+                "restore_to '{asked}' would change {} whose wording is testimony, the \
+                 operator's own words: {}. A restore may not put the operator's old words back \
+                 over the current ones on its own say-so, because what replaced them may be \
+                 their own correction. Nothing was written. Send confirmed_by_user: true once \
+                 the operator has confirmed it",
+                crate::answer::counted(testimony.len(), "section", "sections"),
+                testimony.join(", ")
+            ));
+        }
+        let known = match self.memory.list_entities(None).await {
+            Ok(known) => known,
+            Err(e) => return memory_declined("put_document", e),
+        };
+        for step in &plan.steps {
+            if let Step::Recreate { new, .. } = step
+                && let Some(refused) = jojobot_domain::memory::mention::refusal_for_words(
+                    &new.content,
+                    new.details.as_deref(),
+                    &known,
+                )
+            {
+                return memory_declined("put_document", refused);
+            }
+        }
+
+        let before = self.as_it_stands(subject).await;
+        let total = plan.steps.len();
+        let mut rewritten: Vec<String> = Vec::new();
+        let mut recreated: Vec<serde_json::Value> = Vec::new();
+        let mut archived: Vec<String> = Vec::new();
+        let mut heading_record: Option<String> = None;
+        let mut fold_behind = None;
+        for step in plan.steps {
+            let written = match step {
+                Step::Rewrite { address, patch } => {
+                    let outcome = self.memory.update_fact(&address, *patch, &caller.bot).await;
+                    landed_fact(outcome, &mut fold_behind)
+                        .map(|_| rewritten.push(address.to_string()))
+                }
+                Step::Archive { address } => {
+                    let patch = FactPatch {
+                        status: Some(FactStatus::Archived),
+                        session: Some(caller.sid.as_str().to_string()),
+                        ..Default::default()
+                    };
+                    let outcome = self.memory.update_fact(&address, patch, &caller.bot).await;
+                    landed_fact(outcome, &mut fold_behind)
+                        .map(|_| archived.push(address.to_string()))
+                }
+                Step::Recreate {
+                    old,
+                    mut new,
+                    continues,
+                } => {
+                    if let Some(link) = continues {
+                        let heading = link.or_else(|| heading_record.clone()).expect(
+                            "a chunk that carries a section on comes after the heading it follows",
+                        );
+                        new.fields.insert(document::CONTINUES.to_string(), heading);
+                    }
+                    let is_heading = continues_none(&new);
+                    let outcome = self.memory.capture(*new).await;
+                    landed_fact(outcome, &mut fold_behind).map(|fact| {
+                        if is_heading {
+                            heading_record = Some(fact.id.0.clone());
+                        }
+                        recreated.push(serde_json::json!({
+                            "from": old.to_string(),
+                            "to": fact.address().to_string(),
+                        }));
+                    })
+                }
+            };
+            if let Err(refused) = written {
+                let done = rewritten.len() + recreated.len() + archived.len();
+                let to_finish = format!(
+                    "{done} of {total} writes landed and stay. Send the same restore_to again: \
+                     it works out what is left from what is stored and writes only that"
+                );
+                return super::documents::stopped_with(
+                    refused,
+                    serde_json::json!({
+                        "rewritten": rewritten,
+                        "recreated": recreated,
+                        "archived": archived,
+                        "not_written": total - done,
+                        "to_finish": to_finish,
+                    }),
+                    format!("the store stopped partway: {to_finish}"),
+                );
+            }
+        }
+
+        self.beat("put_document", subject.as_str(), Some(caller.sid.as_str()))
+            .await;
+        let changed_count = rewritten.len() + recreated.len() + archived.len();
+        let mut body = serde_json::json!({
+            "document": subject.as_str(),
+            "restored": {
+                "asked": asked,
+                "moment": moment.to_string(),
+                "changed": changed_count,
+                "rewritten": rewritten,
+                "recreated": recreated,
+                "archived": archived,
+            },
+        });
+        let changed = match fold_behind {
+            Some(_) => crate::changed::Changed::not_read(),
+            None => self.changed_on(&before, subject).await,
+        };
+        crate::changed::note_changed(&mut body, changed);
+        if let Some(behind) = fold_behind {
+            crate::answer::note_fold_behind(&mut body, behind);
+        }
+        crate::answer::note_postcondition(
+            &mut body,
+            format!(
+                "{subject} was put back as it stood at {moment}: {}. read_document returns it, \
+                 and the history of every section still holds every version.",
+                crate::answer::counted(changed_count, "write", "writes")
+            ),
+        );
+        json_result(&body)
+    }
+
     /// **Rebuild a document's records as they stood at `moment`.** Each record
     /// takes its newest write at or before the moment, and each section key its
     /// newest write at or before it. A record with no write by then did not exist
@@ -170,6 +641,8 @@ impl Jojobot {
             fact.content = write.content.clone();
             fact.details = write.details.clone();
             fact.status = write.status;
+            fact.provenance = write.provenance;
+            fact.standing = write.standing;
             for key in SECTION_KEYS {
                 let held = trails
                     .record_writes

@@ -2256,6 +2256,7 @@ read_document returns the file byte for byte; update_fact edits one section and 
 A section too long for one record is cut at the last blank line that fits.
 The document must already exist (add_entity, kind document).
 Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
+`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` with `as_of` showed it: sections that differ get a new write with their old wording, one archived since comes back as a new record naming it, one made since is archived, and nothing in the history is rewritten; over testimony it needs `confirmed_by_user`.
 Every section is checked before any is written; a write that stops midway answers with the addresses that landed and where the rest begins.
 Answers with a receipt, not the text.
 The receipt's `changed` lists what this call changed, or says nothing.
@@ -2276,11 +2277,22 @@ A refusal before any section lands is an answer with status: blocked and nothing
           "null"
         ]
       },
+      "confirmed_by_user": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "document": {
         "type": "string"
       },
       "markdown": {
-        "type": "string"
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "provenance": {
         "default": null,
@@ -2290,6 +2302,13 @@ A refusal before any section lands is an answer with status: blocked and nothing
         ]
       },
       "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "restore_to": {
         "default": null,
         "type": [
           "string",
@@ -2319,8 +2338,7 @@ A refusal before any section lands is an answer with status: blocked and nothing
       }
     },
     "required": [
-      "document",
-      "markdown"
+      "document"
     ],
     "type": "object"
   },
@@ -2336,6 +2354,14 @@ right after it. **Required when the document already has sections**, so
 that putting an edited file again cannot silently double the document.
 To change a section that is there, edit its record with `update_fact`;
 to take one away, archive its record.
+```
+
+#### `put_document` — argument `/inputSchema.confirmed_by_user`
+
+```text
+**The operator has confirmed a restore over their own words.** A restore
+that would change a section whose wording is testimony is refused whole
+without this, naming those sections. Only meaningful with `restore_to`.
 ```
 
 #### `put_document` — argument `/inputSchema.document`
@@ -2374,6 +2400,19 @@ section of the call.
 ```text
 The day the sections were made, `YYYY-MM-DD`. Defaults to the day your
 run is in.
+```
+
+#### `put_document` — argument `/inputSchema.restore_to`
+
+```text
+**Put the document back as it stood at a moment, instead of writing a
+file**: a day, `YYYY-MM-DD`, meaning the end of that day in your zone, or
+an instant. Send this OR `markdown`, never both; with this, `after` and
+`markdown` are not needed. Every section that differs gets a new write
+carrying its old wording; a section archived since comes back as a new
+record that names the archived one in `derived_from`; a section made
+since is archived. History is never rewritten. Read the moment first with
+`read_document` and `as_of`.
 ```
 
 #### `put_document` — argument `/inputSchema.sid`

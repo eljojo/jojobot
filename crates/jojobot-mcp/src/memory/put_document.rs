@@ -29,7 +29,23 @@ pub struct PutDocumentArgs {
     ///
     /// A `@kind:slug` outside a code span or fence links to a thing that exists
     /// and is refused when it names nothing; inside code it is literal.
-    pub(crate) markdown: String,
+    #[serde(default)]
+    pub(crate) markdown: Option<String>,
+    /// **Put the document back as it stood at a moment, instead of writing a
+    /// file**: a day, `YYYY-MM-DD`, meaning the end of that day in your zone, or
+    /// an instant. Send this OR `markdown`, never both; with this, `after` and
+    /// `markdown` are not needed. Every section that differs gets a new write
+    /// carrying its old wording; a section archived since comes back as a new
+    /// record that names the archived one in `derived_from`; a section made
+    /// since is archived. History is never rewritten. Read the moment first with
+    /// `read_document` and `as_of`.
+    #[serde(default)]
+    pub(crate) restore_to: Option<String>,
+    /// **The operator has confirmed a restore over their own words.** A restore
+    /// that would change a section whose wording is testimony is refused whole
+    /// without this, naming those sections. Only meaningful with `restore_to`.
+    #[serde(default)]
+    pub(crate) confirmed_by_user: Option<bool>,
     /// **A section's address**, `document:homer#local-id`: write the new sections
     /// right after it. **Required when the document already has sections**, so
     /// that putting an edited file again cannot silently double the document.
@@ -75,7 +91,13 @@ impl Jojobot {
                        for one record is cut at the last blank line that fits. The document \
                        must already exist (add_entity, kind document). Onto a document with \
                        sections the call is refused unless it names `after`, a section's \
-                       address, so an edited file put twice cannot double the text. Every \
+                       address, so an edited file put twice cannot double the text. \
+                       `restore_to` (a day or an instant) instead of `markdown` puts the \
+                       document back as `read_document` with `as_of` showed it: sections that \
+                       differ get a new write with their old wording, one archived since comes \
+                       back as a new record naming it, one made since is archived, and nothing \
+                       in the history is rewritten; over testimony it needs \
+                       `confirmed_by_user`. Every \
                        section is checked before any is written; a write that stops midway \
                        answers with the addresses that landed and where the rest begins. \
                        Answers with a receipt, not the text. The receipt's `changed` lists \
@@ -102,6 +124,34 @@ impl Jojobot {
                 )),
             );
         }
+        let markdown = match (args.markdown.as_deref(), args.restore_to.as_deref()) {
+            (Some(_), Some(_)) | (None, None) => {
+                return memory_declined(
+                    "put_document",
+                    MemoryError::InvalidFact(
+                        "put_document writes a markdown file onto a document, or puts the \
+                         document back as it stood with `restore_to`: send `markdown` or \
+                         `restore_to`, not both and not neither"
+                            .into(),
+                    ),
+                );
+            }
+            (None, Some(asked)) => {
+                let recorded_at = self
+                    .dated(args.recorded_at.as_deref(), args.sid.as_deref())
+                    .await?;
+                return self
+                    .restore_document(
+                        &subject,
+                        asked,
+                        args.confirmed_by_user.unwrap_or(false),
+                        recorded_at,
+                        &caller,
+                    )
+                    .await;
+            }
+            (Some(markdown), None) => markdown,
+        };
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let recorded_at = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
@@ -177,7 +227,7 @@ impl Jojobot {
             }
         };
 
-        let sections = match document::split(&args.markdown) {
+        let sections = match document::split(markdown) {
             Ok(sections) if sections.is_empty() => {
                 return memory_declined(
                     "put_document",
@@ -193,7 +243,7 @@ impl Jojobot {
         };
 
         let room = self.room_for_records(&subject).await;
-        let ordinal = held.len() + args.markdown.len().min(99_999);
+        let ordinal = held.len() + markdown.len().min(99_999);
         let widest = "z".repeat(WIDEST_ORDER_KEY);
         let record_of = |section: &Section, order: &str| {
             let mut new = NewFact::about(subject.clone(), section.first_line.clone(), recorded_at);
@@ -341,7 +391,7 @@ impl Jojobot {
             "sections": landed.len(),
             "first": landed.first().map(ToString::to_string),
             "last": landed.last().map(ToString::to_string),
-            "bytes": args.markdown.len(),
+            "bytes": markdown.len(),
         });
         if cut_for_size > 0 {
             body["cut_for_size"] = cut_for_size.into();

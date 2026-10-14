@@ -1452,7 +1452,9 @@ mod tests {
                 &jojobot
                     .put_document(Parameters(crate::memory::PutDocumentArgs {
                         document: "document:homer".into(),
-                        markdown: "# After the wrap\n".into(),
+                        markdown: Some("# After the wrap\n".into()),
+                        restore_to: None,
+                        confirmed_by_user: None,
                         after: None,
                         provenance: None,
                         source: None,
