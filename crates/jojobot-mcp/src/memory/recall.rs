@@ -486,6 +486,17 @@ pub struct RecallArgs {
     /// Omit it and no chain comes back, which is the normal read.
     #[serde(default)]
     pub(crate) history_record: Option<String>,
+    /// **Record addresses to read as they stand now**, `kind:slug#fN` each, on
+    /// any subjects, in one call. Each comes back with its current wording, its
+    /// address and subject, provenance, standing, the day it was recorded and how
+    /// many times it has been written, and none of the writes behind it:
+    /// `history_record` is the door for those. An address that names nothing is
+    /// named as missing and the others are still served. The call is its own
+    /// question, so name no subject, kind or other selection beside it. A long
+    /// list stops at the answer ceiling, and `not_shown` names the `offset` that
+    /// reads on.
+    #[serde(default)]
+    pub(crate) records: Option<Vec<String>>,
     /// **How many of those writes come back**, newest kept. Twenty when
     /// you do not say.
     ///
@@ -2405,8 +2416,9 @@ impl Jojobot {
                        fields_left_out does when a view's shows_keys supplied the keys). A merged thing's object \
                        can carry `claims_left_out`: claims stored under a thing folded into it \
                        that it cannot serve, each with a reason and an address. Read one with \
-                       history_record set to that address, and give no subject. A thing others were folded into lists \
-                       their names as `foldedNames`, apart from its `alternateName`. WHICH EDGES: follow {shape or relation, direction, depth, \
+                       history_record set to that address, and give no subject; records reads \
+                       several at once as they stand now. `foldedNames` holds the names folded into \
+                       a thing. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \
@@ -2431,6 +2443,9 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let asked_by = caller.as_ref().map(|caller| caller.bot.clone());
+        if let Some(addresses) = args.records.as_deref() {
+            return self.recall_records(&args, addresses).await;
+        }
         // **A view fills the call in before anything reads it.** What the view
         // says is what this call asks; what the caller sent beside it wins, so
         // a view is a starting point rather than a cage. **Done before
@@ -4225,6 +4240,173 @@ impl Jojobot {
             }
             None
         })
+    }
+}
+
+impl Jojobot {
+    /// **Read records by address, each as it stands now** — the `records`
+    /// argument.
+    ///
+    /// **The lookup is `history_record`'s**: `claim_history` answers from the
+    /// fold, and the record as it stands is the newest of its writes. Nothing
+    /// here reads a second way, and none of the writes behind the newest ride
+    /// along. An address that names nothing is named in its own place in the
+    /// list and the others are served.
+    async fn recall_records(
+        &self,
+        args: &RecallArgs,
+        addresses: &[String],
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(beside) = selection_beside_records(args) {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(format!(
+                    "records is its own question and takes no {beside} beside it: send the \
+                     addresses alone (with sid and offset if you have them), or drop records \
+                     to ask the other question"
+                )),
+            );
+        }
+        if addresses.is_empty() {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(
+                    "records names no address: send at least one, as kind:slug#fN, or leave \
+                     records off"
+                        .into(),
+                ),
+            );
+        }
+        let mut answered = Vec::with_capacity(addresses.len());
+        for asked in addresses {
+            let address = match FactAddress::parse(asked) {
+                Ok(address) => address,
+                Err(refused) => {
+                    answered.push(missing_record(asked, &refused.to_string()));
+                    continue;
+                }
+            };
+            match self.memory.claim_history(&address).await {
+                Ok(writes) => match writes.last() {
+                    Some(newest) => {
+                        answered.push(record_json(&address, newest, writes.len()));
+                    }
+                    None => answered.push(missing_record(asked, "the record holds no write")),
+                },
+                Err(
+                    miss @ (MemoryError::UnknownEntity { .. } | MemoryError::UnknownFact { .. }),
+                ) => answered.push(missing_record(asked, &miss.to_string())),
+                Err(refused) => return memory_declined("recall", refused),
+            }
+        }
+        let mut body = serde_json::json!({ "count": answered.len(), "records": answered });
+        fit_records(&mut body, args.offset.map_or(0, |offset| offset as usize));
+        json_result(&body)
+    }
+}
+
+/// **The first argument sent beside `records` that is not `sid` or `offset`**,
+/// by name. A selection or a shaping argument next to it would be dropped
+/// without a word, so the call is refused naming it.
+fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
+    [
+        ("subject", args.subject.is_some()),
+        ("kind", args.kind.is_some()),
+        ("parent", args.parent.is_some()),
+        ("answers_type", args.answers_type.is_some()),
+        ("fields", args.fields.is_some()),
+        ("where", args.expression.is_some()),
+        ("scope", args.scope.is_some()),
+        ("order", args.order.is_some()),
+        ("view", args.view.is_some()),
+        ("inputs", args.inputs.is_some()),
+        ("facts", args.facts.is_some()),
+        ("stood_for", args.stood_for.is_some()),
+        ("status", args.status.is_some()),
+        ("prose", args.prose.is_some()),
+        ("charter", args.charter.is_some()),
+        ("keys", args.keys.is_some()),
+        ("follow", args.follow.is_some()),
+        ("overdue", args.overdue.is_some()),
+        ("near", args.near.is_some()),
+        ("history", args.history.is_some()),
+        ("history_record", args.history_record.is_some()),
+        ("history_most", args.history_most.is_some()),
+        ("values", args.values.is_some()),
+        ("values_most", args.values_most.is_some()),
+        ("built_on", args.built_on.is_some()),
+        ("backing", args.backing.is_some()),
+        ("held", args.held.is_some()),
+    ]
+    .into_iter()
+    .find_map(|(name, sent)| sent.then_some(name))
+}
+
+/// **One record as it stands now**: its newest write, with how many writes it
+/// has. The writes behind the newest are not here; `history_record` reads them.
+fn record_json(
+    address: &FactAddress,
+    newest: &jojobot_domain::memory::ClaimWrite,
+    revisions: usize,
+) -> serde_json::Value {
+    let mut record = serde_json::json!({
+        "address": address.to_string(),
+        "subject": address.home.as_str(),
+        "content": newest.content,
+        "provenance": newest.provenance.as_token(),
+        "standing": newest.standing.as_token(),
+        "status": newest.status.as_token(),
+        "recorded_at": newest.recorded_at.to_string(),
+        "revisions": revisions,
+    });
+    if let (Some(details), Some(fields)) = (&newest.details, record.as_object_mut()) {
+        fields.insert("details".into(), details.as_str().into());
+    }
+    record
+}
+
+/// **An address that names nothing**, in the place it was asked, with the
+/// reason the lookup gave.
+fn missing_record(asked: &str, why: &str) -> serde_json::Value {
+    serde_json::json!({ "address": asked, "missing": why })
+}
+
+/// **Fit the records under the answer ceiling, in the order asked.** `offset` is
+/// how many were already read. The first of a part is always served, so a record
+/// larger than the room still comes back whole; what was left out is counted
+/// under `not_shown` with the `offset` that reads on.
+fn fit_records(body: &mut serde_json::Value, offset: usize) {
+    use jojobot_domain::text::ANSWER_CEILING;
+    let Some(records) = body
+        .get_mut("records")
+        .and_then(|records| records.as_array_mut())
+        .map(std::mem::take)
+    else {
+        return;
+    };
+    let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
+    let total = records.len();
+    let window: Vec<serde_json::Value> = records.into_iter().skip(offset).collect();
+    let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM;
+    if offset == 0 && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING {
+        body["records"] = window.into();
+        return;
+    }
+    let mut room = ANSWER_CEILING.saturating_sub(rest + crate::answer::widest_not_shown("records"));
+    let mut shown: Vec<serde_json::Value> = Vec::new();
+    for record in window {
+        let cost = size(&record);
+        if !shown.is_empty() && cost > room {
+            break;
+        }
+        room = room.saturating_sub(cost);
+        shown.push(record);
+    }
+    let after = offset + shown.len();
+    body["count"] = shown.len().into();
+    body["records"] = shown.into();
+    if total > after {
+        body["not_shown"] = crate::answer::not_shown(total - after, after, "records");
     }
 }
 

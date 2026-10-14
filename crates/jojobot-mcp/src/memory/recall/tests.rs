@@ -72,6 +72,7 @@ fn of(subject: &str) -> RecallArgs {
         sid: None,
         history: None,
         history_record: None,
+        records: None,
         history_most: None,
         offset: None,
         values: None,
@@ -4913,6 +4914,7 @@ fn of_nothing() -> RecallArgs {
         sid: None,
         history: None,
         history_record: None,
+        records: None,
         history_most: None,
         offset: None,
         values: None,
@@ -10030,5 +10032,251 @@ async fn a_view_whose_input_has_no_default_still_drops_its_term() {
         handles(&given),
         ["rhythm:descale", "promise:delta"],
         "{given}"
+    );
+}
+
+/// The call that reads records by address: no subject, no facts, only the list.
+fn of_records(addresses: &[&str]) -> RecallArgs {
+    RecallArgs {
+        subject: None,
+        facts: None,
+        records: Some(
+            addresses
+                .iter()
+                .map(|address| address.to_string())
+                .collect(),
+        ),
+        ..of("alpha")
+    }
+}
+
+/// 🚨 **Records on two subjects come back in one call, each as it stands now.**
+///
+/// Three records, two subjects, and one of them written three times. The
+/// positive half: the rewritten record answers with its newest wording and says
+/// it was written three times. The negative half, on the same answer: neither
+/// earlier wording is anywhere in it, and no chain of writes rides beside it.
+/// Each half alone passes on a build that is useless: an answer that always
+/// carries the chain costs every caller who wanted the wording, and an answer
+/// with the wording but not the count hides that the record was ever rewritten.
+#[tokio::test]
+async fn recall_reads_records_on_two_subjects_in_one_call_with_only_their_current_wording() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+    capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
+    capture_ok(&jojobot, capture_args("beta", "keeps bees")).await;
+    for wording in ["works at the new place", "works from home"] {
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                provenance: Some("inference".to_string()),
+                content: Some(wording.into()),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("update ok");
+    }
+
+    let answered = json_of(
+        &jojobot
+            .recall(Parameters(of_records(&[
+                "person:alpha#f1",
+                "person:alpha#f2",
+                "person:beta#f1",
+            ])))
+            .await
+            .expect("recall ok"),
+    );
+    let records = answered["records"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the records come back as a list: {answered}"));
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record["address"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>(),
+        vec!["person:alpha#f1", "person:alpha#f2", "person:beta#f1"],
+        "one answer per address, in the order asked: {answered}"
+    );
+    assert_eq!(records[0]["content"], "works from home");
+    assert_eq!(
+        records[0]["revisions"], 3,
+        "the record was written three times and the answer says so: {answered}"
+    );
+    assert_eq!(records[0]["subject"], "person:alpha");
+    assert_eq!(records[0]["provenance"], "inference");
+    assert!(
+        records[0]["standing"].is_string() && records[0]["recorded_at"].is_string(),
+        "standing and the day it was recorded ride with the wording: {answered}"
+    );
+    assert_eq!(records[1]["content"], "rides to work");
+    assert_eq!(records[1]["revisions"], 1);
+    assert_eq!(records[2]["content"], "keeps bees");
+    assert_eq!(records[2]["subject"], "person:beta");
+
+    let text = answered.to_string();
+    for earlier in ["old place", "new place"] {
+        assert!(
+            !text.contains(earlier),
+            "an earlier wording ({earlier}) came back with the current one: {answered}"
+        );
+    }
+    assert!(
+        !text.contains("record_history") && !text.contains("\"writes\""),
+        "the chain rode along with the wording: {answered}"
+    );
+}
+
+/// **An address that names nothing is named, and the rest are still served.**
+///
+/// Three kinds of nothing in one list: a record number the thing never had, a
+/// thing that does not exist, and text that is no address at all. Each is named
+/// in its own place in the list; the two real records beside them are served.
+#[tokio::test]
+async fn recall_names_an_address_that_names_nothing_and_serves_the_rest() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
+    capture_ok(&jojobot, capture_args("beta", "keeps bees")).await;
+
+    let answered = json_of(
+        &jojobot
+            .recall(Parameters(of_records(&[
+                "person:alpha#f1",
+                "person:alpha#f9",
+                "person:zeta#f1",
+                "not an address",
+                "person:beta#f1",
+            ])))
+            .await
+            .expect("recall ok"),
+    );
+    let records = answered["records"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the records come back as a list: {answered}"));
+    assert_eq!(records.len(), 5, "every address is answered: {answered}");
+    assert_eq!(records[0]["content"], "rides to work");
+    assert_eq!(records[4]["content"], "keeps bees");
+    for at in [1, 2, 3] {
+        assert!(
+            records[at]["missing"].is_string() && records[at].get("content").is_none(),
+            "address {at} names nothing and is named missing, with no wording: {answered}"
+        );
+    }
+    assert_eq!(records[1]["address"], "person:alpha#f9");
+    assert_eq!(records[2]["address"], "person:zeta#f1");
+    assert_eq!(records[3]["address"], "not an address");
+}
+
+/// **A list longer than the answer ceiling stops at it, says how many it left
+/// out, and the `offset` it names reads on.** Every address is read exactly once
+/// across the parts, in the order asked.
+#[tokio::test]
+async fn recall_reads_records_in_parts_under_the_answer_ceiling() {
+    let jojobot = handler();
+    let wide = "a long claim ".repeat(300);
+    let mut addresses = Vec::new();
+    for at in 1..=12 {
+        capture_ok(&jojobot, capture_args("alpha", &format!("{at} {wide}"))).await;
+        addresses.push(format!("person:alpha#f{at}"));
+    }
+    let asked: Vec<&str> = addresses.iter().map(String::as_str).collect();
+
+    let mut read: Vec<String> = Vec::new();
+    let mut offset = 0u32;
+    let mut parts = 0;
+    loop {
+        let part = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    offset: Some(offset),
+                    ..of_records(&asked)
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        parts += 1;
+        assert!(
+            part.to_string().chars().count() <= jojobot_domain::text::ANSWER_CEILING,
+            "part {parts} is over the answer ceiling"
+        );
+        read.extend(
+            part["records"]
+                .as_array()
+                .unwrap_or_else(|| panic!("the records come back as a list: {part}"))
+                .iter()
+                .map(|record| record["address"].as_str().unwrap_or_default().to_string()),
+        );
+        match part["not_shown"]["offset"].as_u64() {
+            Some(next) => {
+                assert!(part["not_shown"]["count"].as_u64().unwrap_or(0) > 0);
+                offset = next as u32;
+            }
+            None => break,
+        }
+        assert!(parts < 20, "the parts never end: {part}");
+    }
+    assert!(
+        parts > 1,
+        "twelve wide records fit one answer, so the case proves nothing"
+    );
+    assert_eq!(
+        read, addresses,
+        "each address is read once, in the order asked"
+    );
+}
+
+/// **`records` is its own question**, so a subject, a kind or any other
+/// selection beside it is refused rather than ignored, and so is an empty list.
+#[tokio::test]
+async fn recall_refuses_records_beside_another_selection_or_with_none() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
+
+    let beside = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("person:alpha".into()),
+                ..of_records(&["person:alpha#f1"])
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    assert!(
+        beside["status"] == "blocked"
+            && beside["wrote"] == false
+            && beside.to_string().contains("subject"),
+        "a subject beside records was not refused, naming it: {beside}"
+    );
+    let shaped = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                facts: Some(true),
+                ..of_records(&["person:alpha#f1"])
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    assert!(
+        shaped["status"] == "blocked" && shaped.to_string().contains("facts"),
+        "an argument that shapes another question was dropped without a word: {shaped}"
+    );
+    let empty = json_of(
+        &jojobot
+            .recall(Parameters(of_records(&[])))
+            .await
+            .expect("recall answers"),
+    );
+    assert!(
+        empty["status"] == "blocked" && empty["wrote"] == false,
+        "an empty list was not refused: {empty}"
+    );
+    let alone = json_of(
+        &jojobot
+            .recall(Parameters(of_records(&["person:alpha#f1"])))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(
+        alone["records"][0]["content"], "rides to work",
+        "the same list, sent alone, is served: {alone}"
     );
 }

@@ -2722,8 +2722,8 @@ A call that narrows nothing is refused: name one of subject, kind, parent, answe
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied the keys).
 A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
-Read one with history_record set to that address, and give no subject.
-A thing others were folded into lists their names as `foldedNames`, apart from its `alternateName`.
+Read one with history_record set to that address, and give no subject; records reads several at once as they stand now.
+`foldedNames` holds the names folded into a thing.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.
@@ -3056,6 +3056,16 @@ Each argument's own description holds the rest.
         "default": null,
         "type": [
           "boolean",
+          "null"
+        ]
+      },
+      "records": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
           "null"
         ]
       },
@@ -3842,6 +3852,20 @@ every one of them unasked is a cost the caller cannot decline.
 **For a bot this is the instance's own layer**, which is what somebody
 wrote and what `set_charter` replaces. Ask for `charter` instead to read
 what that identity actually answers with.
+```
+
+#### `recall` — argument `/inputSchema.records`
+
+```text
+**Record addresses to read as they stand now**, `kind:slug#fN` each, on
+any subjects, in one call. Each comes back with its current wording, its
+address and subject, provenance, standing, the day it was recorded and how
+many times it has been written, and none of the writes behind it:
+`history_record` is the door for those. An address that names nothing is
+named as missing and the others are still served. The call is its own
+question, so name no subject, kind or other selection beside it. A long
+list stops at the answer ceiling, and `not_shown` names the `offset` that
+reads on.
 ```
 
 #### `recall` — argument `/inputSchema.scope`

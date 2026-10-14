@@ -212,6 +212,8 @@ mod quiet_answers;
 /// A bot that quotes the operator quotes a record.
 #[path = "user_stories/quoting_the_operator.rs"]
 mod quoting_the_operator;
+#[path = "user_stories/reading_records_by_address.rs"]
+mod reading_records_by_address;
 #[path = "user_stories/ready.rs"]
 mod ready;
 #[path = "user_stories/receipts.rs"]

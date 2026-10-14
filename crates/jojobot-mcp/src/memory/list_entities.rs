@@ -209,6 +209,7 @@ mod tests {
             keys: None,
             history: None,
             history_record: None,
+            records: None,
             history_most: None,
             offset: None,
             backing: None,

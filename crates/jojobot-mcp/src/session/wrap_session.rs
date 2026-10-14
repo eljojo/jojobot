@@ -1108,6 +1108,7 @@ mod tests {
                     sid: Some(reader),
                     history: None,
                     history_record: None,
+                    records: None,
                     history_most: None,
                     offset: None,
                     values: None,
