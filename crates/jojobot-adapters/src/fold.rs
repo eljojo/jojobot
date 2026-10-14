@@ -1846,7 +1846,7 @@ mod tests {
     /// FIRST `fields_versioned` call after its snapshot is already taken, so
     /// a test can let a second, faster write-and-refresh land entirely while
     /// the first is still holding an early snapshot open — the exact
-    /// interleaving [`Folded::refresh`]'s version guard exists for.
+    /// interleaving the `Folded::writing` gate exists for.
     struct StallFirstVersionedRead {
         inner: Arc<InMemoryMemory>,
         written: std::sync::atomic::AtomicU64,
