@@ -4739,7 +4739,11 @@ impl Memory for Scanned {
     async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         unimplemented!("this double only scans")
     }
-    async fn declare_type(&self, _: DeclaredType) -> Result<DeclaredType, MemoryError> {
+    async fn declare_type(
+        &self,
+        _: DeclaredType,
+        _: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
         unimplemented!("this double only scans")
     }
     async fn declare_kind(
@@ -4979,8 +4983,12 @@ impl Memory for SummarizedScan {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.inner.list_entities(kind).await
     }
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -5270,7 +5278,11 @@ impl Memory for Delegated {
     ) -> Result<String, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
-    async fn declare_type(&self, _: DeclaredType) -> Result<DeclaredType, MemoryError> {
+    async fn declare_type(
+        &self,
+        _: DeclaredType,
+        _: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
@@ -9383,8 +9395,12 @@ impl Memory for FixedWriteSummary {
             fact_hash: None,
         }))
     }
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-        self.0.declare_type(declared).await
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
+        self.0.declare_type(declared, by_session).await
     }
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.0.declared_types().await
@@ -9459,10 +9475,13 @@ async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged
     );
 
     indexed
-        .declare_type(DeclaredType::new(
-            "running",
-            vec![jojobot_domain::memory::types::Field::summing("laps")],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "running",
+                vec![jojobot_domain::memory::types::Field::summing("laps")],
+            ),
+            None,
+        )
         .await
         .expect("declare ok");
 

@@ -231,7 +231,7 @@ pub async fn ensure_kinds(memory: &Arc<dyn Memory>) -> Result<usize, MemoryError
 pub async fn ensure_shipped_types(memory: &Arc<dyn Memory>) -> Result<usize, MemoryError> {
     let types = shipped_types();
     for declared in &types {
-        memory.declare_type(declared.clone()).await?;
+        memory.declare_type(declared.clone(), None).await?;
     }
     Ok(types.len())
 }
@@ -501,10 +501,13 @@ mod tests {
         let (memory, _) = ports();
         // What an older build shipped: the same name, three keys short.
         memory
-            .declare_type(DeclaredType::shipped(
-                "trip",
-                vec![Field::required("departs_from", ValueType::Reference)],
-            ))
+            .declare_type(
+                DeclaredType::shipped(
+                    "trip",
+                    vec![Field::required("departs_from", ValueType::Reference)],
+                ),
+                None,
+            )
             .await
             .expect("the software declares its own types");
 

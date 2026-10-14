@@ -857,13 +857,16 @@ impl Merged {
         // Two lists that name both sides of the merge, one under a key nothing
         // declares and one under a declared reference list.
         memory
-            .declare_type(jojobot_domain::memory::types::DeclaredType::new(
-                "regulars-fixture",
-                vec![jojobot_domain::memory::types::Field::listing(
-                    "regulars",
-                    jojobot_domain::memory::types::ValueType::Reference,
-                )],
-            ))
+            .declare_type(
+                jojobot_domain::memory::types::DeclaredType::new(
+                    "regulars-fixture",
+                    vec![jojobot_domain::memory::types::Field::listing(
+                        "regulars",
+                        jojobot_domain::memory::types::ValueType::Reference,
+                    )],
+                ),
+                None,
+            )
             .await
             .expect("the type is declared");
         let mut pointer = said(

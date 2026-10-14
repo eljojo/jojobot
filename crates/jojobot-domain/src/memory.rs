@@ -7116,6 +7116,7 @@ pub trait Memory: Send + Sync {
     async fn declare_type(
         &self,
         declared: types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<types::DeclaredType, MemoryError>;
 
     /// Every type anybody has declared, each complete with its keys in the

@@ -221,13 +221,16 @@ async fn seed(store: &dyn Memory) {
     // A type the fold makes the stall answer whole, which no one of its records
     // answers alone.
     store
-        .declare_type(DeclaredType::new(
-            "stall",
-            vec![
-                Field::new("opens", ValueType::Date),
-                Field::new("pitch", ValueType::Number),
-            ],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "stall",
+                vec![
+                    Field::new("opens", ValueType::Date),
+                    Field::new("pitch", ValueType::Number),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("the type is declared");
 
@@ -3272,10 +3275,10 @@ async fn memory_with_views() -> Arc<dyn Memory> {
     // The rhythm kind says `counts_from` holds a date, which is what licenses
     // an ordering on it. The fake store declares no kind's keys on its own.
     memory
-        .declare_type(DeclaredType::shipped(
-            "rhythm",
-            vec![Field::new("counts_from", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::shipped("rhythm", vec![Field::new("counts_from", ValueType::Date)]),
+            None,
+        )
         .await
         .expect("the rhythm kind's date key is declared");
     // **A view that narrows by an expression and orders by a key**, which is
@@ -4116,10 +4119,10 @@ async fn a_views_page_and_a_recall_of_it_select_the_same_things() {
     // `where` alone leaves: the loop below counts from after the cut and
     // carries no such key.
     memory
-        .declare_type(DeclaredType::new(
-            "marked",
-            vec![Field::new("flagged", ValueType::Text)],
-        ))
+        .declare_type(
+            DeclaredType::new("marked", vec![Field::new("flagged", ValueType::Text)]),
+            None,
+        )
         .await
         .expect("the type is declared");
     for handle in ["rhythm:worming", "rhythm:abseiling"] {

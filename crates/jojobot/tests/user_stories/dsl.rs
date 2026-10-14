@@ -130,9 +130,10 @@ impl jojobot_domain::memory::Memory for Blindable {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, jojobot_domain::memory::MemoryError>
     {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
 
     async fn declared_types(

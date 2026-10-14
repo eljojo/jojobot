@@ -188,6 +188,9 @@ impl Jojobot {
         if let Err(refused) = self.attributable_for_write(args.sid.as_deref()).await {
             return Ok(refused);
         }
+        // Good by the check above, so a carried handle resolves; a call that
+        // carried none is declared by no run.
+        let caller = self.caller(args.sid.as_deref()).ok().flatten();
         let mut fields = Vec::with_capacity(args.fields.len());
         // **What each closed set was sent as**, taken before the values are
         // trimmed, because trimming is what the receipt below reports.
@@ -230,7 +233,10 @@ impl Jojobot {
 
         let declared = match self
             .memory
-            .declare_type(DeclaredType::new(&args.name, fields))
+            .declare_type(
+                DeclaredType::new(&args.name, fields),
+                caller.as_ref().map(|caller| caller.sid.as_str()),
+            )
             .await
         {
             Ok(declared) => declared,
@@ -314,7 +320,9 @@ fn why_no_field(token: &str) -> McpError {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::types::Origin;
+    use std::sync::Arc;
 
     fn declare_args(name: &str, keys: &[&str]) -> DeclareTypeArgs {
         DeclareTypeArgs {
@@ -331,6 +339,32 @@ mod tests {
                 .collect(),
             sid: Some(TEST_SID.to_string()),
         }
+    }
+
+    /// **The store is told which run sent a declaration.** A call carrying a
+    /// session is declared by that run's public name, never by the key it sent;
+    /// a call carrying none is declared by no run.
+    #[tokio::test]
+    async fn a_declaration_reaches_the_store_with_the_run_that_sent_it() {
+        let memory = Arc::new(InMemoryMemory::seeded());
+        let jojobot = handler_over(memory.clone());
+        writing_as(&jojobot);
+
+        jojobot
+            .declare_type(Parameters(declare_args("recipe", &["flavor"])))
+            .await
+            .expect("declare ok");
+        let mut anonymous = declare_args("recipe", &["flavor", "glaze"]);
+        anonymous.sid = None;
+        jojobot
+            .declare_type(Parameters(anonymous))
+            .await
+            .expect("declare ok");
+
+        assert_eq!(
+            memory.type_write_sessions("recipe"),
+            vec![Some(TEST_RUN.to_string()), None]
+        );
     }
 
     /// **A caller cannot declare a key that describes its record** (rule 360).
@@ -449,7 +483,7 @@ mod tests {
         );
         jojobot
             .memory
-            .declare_type(shipped.clone())
+            .declare_type(shipped.clone(), None)
             .await
             .expect("the software declares its own types");
 
@@ -507,10 +541,10 @@ mod tests {
             .date();
         jojobot
             .memory
-            .declare_type(DeclaredType::shipped(
-                "roster",
-                vec![Field::new("starts", ValueType::Date)],
-            ))
+            .declare_type(
+                DeclaredType::shipped("roster", vec![Field::new("starts", ValueType::Date)]),
+                None,
+            )
             .await
             .expect("the software's own write replaces a caller's");
 
@@ -543,10 +577,13 @@ mod tests {
         writing_as(&jojobot);
         jojobot
             .memory
-            .declare_type(DeclaredType::shipped(
-                "always-shipped",
-                vec![Field::new("starts", ValueType::Date)],
-            ))
+            .declare_type(
+                DeclaredType::shipped(
+                    "always-shipped",
+                    vec![Field::new("starts", ValueType::Date)],
+                ),
+                None,
+            )
             .await
             .expect("the software declares its own types");
 
@@ -583,10 +620,10 @@ mod tests {
         writing_as(&jojobot);
         jojobot
             .memory
-            .declare_type(DeclaredType::shipped(
-                "rota",
-                vec![Field::new("starts", ValueType::Date)],
-            ))
+            .declare_type(
+                DeclaredType::shipped("rota", vec![Field::new("starts", ValueType::Date)]),
+                None,
+            )
             .await
             .expect("the software declares its own types");
 

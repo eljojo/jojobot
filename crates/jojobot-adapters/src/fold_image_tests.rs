@@ -105,10 +105,16 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
         "fold-ranked",
         vec![Field::required("rank", ValueType::Number)],
     );
-    folded.declare_type(ranked.clone()).await.expect("declared");
+    folded
+        .declare_type(ranked.clone(), None)
+        .await
+        .expect("declared");
 
     counted.reset();
-    folded.declare_type(ranked).await.expect("declared again");
+    folded
+        .declare_type(ranked, None)
+        .await
+        .expect("declared again");
     assert_eq!(
         counted.seen(),
         std::collections::BTreeMap::from([("declare_type", 1)]),
@@ -117,10 +123,13 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
 
     counted.reset();
     folded
-        .declare_type(DeclaredType::new(
-            "fold-ranked",
-            vec![Field::required("rank", ValueType::Text)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "fold-ranked",
+                vec![Field::required("rank", ValueType::Text)],
+            ),
+            None,
+        )
         .await
         .expect("declared differently");
     assert!(

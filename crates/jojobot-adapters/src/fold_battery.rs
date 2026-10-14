@@ -528,10 +528,13 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
     .expect("not blocked");
     p.agree("after an entity is edited").await;
 
-    w.declare_type(DeclaredType::new(
-        "fold-ranked",
-        vec![Field::required("rank", ValueType::Number)],
-    ))
+    w.declare_type(
+        DeclaredType::new(
+            "fold-ranked",
+            vec![Field::required("rank", ValueType::Number)],
+        ),
+        None,
+    )
     .await
     .expect("declare_type");
     p.agree("after a type is declared").await;

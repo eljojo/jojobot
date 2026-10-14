@@ -655,9 +655,13 @@ impl Memory for Folded {
     /// the way a capture refreshes its own home. The whole image is read
     /// again. The write already landed; only the re-read is what this can
     /// fail to report.
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
         let _gate = self.writing.lock().await;
-        let written = self.inner.declare_type(declared).await?;
+        let written = self.inner.declare_type(declared, by_session).await?;
         // **A declaration the image already holds, word for word, folds nothing
         // differently.** A boot declares every type the build ships, so on a
         // store that has them each of those would read the whole image again.
@@ -1181,8 +1185,12 @@ mod tests {
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             self.0.scan().await
         }
-        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-            self.0.declare_type(declared).await
+        async fn declare_type(
+            &self,
+            declared: DeclaredType,
+            by_session: Option<&str>,
+        ) -> Result<DeclaredType, MemoryError> {
+            self.0.declare_type(declared, by_session).await
         }
         async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             self.0.declared_types().await
@@ -1385,8 +1393,12 @@ mod tests {
                 .into_iter()
                 .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
         }
-        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-            self.inner.declare_type(declared).await
+        async fn declare_type(
+            &self,
+            declared: DeclaredType,
+            by_session: Option<&str>,
+        ) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared, by_session).await
         }
         async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             self.inner.declared_types().await
@@ -1552,8 +1564,12 @@ mod tests {
                 .into_iter()
                 .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
         }
-        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-            self.inner.declare_type(declared).await
+        async fn declare_type(
+            &self,
+            declared: DeclaredType,
+            by_session: Option<&str>,
+        ) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared, by_session).await
         }
         async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             self.inner.declared_types().await
@@ -1885,8 +1901,12 @@ mod tests {
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             self.inner.scan().await
         }
-        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-            self.inner.declare_type(declared).await
+        async fn declare_type(
+            &self,
+            declared: DeclaredType,
+            by_session: Option<&str>,
+        ) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared, by_session).await
         }
         async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             self.inner.declared_types().await
@@ -2064,10 +2084,10 @@ mod tests {
         );
 
         folded
-            .declare_type(types::DeclaredType::new(
-                "running",
-                vec![types::Field::summing("laps")],
-            ))
+            .declare_type(
+                types::DeclaredType::new("running", vec![types::Field::summing("laps")]),
+                None,
+            )
             .await
             .expect("declare ok");
 
@@ -2159,10 +2179,13 @@ mod tests {
         let inner = Arc::new(InMemoryMemory::booted());
         let folded = Folded::new(inner.clone());
         folded
-            .declare_type(DeclaredType::new(
-                "fold-pointing",
-                vec![Field::new("friend", ValueType::Reference)],
-            ))
+            .declare_type(
+                DeclaredType::new(
+                    "fold-pointing",
+                    vec![Field::new("friend", ValueType::Reference)],
+                ),
+                None,
+            )
             .await
             .expect("the type is declared");
         let gamma = EntityId::person("person:gamma");

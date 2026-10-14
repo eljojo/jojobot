@@ -34,7 +34,7 @@ use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::testing::contract as memory;
-use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
 use jojobot_domain::memory::{
     Edge, EdgeShape, EntityPatch, FactAddress, FactPatch, MemoryError, NewEntity, NewFact,
     Provenance,
@@ -217,6 +217,129 @@ async fn a_charter_changed_by_another_bot_and_then_by_the_bot_itself_leaves_two_
             at: by_lisa
         }),
         "the read still answers with the change by another"
+    );
+    store.stop().await;
+}
+
+/// **Every declaration a caller makes of a type is kept, in the order it was
+/// made.** A type declared, redeclared with another key and redeclared again
+/// leaves three writes, each with the keys it declared and the run that sent
+/// it, while the declaration the reads answer with is the newest alone. A kind
+/// a caller declares is kept the same way; what the software ships is not.
+#[tokio::test]
+async fn a_type_declared_and_redeclared_twice_leaves_three_writes_in_order() {
+    let scratch = Scratch::new("type-writes");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "type_writes")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let keys = |names: &[&str]| -> Vec<Field> {
+        names
+            .iter()
+            .map(|name| Field::new(name, ValueType::Text))
+            .collect()
+    };
+
+    for (names, session) in [
+        (&["flavor"][..], Some("run-bart")),
+        (&["flavor", "glaze"][..], Some("run-lisa")),
+        (&["flavor", "glaze", "sprinkles"][..], None),
+    ] {
+        memory
+            .declare_type(DeclaredType::new("recipe", keys(names)), session)
+            .await
+            .expect("a caller's declaration lands");
+    }
+    memory
+        .declare_type(
+            DeclaredType::shipped("ledger", keys(&["balance"])),
+            Some("run-bart"),
+        )
+        .await
+        .expect("a shipped declaration lands");
+    memory
+        .declare_kind("pantry", Origin::Declared, keys(&["shelf"]))
+        .await
+        .expect("a caller's kind lands");
+    memory
+        .declare_kind("larder", Origin::Shipped, keys(&["shelf"]))
+        .await
+        .expect("a shipped kind lands");
+
+    let rows: Vec<(String, i32, Option<String>, String, String)> = sqlx::query_as(
+        "SELECT name, ordinal, by_session, written_at, fields
+         FROM type_write ORDER BY name, ordinal",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    let keys_of = |fields: &str| -> Vec<String> {
+        serde_json::from_str::<Vec<serde_json::Value>>(fields)
+            .expect("the fields are a list")
+            .iter()
+            .map(|field| field["key"].as_str().expect("a key").to_string())
+            .collect()
+    };
+    assert_eq!(
+        rows.iter()
+            .map(|(name, ordinal, session, _, fields)| (
+                name.as_str(),
+                *ordinal,
+                session.as_deref(),
+                keys_of(fields)
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("pantry", 1, None, vec!["shelf".to_string()]),
+            ("recipe", 1, Some("run-bart"), vec!["flavor".to_string()]),
+            (
+                "recipe",
+                2,
+                Some("run-lisa"),
+                vec!["flavor".to_string(), "glaze".to_string()]
+            ),
+            (
+                "recipe",
+                3,
+                None,
+                vec![
+                    "flavor".to_string(),
+                    "glaze".to_string(),
+                    "sprinkles".to_string()
+                ]
+            ),
+        ],
+        "the shipped type and the shipped kind wrote nothing"
+    );
+    let moments: Vec<jiff::Timestamp> = rows
+        .iter()
+        .filter(|row| row.0 == "recipe")
+        .map(|row| row.3.parse().expect("a stored moment"))
+        .collect();
+    assert!(
+        moments.windows(2).all(|pair| pair[0] <= pair[1]),
+        "the writes are stamped in the order they happened: {moments:?}"
+    );
+    let current = memory
+        .declared_types()
+        .await
+        .expect("the declarations read")
+        .into_iter()
+        .find(|declared| declared.name == "recipe")
+        .expect("the type stands");
+    assert_eq!(
+        current
+            .fields
+            .iter()
+            .map(|field| field.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["flavor", "glaze", "sprinkles"],
+        "the declaration the reads answer with is the newest"
     );
     store.stop().await;
 }
@@ -904,10 +1027,13 @@ async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text()
     let memory = DoltMemory::open(pool.clone());
 
     memory
-        .declare_type(DeclaredType::new(
-            "contract-field-migration-pointer",
-            vec![Field::listing("friends", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-field-migration-pointer",
+                vec![Field::listing("friends", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("declare_type ok");
 
@@ -1043,10 +1169,13 @@ async fn migrate_reference_fields_refuses_to_guess_at_an_unresolvable_value() {
     let memory = DoltMemory::open(pool.clone());
 
     memory
-        .declare_type(DeclaredType::new(
-            "contract-field-migration-blocked-pointer",
-            vec![Field::new("friend", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-field-migration-blocked-pointer",
+                vec![Field::new("friend", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("declare_type ok");
 
@@ -6311,10 +6440,13 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
     memory
-        .declare_type(DeclaredType::new(
-            "contract-links-pointer",
-            vec![Field::listing("friends", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-links-pointer",
+                vec![Field::listing("friends", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("declare_type ok");
 
@@ -7301,10 +7433,13 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
     memory
-        .declare_type(DeclaredType::new(
-            "contract-forwarded",
-            vec![Field::required("forwarded_points_at", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-forwarded",
+                vec![Field::required("forwarded_points_at", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
 

@@ -103,6 +103,10 @@ pub struct InMemoryMemory {
     /// write over it is refused, so the name never returns to `Declared` for
     /// this to capture a second time.
     displaced_types: Mutex<Vec<crate::memory::types::Displaced>>,
+    /// **The run that sent each declaration a caller made**, by type name, in
+    /// the order they were sent. The real store keeps the same account in
+    /// `type_write`; what the software ships is not kept.
+    type_writes: Mutex<Vec<(String, Option<String>)>>,
     /// The kinds, one per token, with where each came from. Rows in the real
     /// store, so a `Vec` here for the same reason the types are one.
     kinds: Mutex<Vec<(String, crate::memory::types::Origin)>>,
@@ -132,6 +136,18 @@ pub struct InMemoryMemory {
 }
 
 impl InMemoryMemory {
+    /// The run that sent each declaration of the type `name`, oldest first.
+    /// `None` is a declaration no run was known to send.
+    pub fn type_write_sessions(&self, name: &str) -> Vec<Option<String>> {
+        self.type_writes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(written, _)| written == name)
+            .map(|(_, session)| session.clone())
+            .collect()
+    }
+
     /// A new fake, holding the shipped kinds as rows and **touching nothing
     /// outside itself**.
     ///
@@ -3772,6 +3788,7 @@ impl Memory for InMemoryMemory {
     async fn declare_type(
         &self,
         declared: crate::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<crate::memory::types::DeclaredType, MemoryError> {
         crate::memory::types::validate_type(&declared)?;
         let declared = declared.normalized();
@@ -3825,6 +3842,12 @@ impl Memory for InMemoryMemory {
         // name: a type is the keys it names now.
         held.retain(|t| t.name != declared.name);
         held.push(declared.clone());
+        if declared.origin == crate::memory::types::Origin::Declared {
+            self.type_writes
+                .lock()
+                .unwrap()
+                .push((declared.name.clone(), by_session.map(str::to_string)));
+        }
         Ok(declared)
     }
 

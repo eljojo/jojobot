@@ -4908,17 +4908,20 @@ async fn a_query_naming_a_displaced_type_names_it_once_in_the_answer() {
     let memory = shared_memory();
     let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
     memory
-        .declare_type(DeclaredType::new(
-            "roster",
-            vec![Field::new("shift_lead", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "roster",
+                vec![Field::new("shift_lead", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the caller's own declaration lands");
     memory
-        .declare_type(DeclaredType::shipped(
-            "roster",
-            vec![Field::new("starts", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::shipped("roster", vec![Field::new("starts", ValueType::Date)]),
+            None,
+        )
         .await
         .expect("the software's own write replaces a caller's");
 
@@ -4951,10 +4954,13 @@ async fn a_query_naming_a_type_never_displaced_names_nothing() {
     let memory = shared_memory();
     let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
     memory
-        .declare_type(DeclaredType::shipped(
-            "always-shipped-recall",
-            vec![Field::new("starts", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::shipped(
+                "always-shipped-recall",
+                vec![Field::new("starts", ValueType::Date)],
+            ),
+            None,
+        )
         .await
         .expect("the software declares its own types");
 

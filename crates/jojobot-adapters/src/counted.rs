@@ -301,9 +301,13 @@ impl Memory for Counted {
         self.hit("write_summary");
         self.inner.write_summary().await
     }
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
         self.hit("declare_type");
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.hit("declared_types");

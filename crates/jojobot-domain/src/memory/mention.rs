@@ -1702,8 +1702,9 @@ impl super::Memory for Mentioning {
     async fn declare_type(
         &self,
         declared: super::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<super::types::DeclaredType, super::MemoryError> {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declared_types(&self) -> Result<Vec<super::types::DeclaredType>, super::MemoryError> {
         self.inner.declared_types().await
@@ -1878,10 +1879,10 @@ mod tests {
         let inner = std::sync::Arc::new(crate::memory::testing::InMemoryMemory::booted());
         let store = Mentioning::new(inner.clone());
         store
-            .declare_type(DeclaredType::new(
-                "saved",
-                vec![Field::new("line", ValueType::Expression)],
-            ))
+            .declare_type(
+                DeclaredType::new("saved", vec![Field::new("line", ValueType::Expression)]),
+                None,
+            )
             .await
             .expect("a declaration the store keeps");
         let holder = EntityId("thing:delta".into());

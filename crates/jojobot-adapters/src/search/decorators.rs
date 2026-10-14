@@ -707,9 +707,13 @@ impl Memory for IndexedMemory {
     // check in `rescan` cannot see this on its own; dropping the cache
     // forces the NEXT read to take a real scan rather than serve one taken
     // under the old declarations.
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
         let _gate = self.write_gate.lock().await;
-        let written = self.inner.declare_type(declared).await?;
+        let written = self.inner.declare_type(declared, by_session).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(written)
     }

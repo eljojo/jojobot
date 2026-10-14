@@ -228,6 +228,7 @@ pub trait StoredMemory: Send + Sync {
     async fn declare_type(
         &self,
         declared: super::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<super::types::DeclaredType, super::MemoryError>;
     async fn declared_types(&self) -> Result<Vec<super::types::DeclaredType>, super::MemoryError>;
     async fn displaced_type(
@@ -493,8 +494,9 @@ impl StoredMemory for Unrendered {
     async fn declare_type(
         &self,
         declared: super::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<super::types::DeclaredType, super::MemoryError> {
-        self.0.declare_type(declared).await
+        self.0.declare_type(declared, by_session).await
     }
     async fn declared_types(&self) -> Result<Vec<super::types::DeclaredType>, super::MemoryError> {
         self.0.declared_types().await

@@ -174,6 +174,7 @@ mod tests {
             async fn declare_type(
                 &self,
                 _: jojobot_domain::memory::types::DeclaredType,
+                _: Option<&str>,
             ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

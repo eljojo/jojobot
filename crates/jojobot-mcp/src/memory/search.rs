@@ -1321,18 +1321,21 @@ mod tests {
         let jojobot = handler_with(Arc::new(SpySearch::default()));
         jojobot
             .memory
-            .declare_type(DeclaredType::new(
-                "roster",
-                vec![Field::new("shift_lead", ValueType::Reference)],
-            ))
+            .declare_type(
+                DeclaredType::new(
+                    "roster",
+                    vec![Field::new("shift_lead", ValueType::Reference)],
+                ),
+                None,
+            )
             .await
             .expect("the caller's own declaration lands");
         jojobot
             .memory
-            .declare_type(DeclaredType::shipped(
-                "roster",
-                vec![Field::new("starts", ValueType::Date)],
-            ))
+            .declare_type(
+                DeclaredType::shipped("roster", vec![Field::new("starts", ValueType::Date)]),
+                None,
+            )
             .await
             .expect("the software's own write replaces a caller's");
 
@@ -1363,10 +1366,13 @@ mod tests {
         let jojobot = handler_with(Arc::new(SpySearch::default()));
         jojobot
             .memory
-            .declare_type(DeclaredType::shipped(
-                "always-shipped-search",
-                vec![Field::new("starts", ValueType::Date)],
-            ))
+            .declare_type(
+                DeclaredType::shipped(
+                    "always-shipped-search",
+                    vec![Field::new("starts", ValueType::Date)],
+                ),
+                None,
+            )
             .await
             .expect("the software declares its own types");
 

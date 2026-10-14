@@ -1532,6 +1532,7 @@ pub(crate) mod tests {
         async fn declare_type(
             &self,
             _: jojobot_domain::memory::types::DeclaredType,
+            _: Option<&str>,
         ) -> Result<jojobot_domain::memory::types::DeclaredType, jojobot_domain::memory::MemoryError>
         {
             unimplemented!("migrate_permanent_ids only reads the entity world")

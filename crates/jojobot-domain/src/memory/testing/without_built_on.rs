@@ -30,8 +30,12 @@ impl Memory for WithoutBuiltOn {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.0.add_entity(new).await
     }
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-        self.0.declare_type(declared).await
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
+        self.0.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,

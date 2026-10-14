@@ -247,10 +247,13 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     // reads it back as the handle, so a pointer read that asks the store for
     // the handle alone finds nothing.
     indexed
-        .declare_type(DeclaredType::new(
-            "assembled-pointing",
-            vec![Field::required("fires", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "assembled-pointing",
+                vec![Field::required("fires", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
     let derived = indexed

@@ -748,10 +748,13 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
     mentioning: &M,
 ) {
     mentioning
-        .declare_type(DeclaredType::new(
-            "contract-scope-pet",
-            vec![Field::new("owner", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-scope-pet",
+                vec![Field::new("owner", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the type is declared");
 
@@ -855,10 +858,13 @@ pub async fn a_reference_listing_field_is_lowered_and_a_served_write_back_does_n
     mentioning: &M,
 ) {
     mentioning
-        .declare_type(DeclaredType::new(
-            "contract-listed-pointer",
-            vec![Field::listing("friends", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-listed-pointer",
+                vec![Field::listing("friends", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the type is declared");
 
@@ -977,10 +983,13 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
     bare: &B,
 ) {
     mentioning
-        .declare_type(DeclaredType::new(
-            "contract-rename-link",
-            vec![Field::new("about", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-rename-link",
+                vec![Field::new("about", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the type is declared");
 

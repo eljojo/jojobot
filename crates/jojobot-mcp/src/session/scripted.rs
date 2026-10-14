@@ -354,8 +354,9 @@ impl Memory for Scripted {
     async fn declare_type(
         &self,
         declared: types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<types::DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declared_types(&self) -> Result<Vec<types::DeclaredType>, MemoryError> {
         self.inner.declared_types().await

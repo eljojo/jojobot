@@ -1548,13 +1548,16 @@ pub async fn a_summed_key_has_no_backing_to_report<M: Memory>(store: &M) {
     )
     .await;
     store
-        .declare_type(DeclaredType::new(
-            "contract-tallying",
-            vec![
-                Field::summing("laps_swum").needed(),
-                Field::required("pool", ValueType::Text),
-            ],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-tallying",
+                vec![
+                    Field::summing("laps_swum").needed(),
+                    Field::required("pool", ValueType::Text),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("declaring a type should succeed");
     assert_eq!(
@@ -1918,10 +1921,13 @@ pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
 /// again so the two are asked of one store in one answer.
 pub async fn referring_to_follows_a_declared_reference_key<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-pointing",
-            vec![Field::required("contract_points_at", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-pointing",
+                vec![Field::required("contract_points_at", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
     let gate = EntityId("event:contract-declared-gate".into());
@@ -2009,13 +2015,16 @@ pub async fn referring_to_follows_a_declared_reference_key<M: Memory>(store: &M)
 /// answer, so a store that returned every holder cannot pass.
 pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-renamed-pointing",
-            vec![Field::required(
-                "contract_renamed_points_at",
-                ValueType::Reference,
-            )],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-renamed-pointing",
+                vec![Field::required(
+                    "contract_renamed_points_at",
+                    ValueType::Reference,
+                )],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
     let was = EntityId("event:contract-renamed-gate-was".into());
@@ -2726,13 +2735,16 @@ pub async fn a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it<M: 
 /// in the answer.
 pub async fn referring_to_finds_a_target_named_in_a_list_of_references<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-listing",
-            vec![Field::listing(
-                "contract_list_points_at",
-                ValueType::Reference,
-            )],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-listing",
+                vec![Field::listing(
+                    "contract_list_points_at",
+                    ValueType::Reference,
+                )],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
     let first = EntityId("event:contract-listed-first".into());
@@ -7044,16 +7056,19 @@ pub async fn a_key_written_many_times_holds_one_value_and_counts<M: Memory>(stor
 pub async fn a_counter_totals_its_writes_and_keeps_them<M: Memory>(store: &M) {
     let subject = EntityId::person("person:contract-totalled");
     store
-        .declare_type(crate::memory::types::DeclaredType::new(
-            "contract-snacking",
-            vec![
-                crate::memory::types::Field::summing("donuts").needed(),
-                crate::memory::types::Field::required(
-                    "mood",
-                    crate::memory::types::ValueType::Text,
-                ),
-            ],
-        ))
+        .declare_type(
+            crate::memory::types::DeclaredType::new(
+                "contract-snacking",
+                vec![
+                    crate::memory::types::Field::summing("donuts").needed(),
+                    crate::memory::types::Field::required(
+                        "mood",
+                        crate::memory::types::ValueType::Text,
+                    ),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("declaring a type should succeed");
     assert_eq!(
@@ -10241,7 +10256,7 @@ pub async fn a_field_at_the_validators_limit_survives_storage<M: Memory>(store: 
 async fn declare<M: Memory>(store: &M, declared: DeclaredType) -> DeclaredType {
     let name = declared.name.clone();
     store
-        .declare_type(declared)
+        .declare_type(declared, None)
         .await
         .unwrap_or_else(|e| panic!("declaring '{name}' should succeed: {e}"))
 }
@@ -10382,7 +10397,7 @@ pub async fn declaring_a_type_again_replaces_its_keys<M: Memory>(store: &M) {
 /// that errored after inserting the name would pass the first alone.
 pub async fn a_type_with_no_keys_is_refused_and_writes_nothing<M: Memory>(store: &M) {
     let refused = store
-        .declare_type(DeclaredType::new("contract-empty", vec![]))
+        .declare_type(DeclaredType::new("contract-empty", vec![]), None)
         .await;
     assert!(
         matches!(refused, Err(MemoryError::InvalidType(_))),
@@ -10436,10 +10451,13 @@ pub async fn a_shipped_type_refuses_a_callers_redeclaration<M: Memory>(store: &M
     );
 
     let refused = store
-        .declare_type(DeclaredType::new(
-            "contract-rota",
-            vec![Field::required("starts", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-rota",
+                vec![Field::required("starts", ValueType::Date)],
+            ),
+            None,
+        )
         .await;
     assert!(
         matches!(refused, Err(MemoryError::ShippedType { .. })),
@@ -10514,10 +10532,13 @@ pub async fn a_shipped_write_displacing_a_callers_type_is_remembered<M: Memory>(
     );
 
     let redeclare = || {
-        store.declare_type(DeclaredType::new(
-            "contract-roster",
-            vec![Field::required("starts", ValueType::Date)],
-        ))
+        store.declare_type(
+            DeclaredType::new(
+                "contract-roster",
+                vec![Field::required("starts", ValueType::Date)],
+            ),
+            None,
+        )
     };
     let Err(MemoryError::ShippedType { displaced, .. }) = redeclare().await else {
         panic!("redeclaring a shipped name is still refused");
@@ -10575,10 +10596,13 @@ pub async fn a_shipped_type_declared_fresh_displaces_nothing<M: Memory>(store: &
     declare(store, shipped).await;
 
     let refused = store
-        .declare_type(DeclaredType::new(
-            "contract-fresh-rota",
-            vec![Field::required("starts", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-fresh-rota",
+                vec![Field::required("starts", ValueType::Date)],
+            ),
+            None,
+        )
         .await;
     let Err(MemoryError::ShippedType { displaced, .. }) = refused else {
         panic!("redeclaring a shipped name is still refused: {refused:?}");
@@ -11600,13 +11624,16 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
 
     let declare = |holds: ValueType| async move {
         store
-            .declare_type(DeclaredType::new(
-                "contract-holding",
-                vec![
-                    Field::required("keeper", holds),
-                    Field::required("since", ValueType::Date),
-                ],
-            ))
+            .declare_type(
+                DeclaredType::new(
+                    "contract-holding",
+                    vec![
+                        Field::required("keeper", holds),
+                        Field::required("since", ValueType::Date),
+                    ],
+                ),
+                None,
+            )
             .await
             .expect("a declaration the store keeps");
     };
@@ -11701,14 +11728,17 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
 /// write. A case that picks a short kind answers for the short kinds only.
 pub async fn a_reference_keeps_the_kind_it_points_at<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-stay",
-            vec![
-                Field::pointing_at("venue", EntityKind::PLACE).needed(),
-                Field::pointing_at("part_of", EntityKind::PROJECT).needed(),
-                Field::required("booked_by", ValueType::Reference),
-            ],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-stay",
+                vec![
+                    Field::pointing_at("venue", EntityKind::PLACE).needed(),
+                    Field::pointing_at("part_of", EntityKind::PROJECT).needed(),
+                    Field::required("booked_by", ValueType::Reference),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("declaring a type of my own is accepted");
 
@@ -11766,10 +11796,10 @@ pub async fn neither_half_writes_over_the_others_keys<M: Memory>(store: &M) {
         .await
         .expect("a caller declares a kind that names a key");
     let refused = store
-        .declare_type(DeclaredType::new(
-            "handcart",
-            vec![Field::required("colour", ValueType::Text)],
-        ))
+        .declare_type(
+            DeclaredType::new("handcart", vec![Field::required("colour", ValueType::Text)]),
+            None,
+        )
         .await
         .expect_err("a type may not write over the keys of a kind of that name");
     assert!(
@@ -11795,10 +11825,13 @@ pub async fn neither_half_writes_over_the_others_keys<M: Memory>(store: &M) {
     // ② And a kind may not take a type's keys over, which is the same rule
     // read from the other side.
     store
-        .declare_type(DeclaredType::new(
-            "contract-cartload",
-            vec![Field::required("weighed_on", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-cartload",
+                vec![Field::required("weighed_on", ValueType::Date)],
+            ),
+            None,
+        )
         .await
         .expect("a caller declares a type of their own");
     let refused = store
@@ -11853,10 +11886,13 @@ pub async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes<M: Memory
     let moes = EntityId("place:contract-tavern".into());
     ensure(store, &moes).await;
     store
-        .declare_type(DeclaredType::new(
-            "place",
-            vec![Field::required("shadow_postcode", ValueType::Number)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "place",
+                vec![Field::required("shadow_postcode", ValueType::Number)],
+            ),
+            None,
+        )
         .await
         .expect("a caller's schema may be named after a kind");
 
@@ -12237,10 +12273,13 @@ pub async fn a_closed_set_refuses_a_write_outside_it<M: Memory>(store: &M) {
 
 pub async fn a_reference_must_name_an_entity_that_exists<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-loan",
-            vec![Field::required("loaned_to", ValueType::Reference)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-loan",
+                vec![Field::required("loaned_to", ValueType::Reference)],
+            ),
+            None,
+        )
         .await
         .expect("declaring a type of my own is accepted");
 
@@ -12995,13 +13034,16 @@ pub async fn a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_e
 /// can answer for.
 pub async fn a_declared_type_governs_no_write<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-vocabulary",
-            vec![
-                Field::required("cost", ValueType::Number),
-                Field::required("done_on", ValueType::Date),
-            ],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-vocabulary",
+                vec![
+                    Field::required("cost", ValueType::Number),
+                    Field::required("done_on", ValueType::Date),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("declaring a type of my own is accepted");
 
@@ -15197,13 +15239,16 @@ async fn held_and_walked<M: Memory>(
 /// a merge where nothing points at the duplicate changes no holder.
 pub async fn a_fold_repoints_a_reference_field_naming_the_folded_side<M: Memory>(store: &M) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-fieldlink-pointing",
-            vec![Field::required(
-                "contract_fieldlink_points_at",
-                ValueType::Reference,
-            )],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-fieldlink-pointing",
+                vec![Field::required(
+                    "contract_fieldlink_points_at",
+                    ValueType::Reference,
+                )],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
     let key = "contract_fieldlink_points_at";
@@ -15311,13 +15356,16 @@ pub async fn a_fold_repoints_a_list_of_references_and_names_the_survivor_once<M:
     store: &M,
 ) {
     store
-        .declare_type(DeclaredType::new(
-            "contract-fieldlink-listing",
-            vec![Field::listing(
-                "contract_fieldlink_list_points_at",
-                ValueType::Reference,
-            )],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-fieldlink-listing",
+                vec![Field::listing(
+                    "contract_fieldlink_list_points_at",
+                    ValueType::Reference,
+                )],
+            ),
+            None,
+        )
         .await
         .expect("the declaration lands");
     let key = "contract_fieldlink_list_points_at";
@@ -15661,10 +15709,13 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
     .await;
     // A key that only describes its record, which any session may set.
     store
-        .declare_type(crate::memory::types::DeclaredType::shipped(
-            "contract-session-label",
-            vec![crate::memory::types::Field::describing("label")],
-        ))
+        .declare_type(
+            crate::memory::types::DeclaredType::shipped(
+                "contract-session-label",
+                vec![crate::memory::types::Field::describing("label")],
+            ),
+            None,
+        )
         .await
         .expect("a describing key is declared");
     let written_in = |session: &str, provenance: Provenance, words: &str| NewFact {
@@ -15932,10 +15983,13 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
     .await;
     // A key that only describes its record, which any session may set.
     store
-        .declare_type(crate::memory::types::DeclaredType::shipped(
-            "contract-testified-label",
-            vec![crate::memory::types::Field::describing("label")],
-        ))
+        .declare_type(
+            crate::memory::types::DeclaredType::shipped(
+                "contract-testified-label",
+                vec![crate::memory::types::Field::describing("label")],
+            ),
+            None,
+        )
         .await
         .expect("a describing key is declared");
     let map = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
@@ -16467,10 +16521,13 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
     )
     .await;
     store
-        .declare_type(crate::memory::types::DeclaredType::shipped(
-            "contract-bags-label",
-            vec![crate::memory::types::Field::describing("label")],
-        ))
+        .declare_type(
+            crate::memory::types::DeclaredType::shipped(
+                "contract-bags-label",
+                vec![crate::memory::types::Field::describing("label")],
+            ),
+            None,
+        )
         .await
         .expect("a describing key is declared");
     let pairs = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {

@@ -876,13 +876,16 @@ pub async fn search_finds_things_that_answer_a_type_structurally<M: Memory, S: S
     search: &S,
 ) {
     let declared = store
-        .declare_type(DeclaredType::new(
-            "contract-crate",
-            vec![
-                Field::required("weight", ValueType::Number),
-                Field::required("arrives", ValueType::Date),
-            ],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-crate",
+                vec![
+                    Field::required("weight", ValueType::Number),
+                    Field::required("arrives", ValueType::Date),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("declaring should succeed");
 
@@ -1010,13 +1013,16 @@ pub async fn search_keeps_only_what_fits_when_the_caller_asks<M: Memory, S: Sear
     // caller produces, and a strict question proved only against that shape
     // is proved against nothing anybody asks.
     let declared = store
-        .declare_type(DeclaredType::new(
-            "contract-pallet",
-            vec![
-                Field::new("stacked", ValueType::Number),
-                Field::new("shipped_on", ValueType::Date),
-            ],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-pallet",
+                vec![
+                    Field::new("stacked", ValueType::Number),
+                    Field::new("shipped_on", ValueType::Date),
+                ],
+            ),
+            None,
+        )
         .await
         .expect("declaring should succeed");
 
@@ -1125,10 +1131,13 @@ pub async fn a_type_query_flags_a_bad_value_and_returns_the_record<M: Memory, S:
     search: &S,
 ) {
     let declared = store
-        .declare_type(DeclaredType::new(
-            "contract-pallet",
-            vec![Field::required("arrives", ValueType::Date)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "contract-pallet",
+                vec![Field::required("arrives", ValueType::Date)],
+            ),
+            None,
+        )
         .await
         .expect("declaring should succeed");
 

@@ -50,10 +50,13 @@ async fn a_declared_type_with_a_reference_field_refuses_to_read_back_on_an_unloa
     // restart that could not reach the store.
     kinds::seed(&store).await.expect("the kinds are declared");
     store
-        .declare_type(DeclaredType::new(
-            "trip-fixture",
-            vec![Field::pointing_at("destination", EntityKind::PLACE)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "trip-fixture",
+                vec![Field::pointing_at("destination", EntityKind::PLACE)],
+            ),
+            None,
+        )
         .await
         .expect("a caller declares a type");
 

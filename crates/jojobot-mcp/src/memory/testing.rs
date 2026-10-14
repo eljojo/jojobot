@@ -527,8 +527,9 @@ impl Memory for DownMemory {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.1.declare_type(declared).await
+        self.1.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -729,8 +730,9 @@ impl Memory for FoldBehindMemory {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.0.declare_type(declared).await
+        self.0.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -903,8 +905,9 @@ impl Memory for RacingMemory {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -1076,8 +1079,9 @@ impl Memory for MovesAfterTheRead {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -1292,8 +1296,9 @@ impl Memory for YieldsLikeAStore {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -1449,8 +1454,9 @@ impl Memory for ConflictingMemory {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.0.declare_type(declared).await
+        self.0.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,
@@ -1606,8 +1612,9 @@ impl Memory for FailsOnCapture {
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
+        by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        self.inner.declare_type(declared, by_session).await
     }
     async fn declare_kind(
         &self,

@@ -547,10 +547,10 @@ async fn a_boot_does_not_destroy_a_schema_named_like_a_shipped_kind() {
     let (mut server, store, _turn) = a_store("boot-collision").await;
 
     store
-        .declare_type(DeclaredType::new(
-            "place",
-            vec![Field::required("budget", ValueType::Text)],
-        ))
+        .declare_type(
+            DeclaredType::new("place", vec![Field::required("budget", ValueType::Text)]),
+            None,
+        )
         .await
         .expect("a caller declares a schema of their own");
 
@@ -611,7 +611,7 @@ async fn a_seed_over_a_callers_type_with_a_reference_key_still_finishes() {
         ],
     );
     store
-        .declare_type(theirs.clone())
+        .declare_type(theirs.clone(), None)
         .await
         .expect("a caller declares a type under a name the build ships later");
 
@@ -668,7 +668,7 @@ async fn a_callers_type_under_a_keyed_kinds_name_is_displaced_and_remembered(
         .expect("the shipped kind is taken back");
     let theirs = DeclaredType::new(token, vec![Field::new("budget", ValueType::Text)]);
     store
-        .declare_type(theirs.clone())
+        .declare_type(theirs.clone(), None)
         .await
         .expect("a caller declares a type under the name of a keyless kind");
 
@@ -736,10 +736,13 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
         .expect("a caller declares a kind");
 
     let refused = store
-        .declare_type(DeclaredType::new(
-            "cartwright",
-            vec![Field::required("price", ValueType::Text)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "cartwright",
+                vec![Field::required("price", ValueType::Text)],
+            ),
+            None,
+        )
         .await
         .expect_err("a schema cannot reshape a kind");
     assert!(
@@ -766,10 +769,13 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
 
     // The other direction: a schema's name is not a kind's to take.
     store
-        .declare_type(DeclaredType::new(
-            "barrow-boy",
-            vec![Field::required("price", ValueType::Text)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "barrow-boy",
+                vec![Field::required("price", ValueType::Text)],
+            ),
+            None,
+        )
         .await
         .expect("a caller declares a schema");
     let refused = store
@@ -1453,10 +1459,13 @@ async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
     added(&store, &moes, "Moe's").await;
 
     store
-        .declare_type(DeclaredType::new(
-            "place",
-            vec![Field::required("postcode", ValueType::Number)],
-        ))
+        .declare_type(
+            DeclaredType::new(
+                "place",
+                vec![Field::required("postcode", ValueType::Number)],
+            ),
+            None,
+        )
         .await
         .expect("a caller's schema may be named after a kind — see the boot case above");
 

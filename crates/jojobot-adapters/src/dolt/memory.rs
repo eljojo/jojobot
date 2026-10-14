@@ -7151,7 +7151,11 @@ impl Memory for DoltMemory {
     /// The origin of what is already there is read inside that transaction and
     /// decides whether the replacement may happen at all: a caller cannot write
     /// over a type the software ships.
-    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+    async fn declare_type(
+        &self,
+        declared: DeclaredType,
+        by_session: Option<&str>,
+    ) -> Result<DeclaredType, MemoryError> {
         validate_type(&declared)?;
         let declared = declared.normalized();
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -7207,6 +7211,16 @@ impl Memory for DoltMemory {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        }
+        if declared.origin == Origin::Declared {
+            append_type_write(
+                &mut tx,
+                &declared.name,
+                &declared.fields,
+                by_session,
+                &self.clock,
+            )
+            .await?;
         }
         tx.commit().await.map_err(store)?;
         Ok(declared)
@@ -7341,6 +7355,9 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
             }
         }
+        if origin == Origin::Declared {
+            append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
+        }
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -7388,6 +7405,50 @@ impl Memory for DoltMemory {
             .map(|(token, origin)| (token, Origin::of_token(&origin).unwrap_or(Origin::Declared)))
             .collect())
     }
+}
+
+/// **Keep one declaration a caller made, in the transaction that replaced the
+/// keys of the name.** The keys and the account of how they got there land
+/// together or not at all. The declaration takes the next ordinal the name
+/// holds, and its keys are written as `type_field` spells them.
+async fn append_type_write(
+    tx: &mut Transaction<'_, MySql>,
+    name: &str,
+    fields: &[Field],
+    by_session: Option<&str>,
+    clock: &Clock,
+) -> Result<(), MemoryError> {
+    let held: Option<i32> =
+        sqlx::query_scalar("SELECT MAX(ordinal) FROM type_write WHERE name = ?")
+            .bind(name)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(store)?;
+    let keys: Vec<serde_json::Value> = fields
+        .iter()
+        .map(|field| {
+            serde_json::json!({
+                "key": field.key,
+                "holds": field.holds_token(),
+                "folds": field.folds.as_token(),
+                "required": field.required,
+                "one_of": field.one_of_cell(),
+            })
+        })
+        .collect();
+    sqlx::query(
+        "INSERT INTO type_write (name, ordinal, written_at, by_session, fields)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(name)
+    .bind(held.unwrap_or(0) + 1)
+    .bind(clock.now().to_string())
+    .bind(by_session)
+    .bind(serde_json::Value::Array(keys).to_string())
+    .execute(&mut **tx)
+    .await
+    .map_err(store)?;
+    Ok(())
 }
 
 /// **Which half of the sentence a key row belongs to.** A kind is a schema
