@@ -957,6 +957,7 @@ impl Jojobot {
                 if content_sent {
                     self.note_possible_subject(&fact, &caller, &mut body).await;
                 }
+                self.note_unlocks(&fact.subject, &caller, &mut body).await;
                 let unstarred_this_write =
                     was_starred && fact.fields.get("starred").is_none_or(|v| v != "true");
                 self.note_unstarred(&fact, was_starred, caller.sid.as_str());

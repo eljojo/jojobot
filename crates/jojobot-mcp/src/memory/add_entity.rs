@@ -554,6 +554,7 @@ impl Jojobot {
                 if let Some(fact) = &first_claim {
                     self.note_status_word(fact, &mut body).await;
                     self.note_depends_on_read(fact, &caller, &mut body).await;
+                    self.note_unlocks(&entity.id, &caller, &mut body).await;
                 }
                 let changed = match fold_behind {
                     Some(_) => crate::changed::Changed::not_read(),

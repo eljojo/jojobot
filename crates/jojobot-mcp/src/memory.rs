@@ -40,6 +40,7 @@ pub mod starred;
 pub mod status_words;
 #[cfg(test)]
 pub mod testing;
+pub mod unlocks;
 pub mod update_entity;
 pub mod update_fact;
 pub mod view_run;
