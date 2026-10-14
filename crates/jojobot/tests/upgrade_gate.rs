@@ -5990,6 +5990,9 @@ const FOLD_CHILD: &str = "thing:the-fern";
 /// The second duplicate, and the name its survivor was given after the fold.
 const FOLD_FOLDED_TWO: &str = "thing:recorded-spare";
 const FOLD_SURVIVOR_TWO_NOW: &str = "thing:jukebox";
+/// The handle the second survivor wore at the fold, taken by a newcomer after the
+/// rename.
+const FOLD_HEIR_HANDLE: &str = "thing:recorded-heir";
 
 /// **The claims the recording drew at a folded thing**, each by its words, with
 /// where its pointer is read: the edge of the claim, the `refs` of the claim, or
@@ -6208,5 +6211,70 @@ async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_g
          is given",
         jojobot_exercise::room::READY_TIMEOUT
     );
+    drop(scratch);
+}
+
+/// **A fold whose survivor was renamed, beside a new thing that took the handle
+/// the rename freed.** The second duplicate names the handle its survivor wore at
+/// the fold. Two things have worn that handle since: the survivor, before the
+/// rename, and a newcomer, after it. The fold came first, so the survivor is the
+/// one it meant; the boots place the forward without guessing, log no repair
+/// warning, and a pointer at the duplicate reads as the survivor and not as the
+/// newcomer.
+#[tokio::test]
+async fn a_fold_naming_a_handle_two_things_wore_is_placed_and_the_boots_are_quiet() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "reused-handle").await;
+    // **Stated before any boot**, so a recording that holds no such handle fails
+    // here and not as a green case: the handle is worn now by one thing and was
+    // worn by another, and the duplicate still names it.
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (wearers_now, wearers_before): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM entity WHERE id = ?),
+                (SELECT COUNT(*) FROM entity_former_handle WHERE former_handle = ?)",
+    )
+    .bind(FOLD_HEIR_HANDLE)
+    .bind(FOLD_HEIR_HANDLE)
+    .fetch_one(store.pool())
+    .await
+    .expect("the wearers of the handle read");
+    let named: Option<String> = sqlx::query_scalar("SELECT merged_into FROM entity WHERE id = ?")
+        .bind(FOLD_FOLDED_TWO)
+        .fetch_one(store.pool())
+        .await
+        .expect("the second duplicate reads");
+    store.stop().await;
+    assert_eq!(
+        (wearers_now, wearers_before, named.as_deref()),
+        (1, 1, Some(FOLD_HEIR_HANDLE)),
+        "recorded at {git_ref}: the handle is not worn by one thing and once by another, or the \
+         duplicate does not name it"
+    );
+
+    for boot in 1..=2 {
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+            .await
+            .expect("connecting to the current binary");
+        let read: serde_json::Value = serde_json::from_str(
+            &surface
+                .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
+                .await,
+        )
+        .expect("the holder reads");
+        booted.stop().await;
+        let edge =
+            the_claim_saying(&read, "keeps an eye on the second twin")["edge"]["object"].clone();
+        assert_eq!(
+            edge, FOLD_SURVIVOR_TWO_NOW,
+            "recorded at {git_ref}: boot {boot} reads the edge at the second duplicate as {edge}, \
+             not as the survivor: {read}"
+        );
+    }
     drop(scratch);
 }

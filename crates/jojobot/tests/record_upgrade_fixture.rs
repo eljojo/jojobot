@@ -478,6 +478,17 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await;
     eprintln!("a child under the folded handle, after the fold: {answer}");
+    // **The handle the rename freed is taken by a new thing.** The second
+    // duplicate still names that handle, now worn by another thing and once worn
+    // by the survivor.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "thing", "handle": "recorded-heir", "name": "A Newcomer",
+                   "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the handle the rename freed is taken by a new thing");
     // An edge drawn at the second duplicate once its survivor wears a new handle.
     let answer = surface
         .call(
