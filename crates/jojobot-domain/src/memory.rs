@@ -30,6 +30,7 @@ pub mod graph;
 pub mod guard;
 pub use guard::Override;
 pub mod kinds;
+pub mod likeness;
 pub mod list;
 pub mod mention;
 pub mod numbered;

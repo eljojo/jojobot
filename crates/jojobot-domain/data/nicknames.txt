@@ -1,0 +1,60 @@
+# Given-name short forms, one family per line: the full name, a colon, then the
+# short forms that go with it. Public English naming conventions; no person is
+# named here. A short form may head more than one family (chris: christopher and
+# christine), and two names are linked when their families meet.
+alexander: alex al xander sandy lex
+alexandra: alex alexa sandra sandy lexi
+andrew: andy drew
+anthony: tony ant
+barbara: barb barbie babs
+bartholomew: bart barty
+benjamin: ben benny benji
+catherine: cathy kate katie kat cat
+charles: charlie chuck chas
+christine: chris christy tina
+christopher: chris kit topher
+daniel: dan danny
+david: dave davey
+deborah: deb debbie
+edward: ed eddie ted teddy ned
+eleanor: ellie nell nora
+elizabeth: liz lisa beth betty eliza lizzie libby
+frederick: fred freddie fritz
+gerald: gerry jerry
+gregory: greg
+henry: hank harry
+isabel: izzy bella
+jacob: jake
+james: jim jimmy jamie
+jennifer: jen jenny
+jeremy: jerry
+john: jack johnny jon
+jonathan: jon nathan
+joseph: joe joey
+katherine: kathy kate katie kat
+kenneth: ken kenny
+lawrence: larry laurie
+leonard: leo len lenny
+margaret: maggie meg peggy marge
+matthew: matt
+maurice: moe morrie maury
+michael: mike mikey mick
+nicholas: nick nicky
+patricia: pat patty trish
+patrick: pat paddy
+peter: pete
+philip: phil
+rebecca: becky becca
+richard: rick dick rich ricky
+robert: bob bobby rob robbie bert
+ronald: ron ronnie
+samuel: sam sammy
+stephen: steve stevie
+steven: steve stevie
+susan: sue susie suzy
+theodore: ted teddy theo
+thomas: tom tommy
+timothy: tim timmy
+victoria: vicky vicki tori
+walter: walt wally
+william: bill billy will willy
