@@ -8677,6 +8677,7 @@ async fn recall_of_a_survivor_names_the_claim_the_merge_did_not_list() {
                     reason: None,
                     recorded_at: None,
                     sid: Some(sid.clone()),
+                    request_id: None,
                 }))
                 .await
                 .expect("merge ok"),
