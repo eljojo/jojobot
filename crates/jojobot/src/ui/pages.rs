@@ -10,6 +10,7 @@ use axum::{
 };
 
 use jojobot_domain::attention;
+use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention,
 };
@@ -761,8 +762,8 @@ async fn view_section(
     let answers_type = match asked.answers_type.as_deref().map(str::trim) {
         None | Some("") => None,
         Some(wanted) => match state.memory.declared_types().await {
-            Ok(known) => match known.into_iter().find(|declared| declared.name == wanted) {
-                Some(declared) => Some(declared),
+            Ok(known) => match DeclaredType::named(&known, wanted) {
+                Some(declared) => Some(declared.clone()),
                 None => {
                     return cannot_run(&format!(
                         "it asks for things that answer the type <code>{}</code>, and no type is \

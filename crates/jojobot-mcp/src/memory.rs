@@ -173,7 +173,7 @@ impl Jojobot {
             // from drifting away from it.
             Err(e) => return memory_declined(did, e).map(Err),
         };
-        if let Some(found) = known.iter().find(|t| t.name == wanted.trim()) {
+        if let Some(found) = DeclaredType::named(&known, wanted) {
             // **A name that resolves may still have displaced a caller's own
             // declaration** (rule 68): the query is about to match against
             // the type this answers with, and if that used to be a caller's,

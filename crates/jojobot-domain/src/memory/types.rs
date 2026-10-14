@@ -837,6 +837,17 @@ impl Match {
 }
 
 impl DeclaredType {
+    /// **The declaration a type name stands for**, among `known`.
+    ///
+    /// The one place a name becomes a declaration, so the verbs and the page of
+    /// a view cannot disagree about which names resolve. A store keeps names
+    /// trimmed, so the name asked for is trimmed to match. What a caller says
+    /// when no name resolves is its own.
+    pub fn named<'a>(known: &'a [DeclaredType], wanted: &str) -> Option<&'a DeclaredType> {
+        let wanted = wanted.trim();
+        known.iter().find(|declared| declared.name == wanted)
+    }
+
     /// The field this type declares under `key`, if it declares one.
     pub fn field(&self, key: &str) -> Option<&Field> {
         let key = key.trim();
@@ -1206,6 +1217,26 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect()
+    }
+
+    #[test]
+    fn a_type_name_resolves_to_its_declaration_by_the_name_trimmed() {
+        let known = vec![booking(), DeclaredType::new("tally", Vec::new())];
+        assert_eq!(
+            DeclaredType::named(&known, "  tally ").map(|t| t.name.as_str()),
+            Some("tally"),
+            "the name a caller padded is the name that was declared"
+        );
+        assert_eq!(
+            DeclaredType::named(&known, "booking").map(|t| t.name.as_str()),
+            Some("booking"),
+            "the control: an exact name resolves, so the padded case is not passing on a lookup \
+             that finds everything"
+        );
+        assert!(
+            DeclaredType::named(&known, "tall").is_none(),
+            "a name that is only part of a declared one resolves to nothing"
+        );
     }
 
     fn booking() -> DeclaredType {
