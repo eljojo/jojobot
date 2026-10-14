@@ -49,7 +49,7 @@ pub struct Provisioned<M> {
     provisions: Provisions,
 }
 
-impl<M> Provisioned<M> {
+impl<M: Memory + Send + Sync> Provisioned<M> {
     /// Wrap a store with what this build supplies.
     ///
     /// **An empty set is the ordinary case for every row**, so a store with no
@@ -76,13 +76,44 @@ impl<M> Provisioned<M> {
     /// [`fields`](Self::fields) extends this with what the store holds;
     /// [`echoed_defaults`](Self::echoed_defaults) compares an incoming write
     /// against it directly.
-    fn unwritten_defaults(&self, entity: &EntityId) -> BTreeMap<String, String> {
-        let mut defaults = match self.provisions.record_for(entity) {
-            Some((_, supplied)) => supplied.clone(),
-            None => BTreeMap::new(),
+    ///
+    /// **Empty under a stored row at a handle the build ships whole**: the
+    /// operator's record is fully theirs and reads back only the keys it
+    /// holds (rule 508).
+    async fn unwritten_defaults(
+        &self,
+        entity: &EntityId,
+    ) -> Result<BTreeMap<String, String>, MemoryError> {
+        if self.provisions.record_for(entity).is_none() {
+            return Ok(self.provisions.fields_for(entity));
+        }
+        let Some((_, supplied)) = self.supplied_only(entity).await? else {
+            return Ok(BTreeMap::new());
         };
+        let mut defaults = supplied.clone();
         defaults.extend(self.provisions.fields_for(entity));
-        defaults
+        Ok(defaults)
+    }
+
+    /// **The one "a stored row is here" check** (rule 498). The record the
+    /// build ships at this handle, but only while the store holds no row of
+    /// its own there: once the operator's row exists, the handle is a stored
+    /// thing and every verb treats it as one. Archived and folded rows count
+    /// as rows, so a restore still finds the row it restores.
+    async fn supplied_only(
+        &self,
+        handle: &EntityId,
+    ) -> Result<Option<(&Entity, &BTreeMap<String, String>)>, MemoryError> {
+        let Some(supplied) = self.provisions.record_for(handle) else {
+            return Ok(None);
+        };
+        let stored = self
+            .inner
+            .list_entities(None)
+            .await?
+            .iter()
+            .any(|row| row.id == *handle);
+        Ok((!stored).then_some(supplied))
     }
 }
 
@@ -271,7 +302,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        if let Some((supplied, _)) = self.provisions.record_for(handle) {
+        if let Some((supplied, _)) = self.supplied_only(handle).await? {
             let edits_the_record = patch.name.is_some()
                 || patch.aliases.is_some()
                 || patch.source.is_some()
@@ -354,7 +385,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// nothing.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
         let held = self.inner.fields(entity).await?;
-        let mut folded = self.unwritten_defaults(entity);
+        let mut folded = self.unwritten_defaults(entity).await?;
         folded.extend(held);
         Ok(folded)
     }
@@ -377,7 +408,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         entity: &EntityId,
     ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
         let (held, version) = self.inner.fields_versioned(entity).await?;
-        let mut folded = self.unwritten_defaults(entity);
+        let mut folded = self.unwritten_defaults(entity).await?;
         folded.extend(held);
         Ok((folded, version))
     }
@@ -396,7 +427,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         entity: &EntityId,
         fields: &BTreeMap<String, String>,
     ) -> Vec<String> {
-        let defaults = self.unwritten_defaults(entity);
+        // The trait gives this no error to return. A store that cannot be read names
+        // nothing as echoed, and the write itself is unaffected.
+        let defaults = self.unwritten_defaults(entity).await.unwrap_or_default();
         let mut echoed: Vec<String> = fields
             .iter()
             .filter(|(key, value)| defaults.get(key.as_str()) == Some(*value))
@@ -449,7 +482,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        if let Some((supplied, _)) = self.provisions.record_for(handle) {
+        if let Some((supplied, _)) = self.supplied_only(handle).await? {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates: vec![guard::EntityMatch {
@@ -483,7 +516,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        if self.provisions.record_for(from).is_some() {
+        if self.supplied_only(from).await?.is_some() {
             return Err(MemoryError::SuppliedHandle {
                 attempted: from.to_string(),
             });
@@ -502,7 +535,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
-        if self.provisions.record_for(id).is_some() {
+        if self.supplied_only(id).await?.is_some() {
             return Err(MemoryError::SuppliedHandle {
                 attempted: id.to_string(),
             });
@@ -514,7 +547,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         id: &EntityId,
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
-        if self.provisions.record_for(id).is_some() {
+        if self.supplied_only(id).await?.is_some() {
             return Err(MemoryError::SuppliedHandle {
                 attempted: id.to_string(),
             });
@@ -627,7 +660,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         for side in [folded, survivor] {
-            if self.provisions.record_for(side).is_some() {
+            if self.supplied_only(side).await?.is_some() {
                 return Err(MemoryError::SuppliedHandle {
                     attempted: side.to_string(),
                 });
@@ -1135,6 +1168,232 @@ mod tests {
         )
         .await
         .expect("a fold of two stored things is still the decorator's to pass through");
+    }
+
+    /// **A record the build ships whole, with the keys a view's build inputs
+    /// live under** — what a stored row at the same handle must never read
+    /// back.
+    fn shipped_view_with_inputs(slug: &str) -> jojobot_domain::memory::owned::Provision {
+        let id = EntityId::new(EntityKind::VIEW, slug);
+        jojobot_domain::memory::owned::Provision::record(
+            Entity {
+                folded_names: Vec::new(),
+                id: id.clone(),
+                kind: EntityKind::VIEW,
+                name: format!("The {slug} view"),
+                aliases: Vec::new(),
+                source: "jojobot".into(),
+                crm: None,
+                parent: Some(EntityId("topic:all-rules".into())),
+                boot: Default::default(),
+                merged_into: None,
+                badge: None,
+                archived: None,
+            },
+            BTreeMap::from([
+                ("selects".to_string(), "rhythm".to_string()),
+                ("inputs".to_string(), "project".to_string()),
+                ("order".to_string(), "position".to_string()),
+                ("shows_keys".to_string(), "status,owner".to_string()),
+            ]),
+        )
+    }
+
+    /// **The operator's row at a handle the build also ships**: a stored
+    /// `view:loops` holding only `selects` and `where`, over a build that
+    /// ships that handle with inputs, an order and a key list. Every store
+    /// the layer wraps can hold such a row (rule 508).
+    async fn stored_over_supplied() -> Provisioned<InMemoryMemory> {
+        let store = InMemoryMemory::booted();
+        let board = EntityId("view:loops".into());
+        store
+            .add_entity(NewEntity::new(board.clone(), "Mine", "user-named"))
+            .await
+            .expect("the operator's row is created")
+            .written()
+            .expect("nothing shipped it yet");
+        store
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: [
+                    ("selects".to_string(), "work".to_string()),
+                    ("where".to_string(), "status = now".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    board,
+                    "what the operator selects",
+                    Date::constant(2026, 6, 2),
+                )
+            }))
+            .await
+            .expect("the operator's keys land")
+            .written()
+            .expect("nothing blocks them");
+        for spare in ["view:due", "view:plan"] {
+            store
+                .add_entity(NewEntity::new(EntityId(spare.into()), spare, "user-named"))
+                .await
+                .expect("the operator's other row is created")
+                .written()
+                .expect("nothing blocks it");
+        }
+        Provisioned::new(
+            store,
+            Provisions::new(vec![shipped_view_with_inputs("loops")]),
+        )
+    }
+
+    /// **A stored row at a supplied handle reads back only the keys it
+    /// holds.** Paired with a supplied record that has no stored row, which
+    /// keeps every default: without the second, a layer that dropped the
+    /// build's keys everywhere would pass the first.
+    #[tokio::test]
+    async fn a_stored_row_at_a_supplied_handle_reads_back_only_its_own_keys() {
+        let over = stored_over_supplied().await;
+        let board = EntityId("view:loops".into());
+
+        let keys = |m: BTreeMap<String, String>| m.keys().cloned().collect::<Vec<_>>();
+        let read = over.fields(&board).await.expect("fields read");
+        assert_eq!(keys(read.clone()), ["selects", "where"], "{read:?}");
+        assert_eq!(read.get("selects").map(String::as_str), Some("work"));
+        let (versioned, _) = over.fields_versioned(&board).await.expect("fields read");
+        assert_eq!(keys(versioned), ["selects", "where"]);
+
+        let echoed = over
+            .echoed_defaults(
+                &board,
+                &BTreeMap::from([("inputs".to_string(), "project".to_string())]),
+            )
+            .await;
+        assert!(
+            echoed.is_empty(),
+            "no default sits under a stored row, so none can be echoed: {echoed:?}"
+        );
+
+        let supplies = Provisions::new(vec![shipped_view_with_inputs("loops")]);
+        let no_row = Provisioned::new(InMemoryMemory::booted().knowing(supplies.clone()), supplies);
+        let supplied = no_row.fields(&board).await.expect("fields read");
+        assert_eq!(
+            keys(supplied),
+            ["inputs", "order", "selects", "shows_keys"],
+            "a supplied record with no stored row keeps every default",
+        );
+    }
+
+    /// **A stored row at a supplied handle takes the writes a stored row
+    /// takes** — an edit, a rename, an archive and its restore — while the
+    /// same verbs on a supplied record with no stored row are still refused.
+    #[tokio::test]
+    async fn a_stored_row_at_a_supplied_handle_takes_edit_rename_archive_and_restore() {
+        let over = stored_over_supplied().await;
+        let board = EntityId("view:loops".into());
+
+        let edited = over
+            .update_entity(
+                &board,
+                EntityPatch {
+                    name: Some("Mine, edited".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the edit reaches the store");
+        assert!(
+            matches!(edited, Guarded::Written(ref e) if e.name == "Mine, edited"),
+            "{edited:?}"
+        );
+
+        let archived = over
+            .archive_entity(&board, "retired", None)
+            .await
+            .expect("the archive reaches the store");
+        assert!(archived.archived.is_some(), "{archived:?}");
+        let (restored, _) = over
+            .restore_entity(&board, None)
+            .await
+            .expect("the restore reaches the store");
+        assert!(restored.archived.is_none(), "{restored:?}");
+
+        let renamed = over
+            .rename_entity(
+                &board,
+                &EntityId("view:urgent-things".into()),
+                None,
+                Date::constant(2026, 6, 13),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("the rename reaches the store");
+        assert!(
+            matches!(renamed, Guarded::Written(ref e) if e.id == EntityId("view:urgent-things".into())),
+            "{renamed:?}"
+        );
+
+        let still_supplied = Provisioned::new(
+            InMemoryMemory::booted(),
+            Provisions::new(vec![shipped_view_with_inputs("loops")]),
+        );
+        assert!(matches!(
+            still_supplied.archive_entity(&board, "x", None).await,
+            Err(MemoryError::SuppliedHandle { .. })
+        ));
+        assert!(matches!(
+            still_supplied.restore_entity(&board, None).await,
+            Err(MemoryError::SuppliedHandle { .. })
+        ));
+    }
+
+    /// **A stored row at a supplied handle merges as either side**, and an
+    /// edit that carries a claim and a new name reaches the store too.
+    #[tokio::test]
+    async fn a_stored_row_at_a_supplied_handle_merges_and_takes_a_named_edit_with_a_claim() {
+        let over = stored_over_supplied().await;
+        let board = EntityId("view:loops".into());
+        let caller = EntityId("bot:sigma".into());
+
+        over.merge(
+            &EntityId("view:due".into()),
+            &board,
+            None,
+            Date::constant(2026, 6, 13),
+            &caller,
+            None,
+        )
+        .await
+        .expect("the stored row is a survivor like any other");
+        over.merge(
+            &board,
+            &EntityId("view:plan".into()),
+            None,
+            Date::constant(2026, 6, 13),
+            &caller,
+            None,
+        )
+        .await
+        .expect("the stored row folds away like any other");
+
+        let over = stored_over_supplied().await;
+        let edited = over
+            .update_entity_with_claim(
+                &board,
+                EntityPatch {
+                    name: Some("Mine again".into()),
+                    ..Default::default()
+                },
+                NewFact::about(
+                    board.clone(),
+                    "renamed by hand",
+                    Date::constant(2026, 6, 14),
+                ),
+            )
+            .await
+            .expect("the paired edit reaches the store");
+        assert!(
+            matches!(edited, Guarded::Written((ref e, _)) if e.name == "Mine again"),
+            "{edited:?}"
+        );
     }
 
     /// **A shipped default for one key on a row the store already holds**,
