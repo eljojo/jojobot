@@ -16,12 +16,12 @@ on:
     branches:
       - 'dev*-work'
 
-# A run that has started always finishes and reports. A newer push to the same
-# branch replaces only the run still queued. The group is keyed on the ref, so
-# two lines never share one.
+# The newest head wins. A newer push to the same branch cancels the older run,
+# started or not, because a superseded head's verdict is about code nobody will
+# land. The group is keyed on the ref, so two lines never share one.
 concurrency:
   group: branch-${{ forgejo.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   report:

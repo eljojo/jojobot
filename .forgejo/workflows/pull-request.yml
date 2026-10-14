@@ -18,13 +18,13 @@ on:
     branches:
       - main
 
-# A run that has started always finishes and reports. A newer push to the same
-# pull request replaces only the run still queued. The group is keyed on the
-# pull request number: on this event the ref does not name the pull request,
-# so two pull requests would share a group.
+# The newest head wins. A newer push to the same pull request cancels the older
+# run, started or not, because a superseded head's verdict is about code nobody
+# will land. The group is keyed on the pull request number: on this event the
+# ref does not name the pull request, so two pull requests would share a group.
 concurrency:
   group: pull-request-${{ forgejo.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 # The runner labelled `nix` is a host executor: the job runs on the machine
 # itself, sees only the runner's own directory, and reaches the internet and

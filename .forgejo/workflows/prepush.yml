@@ -11,11 +11,12 @@ name: prepush
 on:
   workflow_dispatch:
 
-# One run at a time. A started run finishes and reports; a newer request
-# replaces only a queued one.
+# One run at a time, and the newest head wins. A newer dispatch cancels the
+# older run, started or not, because a superseded head's verdict is about code
+# nobody will push.
 concurrency:
   group: prepush
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   prepush:
