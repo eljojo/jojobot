@@ -36,7 +36,11 @@ async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
                 "subject": "rhythm:swap-the-air-filter",
                 "content": "change the filter every quarter",
                 "provenance": "testimony",
-                "sets": {"cadence_days": "90", "advances_from": "check_in_date"},
+                "sets": {
+                    "name": "Swap the air filter",
+                    "cadence_days": "90",
+                    "advances_from": "check_in_date",
+                },
             }),
         )
         .await
@@ -50,7 +54,7 @@ async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
             .any(|step| step["add"] == json!(["last_check_in"])),
         "the step names the check-in: {partial}"
     );
-    assert_eq!(partial["unlocks"]["holds"]["keys"], 2, "{partial}");
+    assert_eq!(partial["unlocks"]["holds"]["keys"], 3, "{partial}");
 
     // ── ② the check-in itself, which closes the gap ─────────────────────────
     let checked = s

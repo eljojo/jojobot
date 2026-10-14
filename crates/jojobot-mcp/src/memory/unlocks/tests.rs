@@ -362,3 +362,95 @@ async fn a_type_of_computed_keys_is_not_offered_but_a_completable_one_is() {
         "a type of keys jojobot computes is not offered: {receipt}"
     );
 }
+
+/// **A kind's optional keys never earn a line, and a kind's required keys do.**
+///
+/// A work item holds a status and none of the optional keys its kind lists, and
+/// its receipt is silent. A loop that holds its schedule and its check-in but no
+/// `name`, a key its kind requires, is told once. Both ride in one case so the
+/// silence cannot pass on a build that never speaks.
+#[tokio::test]
+async fn a_kinds_required_keys_are_named_and_its_optional_keys_are_not() {
+    let jojobot = handler();
+    a_loop(&jojobot, "rhythm:descale").await;
+    ensure(&jojobot, "project:atlas").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "work:delta", "Delta")
+        }))
+        .await
+        .expect("add ok");
+
+    let work = capture_sets(
+        &jojobot,
+        "work:delta",
+        "started on it",
+        &[("status", "now")],
+    )
+    .await;
+    assert!(
+        work.get("unlocks").is_none(),
+        "a work item missing only optional keys has nothing to unlock: {work}"
+    );
+
+    let stray = capture_sets(
+        &jojobot,
+        "thing:kettle",
+        "carries a work key",
+        &[("status", "now")],
+    )
+    .await;
+    assert!(
+        stray.get("unlocks").is_none(),
+        "a key of another kind's shape does not offer that kind's keys: {stray}"
+    );
+
+    let unnamed = capture_sets(
+        &jojobot,
+        "rhythm:descale",
+        "scheduled and checked in",
+        &[
+            ("cadence_days", "7"),
+            ("advances_from", "check_in_date"),
+            ("counts_from", "2026-08-01"),
+            ("last_check_in", "2026-08-01"),
+        ],
+    )
+    .await;
+    let steps = steps_for_type(&unnamed, "rhythm");
+    assert_eq!(steps.len(), 1, "the kind's own shape is named: {unnamed}");
+    assert_eq!(
+        adds(steps[0]),
+        vec!["name"],
+        "only the key the kind requires, and not the optional ones: {unnamed}"
+    );
+}
+
+/// **A required key the loop step already names is named once.**
+#[tokio::test]
+async fn a_key_the_loop_step_names_is_not_named_again_by_the_kind() {
+    let jojobot = handler();
+    a_loop(&jojobot, "rhythm:descale").await;
+
+    let receipt = capture_sets(
+        &jojobot,
+        "rhythm:descale",
+        "every week",
+        &[
+            ("cadence_days", "7"),
+            ("advances_from", "check_in_date"),
+            ("name", "descale"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        steps_adding(&receipt, "last_check_in").len(),
+        1,
+        "the check-in is named by one step only: {receipt}"
+    );
+    assert!(
+        steps_for_type(&receipt, "rhythm").is_empty(),
+        "a kind step with nothing left to add is not sent: {receipt}"
+    );
+}

@@ -97,14 +97,24 @@ pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
 }
 
 /// **The steps that make a thing answer a declared type it already partly
-/// answers.** A type that matches nothing the thing holds gets no step. Two
-/// sorts of type are not a shape for a caller to complete: one whose every key
-/// jojobot works out itself, and one named like a kind, which is that kind's own
-/// keys read as a type and is not offered to a thing of another kind.
-pub(crate) fn type_steps(fields: &BTreeMap<String, String>, types: &[DeclaredType]) -> Vec<Step> {
+/// answers.** A type that matches nothing the thing holds gets no step.
+///
+/// Two sorts of type are not a shape for a caller to complete: one whose every
+/// key jojobot works out itself, and one named like a kind other than the
+/// thing's own, which is that kind's keys read as a type. **The type named like
+/// the thing's own kind is its kind's shape, and only the keys the kind
+/// requires are offered**: an optional key of a kind is welcome and never earns
+/// a line. **A key a step before it already names is left out**, so one key is
+/// named once.
+pub(crate) fn type_steps(
+    kind: &str,
+    fields: &BTreeMap<String, String>,
+    types: &[DeclaredType],
+    named: &[String],
+) -> Vec<Step> {
     types
         .iter()
-        .filter(|declared| !kinds::known(&declared.name))
+        .filter(|declared| declared.name == kind || !kinds::known(&declared.name))
         .filter(|declared| {
             !declared
                 .fields
@@ -113,7 +123,14 @@ pub(crate) fn type_steps(fields: &BTreeMap<String, String>, types: &[DeclaredTyp
         })
         .filter_map(|declared| {
             let matched = declared.matched_by(fields)?;
-            if matched.lacking.is_empty() {
+            let of_kind = declared.name == kind;
+            let add: Vec<String> = matched
+                .lacking
+                .into_iter()
+                .filter(|key| !of_kind || declared.field(key).is_some_and(|field| field.required))
+                .filter(|key| !named.contains(key))
+                .collect();
+            if add.is_empty() {
                 return None;
             }
             Some(Step {
@@ -121,10 +138,10 @@ pub(crate) fn type_steps(fields: &BTreeMap<String, String>, types: &[DeclaredTyp
                 unlocks: format!(
                     "Add {} and a question for the type {} (answers_type, fits_type) finds this \
                      thing whole.",
-                    matched.lacking.join(", "),
+                    add.join(", "),
                     declared.name
                 ),
-                add: matched.lacking,
+                add,
             })
         })
         .collect()
@@ -151,7 +168,8 @@ impl Jojobot {
         };
         let mut steps = loop_steps(&fields);
         if let Ok(types) = self.memory.declared_types().await {
-            let of_types = type_steps(&fields, &types);
+            let named: Vec<String> = steps.iter().flat_map(|step| step.add.clone()).collect();
+            let of_types = type_steps(subject.kind_token(), &fields, &types, &named);
             if !of_types.is_empty()
                 && self
                     .first_contact(&format!("type-unlocks:{subject}"), Some(caller))
