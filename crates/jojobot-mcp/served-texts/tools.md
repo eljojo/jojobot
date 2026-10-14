@@ -2402,6 +2402,8 @@ WHICH OBJECTS: subject (one handle; a named subject always comes back, and a han
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields or where, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (fields_left_out names what it hid, and a view's shows_keys yields to it).
+A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
+Read one with history_record set to that address, and give no subject.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.

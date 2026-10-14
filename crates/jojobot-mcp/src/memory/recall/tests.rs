@@ -8603,3 +8603,117 @@ async fn an_object_names_the_claims_it_cannot_serve_beside_the_claims_it_can() {
         "nothing is left out of a thing nobody merged into: {plain}"
     );
 }
+
+/// **A recall of a merged survivor names the claim it cannot serve, through the
+/// verb a caller uses.** The store holds a claim under the folded thing's key that
+/// the merge's event does not list. `recall` with claims asked for lists the claim
+/// the event maps and names the one it cannot serve with the reason and an
+/// address, and that address reads the claim. **Paired**: the folded thing's own
+/// answer names nothing, and a survivor nobody staged a stray claim under names
+/// nothing either.
+#[tokio::test]
+async fn recall_of_a_survivor_names_the_claim_the_merge_did_not_list() {
+    let memory = shared_memory();
+    let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+    let sid = writing_as(&jojobot);
+    for handle in [
+        "person:milhouse",
+        "person:bart",
+        "person:nelson",
+        "person:ralph",
+    ] {
+        ensure(&jojobot, handle).await;
+    }
+    for (handle, said) in [
+        ("person:milhouse", "plays the cornet"),
+        ("person:bart", "skates to school"),
+        ("person:nelson", "laughs at the pier"),
+        ("person:ralph", "eats paste"),
+    ] {
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args(handle, said)
+            },
+        )
+        .await;
+    }
+    for (duplicate, survivor) in [
+        ("person:bart", "person:milhouse"),
+        ("person:ralph", "person:nelson"),
+    ] {
+        let landed = json_of(
+            &jojobot
+                .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    duplicate: duplicate.into(),
+                    survivor: survivor.into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(landed["merged"], duplicate, "the merge landed: {landed}");
+    }
+    // Only Bart's row gets a claim the event does not map.
+    let stray = memory.stray_claim_under(&EntityId("person:bart".into()), "a stray claim");
+
+    let answered = json_of(
+        &jojobot
+            .recall(Parameters(of("person:milhouse")))
+            .await
+            .expect("recall ok"),
+    );
+    let object = &answered["objects"][0];
+    let left_out = &object["claims_left_out"];
+    assert_eq!(left_out["count"], 1, "{answered}");
+    assert_eq!(left_out["claims"][0]["address"], stray.to_string());
+    assert!(
+        left_out["claims"][0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.starts_with("unmapped by merge event")),
+        "{left_out}"
+    );
+    let served: Vec<&str> = object["facts"]
+        .as_array()
+        .expect("claims were asked for")
+        .iter()
+        .filter_map(|fact| fact["content"].as_str())
+        .collect();
+    assert!(
+        served.contains(&"skates to school") && served.contains(&"plays the cornet"),
+        "the claims the event maps are served: {served:?}"
+    );
+    assert!(!served.contains(&"a stray claim"), "{served:?}");
+
+    // The address named reads the claim.
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: None,
+                facts: None,
+                history_record: Some(stray.to_string()),
+                ..of("person:milhouse")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        read.to_string().contains("a stray claim"),
+        "the address reads the claim: {read}"
+    );
+
+    // Pairs: a survivor with no stray claim names none.
+    let clean = json_of(
+        &jojobot
+            .recall(Parameters(of("person:nelson")))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        clean["objects"][0].get("claims_left_out").is_none(),
+        "{clean}"
+    );
+}
