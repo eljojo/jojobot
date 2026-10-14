@@ -610,6 +610,100 @@ pub fn refusal_for_text(text: &[&str], known: &[Entity]) -> Option<super::Memory
         .or_else(|| Mentioning::screen_or_unknown(text, known))
 }
 
+/// How a claim's content and its details are joined when the question is what
+/// is code: a blank line, so an inline span can never run from one into the other.
+const WORDS_BREAK: &str = "\n\n";
+
+/// **A claim's content and details as the one text a reader reads.** A fence that
+/// opens on the content line closes in the details, and neither field alone holds
+/// a fenced block, so what is code is decided over both together. **Nothing
+/// changes for a claim whose content does not open a fence**: the blank line
+/// between the two keeps a span from crossing, and a fence in the details alone is
+/// the same fence either way. `None` when there are no details, and when the
+/// content is not one line (a store never holds such a claim, so this is only
+/// a guard against reading one as two).
+fn words_joined(content: &str, details: Option<&str>) -> Option<String> {
+    let details = details?;
+    (!super::breaks_the_row(content)).then(|| format!("{content}{WORDS_BREAK}{details}"))
+}
+
+/// A text read through [`words_joined`], cut back into content and details at
+/// the blank line it was joined with. Content is one line and a replacement holds
+/// no line break, so the first blank line is the join.
+fn words_split(text: String) -> (String, Option<String>) {
+    match text.split_once(WORDS_BREAK) {
+        Some((content, details)) => (content.to_string(), Some(details.to_string())),
+        None => (text, None),
+    }
+}
+
+/// The texts a claim's words are read as: one joined text, or the content and the
+/// details each as they stand.
+fn words_text(content: &str, details: Option<&str>) -> Vec<String> {
+    match words_joined(content, details) {
+        Some(text) => vec![text],
+        None => std::iter::once(content)
+            .chain(details)
+            .map(str::to_string)
+            .collect(),
+    }
+}
+
+/// Every entity a claim's words name, over content and details as one text.
+pub fn named_words(content: &str, details: Option<&str>) -> Vec<EntityId> {
+    words_text(content, details)
+        .iter()
+        .flat_map(|text| named(text))
+        .collect()
+}
+
+/// [`resolved`] for a claim's words: what the store keeps of the content and of
+/// the details, with what is code decided over both as one text.
+pub fn resolved_words(
+    content: &str,
+    details: Option<&str>,
+    known: &[Entity],
+) -> Result<(String, Option<String>), KindsUnloaded> {
+    match words_joined(content, details) {
+        Some(text) => Ok(words_split(resolved(&text, known)?)),
+        None => Ok((
+            resolved(content, known)?,
+            details.map(|d| resolved(d, known)).transpose()?,
+        )),
+    }
+}
+
+/// [`rendered`] for a claim's words: what a reader sees of the content and of the
+/// details, with what is code decided over both as one text.
+pub fn rendered_words(
+    content: &str,
+    details: Option<&str>,
+    known: &[Entity],
+) -> (String, Option<String>) {
+    match words_joined(content, details) {
+        Some(text) => words_split(rendered(&text, known)),
+        None => (
+            rendered(content, known),
+            details.map(|d| rendered(d, known)),
+        ),
+    }
+}
+
+/// [`refusal_for_text`] for a claim's words: what they would be refused for, with
+/// what is code decided over content and details as one text.
+pub fn refusal_for_words(
+    content: &str,
+    details: Option<&str>,
+    known: &[Entity],
+) -> Option<super::MemoryError> {
+    let parts: Vec<&str> = std::iter::once(content).chain(details).collect();
+    refuse_forged(&parts).err().or_else(|| {
+        let texts = words_text(content, details);
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        Mentioning::screen_or_unknown(&texts, known)
+    })
+}
+
 /// Whether any of this text holds a mention-shaped substring this process
 /// cannot resolve because it has loaded no kinds.
 fn any_unknowable(text: &[&str]) -> bool {
@@ -807,10 +901,8 @@ impl Mentioning {
         former: &[super::FormerHandle],
         declared: &[super::types::DeclaredType],
     ) {
-        fact.content = rendered(&fact.content, known);
-        if let Some(details) = &fact.details {
-            fact.details = Some(rendered(details, known));
-        }
+        (fact.content, fact.details) =
+            rendered_words(&fact.content, fact.details.as_deref(), known);
         Self::render_fields(&mut fact.fields, known, former, declared);
     }
 
@@ -901,6 +993,18 @@ impl Mentioning {
         })
     }
 
+    /// **[`Self::screen`] for a claim's words**, over content and details as one
+    /// text, so a handle inside a fence that opens on the content line is code.
+    fn screen_words<T>(
+        content: &str,
+        details: Option<&str>,
+        known: &[Entity],
+    ) -> Option<super::Guarded<T>> {
+        let texts = words_text(content, details);
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        Self::screen(&texts, known)
+    }
+
     /// **The same rule, answered as an error.**
     ///
     /// `retract` and `merge` return `Retraction`/`Merge` directly — neither
@@ -962,33 +1066,25 @@ impl super::Memory for Mentioning {
             first.drop_because.as_deref().unwrap_or(""),
         ])?;
         let known = self.known().await?;
-        if let Some(blocked) = Self::screen(
-            &[
-                first.content.as_str(),
-                first.details.as_deref().unwrap_or(""),
-            ],
-            &known,
-        ) {
+        if let Some(blocked) = Self::screen_words(&first.content, first.details.as_deref(), &known)
+        {
             return Ok(blocked);
         }
         let mut fields = first.fields.clone();
         bind_expression_fields(&mut fields, &self.declared().await?, &known, &new.id)?;
         let written = self
             .inner
-            .add_entity_with_first_claim(
-                new,
+            .add_entity_with_first_claim(new, {
+                let (content, details) =
+                    resolved_words(&first.content, first.details.as_deref(), &known)
+                        .map_err(unloaded)?;
                 super::NewFact {
                     fields,
-                    content: resolved(&first.content, &known).map_err(unloaded)?,
-                    details: first
-                        .details
-                        .as_deref()
-                        .map(|d| resolved(d, &known))
-                        .transpose()
-                        .map_err(unloaded)?,
+                    content,
+                    details,
                     ..first
-                },
-            )
+                }
+            })
             .await?
             .open();
         Ok(match written {
@@ -1017,34 +1113,25 @@ impl super::Memory for Mentioning {
             claim.drop_because.as_deref().unwrap_or(""),
         ])?;
         let known = self.known().await?;
-        if let Some(blocked) = Self::screen(
-            &[
-                claim.content.as_str(),
-                claim.details.as_deref().unwrap_or(""),
-            ],
-            &known,
-        ) {
+        if let Some(blocked) = Self::screen_words(&claim.content, claim.details.as_deref(), &known)
+        {
             return Ok(blocked);
         }
         let mut fields = claim.fields.clone();
         bind_expression_fields(&mut fields, &self.declared().await?, &known, handle)?;
         let written = self
             .inner
-            .update_entity_with_claim(
-                handle,
-                patch,
+            .update_entity_with_claim(handle, patch, {
+                let (content, details) =
+                    resolved_words(&claim.content, claim.details.as_deref(), &known)
+                        .map_err(unloaded)?;
                 super::NewFact {
                     fields,
-                    content: resolved(&claim.content, &known).map_err(unloaded)?,
-                    details: claim
-                        .details
-                        .as_deref()
-                        .map(|d| resolved(d, &known))
-                        .transpose()
-                        .map_err(unloaded)?,
+                    content,
+                    details,
                     ..claim
-                },
-            )
+                }
+            })
             .await?
             .open();
         Ok(match written {
@@ -1117,25 +1204,19 @@ impl super::Memory for Mentioning {
             fact.drop_because.as_deref().unwrap_or(""),
         ])?;
         let known = self.known().await?;
-        if let Some(blocked) = Self::screen(
-            &[fact.content.as_str(), fact.details.as_deref().unwrap_or("")],
-            &known,
-        ) {
+        if let Some(blocked) = Self::screen_words(&fact.content, fact.details.as_deref(), &known) {
             return Ok(blocked);
         }
         let mut fields = fact.fields.clone();
         bind_expression_fields(&mut fields, &self.declared().await?, &known, &fact.subject)?;
+        let (content, details) =
+            resolved_words(&fact.content, fact.details.as_deref(), &known).map_err(unloaded)?;
         let written = self
             .inner
             .capture(super::NewFact {
                 fields,
-                content: resolved(&fact.content, &known).map_err(unloaded)?,
-                details: fact
-                    .details
-                    .as_deref()
-                    .map(|d| resolved(d, &known))
-                    .transpose()
-                    .map_err(unloaded)?,
+                content,
+                details,
                 ..fact
             })
             .await?
@@ -1193,23 +1274,56 @@ impl super::Memory for Mentioning {
         ];
         refuse_forged(&screened)?;
         let known = self.known().await?;
-        if let Some(blocked) = Self::screen(&screened, &known) {
+        // **What is code is decided over the claim's content and details as one
+        // text**, so an edit to one of them is read beside the other as stored:
+        // a details written under a content line that opens a fence is code.
+        // The other one is only read, never rewritten here.
+        let sent_content = patch
+            .content
+            .as_deref()
+            .filter(|_| editing != Some(TextField::Content));
+        let sent_details = patch
+            .details
+            .as_deref()
+            .filter(|_| editing != Some(TextField::Details));
+        let stored_beside = if editing.is_none() && sent_content.is_some() != sent_details.is_some()
+        {
+            self.inner.claim_history(address).await?.open().pop()
+        } else {
+            None
+        };
+        let words: Option<(String, Option<String>)> = match (sent_content, sent_details) {
+            (Some(c), Some(d)) => Some((c.to_string(), Some(d.to_string()))),
+            (Some(c), None) => Some((
+                c.to_string(),
+                stored_beside.as_ref().and_then(|w| w.details.clone()),
+            )),
+            (None, Some(d)) => Some((
+                stored_beside
+                    .as_ref()
+                    .map(|w| w.content.clone())
+                    .unwrap_or_default(),
+                Some(d.to_string()),
+            )),
+            (None, None) => None,
+        };
+        if let Some((c, d)) = &words
+            && let Some(blocked) = Self::screen_words(c, d.as_deref(), &known)
+        {
             return Ok(blocked);
         }
         let mut fields = patch.fields.clone();
         bind_expression_fields(&mut fields, &self.declared().await?, &known, &address.home)?;
-        let mut content = patch
-            .content
-            .as_deref()
-            .map(|c| resolved(c, &known))
-            .transpose()
-            .map_err(unloaded)?;
-        let mut details = patch
-            .details
-            .as_deref()
-            .map(|d| resolved(d, &known))
-            .transpose()
-            .map_err(unloaded)?;
+        let resolved_in_words = match &words {
+            Some((c, d)) => Some(resolved_words(c, d.as_deref(), &known).map_err(unloaded)?),
+            None => None,
+        };
+        let mut content = sent_content
+            .and(resolved_in_words.as_ref())
+            .map(|(c, _)| c.clone());
+        let mut details = sent_details
+            .and(resolved_in_words.as_ref())
+            .and_then(|(_, d)| d.clone());
         let mut expected_revision = patch.expected_revision;
         if let Some(edit) = &patch.text_edit {
             // **Read as stored**, so the match is made over what the reader is
@@ -1306,10 +1420,8 @@ impl super::Memory for Mentioning {
         }
         let known = self.known().await?;
         for write in &mut chain {
-            write.content = rendered(&write.content, &known);
-            if let Some(details) = &write.details {
-                write.details = Some(rendered(details, &known));
-            }
+            (write.content, write.details) =
+                rendered_words(&write.content, write.details.as_deref(), &known);
         }
         Ok(chain)
     }
@@ -1371,10 +1483,8 @@ impl super::Memory for Mentioning {
         }
         let known = self.known().await?;
         for write in chains.values_mut().flatten() {
-            write.content = rendered(&write.content, &known);
-            if let Some(details) = &write.details {
-                write.details = Some(rendered(details, &known));
-            }
+            (write.content, write.details) =
+                rendered_words(&write.content, write.details.as_deref(), &known);
         }
         Ok(chains)
     }

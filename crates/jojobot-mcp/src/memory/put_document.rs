@@ -255,9 +255,11 @@ impl Jojobot {
             Err(e) => return memory_declined("put_document", e),
         };
         for new in &facts {
-            let words = [new.content.as_str(), new.details.as_deref().unwrap_or("")];
-            if let Some(refused) = jojobot_domain::memory::mention::refusal_for_text(&words, &known)
-            {
+            if let Some(refused) = jojobot_domain::memory::mention::refusal_for_words(
+                &new.content,
+                new.details.as_deref(),
+                &known,
+            ) {
                 return memory_declined("put_document", refused);
             }
         }

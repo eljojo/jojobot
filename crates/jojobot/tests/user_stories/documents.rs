@@ -197,3 +197,111 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
         "the part that mentions the fryer is the opening: {found}"
     );
 }
+
+/// **A section that opens with a code fence keeps the fence, and what is inside
+/// it stays literal.** The text is read back byte for byte, a handle in the fence
+/// that names nothing does not refuse the put, and a handle in the fence that
+/// names a thing is not linked to it: a rename leaves the fenced text as it was
+/// written.
+///
+/// **Paired**: the same handle in a section after the fence is a link, and the
+/// rename moves what it reads as, so the fenced handle stayed because it is
+/// code and not because nothing was ever linked.
+#[tokio::test]
+async fn a_section_that_opens_with_a_code_fence_keeps_what_is_inside_it_literal() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session.add("person:milhouse", "Milhouse").await;
+    let markdown = "```text\nrun @person:milhouse and @person:nelson\n```\n\n## Notes\n\nask @person:milhouse about it\n";
+
+    let put = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": markdown}),
+        )
+        .await
+        .json();
+    assert_eq!(put["sections"], 2, "{put}");
+    let read = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(read["markdown"], markdown, "{read}");
+
+    session
+        .call(
+            "rename_entity",
+            json!({"handle": "person:milhouse", "to": "person:bart"}),
+        )
+        .await;
+    let renamed = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        renamed["markdown"],
+        markdown.replace("ask @person:milhouse", "ask @person:bart"),
+        "the fenced handle stays as written and the one in the notes follows the rename: {renamed}"
+    );
+
+    // A walk in from the thing reaches the document that mentions it in a
+    // sentence and not one that names it only inside a fence.
+    session.add("document:marge", "Griddle manual").await;
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:marge",
+                "markdown": "```\n@person:bart\n```\n\nplain words\n",
+            }),
+        )
+        .await;
+    session
+        .call(
+            "recall",
+            json!({"subject": "person:bart", "follow": {"direction": "in"}}),
+        )
+        .await
+        .says("document:homer")
+        .never_says("document:marge");
+    // …and the walk out from a document reaches what its sentences name and not
+    // what its fence holds.
+    session
+        .call(
+            "recall",
+            json!({"subject": "document:homer", "follow": {"direction": "out"}}),
+        )
+        .await
+        .says("person:bart");
+    session
+        .call(
+            "recall",
+            json!({"subject": "document:marge", "follow": {"direction": "out"}}),
+        )
+        .await
+        .never_says("person:bart");
+
+    // An edit to the details of the section that opens the fence is read beside
+    // its content, so the fence still holds what is inside it.
+    let recalled = session.recall("document:homer").await;
+    let address = recalled.json()["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("a section has an address")
+        .to_string();
+    session
+        .call(
+            "update_fact",
+            json!({"address": address, "details": "see @person:nelson again\n```"}),
+        )
+        .await;
+    let edited = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        edited["markdown"],
+        "```text\nsee @person:nelson again\n```\n\n## Notes\n\nask @person:bart about it\n",
+        "{edited}"
+    );
+}
