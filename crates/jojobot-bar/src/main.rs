@@ -103,7 +103,7 @@ fn announce_expectation(target: &str) {
     let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
     let home = std::env::var("HOME").ok();
     let history = history_root(variable.as_deref(), home.as_deref())
-        .map(|root| read_history(&root, &[target]))
+        .map(|root| read_history(&root, &["check", "report", "rooms"]))
         .unwrap_or_default();
     for line in start_lines(target, &history) {
         println!("{line}");
