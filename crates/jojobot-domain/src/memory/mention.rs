@@ -401,11 +401,25 @@ const GONE: &str = "(gone)";
 /// **Text shaped like a handle that jojobot never made a link.**
 const UNKNOWN: &str = "(no such handle)";
 
-/// The entity wearing this badge, if any.
+/// **The entity a badge reads as**: the one wearing it, or the one it was folded
+/// into when a merge folded it away, through a survivor folded in its turn. The
+/// badge is a pointer to the row and the row forwards, so the mention is served
+/// as the thing the row became and the stored text is left as it is. A row whose
+/// forwarding loops reads as itself, since a rendering has no way to refuse.
 fn wearing<'a>(known: &'a [Entity], badge: &str) -> Option<&'a Entity> {
-    known
+    let worn = known
         .iter()
-        .find(|e| e.badge.as_deref().is_some_and(|worn| worn == badge))
+        .find(|e| e.badge.as_deref().is_some_and(|worn| worn == badge))?;
+    let end = super::claim_walk::follow_thing::<_, super::claim_walk::MergeLoop>(&worn.id, |at| {
+        Ok(known
+            .iter()
+            .find(|e| &e.id == *at)
+            .and_then(|e| e.merged_into.as_ref()))
+    });
+    Some(match end {
+        Ok(id) => known.iter().find(|e| &e.id == id).unwrap_or(worn),
+        Err(_) => worn,
+    })
 }
 
 /// Walk every `@` in the text and let `at` decide what replaces it, told

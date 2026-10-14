@@ -3043,6 +3043,77 @@ pub async fn the_words_that_replace_a_find_are_resolved_where_they_land<
     assert_eq!(kept_details(bare, &author, &claim.id).await, stored);
 }
 
+/// 🚨 **A mention of a thing that was folded into another renders as the
+/// survivor**, never as the handle of the row that was folded away. The claim
+/// was written before the merge and no stored byte of it changes.
+///
+/// **Paired in the same read** with a mention of a thing nobody merged, which
+/// still renders as itself, and with the stored form, which names neither
+/// handle: a build that rewrote the claim at the merge would pass the first
+/// half alone.
+pub async fn a_mention_of_a_folded_thing_renders_as_its_survivor<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+) {
+    let handle = |slug: &str| EntityId::person(format!("person:{}", slug));
+    let author = handle("contract-mention-scribe-writing");
+    let survivor = handle("contract-mention-scribe-surviving");
+    let folded = handle("contract-mention-scribe-vanishing");
+    let bystander = handle("contract-mention-scribe-untouched");
+    for id in [&author, &survivor, &folded, &bystander] {
+        ensure(mentioning, id).await;
+    }
+    let written = capture(
+        mentioning,
+        NewFact::about(
+            author.clone(),
+            format!("the survey went out on @{folded} and on @{bystander}"),
+            date(2026, 4, 18),
+        ),
+    )
+    .await;
+    let before = read_claim(mentioning, &author, &written.id).await;
+    assert!(
+        before.contains(folded.as_str()) && before.contains(bystander.as_str()),
+        "both mentions read as the handles they were written with: {before}",
+    );
+
+    mentioning
+        .merge(
+            &folded,
+            &survivor,
+            Some("one person, filed twice"),
+            date(2026, 4, 19),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+
+    let after = read_claim(mentioning, &author, &written.id).await;
+    assert!(
+        after.contains(survivor.as_str()),
+        "the mention of the folded thing does not read as its survivor: {after}",
+    );
+    assert!(
+        !after.contains(folded.as_str()),
+        "the mention still reads as the handle that was folded away: {after}",
+    );
+    assert!(
+        after.contains(bystander.as_str()),
+        "a mention of a thing nobody merged reads as itself: {after}",
+    );
+    let stored = stored_of(bare, &author, &written.id).await;
+    assert!(
+        !stored.contains(survivor.as_str()) && !stored.contains(folded.as_str()),
+        "the stored claim was rewritten, so this is find-and-replace rather than a pointer: \
+         {stored}",
+    );
+}
+
 /// The mention contract, over a store that resolves and renders them and
 /// the same store read bare.
 pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
@@ -3053,6 +3124,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_mention_is_stored_as_a_badge_and_read_back_as_a_handle(mentioning, bare).await;
     a_mention_inside_a_multi_line_details_is_a_link(mentioning, bare).await;
     a_mention_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
+    a_mention_of_a_folded_thing_renders_as_its_survivor(mentioning, bare).await;
     a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
     a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
     text_inside_code_is_stored_and_served_as_written(mentioning, bare).await;
