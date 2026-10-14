@@ -128,7 +128,7 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
     step!("set_focus", counted.set_focus(&id, "still working"));
     step!(
         "set_timezone",
-        counted.set_timezone(&id, Some("America/Toronto"))
+        counted.set_timezone(&id, Some("America/New_York"))
     );
     step!(
         "set_stated_day",

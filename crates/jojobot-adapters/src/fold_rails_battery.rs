@@ -262,7 +262,7 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
         key_hash: Some(format!("hash-of-{sid}")),
         focus: format!("{slug} starts"),
         started_at: at(second),
-        timezone: Some("America/Toronto".into()),
+        timezone: Some("America/New_York".into()),
         started_on: Some(date(2026, 9, 1)),
     };
     calls.reset();

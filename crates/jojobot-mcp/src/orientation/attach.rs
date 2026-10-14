@@ -2858,7 +2858,7 @@ mod tests {
     /// zone, not from the caller) each keep it.
     #[tokio::test]
     async fn a_plain_boot_carries_no_swept_in_and_each_boot_that_needs_it_does() {
-        let zone = "America/Toronto";
+        let zone = "America/New_York";
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma").await;
@@ -4348,7 +4348,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
-                    timezone: Some("America/Toronto".into()),
+                    timezone: Some("America/New_York".into()),
                     today: None,
                     bot: Some(bot.into()),
                     brief,
@@ -4419,7 +4419,7 @@ mod tests {
         assert_eq!(answer["session"]["resumed"], true, "{answer}");
         assert!(answer["session"]["sid"].is_string(), "{answer}");
         assert_eq!(answer["session"]["claim"]["status"], "taken", "{answer}");
-        assert_eq!(answer["timezone"]["zone"], "America/Toronto", "{answer}");
+        assert_eq!(answer["timezone"]["zone"], "America/New_York", "{answer}");
 
         // What it leaves out, each part by the name `left_out` gives it.
         assert!(answer["orientation"].is_null(), "{answer}");

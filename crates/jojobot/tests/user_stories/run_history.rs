@@ -182,7 +182,7 @@ async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
         json!({"entry": "met @person:milhouse, said better"}),
     )
     .await;
-    let other = story.session_in("America/Toronto", Some("new")).await;
+    let other = story.session_in("America/New_York", Some("new")).await;
     other
         .call(
             "journal",
