@@ -2492,6 +2492,24 @@ async fn dolt_loses_no_claim_down_a_chain_of_sixty_five_merges() {
     store.stop().await;
 }
 
+/// **A manager folded through thirty-three merges is the bot it became in the
+/// real store.** Alone, for the cost of that many merges.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dolt_serves_a_manager_folded_through_a_long_chain_as_the_bot_it_became() {
+    let scratch = Scratch::new("merge_manager_chain");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_manager_chain")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    memory::a_manager_folded_through_a_long_chain_is_the_bot_it_became(&DoltMemory::open(pool))
+        .await;
+    store.stop().await;
+}
+
 /// **The same contract, wrapped in a fold, against the real store.** `Folded`
 /// forwards every guard, every read and every write it does not itself
 /// refresh straight to Dolt, so this is the regression test for that claim

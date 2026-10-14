@@ -1,0 +1,114 @@
+//! **The reads of the merge events the store walks with**, each handing the walk
+//! the one step it asks for. The walks themselves are the domain's, in
+//! [`jojobot_domain::memory::claim_walk`]: this file supplies what a step reads
+//! from the `merge_event` table and nothing that decides where a walk goes or
+//! when it ends.
+
+use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, ThingWalk};
+use jojobot_domain::memory::{EntityId, FactAddress, FactId, MemoryError};
+use sqlx::{MySql, Row, Transaction};
+
+use super::{DoltMemory, store};
+
+impl DoltMemory {
+    /// **Where the merge events say a claim went**, by the walk the domain owns:
+    /// this supplies the events that moved the address the walk stands at.
+    /// `None` when no event moved it. `address.home` must be a storage key.
+    pub(super) async fn walk_claim(
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        let mut walk = ClaimWalk::new(address.home.clone(), address.local.clone());
+        loop {
+            let (home, local) = walk.at();
+            let rows = sqlx::query(
+                "SELECT merge_no, survivor, survivor_id FROM merge_event
+                 WHERE folded = ? AND folded_id = ? AND ordinal > 0",
+            )
+            .bind(home.as_str())
+            .bind(local.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            let mut moves = Vec::with_capacity(rows.len());
+            for row in &rows {
+                moves.push(ClaimMove {
+                    order: row.try_get::<i64, _>("merge_no").map_err(store)? as u64,
+                    survivor: EntityId(row.try_get::<String, _>("survivor").map_err(store)?),
+                    survivor_id: FactId(row.try_get::<String, _>("survivor_id").map_err(store)?),
+                });
+            }
+            if !walk.step(moves) {
+                return Ok(walk
+                    .finish()?
+                    .map(|(home, local)| FactAddress::new(home, local)));
+            }
+        }
+    }
+
+    /// **One step back along the events from the address a walk stands at**: the
+    /// key and id a merge took the claim from, when a merge gave the claim this
+    /// address. The walk of an address back to the claim it names, and the walk of
+    /// a claim to every address it has had, both take their step here. `true` when
+    /// the walk moved.
+    pub(super) async fn step_back(
+        tx: &mut Transaction<'_, MySql>,
+        walk: &mut ClaimWalk<EntityId>,
+    ) -> Result<bool, MemoryError> {
+        let (home, local) = walk.at();
+        let rows = sqlx::query(
+            "SELECT merge_no, folded, folded_id FROM merge_event
+             WHERE survivor = ? AND survivor_id = ? AND ordinal > 0",
+        )
+        .bind(home.as_str())
+        .bind(local.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut origins = Vec::with_capacity(rows.len());
+        for row in &rows {
+            origins.push(ClaimMove {
+                order: row.try_get::<i64, _>("merge_no").map_err(store)? as u64,
+                survivor: EntityId(row.try_get::<String, _>("folded").map_err(store)?),
+                survivor_id: FactId(row.try_get::<String, _>("folded_id").map_err(store)?),
+            });
+        }
+        Ok(walk.step(origins))
+    }
+
+    /// **The key a pointer to a thing is served as**: the thing itself, or the
+    /// thing it was merged into when the merge events say so, through a survivor
+    /// that was merged later. A pointer a merge rewrote already names the
+    /// survivor and is returned as it is; one it left naming the folded thing is
+    /// followed.
+    pub(super) async fn forward_key(
+        tx: &mut Transaction<'_, MySql>,
+        key: &EntityId,
+    ) -> Result<EntityId, MemoryError> {
+        let mut walk = ThingWalk::new(key.clone());
+        loop {
+            let survivor = Self::survivor_of(tx, walk.at()).await?;
+            if !walk.step(survivor) {
+                return Ok(walk.finish()?);
+            }
+        }
+    }
+
+    /// **The thing a merge folded this one into**, by the key the merge events
+    /// hold, or none when no merge folded it. One hop: the survivor of the
+    /// latest fold, not the end of the chain.
+    pub(super) async fn survivor_of(
+        tx: &mut Transaction<'_, MySql>,
+        folded: &EntityId,
+    ) -> Result<Option<EntityId>, MemoryError> {
+        let survivor: Option<String> = sqlx::query_scalar(
+            "SELECT survivor FROM merge_event WHERE ordinal = 0 AND folded = ?
+             ORDER BY merge_no DESC LIMIT 1",
+        )
+        .bind(folded.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(survivor.map(EntityId))
+    }
+}

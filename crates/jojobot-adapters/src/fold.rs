@@ -390,7 +390,7 @@ impl Memory for Folded {
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
         match self.held(|image| image.moved(address)) {
-            Some(answer) => Ok(answer),
+            Some(answer) => Ok(answer?),
             None => self.inner.moved_address(address).await,
         }
     }
@@ -414,7 +414,8 @@ impl Memory for Folded {
         match self.held(|image| image.claim_history(address)) {
             Some(Err(merged @ MemoryError::AlreadyMerged { .. })) => {
                 match self.held(|image| image.moved(address)) {
-                    Some(Some(moved)) => match self.held(|image| image.claim_history(&moved)) {
+                    Some(Err(looped)) => Err(looped.into()),
+                    Some(Ok(Some(moved))) => match self.held(|image| image.claim_history(&moved)) {
                         Some(answer) => answer,
                         None => self.inner.claim_history(address).await,
                     },
@@ -641,11 +642,15 @@ impl Memory for Folded {
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         // An address on a thing merged away is moved first, when the merge kept
         // an event.
-        if let Some(Some(moved)) = self.held(|image| image.moved(source)) {
-            return match self.held(|image| image.built_on(&moved)) {
-                Some(answer) => answer,
-                None => self.inner.built_on(&moved).await,
-            };
+        match self.held(|image| image.moved(source)) {
+            Some(Err(looped)) => return Err(looped.into()),
+            Some(Ok(Some(moved))) => {
+                return match self.held(|image| image.built_on(&moved)) {
+                    Some(answer) => answer,
+                    None => self.inner.built_on(&moved).await,
+                };
+            }
+            _ => {}
         }
         match self.held(|image| image.built_on(source)) {
             Some(answer) => answer,

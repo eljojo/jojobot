@@ -3,7 +3,9 @@ use std::sync::Mutex;
 use jiff::civil::Date;
 
 use super::*;
-use crate::memory::claim_walk::{ClaimMove, follow_claim};
+use crate::memory::claim_walk::{
+    ClaimMove, ClaimWalk, MergeLoop, folded_into_walk, follow_claim, follow_thing,
+};
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
@@ -35,12 +37,8 @@ impl World {
     /// not a second resolver: the fake asks it for each address it holds.
     fn relocate(&mut self, merges: &[StoredMerge]) {
         let end_of = |home: &EntityId, id: &FactId| {
-            follow_claim::<_, std::convert::Infallible>(
-                home.clone(),
-                id.clone(),
-                claim_moves(merges),
-            )
-            .unwrap_or_else(|never| match never {})
+            follow_claim::<_, MergeLoop>(home.clone(), id.clone(), claim_moves(merges))
+                .expect("the fake merges nothing into itself, so its merges never loop")
         };
         let follow = |address: &mut FactAddress| {
             if let Some((home, local)) = end_of(&address.home, &address.local) {
@@ -133,8 +131,7 @@ impl World {
 /// position of a merge among all merges is its order, so the newest wins.
 fn claim_moves(
     merges: &[StoredMerge],
-) -> impl Fn(&EntityId, &FactId) -> Result<Vec<ClaimMove<EntityId>>, std::convert::Infallible> + '_
-{
+) -> impl Fn(&EntityId, &FactId) -> Result<Vec<ClaimMove<EntityId>>, MergeLoop> + '_ {
     |home, local| {
         Ok(merges
             .iter()
@@ -153,6 +150,27 @@ fn claim_moves(
             })
             .collect())
     }
+}
+
+/// **Where the merges sent a thing**, as the thing walk asks: the survivor of the
+/// newest merge that folded it, `None` when nothing did.
+fn survivor_in(
+    merges: &[StoredMerge],
+) -> impl Fn(&EntityId) -> Result<Option<EntityId>, MergeLoop> + '_ {
+    |folded| {
+        Ok(merges
+            .iter()
+            .rev()
+            .find(|merge| merge.folded == *folded)
+            .map(|merge| merge.survivor.clone()))
+    }
+}
+
+/// **Where a thing ended up after every merge**, through a survivor folded in its
+/// turn.
+fn ended_at(merges: &[StoredMerge], thing: EntityId) -> EntityId {
+    follow_thing(thing, survivor_in(merges))
+        .expect("the fake merges nothing into itself, so its merges never loop")
 }
 
 #[derive(Default)]
@@ -805,12 +823,7 @@ impl InMemoryMemory {
                 // **A merge moves no row, so a parent left naming a folded thing
                 // reads as the survivor it was folded into** — through a survivor
                 // folded later.
-                let mut parent = parent.clone();
-                for merge in merges.iter() {
-                    if merge.folded == parent {
-                        parent = merge.survivor.clone();
-                    }
-                }
+                let parent = ended_at(&merges, parent.clone());
                 entity.parent = Some(
                     super::super::entity_wearing(parent.as_str(), &snapshot)
                         .map(|found| found.id.clone())
@@ -879,12 +892,9 @@ impl InMemoryMemory {
     fn moved(&self, address: &FactAddress) -> Option<FactAddress> {
         let (key, _) = self.resolve(&address.home)?;
         let merges = self.merges.lock().expect("fake mutex poisoned");
-        let (key, local) = follow_claim::<_, std::convert::Infallible>(
-            key,
-            address.local.clone(),
-            claim_moves(&merges),
-        )
-        .unwrap_or_else(|never| match never {})?;
+        let (key, local) =
+            follow_claim::<_, MergeLoop>(key, address.local.clone(), claim_moves(&merges))
+                .expect("the fake merges nothing into itself, so its merges never loop")?;
         drop(merges);
         Some(FactAddress::new(self.current_handle(&key), local))
     }
@@ -979,15 +989,8 @@ impl InMemoryMemory {
         if merges.is_empty() {
             return Vec::new();
         }
-        let folded_into_key = |folded: &EntityId| {
-            let mut at = folded.clone();
-            for merge in merges.iter() {
-                if merge.folded == at {
-                    at = merge.survivor.clone();
-                }
-            }
-            at == *key && *folded != *key
-        };
+        let folded_into_key =
+            |folded: &EntityId| ended_at(&merges, folded.clone()) == *key && *folded != *key;
         let named: Vec<(EntityId, FactId, u64)> = facts
             .iter()
             .filter_map(|fact| {
@@ -1083,16 +1086,36 @@ impl InMemoryMemory {
     /// no merge gave to a claim is where the claim is stored.
     fn stored_address(&self, served: &FactAddress) -> FactAddress {
         let merges = self.merges.lock().expect("fake mutex poisoned");
-        let mut at = (served.home.clone(), served.local.clone());
-        for merge in merges.iter().rev() {
-            if at.0 != merge.survivor {
-                continue;
-            }
-            if let Some((was, _)) = merge.claims.iter().find(|(_, now)| *now == at.1) {
-                at = (merge.folded.clone(), was.clone());
+        let mut walk = ClaimWalk::new(served.home.clone(), served.local.clone());
+        loop {
+            let (home, local) = walk.at();
+            let origins = merges
+                .iter()
+                .enumerate()
+                .filter(|(_, merge)| merge.survivor == *home)
+                .filter_map(|(order, merge)| {
+                    merge
+                        .claims
+                        .iter()
+                        .find(|(_, now)| now == local)
+                        .map(|(was, _)| ClaimMove {
+                            order: order as u64,
+                            survivor: merge.folded.clone(),
+                            survivor_id: was.clone(),
+                        })
+                })
+                .collect();
+            if !walk.step(origins) {
+                break;
             }
         }
-        FactAddress::new(at.0, at.1)
+        match walk
+            .finish()
+            .expect("the fake merges nothing into itself, so its merges never loop")
+        {
+            Some((home, local)) => FactAddress::new(home, local),
+            None => served.clone(),
+        }
     }
 
     /// **Whether a merge folded this key into another thing.** What such a key
@@ -1111,17 +1134,15 @@ impl InMemoryMemory {
     /// those earlier. A key never counts twice, so a loop in the merges ends.
     fn keys_folded_into(&self, key: &EntityId) -> std::collections::HashSet<EntityId> {
         let merges = self.merges.lock().expect("fake mutex poisoned");
-        let mut reached = std::collections::HashSet::from([key.clone()]);
-        let mut frontier = vec![key.clone()];
-        while let Some(at) = frontier.pop() {
-            for merge in merges.iter().filter(|merge| merge.survivor == at) {
-                if reached.insert(merge.folded.clone()) {
-                    frontier.push(merge.folded.clone());
-                }
-            }
-        }
-        reached.remove(key);
-        reached
+        folded_into_walk(key.clone(), |at| {
+            merges
+                .iter()
+                .filter(|merge| merge.survivor == *at)
+                .map(|merge| merge.folded.clone())
+                .collect()
+        })
+        .into_iter()
+        .collect()
     }
 
     fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
@@ -1724,12 +1745,13 @@ impl InMemoryMemory {
         let known = self.known();
         super::super::with_manager_served(fold, |stored| {
             // A manager folded into another is the one it became.
-            super::super::survivor_of(self.current_handle(stored), |at| {
-                known
+            follow_thing::<_, MergeLoop>(self.current_handle(stored), |at| {
+                Ok(known
                     .iter()
                     .find(|e| &e.id == at)
-                    .and_then(|e| e.merged_into.clone())
+                    .and_then(|e| e.merged_into.clone()))
             })
+            .expect("the fake merges nothing into itself, so its merges never loop")
         })
     }
 

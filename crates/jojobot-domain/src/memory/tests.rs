@@ -171,52 +171,6 @@ fn a_fold_is_served_with_its_operator_as_the_handle_it_answers_to() {
     assert_eq!(served.get("one_liner"), fold.get("one_liner"));
 }
 
-/// **A folded bot is followed to the one it became, and a forwarding that loops
-/// ends.** A row that forwards nowhere is its own survivor; one that forwards on
-/// is followed to the end; and two rows forwarding to each other end the walk at
-/// the bound instead of hanging the write that asked.
-#[test]
-fn a_folded_bot_is_followed_to_the_one_it_became_and_a_loop_ends() {
-    let id = |s: &str| EntityId(format!("bot:{s}"));
-    let forwards = |from: &str, to: &str| {
-        let (from, to) = (id(from), id(to));
-        move |at: &EntityId| (at == &from).then(|| to.clone())
-    };
-    assert_eq!(
-        survivor_of(id("ridge"), |_| None),
-        id("ridge"),
-        "a row that forwards nowhere is its own survivor",
-    );
-    assert_eq!(
-        survivor_of(id("spur"), forwards("spur", "ridge")),
-        id("ridge")
-    );
-
-    let chain = |at: &EntityId| match at.as_str() {
-        "bot:delta" => Some(id("gamma")),
-        "bot:gamma" => Some(id("omega")),
-        _ => None,
-    };
-    assert_eq!(
-        survivor_of(id("delta"), chain),
-        id("omega"),
-        "followed past one hop"
-    );
-
-    let loops = |at: &EntityId| {
-        Some(if at.as_str() == "bot:delta" {
-            id("gamma")
-        } else {
-            id("delta")
-        })
-    };
-    let ended = survivor_of(id("delta"), loops);
-    assert!(
-        ended == id("delta") || ended == id("gamma"),
-        "a forwarding that loops ends on one of its rows: {ended}",
-    );
-}
-
 /// A built-in key for each relation a key can declare, so the one predicate is
 /// held to all three at once. No MCP call can declare one of these: the table
 /// is the build's own.
@@ -1497,6 +1451,15 @@ async fn fake_satisfies_the_contract() {
 #[tokio::test]
 async fn the_fake_loses_no_claim_down_a_chain_of_sixty_five_merges() {
     contract::a_chain_of_sixty_five_merges_loses_no_claim(&InMemoryMemory::booted()).await;
+}
+
+/// **A manager folded through thirty-three merges is the bot it became on the
+/// fake.** Outside the contract's list for the cost of making that many merges
+/// in a real store, which runs it once in its own test.
+#[tokio::test]
+async fn the_fake_serves_a_manager_folded_through_a_long_chain_as_the_bot_it_became() {
+    contract::a_manager_folded_through_a_long_chain_is_the_bot_it_became(&InMemoryMemory::booted())
+        .await;
 }
 
 /// **The contract dealt into parts runs every case once, and each part holds on

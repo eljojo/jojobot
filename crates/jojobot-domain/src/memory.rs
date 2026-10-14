@@ -2567,42 +2567,16 @@ pub fn chart_wanted_by_change(
 /// rows stay and forward, and their names are carried onto the survivor, so they
 /// are the survivor's own earlier selves. A screen of a rename against other
 /// things leaves them out, or the survivor would be a near miss of itself.
-/// A forwarding row that loops is followed at most once.
+/// A forwarding row that loops is followed at most once, by the one walk in
+/// [`claim_walk`].
 pub fn folded_into(survivor: &EntityId, index: &[Entity]) -> Vec<EntityId> {
-    let mut found: Vec<EntityId> = Vec::new();
-    let mut frontier = vec![survivor.clone()];
-    while let Some(at) = frontier.pop() {
-        for row in index {
-            if row.merged_into.as_ref() == Some(&at)
-                && !found.contains(&row.id)
-                && &row.id != survivor
-            {
-                found.push(row.id.clone());
-                frontier.push(row.id.clone());
-            }
-        }
-    }
-    found
-}
-
-/// **The bot a folded bot became.** A fold leaves the folded bot's row in place,
-/// forwarding to the survivor, and a report keeps the id of the manager it named.
-/// So the handle that id answers to may be a forwarding row whose claims have all
-/// moved, and a chain read from it would end there. `forwards_to` answers for one
-/// row; this follows it to the end, at most [`MAX_CHAIN`] rows, so a forwarding
-/// that loops cannot hang a write.
-pub fn survivor_of(
-    start: EntityId,
-    forwards_to: impl Fn(&EntityId) -> Option<EntityId>,
-) -> EntityId {
-    let mut at = start;
-    for _ in 0..MAX_CHAIN {
-        match forwards_to(&at) {
-            Some(next) if next != at => at = next,
-            _ => break,
-        }
-    }
-    at
+    claim_walk::folded_into_walk(survivor.clone(), |at| {
+        index
+            .iter()
+            .filter(|row| row.merged_into.as_ref() == Some(at))
+            .map(|row| row.id.clone())
+            .collect()
+    })
 }
 
 /// **The keys a fold is served with the handle they name**: the manager a bot

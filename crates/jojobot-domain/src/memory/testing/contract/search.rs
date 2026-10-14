@@ -668,6 +668,74 @@ pub async fn a_name_the_duplicate_wore_finds_the_survivor_after_a_fold<M: Memory
     );
 }
 
+/// **A child of the folded thing is found with the survivor as its parent.** The
+/// fold writes an event and moves no row, so the child still names the folded
+/// thing in the store and the index has to read it as the survivor's.
+/// **Paired**: before the fold the same hit names the folded parent, and a child
+/// of the survivor's own keeps its parent.
+pub async fn a_child_of_the_folded_parent_is_found_with_the_survivor_as_its_parent<
+    M: Memory,
+    S: Search,
+>(
+    store: &M,
+    search: &S,
+) {
+    let kept = EntityId(format!("project:{}", "contract-search-parent-kept"));
+    let spare = EntityId(format!("project:{}", "contract-search-parent-spare"));
+    let under_spare = EntityId(format!("work:{}", "contract-search-parent-wombatcarving"));
+    let under_kept = EntityId(format!("work:{}", "contract-search-parent-quokkacarving"));
+    add(
+        store,
+        NewEntity::new(kept.clone(), "Kept Parent", "user-named"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(spare.clone(), "Spare Parent", "user-named"),
+    )
+    .await;
+    for (child, parent) in [(&under_spare, &spare), (&under_kept, &kept)] {
+        add(
+            store,
+            NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(child.clone(), child.slug().replace('-', " "), "user-named")
+            },
+        )
+        .await;
+    }
+    let parent_of = |hits: &[Hit], child: &EntityId| -> Option<EntityId> {
+        hits.iter().find_map(|h| match h {
+            Hit::Entity { entity, .. } if &entity.id == child => entity.parent.clone(),
+            _ => None,
+        })
+    };
+    let before = found(search, SearchQuery::text("wombatcarving")).await;
+    assert_eq!(
+        parent_of(&before, &under_spare),
+        Some(spare.clone()),
+        "before the fold the child names its parent: {before:?}"
+    );
+
+    store
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller(), None)
+        .await
+        .expect("the fold lands");
+
+    let after = found(search, SearchQuery::text("wombatcarving")).await;
+    assert_eq!(
+        parent_of(&after, &under_spare),
+        Some(kept.clone()),
+        "the child of the folded parent does not name the survivor: {after:?}"
+    );
+    let own = found(search, SearchQuery::text("quokkacarving")).await;
+    assert_eq!(
+        parent_of(&own, &under_kept),
+        Some(kept),
+        "the survivor's own child keeps its parent: {own:?}"
+    );
+}
+
 /// **A thing holding a field that named the folded thing is found by the
 /// survivor after a fold.**
 ///
@@ -1295,6 +1363,7 @@ macro_rules! retrieval_cases {
             $store, $search
         ));
         $m!(a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold($store, $search));
+        $m!(a_child_of_the_folded_parent_is_found_with_the_survivor_as_its_parent($store, $search));
         $m!(a_claim_of_the_folded_thing_is_found_under_the_survivor_after_a_fold($store, $search));
         $m!(search_finds_things_that_answer_a_type_structurally(
             $store, $search
