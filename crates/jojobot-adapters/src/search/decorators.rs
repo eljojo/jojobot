@@ -1130,6 +1130,10 @@ impl Refresh for IndexedMailboxes {
         }
         // **Held from the count to the publication.** A verb that finished while
         // this waited has published, so the check is made again.
+        // No case pins this lock: removing it leaves every case green, because the
+        // publication checks in `settle` already refuse the interleavings a case can
+        // pause. It closes the window no case can pause in: a board ingest that lands
+        // between a verb's last index write and its publication.
         let _ordered = self.ordering.lock().await;
         if self.board_held() {
             return;
@@ -1277,6 +1281,10 @@ impl Mailboxes for IndexedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+        // No case pins this lock: removing it leaves every case green, because the
+        // publication checks in `settle` already refuse the interleavings a case can
+        // pause. It closes the window no case can pause in: a board ingest that lands
+        // between this verb's last index write and its publication.
         let _ordered = self.ordering.lock().await;
         let before = self.inner.changes();
         let delivered = self.inner.read_message(id, acting).await?;
@@ -1291,6 +1299,10 @@ impl Mailboxes for IndexedMailboxes {
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
+        // No case pins this lock: removing it leaves every case green, because the
+        // publication checks in `settle` already refuse the interleavings a case can
+        // pause. It closes the window no case can pause in: a board ingest that lands
+        // between this verb's last index write and its publication.
         let _ordered = self.ordering.lock().await;
         let before = self.inner.changes();
         let processed = self.inner.mark_processed(id, notes, acting).await?;
