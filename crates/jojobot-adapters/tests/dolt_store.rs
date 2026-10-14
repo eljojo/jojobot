@@ -6558,13 +6558,14 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
     store.stop().await;
 }
 
-/// **A fold carries the link rows of the claims it moves.**
+/// **A fold leaves the link rows of the claims it folds where they were written.**
 ///
-/// Merging a duplicate into a survivor moves the duplicate's field writes to the
-/// survivor, so the rows saying what those writes point at move with them: the
-/// question of who points at the target is then answered by the survivor's claim.
+/// Merging a duplicate into a survivor moves no row, so the rows saying what the
+/// duplicate's field writes point at stay filed under the duplicate: the question
+/// of who points at the target is still answered by the survivor's claim, and the
+/// survivor serves the value the write held.
 #[tokio::test]
-async fn a_merge_moves_the_link_rows_with_the_writes() {
+async fn a_merge_leaves_the_link_rows_where_the_writes_were_made() {
     let scratch = Scratch::new("field-link-merge");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -6624,10 +6625,29 @@ async fn a_merge_moves_the_link_rows_with_the_writes() {
             .map(|f| f.address().to_string())
             .collect::<Vec<_>>(),
     );
+    // **Stored where it was written, served as the survivor's.** The merge moves
+    // no row: the link row of the duplicate's write is still filed under the
+    // duplicate, and the survivor has none of its own.
+    let rows = link_rows(&pool).await;
+    let (duplicate_key, survivor_key) = (
+        badge_of(&pool, duplicate.as_str()).await,
+        badge_of(&pool, survivor.as_str()).await,
+    );
     assert_eq!(
-        link_rows(&pool).await,
-        links_the_writes_imply(&pool, &[]).await,
-        "no row is left under the folded thing and none is missing",
+        rows.iter()
+            .map(|row| (row.0.as_str(), row.1.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(duplicate_key.as_str(), "blocks")],
+        "one link row, filed under the duplicate: {rows:?}"
+    );
+    assert!(
+        rows.iter().all(|row| row.0 != survivor_key),
+        "none is filed under the survivor: {rows:?}"
+    );
+    assert_eq!(
+        memory.fields(&survivor).await.expect("the fields read")["blocks"],
+        alpha.as_str(),
+        "and the survivor serves what the duplicate's write pointed at"
     );
 
     store.stop().await;
@@ -7015,16 +7035,32 @@ async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_
         .await
         .expect("the fold lands");
 
+    // **Each link stays where its write was made**: the merge moves no row, so the
+    // two rows are the two that stood before it, and the survivor serves both
+    // writes.
     let after = link_rows(&pool).await;
     assert_eq!(
-        after.len(),
-        2,
-        "both links survive on the survivor, one per write: {after:?}"
+        after, before,
+        "the link rows are exactly the ones that stood before the fold: {after:?}"
     );
+    let served = memory
+        .history(&survivor, "blocks")
+        .await
+        .expect("the history reads");
     assert_eq!(
-        after,
-        links_the_writes_imply(&pool, &[]).await,
-        "the links are what the writes imply, at the writes' new ordinals",
+        served.len(),
+        2,
+        "the survivor serves both writes of the key: {served:?}"
+    );
+    let pointing = memory.referring_to(&alpha).await.expect("answers");
+    assert_eq!(
+        pointing.len(),
+        2,
+        "both claims are found from alpha: {pointing:?}"
+    );
+    assert!(
+        pointing.iter().all(|fact| fact.home == survivor),
+        "and both are served as the survivor's: {pointing:?}"
     );
 
     store.stop().await;
