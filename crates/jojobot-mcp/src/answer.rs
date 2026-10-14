@@ -855,8 +855,8 @@ pub(crate) fn note_fold_behind(body: &mut serde_json::Value, behind: Behind) {
             "This write landed and is in the store. The in-process fold that backs \
                           a candidate-picking read of this entity could not be refreshed \
                           afterward, so such a read may still answer with what stood before this \
-                          write until the entity is next touched. recall and history read the \
-                          store directly and already reflect it."
+                          write until the entity is next touched. recall and history are \
+                          complete and already reflect it."
         }
         Behind::Unscanned => {
             "unreachable: a write-path fold gap is always reported as stale, never unscanned"

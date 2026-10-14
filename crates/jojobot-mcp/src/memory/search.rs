@@ -2729,6 +2729,15 @@ mod tests {
                 "list_runs",
             ),
             ("the search description", Some(served), "recall"),
+            (
+                "the note on a write receipt whose fold is behind",
+                {
+                    let mut receipt = serde_json::json!({});
+                    crate::answer::note_fold_behind(&mut receipt, Behind::Stale);
+                    receipt["fold"]["note"].as_str().map(str::to_string)
+                },
+                "recall",
+            ),
         ];
         for (surface, text, verb) in surfaces {
             let text = text.unwrap_or_else(|| panic!("{surface} carries no note"));
