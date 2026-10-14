@@ -1490,6 +1490,15 @@ async fn fake_satisfies_the_contract() {
     contract::run_all(&InMemoryMemory::booted()).await;
 }
 
+/// **A chain of sixty-five merges loses no claim on the fake.** It stands outside
+/// the contract's list because a real store takes minutes to make that many
+/// merges, and the list runs on every flavour of every store; the real store
+/// runs it once, in its own test.
+#[tokio::test]
+async fn the_fake_loses_no_claim_down_a_chain_of_sixty_five_merges() {
+    contract::a_chain_of_sixty_five_merges_loses_no_claim(&InMemoryMemory::booted()).await;
+}
+
 /// **The contract dealt into parts runs every case once, and each part holds on
 /// a store of its own.** A real store runs the parts side by side, one store
 /// each. The parts' counts must add up to the whole list's, or a case was

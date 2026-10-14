@@ -422,3 +422,73 @@ pub async fn an_address_from_before_a_chain_of_merges_names_its_claim_at_the_end
         "an address that was never a claim still does not move"
     );
 }
+
+/// **A chain of merges as long as the store lets it grow loses no claim.** The
+/// first thing of sixty-six is folded into the second, the second into the third,
+/// and so on, sixty-five merges in all. The claim made on the first is served on
+/// the last, an address from before any merge names it there, and its writes read
+/// at the address it is served at. No count of merges is a point past which a
+/// claim drops out of a read.
+pub async fn a_chain_of_sixty_five_merges_loses_no_claim<M: Memory>(store: &M) {
+    const THINGS: usize = 66;
+    let mut chain = Vec::with_capacity(THINGS);
+    // Two things whose slugs sit within two edits of each other are a near-miss
+    // the guard blocks, so each slug ends in a word of six letters: one letter
+    // three times, then another three times, which is at least three edits from
+    // any other word of the set.
+    for n in 0..THINGS {
+        let letter = |digit: usize| char::from(b'a' + digit as u8).to_string().repeat(3);
+        let word = format!("{}{}", letter(n / 11), letter(n % 11));
+        let slug = format!("contract-long-chain-{word}");
+        let id = EntityId::person(format!("person:{slug}"));
+        add(
+            store,
+            NewEntity::new(
+                id.clone(),
+                format!("contract long chain {word}"),
+                "contract-fixture",
+            ),
+        )
+        .await;
+        chain.push(id);
+    }
+    let made = capture(
+        store,
+        NewFact::about(chain[0].clone(), "keeps a long ledger", date(2026, 6, 1)),
+    )
+    .await;
+    for pair in chain.windows(2) {
+        store
+            .merge(
+                &pair[0],
+                &pair[1],
+                Some("filed twice, again"),
+                date(2026, 6, 3),
+                &other_caller(),
+                None,
+            )
+            .await
+            .expect("the fold lands");
+    }
+
+    let last = &chain[THINGS - 1];
+    let served = store
+        .recall(last)
+        .await
+        .expect("the last thing reads")
+        .into_iter()
+        .find(|fact| fact.content == "keeps a long ledger")
+        .expect("the claim made on the first thing is served on the last");
+    assert_eq!(
+        store.moved_address(&made.address()).await.expect("reads"),
+        Some(served.address()),
+        "the address from before any merge names the claim on the last thing"
+    );
+    for address in [served.address(), made.address()] {
+        let writes = store
+            .claim_history(&address)
+            .await
+            .expect("the writes of a merged claim read at its address");
+        assert!(!writes.is_empty(), "the claim has writes at {address}");
+    }
+}

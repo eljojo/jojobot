@@ -2474,6 +2474,24 @@ async fn dolt_satisfies_the_memory_contract() {
     .await;
 }
 
+/// **A chain of sixty-five merges loses no claim in the real store.** Alone,
+/// because that many merges take minutes there and the contract's list runs on
+/// every flavour of the store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dolt_loses_no_claim_down_a_chain_of_sixty_five_merges() {
+    let scratch = Scratch::new("merge_chain");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_chain")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    memory::a_chain_of_sixty_five_merges_loses_no_claim(&DoltMemory::open(pool)).await;
+    store.stop().await;
+}
+
 /// **The same contract, wrapped in a fold, against the real store.** `Folded`
 /// forwards every guard, every read and every write it does not itself
 /// refresh straight to Dolt, so this is the regression test for that claim

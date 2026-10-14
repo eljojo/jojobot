@@ -1758,6 +1758,127 @@ async fn two_events_for_one_claim_serve_it_where_the_walk_says_it_went() {
     store.stop().await;
 }
 
+/// **Events that lead back to where they began end the walk with an error.** A
+/// store edited by hand can hold them; no count of merges is the limit, so only a
+/// repeated address stops the walk, and serving a claim at any address on the loop
+/// would put it where nobody did. **Paired**: an address the loop does not touch
+/// reads as it did.
+#[tokio::test]
+async fn events_that_lead_back_to_where_they_began_are_an_error_and_not_an_answer() {
+    let scratch = Scratch::new("merge-event-loop");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_event_loop")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+    let (first_was, first_now) = merged.moved[0].clone();
+    let (second_was, _) = merged.moved[1].clone();
+
+    // A later event that gives the claim its old address back.
+    let at = merged
+        .memory
+        .merge_events(Some(&merged.survivor))
+        .await
+        .expect("events read")[0]
+        .merged_at
+        .to_string();
+    let first_no: i64 = sqlx::query_scalar("SELECT merge_no FROM merge_event WHERE ordinal = 0")
+        .fetch_one(&pool)
+        .await
+        .expect("the event is there");
+    for (ordinal, folded_id, survivor_id) in [
+        (0_i64, None, None),
+        (1, Some(first_now.as_str()), Some(first_was.as_str())),
+    ] {
+        sqlx::query(
+            "INSERT INTO merge_event
+               (merge_no, ordinal, folded, survivor, merged_at, session, folded_id, survivor_id)
+             VALUES (?, ?, ?, ?, ?, 'run-b', ?, ?)",
+        )
+        .bind(first_no + 1)
+        .bind(ordinal)
+        .bind(merged.survivor_key.as_str())
+        .bind(merged.folded_key.as_str())
+        .bind(&at)
+        .bind(folded_id)
+        .bind(survivor_id)
+        .execute(&pool)
+        .await
+        .expect("the loop's event lands");
+    }
+
+    let old = FactAddress::new(merged.folded.clone(), FactId(first_was.clone()));
+    let looped = merged.memory.moved_address(&old).await;
+    assert!(
+        matches!(looped, Err(MemoryError::Store(_))),
+        "a loop is an error: {looped:?}"
+    );
+    let untouched = FactAddress::new(merged.folded.clone(), FactId(second_was.clone()));
+    assert!(
+        merged.memory.moved_address(&untouched).await.is_ok(),
+        "an address the loop does not touch still reads"
+    );
+    store.stop().await;
+}
+
+/// **A pointer to a thing whose merges lead back to where they began is an
+/// error.** The events name only the two things, so no claim address is on the
+/// loop and the claim walks have nothing to say; the walk of a pointer to its
+/// survivor meets the loop alone. **Paired**: the same read answers before the
+/// loop is there.
+#[tokio::test]
+async fn a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer() {
+    let scratch = Scratch::new("merge-pointer-loop");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_pointer_loop")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+    assert!(
+        merged.memory.recall(&merged.pointing).await.is_ok(),
+        "the read answers while the merges end"
+    );
+
+    let at = merged
+        .memory
+        .merge_events(Some(&merged.survivor))
+        .await
+        .expect("events read")[0]
+        .merged_at
+        .to_string();
+    let first_no: i64 = sqlx::query_scalar("SELECT merge_no FROM merge_event WHERE ordinal = 0")
+        .fetch_one(&pool)
+        .await
+        .expect("the event is there");
+    sqlx::query(
+        "INSERT INTO merge_event (merge_no, ordinal, folded, survivor, merged_at, session)
+         VALUES (?, 0, ?, ?, ?, 'run-b')",
+    )
+    .bind(first_no + 1)
+    .bind(merged.survivor_key.as_str())
+    .bind(merged.folded_key.as_str())
+    .bind(&at)
+    .execute(&pool)
+    .await
+    .expect("the loop's event lands");
+
+    let pointing = merged.memory.recall(&merged.pointing).await;
+    assert!(
+        matches!(pointing, Err(MemoryError::Store(_))),
+        "a pointer into a loop is an error: {:?}",
+        pointing.map(|facts| facts.len())
+    );
+    store.stop().await;
+}
+
 /// **A claim stored under the folded thing that no merge event lists is named,
 /// not dropped.** The survivor serves every claim the event maps, names the one
 /// it cannot serve as left out with the reason and the address that reads it,

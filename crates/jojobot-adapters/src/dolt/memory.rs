@@ -1367,6 +1367,9 @@ impl DoltMemory {
                 });
             }
             if !walk.step(moves) {
+                if walk.looped() {
+                    return Err(merge_events_loop());
+                }
                 return Ok(walk
                     .finish()
                     .map(|(home, local)| FactAddress::new(home, local)));
@@ -1401,10 +1404,10 @@ impl DoltMemory {
     ) -> Result<Vec<MergeStep>, MemoryError> {
         let mut into: Vec<String> = vec![survivor.as_str().to_string()];
         let mut steps: Vec<(i64, String, String)> = Vec::new();
-        // A merge cannot fold a thing into itself, so the chain ends; the bound
-        // is for a store that has been edited by hand.
+        // `into` holds every key already reached, so a chain ends at its last
+        // merge however long it is, and a loop in the events ends at the repeat.
         let mut frontier = into.clone();
-        for _ in 0..64 {
+        loop {
             let mut next = Vec::new();
             for key in &frontier {
                 let rows = sqlx::query(
@@ -1471,12 +1474,11 @@ impl DoltMemory {
         key: &EntityId,
     ) -> Result<EntityId, MemoryError> {
         let mut at = key.clone();
-        // A merge cannot fold a thing into itself, so the chain ends; the bound
-        // is for a store that has been edited by hand.
-        for _ in 0..64 {
-            match Self::survivor_of(tx, &at).await? {
-                Some(survivor) => at = survivor,
-                None => break,
+        let mut passed = std::collections::HashSet::from([at.clone()]);
+        while let Some(survivor) = Self::survivor_of(tx, &at).await? {
+            at = survivor;
+            if !passed.insert(at.clone()) {
+                return Err(merge_events_loop());
             }
         }
         Ok(at)
@@ -2102,15 +2104,16 @@ impl DoltMemory {
         for entity in &mut entities {
             if let Some(parent) = &entity.parent {
                 let mut parent = parent.clone();
-                for _ in 0..64 {
-                    let Some((_, survivor)) = merges
-                        .iter()
-                        .rev()
-                        .find(|(folded, _)| folded == parent.as_str())
-                    else {
-                        break;
-                    };
+                let mut passed = std::collections::HashSet::from([parent.clone()]);
+                while let Some((_, survivor)) = merges
+                    .iter()
+                    .rev()
+                    .find(|(folded, _)| folded == parent.as_str())
+                {
                     parent = EntityId(survivor.clone());
+                    if !passed.insert(parent.clone()) {
+                        return Err(merge_events_loop());
+                    }
                 }
                 entity.parent = Some(
                     jojobot_domain::memory::entity_wearing(parent.as_str(), &snapshot)
@@ -2285,39 +2288,45 @@ impl DoltMemory {
             .map_err(store)?;
             return Ok(held.map(|_| address.clone()));
         }
-        let mut at = address.clone();
-        for _ in 0..64 {
+        let mut walk = ClaimWalk::new(address.home.clone(), address.local.clone());
+        loop {
+            let (home, local) = walk.at();
             let held: Option<i64> = sqlx::query_scalar(
                 "SELECT ordinal FROM fact_write WHERE entity = ? AND fact_id = ? LIMIT 1",
             )
-            .bind(at.home.as_str())
-            .bind(at.local.as_str())
+            .bind(home.as_str())
+            .bind(local.as_str())
             .fetch_optional(&mut **tx)
             .await
             .map_err(store)?;
             if held.is_some() {
-                return Ok(Some(at));
+                return Ok(Some(FactAddress::new(home.clone(), local.clone())));
             }
             // The address may name the claim by the id a merge gave it.
-            let origin = sqlx::query(
-                "SELECT folded, folded_id FROM merge_event
-                 WHERE survivor = ? AND survivor_id = ? AND ordinal > 0
-                 ORDER BY merge_no DESC LIMIT 1",
+            let rows = sqlx::query(
+                "SELECT merge_no, folded, folded_id FROM merge_event
+                 WHERE survivor = ? AND survivor_id = ? AND ordinal > 0",
             )
-            .bind(at.home.as_str())
-            .bind(at.local.as_str())
-            .fetch_optional(&mut **tx)
+            .bind(home.as_str())
+            .bind(local.as_str())
+            .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
-            let Some(origin) = origin else {
+            let mut origins = Vec::with_capacity(rows.len());
+            for row in &rows {
+                origins.push(ClaimMove {
+                    order: row.try_get::<i64, _>("merge_no").map_err(store)? as u64,
+                    survivor: EntityId(row.try_get::<String, _>("folded").map_err(store)?),
+                    survivor_id: FactId(row.try_get::<String, _>("folded_id").map_err(store)?),
+                });
+            }
+            if !walk.step(origins) {
+                if walk.looped() {
+                    return Err(merge_events_loop());
+                }
                 return Ok(None);
-            };
-            at = FactAddress::new(
-                EntityId(origin.try_get::<String, _>("folded").map_err(store)?),
-                FactId(origin.try_get::<String, _>("folded_id").map_err(store)?),
-            );
+            }
         }
-        Ok(None)
     }
 
     /// One claim as it is stored at one address: its newest write.
@@ -4338,6 +4347,15 @@ fn store(e: sqlx::Error) -> MemoryError {
     }
     tracing::error!(error = %e, "the memory store failed");
     MemoryError::Store("the memory store could not be reached".into())
+}
+
+/// **Merge events that lead back to where they began.** A merge cannot fold a
+/// thing into itself, so no merge made here closes a loop; a store edited by
+/// hand can. A walk that met one stops and says so, because ending at any
+/// address on the loop would serve a claim at a place nobody put it.
+fn merge_events_loop() -> MemoryError {
+    tracing::error!("the merge events lead back to an address a walk had already passed");
+    MemoryError::Store("the merge events in the store lead back to where they began".into())
 }
 
 /// A row jojobot cannot read as the record it must be. **Its own failure rather
@@ -6735,24 +6753,34 @@ impl Memory for DoltMemory {
         // its pointers alone leaves a derived claim naming the address the
         // source had before, so each is asked for.
         let mut named_by = vec![FactAddress::new(key.clone(), source.local.clone())];
-        let mut origin = named_by[0].clone();
-        for _ in 0..64 {
-            let earlier = sqlx::query(
-                "SELECT folded, folded_id FROM merge_event
-                 WHERE survivor = ? AND survivor_id = ? AND ordinal > 0
-                 ORDER BY merge_no DESC LIMIT 1",
+        let mut walk = ClaimWalk::new(named_by[0].home.clone(), named_by[0].local.clone());
+        loop {
+            let (home, local) = walk.at();
+            let rows = sqlx::query(
+                "SELECT merge_no, folded, folded_id FROM merge_event
+                 WHERE survivor = ? AND survivor_id = ? AND ordinal > 0",
             )
-            .bind(origin.home.as_str())
-            .bind(origin.local.as_str())
-            .fetch_optional(&mut *tx)
+            .bind(home.as_str())
+            .bind(local.as_str())
+            .fetch_all(&mut *tx)
             .await
             .map_err(store)?;
-            let Some(earlier) = earlier else { break };
-            origin = FactAddress::new(
-                EntityId(earlier.try_get::<String, _>("folded").map_err(store)?),
-                FactId(earlier.try_get::<String, _>("folded_id").map_err(store)?),
-            );
-            named_by.push(origin.clone());
+            let mut origins = Vec::with_capacity(rows.len());
+            for row in &rows {
+                origins.push(ClaimMove {
+                    order: row.try_get::<i64, _>("merge_no").map_err(store)? as u64,
+                    survivor: EntityId(row.try_get::<String, _>("folded").map_err(store)?),
+                    survivor_id: FactId(row.try_get::<String, _>("folded_id").map_err(store)?),
+                });
+            }
+            if !walk.step(origins) {
+                if walk.looped() {
+                    return Err(merge_events_loop());
+                }
+                break;
+            }
+            let (home, local) = walk.at();
+            named_by.push(FactAddress::new(home.clone(), local.clone()));
         }
         let mut standing_on: Vec<(FactAddress, Fact)> = Vec::new();
         for named in &named_by {

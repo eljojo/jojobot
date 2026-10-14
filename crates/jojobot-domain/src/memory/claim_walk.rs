@@ -8,11 +8,10 @@
 //! walk stands, and the walk decides which of them counts, when to stop and what
 //! the answer is. A store that walked on its own would drift from the others.
 
-use super::FactId;
+use std::collections::HashSet;
+use std::hash::Hash;
 
-/// A merge cannot fold a thing into itself, so the chain of merges ends. The
-/// bound is for a store that has been edited by hand.
-pub const MOST_MERGES_FOLLOWED: usize = 64;
+use super::FactId;
 
 /// **One event that moved the claim the walk stands at**: the key it went to and
 /// the id it was given there. `order` is the event's place among all merges, so
@@ -32,15 +31,17 @@ pub struct ClaimMove<K> {
 pub struct ClaimWalk<K> {
     at: (K, FactId),
     moved: bool,
-    steps: usize,
+    passed: HashSet<(K, FactId)>,
+    looped: bool,
 }
 
-impl<K> ClaimWalk<K> {
+impl<K: Clone + Eq + Hash> ClaimWalk<K> {
     pub fn new(home: K, local: FactId) -> Self {
         ClaimWalk {
+            passed: HashSet::from([(home.clone(), local.clone())]),
             at: (home, local),
             moved: false,
-            steps: 0,
+            looped: false,
         }
     }
 
@@ -53,14 +54,29 @@ impl<K> ClaimWalk<K> {
     /// event wins: a thing is merged once, and a store that holds two events for
     /// one address holds the later merge's account of where it went. Returns
     /// whether the walk moved and should be asked again.
+    ///
+    /// **No count of merges ends the walk; only an address it has already stood
+    /// at does.** A chain of merges has no length past which a claim is lost. A
+    /// store edited by hand can hold events that lead back to where they began:
+    /// the walk then stays at the last new address and says so through
+    /// [`looped`](Self::looped), so a store that can refuse does.
     pub fn step(&mut self, candidates: Vec<ClaimMove<K>>) -> bool {
         let Some(newest) = candidates.into_iter().max_by_key(|m| m.order) else {
             return false;
         };
-        self.at = (newest.survivor, newest.survivor_id);
+        let next = (newest.survivor, newest.survivor_id);
+        if !self.passed.insert(next.clone()) {
+            self.looped = true;
+            return false;
+        }
+        self.at = next;
         self.moved = true;
-        self.steps += 1;
-        self.steps < MOST_MERGES_FOLLOWED
+        true
+    }
+
+    /// Whether the events led back to an address the walk had already stood at.
+    pub fn looped(&self) -> bool {
+        self.looped
     }
 
     /// **Where the address ended up**, or `None` when no event moved it, which is
@@ -72,7 +88,7 @@ impl<K> ClaimWalk<K> {
 }
 
 /// [`ClaimWalk`] over a store that answers at once.
-pub fn follow_claim<K, E>(
+pub fn follow_claim<K: Clone + Eq + Hash, E>(
     home: K,
     local: FactId,
     mut moved_from: impl FnMut(&K, &FactId) -> Result<Vec<ClaimMove<K>>, E>,
@@ -137,23 +153,47 @@ mod tests {
     }
 
     #[test]
-    fn a_loop_in_the_events_ends_at_the_bound() {
+    fn a_loop_in_the_events_ends_where_it_closes_and_says_so() {
         let events = [(1, "a", "f1", "b", "f1"), (2, "b", "f1", "a", "f1")];
+        let mut walk = ClaimWalk::new("a", FactId("f1".into()));
         let mut asked = 0;
-        let end = follow_claim::<_, ()>("a", FactId("f1".into()), |home, local| {
+        loop {
             asked += 1;
-            Ok(events
+            let (home, local) = walk.at();
+            let candidates = events
                 .iter()
-                .filter(|(_, folded, was, _, _)| folded == home && *was == local.as_str())
+                .filter(|(_, folded, was, _, _)| folded == home && *was == local.0)
                 .map(|(order, _, _, survivor, now)| ClaimMove {
                     order: *order,
                     survivor: *survivor,
                     survivor_id: FactId((*now).into()),
                 })
+                .collect();
+            if !walk.step(candidates) {
+                break;
+            }
+        }
+        assert!(walk.looped(), "the walk says the events led back");
+        assert_eq!(asked, 2, "each address is asked once");
+        assert_eq!(walk.finish(), Some(("b", FactId("f1".into()))));
+    }
+
+    #[test]
+    fn a_chain_longer_than_any_fixed_bound_is_followed_to_its_end() {
+        let names: Vec<String> = (0..=200).map(|n| format!("h{n}")).collect();
+        let end = follow_claim::<_, ()>(names[0].clone(), FactId("f1".into()), |home, _| {
+            let at = names.iter().position(|n| n == home).expect("a name");
+            Ok(names
+                .get(at + 1)
+                .map(|next| ClaimMove {
+                    order: at as u64,
+                    survivor: next.clone(),
+                    survivor_id: FactId("f1".into()),
+                })
+                .into_iter()
                 .collect())
         })
         .expect("the events read");
-        assert_eq!(asked, MOST_MERGES_FOLLOWED);
-        assert!(end.is_some(), "an address that moved is reported as moved");
+        assert_eq!(end, Some((names[200].clone(), FactId("f1".into()))));
     }
 }
