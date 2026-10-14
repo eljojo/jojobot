@@ -296,6 +296,9 @@ pub struct Booted {
     pub teachings: Arc<dyn Teachings>,
     /// What `AppState.registry` is.
     pub registry: Arc<jojobot_mcp::sid::SessionRegistry>,
+    /// What `AppState.requests` is: the ledger of request ids, in the same store
+    /// the writes are stored in.
+    pub requests: Arc<dyn jojobot_domain::request::Requests>,
     /// **The clock this server stamps with**, which is what `AppState.clock` is.
     /// The clock the boot was given, continued after the newest stamp the store
     /// already holds when that clock states a day.
@@ -761,6 +764,7 @@ pub async fn boot_store_pushing(
         ),
     }
 
+    let requests_pool = store.pool().clone();
     let folded_teachings = Arc::new(FoldedTeachings::new(Arc::new(DoltTeachings::open(
         store.pool().clone(),
     ))));
@@ -1001,6 +1005,9 @@ pub async fn boot_store_pushing(
         sessions,
         teachings,
         registry,
+        requests: Arc::new(jojobot_adapters::dolt::requests::DoltRequests::new(
+            requests_pool,
+        )),
         clock,
     })
 }

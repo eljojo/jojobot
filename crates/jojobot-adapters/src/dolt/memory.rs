@@ -5062,8 +5062,14 @@ impl Memory for DoltMemory {
         validate_new_fact(&fact)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let written = self.capture_in(&mut tx, fact).await?;
-        if matches!(written, Guarded::Written(_)) {
+        if let Guarded::Written(stored) = &written {
+            let claim = super::requests::claim(&mut tx, &self.clock, || {
+                serde_json::json!({ "address": stored.address().to_string() }).to_string()
+            })
+            .await
+            .map_err(store)?;
             tx.commit().await.map_err(store)?;
+            claim.committed();
         }
         Ok(written)
     }

@@ -295,6 +295,16 @@ pub struct CaptureArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time. It needs a `sid`, and a call that wrote nothing
+    /// spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.
@@ -1026,15 +1036,16 @@ impl Jojobot {
         // succeeded, and that failure must not read as this capture having
         // failed. `fold_behind` carries what to note on the receipt; the
         // written record itself is unpacked exactly as an ordinary success.
-        let (captured, fold_behind) = match self.memory.capture(new).await {
-            Ok(captured) => (captured, None),
-            Err(MemoryError::FoldBehind {
-                landed: Landed::Fact(fact),
-                behind,
-                ..
-            }) => (Guarded::Written(*fact), Some(behind)),
-            Err(e) => return memory_declined("capture", e),
-        };
+        let (captured, fold_behind) =
+            match jojobot_domain::request::armed(self.memory.capture(new)).await {
+                Ok(captured) => (captured, None),
+                Err(MemoryError::FoldBehind {
+                    landed: Landed::Fact(fact),
+                    behind,
+                    ..
+                }) => (Guarded::Written(*fact), Some(behind)),
+                Err(e) => return memory_declined("capture", e),
+            };
         match captured {
             Guarded::Written(fact) => {
                 if clears_due_on {

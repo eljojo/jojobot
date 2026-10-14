@@ -412,6 +412,16 @@ impl Jojobot {
         sid: Option<&str>,
         structured: bool,
     ) {
+        self.finish_unshaped(answered, sid).await;
+        if structured {
+            structure(answered);
+        }
+    }
+
+    /// **Everything [`Jojobot::finish`] does short of moving the body to the
+    /// transport's field.** What a spent request id stores is this text: the
+    /// answer as the caller was told it, taken before it is shaped for the wire.
+    pub(crate) async fn finish_unshaped(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         // First, while the refusal is as the verb wrote it: it carries the mark
         // that asks for the list of runs, and the mark is removed here.
         self.add_in_flight(answered, sid).await;
@@ -423,6 +433,21 @@ impl Jojobot {
             self.registry.note_call(caller.sid.as_str());
         }
         self.record_served(answered, sid).await;
+    }
+
+    /// Shape an answer for the wire, as [`Jojobot::finish`] ends by doing.
+    pub(crate) fn shape(&self, answered: &mut CallToolResponse, structured: bool) {
+        if structured {
+            structure(answered);
+        }
+    }
+
+    /// **The answer to a repeated call**: the stored receipt, shaped for the
+    /// wire and nothing else. The status bar, the count of calls and the served
+    /// accounting are writes or reads of the run, and a repeat replays none of
+    /// them.
+    pub(crate) fn finish_replay(&self, answered: &mut CallToolResponse, structured: bool) {
+        strip_nulls_from(answered);
         if structured {
             structure(answered);
         }

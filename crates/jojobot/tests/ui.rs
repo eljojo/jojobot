@@ -465,6 +465,7 @@ async fn spawn_jojobot_serving(
         mailboxes: board.mailboxes.clone() as Arc<dyn Mailboxes>,
         sessions: board.sessions.clone() as Arc<dyn Sessions>,
         teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        requests: None,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
         clock: jojobot_domain::clock::Clock::default(),

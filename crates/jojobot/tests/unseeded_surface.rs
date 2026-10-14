@@ -46,6 +46,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
         ),
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
         teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        requests: None,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),

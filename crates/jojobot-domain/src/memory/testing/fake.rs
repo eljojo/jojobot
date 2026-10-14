@@ -163,6 +163,11 @@ pub struct InMemoryMemory {
     /// from before the change builds it with
     /// [`InMemoryMemory::with_own_fields_reaching`].
     own_fields_reach: bool,
+    /// **The ledger of spent request ids this store spends into**, in the same
+    /// step as the write, as the real store's table is written in the write's
+    /// transaction. `None` is a store that keeps no ledger: a write that carries
+    /// an id spends nothing.
+    requests: Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>,
     entities: Mutex<Vec<Entity>>,
     /// **How many times the whole listing has been asked for**, through
     /// [`Memory::list_entities`]. The real store builds every entity's row on
@@ -426,6 +431,15 @@ impl InMemoryMemory {
                 }),
             },
         ));
+    }
+
+    /// **This store spending request ids into `ledger`.** See the field.
+    pub fn with_requests(
+        mut self,
+        ledger: std::sync::Arc<crate::request::testing::InMemoryRequests>,
+    ) -> Self {
+        self.requests = Some(ledger);
+        self
     }
 
     /// **This store with own fields reaching their thing.** See the field.
@@ -2744,6 +2758,23 @@ impl Memory for InMemoryMemory {
             &after,
             &governs,
         )?;
+        // **The write spends the id of the call that carries one**, under the
+        // lock the write is made under, so a second call with the same id finds
+        // it spent and stores nothing.
+        if let Some(claim) = crate::request::take() {
+            match &self.requests {
+                Some(ledger) => {
+                    let landed = format!(
+                        "{{\"address\":\"{}\"}}",
+                        FactAddress::new(subject_entity.id.clone(), stored.id.clone())
+                    );
+                    if !ledger.spend(claim, landed) {
+                        return Err(MemoryError::Conflict);
+                    }
+                }
+                None => claim.failed(),
+            }
+        }
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
         self.push_stored(Fact {

@@ -65,6 +65,10 @@ pub struct AppState {
     /// taught how a domain behaves. Always the real adapter; no toy store
     /// ships.
     pub teachings: Arc<dyn jojobot_domain::teaching::Teachings>,
+    /// **The ledger of request ids that writes have spent**, in the store the
+    /// writes go to. `None` is an instance that keeps none, and a call that
+    /// sends a `request_id` to it is refused before it writes.
+    pub requests: Option<Arc<dyn jojobot_domain::request::Requests>>,
     /// **Every session handle this process can address**, shared by every
     /// connection. Built and filled from the board before the server serves, so
     /// the first caller after a restart gets the same answer as the second.
@@ -115,6 +119,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     };
     let sessions = state.sessions.clone();
     let teachings = state.teachings.clone();
+    let requests = state.requests.clone();
     // **One registry per process, never per connection** — a session handle is
     // an address across connections, so a registry built per connect would
     // forget each one as it handed it out. Filled from the board before the
@@ -128,7 +133,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
         // binding a connection binding**: the factory runs per connect, so a
         // session bound here belongs to this client and evaporates with it.
         move || {
-            Ok(Jojobot::new(
+            let handler = Jojobot::new(
                 memory.clone(),
                 search.clone(),
                 mailboxes.clone(),
@@ -137,7 +142,11 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 registry.clone(),
             )
             .on_clock(clock)
-            .quiet_after_unless_default(quiet_after))
+            .quiet_after_unless_default(quiet_after);
+            Ok(match &requests {
+                Some(requests) => handler.with_requests(requests.clone()),
+                None => handler,
+            })
         },
         LocalSessionManager::default().into(),
         server_config,

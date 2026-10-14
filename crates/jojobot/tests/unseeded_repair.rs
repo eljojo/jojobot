@@ -43,6 +43,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
         ),
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
         teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        requests: None,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),

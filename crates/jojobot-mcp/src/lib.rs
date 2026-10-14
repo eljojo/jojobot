@@ -38,6 +38,7 @@ mod clock;
 pub mod mailboxes;
 pub mod memory;
 pub mod orientation;
+mod request;
 pub mod views;
 
 /// **Everything this build supplies, in one place.**
@@ -147,6 +148,10 @@ pub struct Jojobot {
     /// already been taught how a domain behaves. See
     /// [`jojobot_domain::teaching`].
     teachings: Arc<dyn jojobot_domain::teaching::Teachings>,
+    /// **The ledger of request ids that writes have spent.** `None` is an
+    /// instance that keeps none, and a call that sends a `request_id` to it is
+    /// refused before it writes. See [`jojobot_domain::request`].
+    requests: Option<Arc<dyn jojobot_domain::request::Requests>>,
     /// **Every session handle this PROCESS has issued** — see [`sid`].
     ///
     /// Shared across connections rather than born with each one, which is what
@@ -318,6 +323,7 @@ impl Jojobot {
             mailboxes,
             sessions,
             teachings,
+            requests: None,
             registry,
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
@@ -330,6 +336,16 @@ impl Jojobot {
             } else {
                 jojobot_domain::session::LEASE_FRESHNESS
             },
+        }
+    }
+
+    /// **The same handler, keeping request ids in `requests`.** The store that
+    /// stores the writes spends into the same ledger, in the write's own step.
+    #[must_use]
+    pub fn with_requests(self, requests: Arc<dyn jojobot_domain::request::Requests>) -> Self {
+        Self {
+            requests: Some(requests),
+            ..self
         }
     }
 
@@ -508,9 +524,43 @@ impl ServerHandler for Jojobot {
             self.finish(&mut answered, sid.as_deref(), structured).await;
             return Ok(answered);
         }
+        // **A call that carries a `request_id` is looked up before the verb runs**,
+        // ahead of its beat, its teaching and its accounting. A spent id answers
+        // from the ledger and runs none of them.
+        let scope = match self.begin_request(&request, sid.as_deref()).await {
+            request::Begun::Absent => None,
+            request::Begun::Refused(refused) => {
+                let mut answered: CallToolResponse = refused.into();
+                self.finish(&mut answered, sid.as_deref(), structured).await;
+                return Ok(answered);
+            }
+            request::Begun::Repeat(receipt) => {
+                let mut answered: CallToolResponse = receipt.into();
+                self.finish_replay(&mut answered, structured);
+                return Ok(answered);
+            }
+            request::Begun::Fresh(scope) => Some(scope),
+        };
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let mut answered = self.tool_router.call(call).await?;
-        self.finish(&mut answered, sid.as_deref(), structured).await;
+        let mut answered = match &scope {
+            Some(scope) => {
+                jojobot_domain::request::within(scope.clone(), self.tool_router.call(call)).await?
+            }
+            None => self.tool_router.call(call).await?,
+        };
+        self.finish_unshaped(&mut answered, sid.as_deref()).await;
+        // **What a spent id stores is the answer as the caller was told it**, so a
+        // repeat gives back the same words. Taken before the answer is shaped for
+        // the wire, which a repeat does again on its way out.
+        if let Some(scope) = &scope
+            && let Some(receipt) = self.end_request(scope, &answered).await
+        {
+            // Another call spent the id while this one ran, and its receipt stands.
+            let mut answered: CallToolResponse = receipt.into();
+            self.finish_replay(&mut answered, structured);
+            return Ok(answered);
+        }
+        self.shape(&mut answered, structured);
         Ok(answered)
     }
 

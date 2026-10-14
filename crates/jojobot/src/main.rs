@@ -154,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         mailboxes: booted.mailboxes,
         sessions: booted.sessions,
         teachings: booted.teachings,
+        requests: Some(booted.requests),
         registry: booted.registry,
         ui,
         clock: booted.clock,

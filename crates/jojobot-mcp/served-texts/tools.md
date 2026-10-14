@@ -548,6 +548,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "request_id": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "sets": {
         "additionalProperties": {
           "type": "string"
@@ -836,6 +843,16 @@ is real and searchable, and what the connection was is left unsaid
 rather than guessed. That is why they are not `about` edges — `about`
 asserts the record is about that entity, and this only admits that it
 touches it.
+```
+
+#### `capture` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 characters. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time. It needs a `sid`, and a call that wrote nothing
+spends no id.
 ```
 
 #### `capture` — argument `/inputSchema.sets`

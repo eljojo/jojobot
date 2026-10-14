@@ -713,6 +713,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Table("type_write"),
     },
     Migration {
+        version: "0089_request_receipt",
+        sql: include_str!("../../migrations/0089_request_receipt.sql"),
+        leaves: Leaves::Table("request_receipt"),
+    },
+    Migration {
         version: "0090_session_key_hash_index",
         sql: include_str!("../../migrations/0090_session_key_hash_index.sql"),
         leaves: Leaves::IndexIfMissing("session", "by_key_hash"),

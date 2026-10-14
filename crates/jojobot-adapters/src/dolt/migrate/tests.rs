@@ -124,6 +124,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0086_push_attempt",
     "0087_charter_change_write",
     "0088_type_write",
+    "0089_request_receipt",
     "0090_session_key_hash_index",
 ];
 

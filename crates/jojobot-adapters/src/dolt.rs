@@ -21,6 +21,7 @@ mod ids;
 pub mod mailboxes;
 pub mod memory;
 pub mod migrate;
+pub mod requests;
 pub mod sessions;
 pub mod teaching;
 

@@ -41,6 +41,7 @@ async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store
         ),
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
         teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        requests: None,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),

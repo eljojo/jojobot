@@ -14,6 +14,7 @@ use jojobot::{AppState, build_app};
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
+use jojobot_domain::request::testing::InMemoryRequests;
 use jojobot_domain::session::testing::InMemorySessions;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
@@ -302,6 +303,31 @@ impl jojobot_domain::memory::Memory for Blindable {
     }
 }
 
+/// **The ledger each wired store spends into**, found again by the store when a
+/// restart serves over it. Held by a weak reference, so a store that is gone
+/// takes its entry with it, and an address a later store reuses is never matched
+/// to an earlier one's ledger.
+static LEDGERS: std::sync::Mutex<
+    Vec<(
+        std::sync::Weak<dyn jojobot_domain::memory::Memory>,
+        Arc<InMemoryRequests>,
+    )>,
+> = std::sync::Mutex::new(Vec::new());
+
+/// The ledger `store` spends into. A store that was not wired here (a
+/// stand-in that can go away, say) spends into none, and its server gets an
+/// empty ledger of its own.
+fn ledger_of(store: &Arc<dyn jojobot_domain::memory::Memory>) -> Arc<InMemoryRequests> {
+    let mut table = LEDGERS.lock().expect("the ledger table is poisoned");
+    table.retain(|(held, _)| held.strong_count() > 0);
+    let wanted = Arc::downgrade(store);
+    table
+        .iter()
+        .find(|(held, _)| held.ptr_eq(&wanted))
+        .map(|(_, ledger)| ledger.clone())
+        .unwrap_or_else(InMemoryRequests::new)
+}
+
 /// **When a served jojobot thinks it is, and how long a run must be quiet
 /// before its name can pick it up.** `None` is the lease an instance really
 /// runs with.
@@ -420,7 +446,21 @@ impl Story {
         // it: the layer above resolves supplied records into answers and the
         // store below sees them when its guard asks what exists.
         let supplied = jojobot_mcp::provisions();
-        Arc::new(Provisioned::new(store.knowing(supplied.clone()), supplied))
+        // **The store spends request ids into a ledger of its own**, as the real
+        // store does in its own table, and the server reads the same ledger. A
+        // restart serves over the same store, so it finds the same ledger.
+        let ledger = InMemoryRequests::new();
+        let memory: Arc<dyn jojobot_domain::memory::Memory> = Arc::new(Provisioned::new(
+            store
+                .with_requests(ledger.clone())
+                .knowing(supplied.clone()),
+            supplied,
+        ));
+        LEDGERS
+            .lock()
+            .expect("the ledger table is poisoned")
+            .push((Arc::downgrade(&memory), ledger));
+        memory
     }
 
     /// **Serve a jojobot on an instance an older build left behind** — a store
@@ -715,6 +755,7 @@ impl Story {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let store_for_restart = store.clone();
+        let requests = ledger_of(&store);
         // **Wrapped in the same two-stage decorator assembly `main.rs`
         // calls** — `jojobot::wiring`'s own doc says why it is two stages
         // and not one. A fixture that indexed the bare stores would serve a
@@ -792,6 +833,7 @@ impl Story {
                 ledger.rebuild().await.expect("the ledger loads");
                 ledger
             },
+            requests: Some(requests),
             registry,
             ui: Some(Arc::new(ui)),
             // The shape a story runs against is the one a fresh instance
