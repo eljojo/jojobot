@@ -116,22 +116,42 @@ pub fn slugify(name: &str) -> String {
 /// Levenshtein edit distance, iterative two-row — no allocation per cell, no
 /// recursion. Compares by `char`, so a multi-byte name doesn't score by bytes.
 pub fn edit_distance(a: &str, b: &str) -> usize {
+    edit_distance_within(a, b, usize::MAX).expect("no distance is over usize::MAX")
+}
+
+/// The edit distance of [`edit_distance`] when it is at most `max`, else `None`.
+///
+/// **The one comparison every name check makes, with the bound inside it.** Two
+/// strings whose lengths differ by more than `max` are further apart than that
+/// by the length alone, and the rows stop as soon as every cell in one is over
+/// `max`, because a later row never holds a smaller cell than the row before
+/// it. Both exits only skip work whose answer is `None`: a distance inside the
+/// bound is the same number the unbounded comparison gives.
+pub fn edit_distance_within(a: &str, b: &str, max: usize) -> Option<usize> {
+    if a.chars().count().abs_diff(b.chars().count()) > max {
+        return None;
+    }
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     if a.is_empty() {
-        return b.len();
+        return Some(b.len());
     }
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0usize; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
         cur[0] = i + 1;
+        let mut row_min = cur[0];
         for (j, cb) in b.iter().enumerate() {
             let sub = prev[j] + usize::from(ca != cb);
             cur[j + 1] = sub.min(prev[j + 1] + 1).min(cur[j] + 1);
+            row_min = row_min.min(cur[j + 1]);
+        }
+        if row_min > max {
+            return None;
         }
         std::mem::swap(&mut prev, &mut cur);
     }
-    prev[b.len()]
+    Some(prev[b.len()]).filter(|d| *d <= max)
 }
 
 /// Fold a set of labels to their comparison forms, dropping blanks. Both sides
@@ -210,9 +230,13 @@ pub fn screen_under(
 /// kind of claim — "this is what it is called" — and screening only the
 /// preferred one leaves the alias channel as an open door onto every collision
 /// the other channel refuses.
+///
+/// `except` is the entity being relabelled. It is left out of the comparison,
+/// not filtered from the answer, so it costs nothing and cannot match itself.
 pub fn screen_labels(
     kind: Option<EntityKind>,
     labels: &[&str],
+    except: Option<&EntityId>,
     index: &[Entity],
 ) -> Vec<EntityMatch> {
     let incoming = folded(labels);
@@ -220,6 +244,7 @@ pub fn screen_labels(
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
+        .filter(|e| Some(&e.id) != except)
         .filter_map(|e| {
             name_reason(kind, &incoming, &incoming_slugs, false, e).map(|reason| EntityMatch {
                 handle: e.id.clone(),
@@ -293,7 +318,7 @@ fn reason_for(
     if siblings && dated_apart(incoming_slug, existing.id.slug()) {
         return by_name;
     }
-    if edit_distance(incoming_slug, existing.id.slug()) <= NEAR {
+    if edit_distance_within(incoming_slug, existing.id.slug(), NEAR).is_some() {
         return Some(MatchReason::NearSlug);
     }
     // **The class distance cannot see: the same thing under a fuller name.**
@@ -405,7 +430,8 @@ fn name_reason(
     }
     let near = incoming.iter().any(|a| {
         existing_names.iter().any(|b| {
-            edit_distance(a, b) <= NEAR && !(siblings && dated_apart(&slugify(a), &slugify(b)))
+            edit_distance_within(a, b, NEAR).is_some()
+                && !(siblings && dated_apart(&slugify(a), &slugify(b)))
         })
     });
     near.then_some(MatchReason::NearName)
@@ -568,10 +594,7 @@ pub fn decide_relabel(
     if added.is_empty() {
         return Decision::Proceed;
     }
-    let matches: Vec<EntityMatch> = screen_labels(handle.kind(), &added, index)
-        .into_iter()
-        .filter(|m| &m.handle != handle)
-        .collect();
+    let matches = screen_labels(handle.kind(), &added, Some(handle), index);
     if matches.is_empty() || collision(handle, &matches).honours(override_token) {
         Decision::Proceed
     } else {
@@ -1504,6 +1527,196 @@ mod tests {
         assert!(
             !screen_under(&incoming, &name, None, &filed).is_empty(),
             "a write naming no parent is no series either"
+        );
+    }
+    /// **What the guard answers, pinned before the distance was bounded.** Each
+    /// line is one probe and everything the two screens answer for it, in order.
+    /// The probes sit on both sides of the budget, differ in length by more and
+    /// by less than it, and carry a multi-byte letter; the index gives entities
+    /// aliases and names of several words. The expected lines were read off the
+    /// unbounded comparison, so a faster comparison has to give the same lines.
+    #[test]
+    fn the_screens_answer_the_same_for_a_fixture_of_near_misses_and_non_misses() {
+        let aliased = |id: &str, name: &str, aliases: &[&str]| Entity {
+            aliases: aliases.iter().map(|a| a.to_string()).collect(),
+            ..entity(id, name, "user-named")
+        };
+        let known = vec![
+            aliased("person:alpha", "Alpha", &["Alfa", "Alpha The First"]),
+            aliased("person:beta", "Beta", &[]),
+            aliased("person:zenith", "Zenith", &["Zenith Prime"]),
+            aliased("person:gama", "Gama", &["Gama Ray Burst"]),
+            aliased("person:barney-gumbel", "Barney Gumbel", &["Barn"]),
+            aliased("place:shelbyville", "Shelbyville", &[]),
+            aliased("place:north-haverbook", "North Haverbook", &["Haverbook"]),
+            aliased("place:daredevil-gorge", "Daredevil Gorge", &[]),
+            aliased("project:atlas", "Atlas", &[]),
+        ];
+        let line = |matches: Vec<EntityMatch>| {
+            matches
+                .iter()
+                .map(|m| format!("{}={:?}", m.handle, m.reason))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let mut seen = Vec::new();
+        for (handle, labels) in [
+            ("person:alphaa", vec!["Alphaa"]),
+            ("person:alpha-b", vec!["Alpha B"]),
+            ("person:zenit", vec!["Zenit"]),
+            ("person:zenit", vec!["Zénith"]),
+            ("person:contract-zenith", vec!["Zenith Prime Two"]),
+            ("person:contract-ghost", vec!["Gama Ray Burst Two"]),
+            ("person:bet", vec!["Bet"]),
+            ("person:barn", vec!["Barne"]),
+            (
+                "person:contract-ghost",
+                vec!["Contract Ghost Of The Long Road"],
+            ),
+            (
+                "person:contract-ghost",
+                vec!["Alpha The Firs", "Contract Ghost"],
+            ),
+            ("place:shelbyvile", vec!["Shelbyvile"]),
+            ("place:shelbyvlle", vec![]),
+            ("place:north-haverbrook", vec!["North Haverbrook"]),
+            ("place:capital-citty", vec!["Capital Citty"]),
+            ("place:daredevil-gorge-2", vec!["Daredevil Gorge 2"]),
+            ("place:contract-atlas", vec!["Atlas"]),
+            ("person:contract-ghost", vec![]),
+        ] {
+            let id = EntityId(handle.into());
+            seen.push(format!(
+                "{handle} {labels:?} -> {}",
+                line(screen_under(&id, &labels, None, &known))
+            ));
+        }
+        for (kind, labels) in [
+            (Some("person"), vec!["Alfaa"]),
+            (Some("person"), vec!["Zénith"]),
+            (Some("person"), vec!["Zenith Prime Too", "Beta"]),
+            (Some("person"), vec!["Gama Ray Burst Tw"]),
+            (Some("person"), vec!["Gama Ray Bur"]),
+            (Some("person"), vec!["Gama Ray Bu"]),
+            (Some("place"), vec!["North Haverbrook", "Shelbyvile"]),
+            (Some("place"), vec!["Alpha"]),
+            (Some("project"), vec!["Atlas", "Atlus"]),
+            (None, vec!["Atlas"]),
+        ] {
+            let of_kind = kind.map(|k| {
+                EntityId(format!("{k}:x"))
+                    .kind()
+                    .expect("test kinds are well-formed")
+            });
+            seen.push(format!(
+                "{kind:?} {labels:?} -> {}",
+                line(screen_labels(of_kind, &labels, None, &known))
+            ));
+        }
+        let expected: Vec<&str> = vec![
+            "person:alphaa [\"Alphaa\"] -> person:alpha=NearSlug",
+            "person:alpha-b [\"Alpha B\"] -> person:alpha=NearSlug",
+            "person:zenit [\"Zenit\"] -> person:zenith=NearSlug",
+            "person:zenit [\"Zénith\"] -> person:zenith=NearSlug",
+            "person:contract-zenith [\"Zenith Prime Two\"] -> person:zenith=Contains",
+            "person:contract-ghost [\"Gama Ray Burst Two\"] -> ",
+            "person:bet [\"Bet\"] -> person:beta=NearSlug",
+            "person:barn [\"Barne\"] -> person:barney-gumbel=SameName",
+            "person:contract-ghost [\"Contract Ghost Of The Long Road\"] -> ",
+            "person:contract-ghost [\"Alpha The Firs\", \"Contract Ghost\"] -> person:alpha=NearName",
+            "place:shelbyvile [\"Shelbyvile\"] -> place:shelbyville=NearSlug",
+            "place:shelbyvlle [] -> place:shelbyville=NearSlug",
+            "place:north-haverbrook [\"North Haverbrook\"] -> place:north-haverbook=NearSlug",
+            "place:capital-citty [\"Capital Citty\"] -> ",
+            "place:daredevil-gorge-2 [\"Daredevil Gorge 2\"] -> place:daredevil-gorge=NearSlug",
+            "place:contract-atlas [\"Atlas\"] -> project:atlas=SameNameOtherKind",
+            "person:contract-ghost [] -> ",
+            "Some(\"person\") [\"Alfaa\"] -> person:alpha=NearName",
+            "Some(\"person\") [\"Zénith\"] -> person:zenith=NearName",
+            "Some(\"person\") [\"Zenith Prime Too\", \"Beta\"] -> person:beta=SameName",
+            "Some(\"person\") [\"Gama Ray Burst Tw\"] -> ",
+            "Some(\"person\") [\"Gama Ray Bur\"] -> person:gama=NearName",
+            "Some(\"person\") [\"Gama Ray Bu\"] -> ",
+            "Some(\"place\") [\"North Haverbrook\", \"Shelbyvile\"] -> place:north-haverbook=NearName place:shelbyville=NearName",
+            "Some(\"place\") [\"Alpha\"] -> person:alpha=SameNameOtherKind",
+            "Some(\"project\") [\"Atlas\", \"Atlus\"] -> project:atlas=SameName",
+            "None [\"Atlas\"] -> project:atlas=SameNameOtherKind",
+        ];
+        assert_eq!(seen, expected);
+    }
+
+    /// Every string over a small alphabet up to four characters, with a
+    /// multi-byte letter among them, against every other: the bounded distance
+    /// is the unbounded one when it is inside the bound and `None` when it is not.
+    #[test]
+    fn the_bounded_distance_is_the_unbounded_one_inside_the_bound_and_none_outside() {
+        let mut strings = vec![String::new()];
+        let mut last = strings.clone();
+        for _ in 0..4 {
+            last = last
+                .iter()
+                .flat_map(|s| ['a', 'b', 'é'].map(|c| format!("{s}{c}")))
+                .collect();
+            strings.extend(last.clone());
+        }
+        for a in &strings {
+            for b in &strings {
+                let exact = edit_distance(a, b);
+                for max in 0..=5 {
+                    assert_eq!(
+                        edit_distance_within(a, b, max),
+                        (exact <= max).then_some(exact),
+                        "{a:?} against {b:?} within {max}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// **The bound is what keeps a long pair cheap**, and the answer is the same
+    /// with or without it, so only the time can say. Each pair is long enough
+    /// that the full comparison takes tens of seconds even in a release build,
+    /// and the bounded one takes milliseconds, so the budget has headroom on
+    /// both sides. The first pair is stopped by the length check alone (the
+    /// rows of equal letters never rise), the second by the rows alone (the
+    /// lengths agree).
+    #[test]
+    fn a_long_pair_beyond_the_bound_is_answered_without_the_full_comparison() {
+        let budget = std::time::Duration::from_secs(2);
+        let long = |c: char, n: usize| c.to_string().repeat(n);
+        for (name, a, b) in [
+            ("lengths", long('a', 30_000), long('a', 30_010)),
+            ("rows", long('a', 30_000), long('b', 30_000)),
+        ] {
+            let started = std::time::Instant::now();
+            assert_eq!(edit_distance_within(&a, &b, NEAR), None, "{name}");
+            assert!(
+                started.elapsed() < budget,
+                "{name}: the bound did not cut the comparison short"
+            );
+        }
+    }
+
+    /// An entity is never compared with itself when it takes a new label: a
+    /// spelling one letter off its own name is no collision, while the same
+    /// spelling on another entity is.
+    #[test]
+    fn a_relabel_is_not_screened_against_the_entity_being_relabelled() {
+        let mut known = index();
+        known.push(entity("person:gama", "Gama", "user-named"));
+        let alpha = EntityId("person:alpha".into());
+        let gama = EntityId("person:gama".into());
+        assert_eq!(
+            decide_relabel(&alpha, &["Alpha", "Alphaa"], &["Alpha"], &known, None),
+            Decision::Proceed,
+            "a near spelling of its own name"
+        );
+        assert!(
+            matches!(
+                decide_relabel(&gama, &["Gama", "Alphaa"], &["Gama"], &known, None),
+                Decision::Block(found) if found.iter().any(|m| m.handle == alpha)
+            ),
+            "the same spelling is a near miss of the other entity"
         );
     }
 }

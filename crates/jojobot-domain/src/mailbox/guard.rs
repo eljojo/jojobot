@@ -88,7 +88,7 @@ fn reason_for(incoming: &str, existing: &str) -> Option<MatchReason> {
     }
     // Names are already one-spelling by grammar ([a-z0-9-]+), so there is no
     // case or whitespace to fold before comparing — unlike a display name.
-    if crate::memory::guard::edit_distance(incoming, existing) <= NEAR {
+    if crate::memory::guard::edit_distance_within(incoming, existing, NEAR).is_some() {
         return Some(MatchReason::Near);
     }
     let (shorter, longer) = if incoming.len() <= existing.len() {
