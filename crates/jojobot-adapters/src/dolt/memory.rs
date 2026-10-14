@@ -30,7 +30,7 @@
 use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
-use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk};
+use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, follow_claim};
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::unmapped::UnmappedClaim;
 use jojobot_domain::memory::{
@@ -1617,28 +1617,58 @@ impl DoltMemory {
         survivor: &EntityId,
     ) -> Result<Vec<FoldedKey>, MemoryError> {
         let steps = Self::merges_into(tx, survivor).await?;
+        // **Every event that gave a folded key's claim an address**, which the
+        // claim-address walk chooses among: the newest counts, and a claim whose
+        // walk does not end at the survivor is not served on it.
+        let mut given: Vec<(i64, EntityId, FactId, EntityId, FactId)> = Vec::new();
+        for step in &steps {
+            let rows = sqlx::query(
+                "SELECT merge_no, survivor, folded_id, survivor_id FROM merge_event
+                 WHERE folded = ? AND ordinal > 0",
+            )
+            .bind(&step.folded)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            for row in &rows {
+                given.push((
+                    row.try_get("merge_no").map_err(store)?,
+                    EntityId(step.folded.clone()),
+                    FactId(row.try_get("folded_id").map_err(store)?),
+                    EntityId(row.try_get("survivor").map_err(store)?),
+                    FactId(row.try_get("survivor_id").map_err(store)?),
+                ));
+            }
+        }
         let mut out: Vec<FoldedKey> = Vec::with_capacity(steps.len());
         for step in &steps {
             let mut served = std::collections::HashMap::new();
-            for id in step.claims.keys() {
-                let mut at = (step.folded.as_str(), id.as_str());
-                let mut now = None;
-                for _ in 0..64 {
-                    let Some(next) = steps
-                        .iter()
-                        .find(|s| s.folded == at.0)
-                        .and_then(|s| s.claims.get(at.1).map(|id| (s.survivor.as_str(), id)))
-                    else {
-                        break;
-                    };
-                    if next.0 == survivor.as_str() {
-                        now = Some(next.1.clone());
-                        break;
-                    }
-                    at = (next.0, next.1.as_str());
-                }
-                if let Some(now) = now {
-                    served.insert(id.clone(), now);
+            let ids: std::collections::BTreeSet<&FactId> = given
+                .iter()
+                .filter(|(_, folded, ..)| folded.as_str() == step.folded)
+                .map(|(_, _, id, ..)| id)
+                .collect();
+            for id in ids {
+                let end = follow_claim::<_, std::convert::Infallible>(
+                    EntityId(step.folded.clone()),
+                    id.clone(),
+                    |home, local| {
+                        Ok(given
+                            .iter()
+                            .filter(|(_, folded, was, ..)| folded == home && was == local)
+                            .map(|(order, _, _, to, now)| ClaimMove {
+                                order: *order as u64,
+                                survivor: to.clone(),
+                                survivor_id: now.clone(),
+                            })
+                            .collect())
+                    },
+                )
+                .unwrap_or_else(|never| match never {});
+                if let Some((home, now)) = end
+                    && home == *survivor
+                {
+                    served.insert(id.as_str().to_string(), now.as_str().to_string());
                 }
             }
             out.push(FoldedKey {
@@ -2212,8 +2242,15 @@ impl DoltMemory {
         Ok(Some(fact))
     }
 
-    /// **Where the writes of the claim at an address are stored.** The address
-    /// itself when the claim sits under the key it is addressed by. The key and
+    /// **Where the writes of the claim at an address are stored.** This is the
+    /// walk the other way, from a served address back to the key and id the claim
+    /// was made under, which [`claim_walk`](jojobot_domain::memory::claim_walk)
+    /// does not do: that walk follows an old address forward to where a claim is
+    /// served now, from the folded key and id a merge event names, and this one
+    /// goes back along the same events to the one row that holds the writes. It is
+    /// not a second copy of the forward rule.
+    ///
+    /// The address itself when the claim sits under the key it is addressed by. The key and
     /// id a merge took it from when the merge left it there, found by walking
     /// the merge events back to a claim that has writes. `None` for a key that
     /// was merged away, which holds nothing of its own, and for an address

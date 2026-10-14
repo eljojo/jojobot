@@ -1672,6 +1672,92 @@ async fn an_edit_or_retraction_of_a_merged_claim_appends_to_its_own_history() {
     store.stop().await;
 }
 
+/// **When two events give one folded claim an address, the survivor serves it at
+/// the newest event's, which is where `moved_address` says it went.** A store
+/// edited by hand can hold both; the claim-address walk decides which counts, and
+/// the read that lists the survivor's claims takes its answer from the same walk.
+/// **Paired**: the claim the second event does not touch keeps the id the first
+/// event gave it.
+#[tokio::test]
+async fn two_events_for_one_claim_serve_it_where_the_walk_says_it_went() {
+    let scratch = Scratch::new("merge-two-events");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_two_events")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+    let (first_was, first_now) = merged.moved[0].clone();
+    let (second_was, second_now) = merged.moved[1].clone();
+
+    // A second event for the same folded thing, giving the first claim another id.
+    let at = merged
+        .memory
+        .merge_events(Some(&merged.survivor))
+        .await
+        .expect("events read")[0]
+        .merged_at
+        .to_string();
+    let first_no: i64 = sqlx::query_scalar("SELECT merge_no FROM merge_event WHERE ordinal = 0")
+        .fetch_one(&pool)
+        .await
+        .expect("the event is there");
+    for (ordinal, folded_id, survivor_id) in [
+        (0_i64, None, None),
+        (1, Some(first_was.as_str()), Some("f77")),
+    ] {
+        sqlx::query(
+            "INSERT INTO merge_event
+               (merge_no, ordinal, folded, survivor, merged_at, session, folded_id, survivor_id)
+             VALUES (?, ?, ?, ?, ?, 'run-b', ?, ?)",
+        )
+        .bind(first_no + 1)
+        .bind(ordinal)
+        .bind(merged.folded_key.as_str())
+        .bind(merged.survivor_key.as_str())
+        .bind(&at)
+        .bind(folded_id)
+        .bind(survivor_id)
+        .execute(&pool)
+        .await
+        .expect("the second event lands");
+    }
+
+    let old = FactAddress::new(merged.folded.clone(), FactId(first_was.clone()));
+    let went_to = merged
+        .memory
+        .moved_address(&old)
+        .await
+        .expect("reads")
+        .expect("the address moved");
+    assert_eq!(went_to.local.as_str(), "f77", "the newest event decides");
+    let listed = merged
+        .memory
+        .recall(&merged.survivor)
+        .await
+        .expect("recall reads");
+    assert!(
+        listed
+            .iter()
+            .any(|fact| fact.id.as_str() == "f77" && fact.content == "runs the store"),
+        "the survivor serves the claim where the walk says it went: {listed:?}"
+    );
+    assert!(
+        listed.iter().all(|fact| fact.id.as_str() != first_now),
+        "and not at the id the older event gave it: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|fact| fact.id.as_str() == second_now && fact.content == "closes at midnight"),
+        "the claim the second event does not name keeps its id ({second_was}): {listed:?}"
+    );
+    store.stop().await;
+}
+
 /// **A claim stored under the folded thing that no merge event lists is named,
 /// not dropped.** The survivor serves every claim the event maps, names the one
 /// it cannot serve as left out with the reason and the address that reads it,
