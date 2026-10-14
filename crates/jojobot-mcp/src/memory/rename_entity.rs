@@ -240,7 +240,8 @@ impl Jojobot {
                        kind) is refused, because a person's box is private. A role object \
                        (kind role) is renamed, retyped or reparented only by the bot it \
                        belongs to or a bot heading the chart; anyone else is refused and told \
-                       who may. `to` is always `kind:slug`, fully qualified: a bare slug is \
+                       who may. The display name stays as it was: update_entity's name \
+                       changes it. `to` is always `kind:slug`, fully qualified: a bare slug is \
                        refused rather than guessed at. The destination faces the same \
                        near-miss guard a creation does: a collision with something that \
                        resembles it comes back status: blocked with candidates, liftable with \
@@ -338,6 +339,23 @@ impl Jojobot {
                 if let Some(obj) = body.as_object_mut() {
                     for (key, value) in self.repoint_mailbox(&from, &entity.id).await {
                         obj.insert(key.into(), value);
+                    }
+                    // **A rename moves the handle and never the display name**,
+                    // so a reslug leaves the old words on the thing. Said only
+                    // when the name does not already spell the new slug: then
+                    // nothing was left behind.
+                    if from.slug() != entity.id.slug()
+                        && jojobot_domain::memory::guard::slugify(&entity.name) != entity.id.slug()
+                    {
+                        obj.insert(
+                            "name_note".into(),
+                            format!(
+                                "The slug changed and the display name did not: it still reads \
+                                 '{}'. update_entity's `name` changes it.",
+                                entity.name
+                            )
+                            .into(),
+                        );
                     }
                 }
                 crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
@@ -633,6 +651,75 @@ mod tests {
         );
         assert_eq!(renamed["id"], "work:red-bike", "{renamed}");
         assert_eq!(renamed["name"], "Red Bike", "the metadata rides along");
+    }
+
+    /// **A reslug leaves the display name as it was, and the receipt says so.**
+    /// The note names the verb that changes it. The negative half rides in the
+    /// next two cases: a retype that keeps the slug, and a reslug onto the
+    /// slug the name already spells, both say nothing.
+    #[tokio::test]
+    async fn a_reslug_that_leaves_the_name_behind_says_how_to_change_it() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("thing", "red-bike", "Red Bike")))
+            .await
+            .expect("add ok");
+
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("thing:red-bike", "thing:road-bike", &sid)))
+                .await
+                .expect("rename ok"),
+        );
+        assert_eq!(renamed["id"], "thing:road-bike", "{renamed}");
+        assert_eq!(renamed["name"], "Red Bike", "the name stays: {renamed}");
+        let note = renamed["name_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a reslug that left the name says so: {renamed}"));
+        assert!(note.contains("update_entity"), "{renamed}");
+    }
+
+    /// The negative half of the case above: a rename that changes no slug, and
+    /// a reslug onto the slug the display name already spells, leave the name
+    /// where the caller wants it, so the receipt carries no note.
+    #[tokio::test]
+    async fn a_rename_that_matches_the_name_or_keeps_the_slug_says_nothing_of_it() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("thing", "fat-bike", "Gravel Bike")))
+            .await
+            .expect("add ok");
+
+        let reslugged = json_of(
+            &jojobot
+                .rename_entity(Parameters(args(
+                    "thing:fat-bike",
+                    "thing:gravel-bike",
+                    &sid,
+                )))
+                .await
+                .expect("rename ok"),
+        );
+        assert_eq!(reslugged["id"], "thing:gravel-bike", "{reslugged}");
+        assert!(reslugged.get("name_note").is_none(), "{reslugged}");
+
+        // The name here does NOT spell the slug, so only the unchanged slug
+        // keeps the note away.
+        jojobot
+            .add_entity(Parameters(add_args("thing", "red-bike", "Crimson Cycle")))
+            .await
+            .expect("add ok");
+        let retyped = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("thing:red-bike", "work:red-bike", &sid)))
+                .await
+                .expect("rename ok"),
+        );
+        assert_eq!(retyped["id"], "work:red-bike", "{retyped}");
+        assert_eq!(retyped["name"], "Crimson Cycle", "{retyped}");
+        assert!(retyped.get("name_note").is_none(), "{retyped}");
     }
 
     /// 🚨 **A handle minted before a rename keeps working under the NEW

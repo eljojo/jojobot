@@ -3609,6 +3609,7 @@ Every entity naming this one as its parent is repointed in the same write, and a
 What does NOT follow: a handle written as free prose that never used @kind:slug, and a thing renamed and later folded into another resolves one hop short of the survivor.
 A rename that moves an owner across the person line (a bot into a person, a person into a bot, or the operator out of the person kind) is refused, because a person's box is private.
 A role object (kind role) is renamed, retyped or reparented only by the bot it belongs to or a bot heading the chart; anyone else is refused and told who may.
+The display name stays as it was: update_entity's name changes it.
 `to` is always `kind:slug`, fully qualified: a bare slug is refused rather than guessed at.
 The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
