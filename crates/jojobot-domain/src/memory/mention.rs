@@ -165,7 +165,58 @@ pub struct Piece {
 /// stored text uses the map to carry the change over without touching a stored
 /// byte outside it.
 pub fn rendered_mapped(text: &str, known: &[Entity]) -> (String, Vec<Piece>) {
-    rewrite_mapped(text, |at, in_code| {
+    rendered_mapped_beside(text, Beside::Nothing, known)
+}
+
+/// **The other field of a claim, as stored, when one field is read or edited.**
+/// What is code in one field can depend on the other: a fence that opens on the
+/// content line closes in the details. The words are joined as
+/// [`words_joined`] joins them, and the code found over both is placed back in
+/// the one field being read.
+#[derive(Debug, Clone, Copy)]
+pub enum Beside<'a> {
+    /// No other field, or one that cannot be read beside this one.
+    Nothing,
+    /// The content, when the field read is the details.
+    Before(&'a str),
+    /// The details, when the field read is the content.
+    After(&'a str),
+}
+
+impl Beside<'_> {
+    /// Where the code is in `text`, read beside the other field.
+    fn code_in(self, text: &str) -> Vec<std::ops::Range<usize>> {
+        let (joined, window) = match self {
+            Beside::Before(lead) if !super::breaks_the_row(lead) => {
+                let skip = lead.len() + WORDS_BREAK.len();
+                (
+                    format!("{lead}{WORDS_BREAK}{text}"),
+                    skip..skip + text.len(),
+                )
+            }
+            Beside::After(trail) if !super::breaks_the_row(text) => {
+                (format!("{text}{WORDS_BREAK}{trail}"), 0..text.len())
+            }
+            _ => return code_ranges(text),
+        };
+        code_ranges(&joined)
+            .into_iter()
+            .filter_map(|range| {
+                let (start, end) = (range.start.max(window.start), range.end.min(window.end));
+                (start < end).then(|| start - window.start..end - window.start)
+            })
+            .collect()
+    }
+}
+
+/// [`rendered_mapped`] for one field of a claim, with the code decided beside the
+/// other field.
+pub fn rendered_mapped_beside(
+    text: &str,
+    beside: Beside<'_>,
+    known: &[Entity],
+) -> (String, Vec<Piece>) {
+    rewrite_mapped_in(text, &beside.code_in(text), |at, in_code| {
         if text[at..].starts_with(MARK) {
             let badge = run_of(text, at + MARK.len(), is_badge_byte);
             if badge.is_empty() {
@@ -217,6 +268,7 @@ pub fn rendered_mapped(text: &str, known: &[Entity]) -> (String, Vec<Piece>) {
 pub fn edited_stored(
     address: &super::FactAddress,
     stored: &str,
+    beside: Beside<'_>,
     edit: &TextEdit,
     known: &[Entity],
 ) -> Result<Result<String, EntityId>, super::MemoryError> {
@@ -224,7 +276,7 @@ pub fn edited_stored(
     if any_unknowable(&[&edit.replace]) {
         return Err(unloaded(KindsUnloaded));
     }
-    let (served, pieces) = rendered_mapped(stored, known);
+    let (served, pieces) = rendered_mapped_beside(stored, beside, known);
     let (after, done) = apply_text_edit(address, &served, edit)?;
     let found = done.start..done.start + edit.find.len();
     for piece in &pieces {
@@ -255,7 +307,7 @@ pub fn edited_stored(
     let put = found.start..found.start + edit.replace.len();
     let mut resolved = String::with_capacity(edit.replace.len());
     let mut cut = put.start;
-    for at in outside_code(&after) {
+    for at in outside_code_beside(&after, beside) {
         if !put.contains(&at) {
             continue;
         }
@@ -372,7 +424,15 @@ fn rewrite_mapped(
     text: &str,
     at: impl Fn(usize, bool) -> Option<(String, usize)>,
 ) -> (String, Vec<Piece>) {
-    let code = code_ranges(text);
+    rewrite_mapped_in(text, &code_ranges(text), at)
+}
+
+/// [`rewrite_mapped`] over code ranges the caller already found.
+fn rewrite_mapped_in(
+    text: &str,
+    code: &[std::ops::Range<usize>],
+    at: impl Fn(usize, bool) -> Option<(String, usize)>,
+) -> (String, Vec<Piece>) {
     let mut out = String::with_capacity(text.len());
     let mut pieces = Vec::new();
     let mut cut = 0;
@@ -380,7 +440,7 @@ fn rewrite_mapped(
         if start < cut {
             continue;
         }
-        let Some((replacement, end)) = at(start, within(&code, start)) else {
+        let Some((replacement, end)) = at(start, within(code, start)) else {
             continue;
         };
         out.push_str(&text[cut..start]);
@@ -407,6 +467,16 @@ fn rewrite_mapped(
 /// written text was.
 pub(crate) fn outside_code(text: &str) -> Vec<usize> {
     let code = code_ranges(text);
+    text.match_indices('@')
+        .map(|(at, _)| at)
+        .filter(|at| !within(&code, *at))
+        .collect()
+}
+
+/// [`outside_code`] for one field of a claim, with the code decided beside the
+/// other field.
+fn outside_code_beside(text: &str, beside: Beside<'_>) -> Vec<usize> {
+    let code = beside.code_in(text);
     text.match_indices('@')
         .map(|(at, _)| at)
         .filter(|at| !within(&code, *at))
@@ -1368,11 +1438,20 @@ impl super::Memory for Mentioning {
                     attempted: address.to_string(),
                     nearest: Vec::new(),
                 })?;
-            let current = match edit.field {
-                TextField::Content => newest.content.as_str(),
-                TextField::Details => newest.details.as_deref().unwrap_or(""),
+            let (current, beside) = match edit.field {
+                TextField::Content => (
+                    newest.content.as_str(),
+                    newest
+                        .details
+                        .as_deref()
+                        .map_or(Beside::Nothing, Beside::After),
+                ),
+                TextField::Details => (
+                    newest.details.as_deref().unwrap_or(""),
+                    Beside::Before(newest.content.as_str()),
+                ),
             };
-            let text = match edited_stored(address, current, edit, &known)? {
+            let text = match edited_stored(address, current, beside, edit, &known)? {
                 Ok(text) => text,
                 Err(handle) => {
                     let candidates = super::guard::screen(&handle, &[], &known);

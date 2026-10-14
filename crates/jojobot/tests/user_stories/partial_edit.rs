@@ -473,3 +473,92 @@ async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() 
     );
     story.finish().await;
 }
+
+/// **A find and replace inside a fence that opens on the content keeps the code
+/// literal.** The content is a fence line and the details hold the code and the
+/// closing fence. The words that replace the find carry a handle naming nothing
+/// and a handle naming a thing: both are stored as typed, neither is refused, and
+/// a rename of the thing leaves the typed handle where it was.
+///
+/// **Paired**: the same edit outside a fence still screens the handle that names
+/// nothing.
+#[tokio::test]
+async fn an_edit_inside_a_fence_that_opens_on_the_content_keeps_the_code_literal() {
+    let story = Story::begin("bot:gamma").await;
+    let run = story.session().await;
+    run.add("person:kenny", "Kenny").await;
+    run.add("person:butters", "Butters").await;
+    let fenced = run
+        .call(
+            "capture",
+            json!({
+                "subject": "person:kenny", "content": "```text",
+                "details": "met @person:butters at noon\n```", "provenance": "inference",
+            }),
+        )
+        .await
+        .json();
+    let fenced = fenced["address"]
+        .as_str()
+        .or_else(|| fenced["fact"]["address"].as_str())
+        .expect("a capture hands back its address")
+        .to_string();
+
+    run.call(
+        "update_fact",
+        json!({
+            "address": fenced, "find": "at noon",
+            "replace": "with @person:butters and @person:nelson",
+            "field": "details", "provenance": "inference",
+        }),
+    )
+    .await;
+    run.call(
+        "rename_entity",
+        json!({"handle": "person:butters", "to": "person:marjorine"}),
+    )
+    .await;
+    assert_eq!(
+        details_of(&run.recall("person:kenny").await.json(), &fenced),
+        "met @person:butters with @person:butters and @person:nelson\n```",
+        "the code stayed as it was typed"
+    );
+
+    // The same holds for an edit to the content line, read beside the details
+    // that close the fence.
+    run.call(
+        "update_fact",
+        json!({
+            "address": fenced, "find": "text", "replace": "@person:nelson",
+            "field": "content", "provenance": "inference",
+        }),
+    )
+    .await;
+    run.recall("person:kenny").await.says("```@person:nelson");
+
+    let outside = run
+        .call(
+            "capture",
+            json!({
+                "subject": "person:kenny", "content": "a note about a visit",
+                "details": "met a friend at noon.", "provenance": "inference",
+            }),
+        )
+        .await
+        .json();
+    let outside = outside["address"]
+        .as_str()
+        .or_else(|| outside["fact"]["address"].as_str())
+        .expect("a capture hands back its address")
+        .to_string();
+    run.refused(
+        "update_fact",
+        json!({
+            "address": outside, "find": "at noon", "replace": "with @person:nelson",
+            "field": "details", "provenance": "inference",
+        }),
+    )
+    .await
+    .says("person:nelson");
+    story.finish().await;
+}
