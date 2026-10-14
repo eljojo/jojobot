@@ -1888,7 +1888,7 @@ attributed, never journalled.
 Merge a duplicate into the thing it duplicates — the repair for one thing named twice.
 A deliberate act rather than a flag on an edit, because there is no way back.
 The survivor answers for everything the duplicate held: its claims, the edges drawn at it, the history under its keys, and its names, which a recall lists as `foldedNames`.
-Beside them lands a dated record of the merge itself, naming the handle that went and the reason if you give one.
+A dated record of the merge lands beside them.
 NOTHING IS DELETED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves, but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
 It does not answer as the survivor: recall the survivor to read everything.
 USE IT WHEN TWO HANDLES ARE ONE THING.
@@ -1897,7 +1897,7 @@ If you are unsure, read both with recall first.
 THE SURVIVOR SERVES THE DUPLICATE'S CLAIMS UNDER ITS OWN HANDLE, each under a new address.
 An address you were holding for one of them still names it: update_fact, retract and recall with history_record act on the claim where it is now.
 The answer's claims_moved counts the claims the survivor serves under its own handle now.
-A refusal is status: blocked with nothing moved: one handle named as both sides; a handle already merged away (the answer names the handle to use instead); a role object (kind role), on either side, merged by anyone but the bot it belongs to or a bot heading the chart (the answer tells you who may); a merge into your own bot of a duplicate carrying thought_capacity or thought_body_cap; a thought room that would go over capacity, or a thought over its body cap; or a result that could not be read back whole in one answer.
+A refusal is status: blocked with nothing moved, and the answer says why and who may: one handle named as both sides; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; or a result that could not be read back whole in one answer.
 The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
@@ -1962,6 +1962,11 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
 The survivor answers for everything it holds, and the handle itself goes
 on resolving.
 
+A handle already merged away is refused, and the answer names the handle
+to use instead. A role object (kind role), on either side, is merged only
+by the bot it belongs to or a bot heading the chart, and the answer tells
+you who may.
+
 A merge into your own bot is refused when the duplicate carries
 thought_capacity OR thought_body_cap, because the merge would raise your own
 ceiling: have a different identity merge it, or take the key off the
@@ -1978,7 +1983,8 @@ one named, with update_fact, then merge again.
 Why the two are one thing, in one line. Optional — worth giving: this is
 the one call that destroys structure, and an account of why is what
 makes it readable a year later. Left out, the record says plainly that
-no reason was given rather than inventing one.
+no reason was given rather than inventing one. The dated record of the
+merge names the handle that went and this reason.
 ```
 
 #### `merge_entities` — argument `/inputSchema.recorded_at`
