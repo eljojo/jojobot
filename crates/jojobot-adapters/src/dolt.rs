@@ -1210,9 +1210,17 @@ pub(crate) mod tests {
         // **Counted from the set rather than written down**, so a new migration
         // does not make this case fail for a reason that has nothing to do with
         // what it is about.
+        // **Every version but the ones a fresh start records without issuing.**
+        // An earlier migration built what 0090 adds, so it is asked first and
+        // found standing.
+        let not_listed: Vec<&str> = migrate::MIGRATIONS
+            .iter()
+            .map(|migration| migration.version)
+            .filter(|version| !applied.iter().any(|seen| seen == version))
+            .collect();
         assert_eq!(
-            applied.len(),
-            migrate::MIGRATIONS.len(),
+            not_listed,
+            ["0090_session_key_hash_index"],
             "the first boot applies the set: {applied:?}"
         );
         // **And it opened the directory it was ASKED for.** Without this the

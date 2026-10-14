@@ -124,7 +124,24 @@ const ALL_VERSIONS: &[&str] = &[
     "0086_push_attempt",
     "0087_charter_change_write",
     "0088_type_write",
+    "0090_session_key_hash_index",
 ];
+
+/// **The versions a start on a fresh store records and does not issue.** An
+/// earlier migration already built what each one adds, and the start asks first
+/// (`Leaves::IndexIfMissing`), so the ledger holds them and `run` does not list
+/// them.
+const RECORDED_NOT_ISSUED: &[&str] = &["0090_session_key_hash_index"];
+
+/// What `run` lists when it applies `versions` to a store that holds none of
+/// them.
+fn issued(versions: &[&str]) -> Vec<String> {
+    versions
+        .iter()
+        .filter(|version| !RECORDED_NOT_ISSUED.contains(version))
+        .map(|version| (*version).to_string())
+        .collect()
+}
 
 /// **A migration set of this test's own, carrying the shape no shipped
 /// migration has.** A column arrives on a table that was already there,
@@ -995,10 +1012,7 @@ async fn a_migration_that_fails_is_not_recorded_as_done() {
         .expect("a database of its own");
     assert_eq!(
         run(&clean).await.expect("the schema moves"),
-        ALL_VERSIONS
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>(),
+        issued(ALL_VERSIONS),
     );
     let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
         .fetch_all(&clean)
@@ -1067,7 +1081,7 @@ async fn a_set_that_fails_part_way_resumes_where_it_stopped() {
         .expect("the obstruction goes");
     assert_eq!(
         run(&pool).await.expect("the rest applies"),
-        ALL_VERSIONS[2..].to_vec(),
+        issued(&ALL_VERSIONS[2..]),
         "the run resumes at the file that failed, and does not redo the ones that landed"
     );
 
@@ -1141,7 +1155,7 @@ async fn a_start_after_an_interrupted_migration_completes_the_schema() {
     let applied = run(&pool).await.expect("the start completes the schema");
     assert_eq!(
         applied,
-        ALL_VERSIONS[1..].to_vec(),
+        issued(&ALL_VERSIONS[1..]),
         "the interrupted version is not re-applied, and everything after it is"
     );
 
@@ -1282,10 +1296,7 @@ async fn an_interruption_before_the_change_landed_applies_it() {
 
     assert_eq!(
         run(&pool).await.expect("the start applies it"),
-        ALL_VERSIONS
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>(),
+        issued(ALL_VERSIONS),
         "the un-landed migration is applied like any other, marker or no marker"
     );
 
@@ -1387,7 +1398,7 @@ async fn the_start_marks_the_window_it_can_be_interrupted_in() {
         .expect("the next start completes the schema");
     assert_eq!(
         applied,
-        ALL_VERSIONS[1..].to_vec(),
+        issued(&ALL_VERSIONS[1..]),
         "the interrupted version is healed rather than re-applied"
     );
 
@@ -1430,10 +1441,7 @@ async fn migrations_run_once_and_the_schema_stays() {
     let first = run(store.pool()).await.expect("the schema moves");
     assert_eq!(
         first,
-        ALL_VERSIONS
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>(),
+        issued(ALL_VERSIONS),
         "the first start applies what is there, in the order the list gives"
     );
 
@@ -1609,6 +1617,16 @@ async fn every_migrations_declared_shape_is_reached_once_it_has_run() {
 /// silently reading as covered.
 async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
     match version {
+        // **Its object stands before it runs**: 0074 built the index, and this
+        // migration exists to build it only when it is missing. The round
+        // states "the marker is there and the change did not land", so the
+        // index goes first.
+        "0090_session_key_hash_index" => {
+            sqlx::raw_sql("ALTER TABLE session DROP INDEX by_key_hash")
+                .execute(pool)
+                .await
+                .expect("the index goes");
+        }
         "0024_rhythm_kind_takes_its_name" => {
             sqlx::query(
                 "INSERT INTO type_field (type_name, key_name, ordinal, holds) \
@@ -3059,7 +3077,14 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
         .database("copyshort")
         .await
         .expect("a database of its own");
-    apply(&pool_short, &MIGRATIONS[..MIGRATIONS.len() - 1])
+    // **Short the last migration that changes the schema.** A migration that is
+    // asked first and finds its object standing changes nothing, so cutting only
+    // it would leave a chain that fingerprints like the whole one.
+    let cut = MIGRATIONS
+        .iter()
+        .rposition(|migration| !migration.leaves.asked_before_issue())
+        .expect("a migration changes the schema");
+    apply(&pool_short, &MIGRATIONS[..cut])
         .await
         .expect("the short chain applies");
     store_short.stop().await;
@@ -3299,6 +3324,114 @@ async fn a_boot_killed_between_the_supersedes_column_and_its_index_completes_on_
             "the boot after the completing one changes nothing (index stands: {index_stands}, begun: {begun})",
         );
     }
+
+    store.stop().await;
+}
+
+/// **A store that booted under new code has every index its migrations say it
+/// has, including the one a column migration was supposed to leave behind.**
+///
+/// 0074 added the key-hash column and its index in one `ALTER` whose landed
+/// check names the column only, and a ledger row of 0074 says nothing about the
+/// index. A store whose ledger holds 0074 and whose index is missing therefore
+/// never got it. The index is its own migration now, with a landed check that
+/// names the index, and 0074 is untouched because production's ledger already
+/// records it.
+///
+/// **Three stores**: the one the deployed build left (0074 recorded, index
+/// missing, the new version unknown) must get the index and say so; a store
+/// that already has the index records the version without issuing it; and a
+/// fresh store ends with the index and the version recorded.
+#[tokio::test]
+async fn a_store_with_the_key_hash_column_and_no_index_gets_the_index_on_boot() {
+    let scratch = Scratch::new("migrate-session-key-hash-index");
+    let path = scratch.0.clone();
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+    let version = "0090_session_key_hash_index";
+
+    for (index_stands, name) in [(false, "keyhashindexmissing"), (true, "keyhashindexstands")] {
+        let pool = store.database(name).await.expect("a database of its own");
+        run(&pool).await.expect("the schema");
+
+        if !index_stands {
+            sqlx::raw_sql("ALTER TABLE session DROP INDEX by_key_hash")
+                .execute(&pool)
+                .await
+                .expect("the index goes");
+        }
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind(version)
+            .execute(&pool)
+            .await
+            .expect("the ledger row of the new version goes");
+
+        let applied = run(&pool).await.expect("the next boot completes");
+        let expected: Vec<String> = if index_stands {
+            Vec::new()
+        } else {
+            vec![version.to_string()]
+        };
+        assert_eq!(
+            applied, expected,
+            "the boot issues the index file only when the index is missing (index stands: {index_stands})",
+        );
+        assert!(
+            index_exists(&pool, "session", "by_key_hash")
+                .await
+                .expect("the schema is readable"),
+            "the index is there afterwards (index stands: {index_stands})",
+        );
+        assert!(
+            column_exists(&pool, "session", "key_hash")
+                .await
+                .expect("the schema is readable"),
+            "the column is still there (index stands: {index_stands})",
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        for held in ["0074_session_key_hash", version] {
+            assert!(
+                recorded.iter().any(|seen| seen == held),
+                "the ledger holds {held} (index stands: {index_stands}): {recorded:?}",
+            );
+        }
+        assert!(
+            run(&pool).await.expect("a second boot").is_empty(),
+            "the boot after the completing one changes nothing (index stands: {index_stands})",
+        );
+    }
+
+    let fresh = store
+        .database("keyhashindexfresh")
+        .await
+        .expect("a database");
+    let first = run(&fresh).await.expect("a fresh store boots");
+    assert!(
+        !first.iter().any(|seen| seen == version),
+        "a fresh store records the version without issuing it, since 0074 built the index: {first:?}"
+    );
+    assert!(
+        index_exists(&fresh, "session", "by_key_hash")
+            .await
+            .expect("the schema is readable"),
+        "a fresh store has the index"
+    );
+    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+        .fetch_all(&fresh)
+        .await
+        .expect("the ledger is readable");
+    assert!(
+        recorded.iter().any(|seen| seen == version),
+        "a fresh store records the new version: {recorded:?}"
+    );
+    assert!(
+        run(&fresh).await.expect("a second boot").is_empty(),
+        "a fresh store's second boot changes nothing"
+    );
 
     store.stop().await;
 }

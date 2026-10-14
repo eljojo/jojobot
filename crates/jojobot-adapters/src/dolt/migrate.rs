@@ -37,7 +37,7 @@ use sqlx::{MySql, MySqlPool, Transaction};
 /// One migration: what it is called, what it does, and what it leaves behind.
 pub(crate) struct Migration {
     /// The name the ledger records and a failure reports.
-    version: &'static str,
+    pub(crate) version: &'static str,
     /// The statement. One of them — see `every_migration_is_a_single_statement`.
     sql: &'static str,
     /// **What the schema looks like once this statement has run**, which is how
@@ -121,6 +121,18 @@ enum Leaves {
     /// asks the one the add's own [`Index`] check cannot: whether the name is
     /// gone.
     NoIndex(&'static str, &'static str),
+    /// The index this statement adds **only when it is missing**, asked BEFORE
+    /// the statement is issued.
+    ///
+    /// Every other variant is asked only after an interrupted start, because a
+    /// migration that never started is assumed not to have landed. That
+    /// assumption is false for an index that an earlier migration's `ALTER`
+    /// also built: this store has no `ADD INDEX IF NOT EXISTS`, so issuing the
+    /// statement over an index that stands fails with a duplicate key. A
+    /// migration with this variant is checked first. The index stands: the start
+    /// records the version and issues nothing. The index is missing: the start
+    /// issues the file. The check is [`Leaves::Index`]'s own.
+    IndexIfMissing(&'static str, &'static str),
     /// The type this statement leaves that column declared as — the shape of a
     /// statement that changes a column rather than adding one.
     ///
@@ -147,9 +159,16 @@ impl Leaves {
             | Leaves::Column(t, _)
             | Leaves::NoRows(t, _)
             | Leaves::Index(t, _)
+            | Leaves::IndexIfMissing(t, _)
             | Leaves::NoIndex(t, _)
             | Leaves::ColumnType(t, _, _) => t,
         }
+    }
+
+    /// Whether a start asks [`Leaves::reached`] before it issues a migration
+    /// that never started, and not only after an interrupted one.
+    fn asked_before_issue(self) -> bool {
+        matches!(self, Leaves::IndexIfMissing(..))
     }
 
     /// Whether the schema is already in the state this migration produces.
@@ -159,7 +178,7 @@ impl Leaves {
             Leaves::NoTable(t) => !object_exists(pool, t).await?,
             Leaves::Column(t, c) => column_exists(pool, t, c).await?,
             Leaves::NoRows(t, condition) => !any_row_answers(pool, t, condition).await?,
-            Leaves::Index(t, i) => index_exists(pool, t, i).await?,
+            Leaves::Index(t, i) | Leaves::IndexIfMissing(t, i) => index_exists(pool, t, i).await?,
             Leaves::NoIndex(t, i) => !index_exists(pool, t, i).await?,
             Leaves::ColumnType(t, c, declared) => column_is(pool, t, c, declared).await?,
         })
@@ -693,6 +712,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0088_type_write.sql"),
         leaves: Leaves::Table("type_write"),
     },
+    Migration {
+        version: "0090_session_key_hash_index",
+        sql: include_str!("../../migrations/0090_session_key_hash_index.sql"),
+        leaves: Leaves::IndexIfMissing("session", "by_key_hash"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -823,6 +847,23 @@ async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>
                 version,
                 object = migration.leaves.table(),
                 "an interrupted migration had landed, and the start recorded it"
+            );
+            record(pool, version).await?;
+            continue;
+        }
+
+        // Never started, and the change is standing: record it and issue
+        // nothing. Only a migration that says so is asked, because for any
+        // other shape "standing before it started" means an earlier migration
+        // already did its work, and a backfill would be skipped silently.
+        if !interrupted
+            && migration.leaves.asked_before_issue()
+            && migration.leaves.reached(pool).await?
+        {
+            tracing::info!(
+                version,
+                object = migration.leaves.table(),
+                "the change already stood, and the start recorded it without issuing it"
             );
             record(pool, version).await?;
             continue;
