@@ -176,11 +176,29 @@ async fn the_answer_to_the_offer_carries_only_what_is_new_and_names_the_call_for
     assert!(offer["snapshot"]["entities"].is_object(), "{offer}");
     assert!(offer["session"]["handover"].is_object(), "{offer}");
     assert!(offer.get("left_out").is_none(), "{offer}");
+    let offer_code = offer["session"]["offer_code"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the offer carries a code to answer it with: {offer}"))
+        .to_string();
 
-    // The answer, with nothing sent beside `resume`: no essay, no snapshot, no
-    // handover, and the run is still handed back with the key to write with.
-    let (answered, _) = story
+    // The negative: `resume` with no code is not an answer to the offer, so the
+    // caller is handed the whole boot and nothing is named as left out.
+    let (bare, _) = story
         .call("start_here", json!({"bot": "otto", "resume": first_sid}))
+        .await;
+    let bare = bare.json();
+    assert!(bare["orientation"].is_string(), "{bare}");
+    assert!(bare["snapshot"]["entities"].is_object(), "{bare}");
+    assert!(bare["session"]["handover"].is_object(), "{bare}");
+    assert!(bare.get("left_out").is_none(), "{bare}");
+
+    // The answer, with the offer's code beside `resume`: no essay, no snapshot,
+    // no handover, and the run is still handed back with the key to write with.
+    let (answered, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "resume": first_sid, "offer_code": offer_code}),
+        )
         .await;
     let answered = answered.json();
     assert!(answered["orientation"].is_null(), "{answered}");

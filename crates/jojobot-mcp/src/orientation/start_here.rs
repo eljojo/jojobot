@@ -39,11 +39,14 @@ pub struct OrientArgs {
     /// wrapped run's own sid back so that run can take one last change. The run
     /// stays wrapped. No role is taken, nothing is swept and no lease renews.
     ///
-    /// Answering the resume-or-new offer? That answer carries what is new (the
-    /// run, its key, the role claim, the zone) and leaves out what the offer
-    /// shipped: the essay, the snapshot, the charter, the carried rules and the
-    /// map of those at home, and the handover story. `left_out` names each and
-    /// the call that returns them, a boot with no `resume`. A boot given a
+    /// Answering the resume-or-new offer? Send the offer's `offer_code` beside
+    /// it. With the code, the answer carries what is new (the run, its key, the
+    /// role claim, the zone, and any rule written since the offer) and leaves out
+    /// what the offer shipped: the essay, the snapshot, the charter, the carried
+    /// rules and the map of those at home, and the handover story. `left_out`
+    /// names each and the call that returns them, a boot with no `resume`.
+    /// Without the code, or with a code that is another bot's or already used,
+    /// the answer is the full boot less the charter. A boot given a
     /// `wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
     /// back, the run stays wrapped for one last change, and no role is taken,
     /// nothing is swept and no lease renews.
@@ -88,8 +91,10 @@ pub struct OrientArgs {
     /// **The run stays the run.** Same `sid`, same chronology, same identity: no
     /// new key, no voucher moves, and no other run of the bot is touched. The
     /// answer is the full orientation, whatever `brief` says, because that is
-    /// what the compaction took. A `sid` that opens no run is refused. Naming
-    /// `bot` is optional; when you do, it has to be the bot the `sid` belongs to.
+    /// what the compaction took, the charter included, whatever else the call
+    /// sends: `resume` and `offer_code` change nothing about it. A `sid` that
+    /// opens no run is refused. Naming `bot` is optional; when you do, it has to
+    /// be the bot the `sid` belongs to.
     #[serde(default)]
     pub(crate) compacted: Option<bool>,
     /// **The day this run is in**, as `YYYY-MM-DD`, when it is not the day the

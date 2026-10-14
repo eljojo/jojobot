@@ -508,7 +508,14 @@ impl Jojobot {
                 .identity(
                     index,
                     bot,
-                    answering,
+                    // **A run that reports a compaction is owed its charter**
+                    // whatever else the call sends: the charter is the first
+                    // thing a run that lost its context needs back.
+                    if compacted {
+                        Answering::Nothing
+                    } else {
+                        answering
+                    },
                     // **The day this run states, and the clock in its own zone
                     // when it states none.** The boot is where a run declares
                     // the day it is working in, so a rule's staleness read on
@@ -791,17 +798,17 @@ impl Jojobot {
             .as_ref()
             .map_or(0, |block| answer::under_key("left_out", block))
             + floor_len(
-            brief,
-            &snapshot,
-            &floor_identity,
-            &session,
-            &carried,
-            self.stated_clock(),
-            InstanceLines {
-                timezone: &timezone_answer,
-                operator: &operator_answer,
-            },
-        );
+                brief,
+                &snapshot,
+                &floor_identity,
+                &session,
+                &carried,
+                self.stated_clock(),
+                InstanceLines {
+                    timezone: &timezone_answer,
+                    operator: &operator_answer,
+                },
+            );
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
         // **A floor over the ceiling is said, not refused.** The boot never
         // declines, and any entity grows the snapshot every bot's boot carries,

@@ -275,14 +275,6 @@ impl Answering {
     pub(crate) fn is_offer(self) -> bool {
         matches!(self, Self::Offer(_))
     }
-
-    /// The moment of the offer this answer answers.
-    pub(crate) fn offered_at(self) -> Option<jiff::Timestamp> {
-        match self {
-            Self::Offer(at) => Some(at),
-            _ => None,
-        }
-    }
 }
 
 /// Said beside the rules an answer to the offer carries.

@@ -4624,6 +4624,60 @@ mod tests {
         assert!(short["snapshot"].is_null(), "{short}");
     }
 
+    /// **A run that reports a compaction always gets its charter back**, a
+    /// `resume` beside the report included: the charter is the first thing a run
+    /// that lost its context needs. **Paired**: the same `resume` with no report
+    /// leaves the charter out and says so.
+    #[tokio::test]
+    async fn a_compaction_report_carries_the_charter_even_with_resume() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "Holds the plan.".into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+        let bare = answer_the_offer(&jojobot, "new", None, None).await;
+        assert!(bare["identity"]["charter"].is_null(), "{bare}");
+        assert_eq!(bare["identity"]["charter_elided"], true, "{bare}");
+        let sid = bare["session"]["sid"].as_str().expect("a key").to_string();
+
+        let compacted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    compacted: Some(true),
+                    claim: None,
+                    timezone: None,
+                    today: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: Some("new".into()),
+                    sid: Some(sid),
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            compacted["identity"]["charter"], "Holds the plan.",
+            "{compacted}"
+        );
+        assert_eq!(
+            compacted["identity"]["charter_elided"], false,
+            "{compacted}"
+        );
+        assert!(compacted["identity"].get("note").is_none(), "{compacted}");
+    }
+
     /// **A rule written after the offer rides the short answer**, because the
     /// offering call could not have shipped it. **Paired**: a rule written before
     /// the offer does not ride, and the answer says that rules were left out.
@@ -4684,7 +4738,11 @@ mod tests {
             .iter()
             .filter_map(|rule| rule["content"].as_str())
             .collect();
-        assert_eq!(rules, ["checks the board twice before starting"], "{answer}");
+        assert_eq!(
+            rules,
+            ["checks the board twice before starting"],
+            "{answer}"
+        );
     }
 
     /// **The block naming what the answer left out is counted in the ceiling.**

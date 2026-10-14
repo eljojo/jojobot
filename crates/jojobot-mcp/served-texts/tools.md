@@ -4367,6 +4367,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "offer_code": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "resume": {
         "default": null,
         "type": [
@@ -4513,8 +4520,19 @@ handed, and writes a dated mark in the run's chronology.
 **The run stays the run.** Same `sid`, same chronology, same identity: no
 new key, no voucher moves, and no other run of the bot is touched. The
 answer is the full orientation, whatever `brief` says, because that is
-what the compaction took. A `sid` that opens no run is refused. Naming
-`bot` is optional; when you do, it has to be the bot the `sid` belongs to.
+what the compaction took, the charter included, whatever else the call
+sends: `resume` and `offer_code` change nothing about it. A `sid` that
+opens no run is refused. Naming `bot` is optional; when you do, it has to
+be the bot the `sid` belongs to.
+```
+
+#### `start_here` — argument `/inputSchema.offer_code`
+
+```text
+**The `offer_code` the resume-or-new offer carried**, sent beside `resume`.
+With it, and only with it, the answer to that offer carries what is new.
+Without it, or with a code for another bot or one already used, the answer
+is the full boot.
 ```
 
 #### `start_here` — argument `/inputSchema.resume`
@@ -4530,11 +4548,14 @@ there is nothing to answer yet.
 wrapped run's own sid back so that run can take one last change. The run
 stays wrapped. No role is taken, nothing is swept and no lease renews.
 
-Answering the resume-or-new offer? That answer carries what is new (the
-run, its key, the role claim, the zone) and leaves out what the offer
-shipped: the essay, the snapshot, the charter, the carried rules and the
-map of those at home, and the handover story. `left_out` names each and
-the call that returns them, a boot with no `resume`. A boot given a
+Answering the resume-or-new offer? Send the offer's `offer_code` beside
+it. With the code, the answer carries what is new (the run, its key, the
+role claim, the zone, and any rule written since the offer) and leaves out
+what the offer shipped: the essay, the snapshot, the charter, the carried
+rules and the map of those at home, and the handover story. `left_out`
+names each and the call that returns them, a boot with no `resume`.
+Without the code, or with a code that is another bot's or already used,
+the answer is the full boot less the charter. A boot given a
 `wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
 back, the run stays wrapped for one last change, and no role is taken,
 nothing is swept and no lease renews.

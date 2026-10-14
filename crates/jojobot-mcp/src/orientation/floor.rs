@@ -548,7 +548,11 @@ mod tests {
         let without = serde_json::json!({"bot": {"id": "bot:gamma"}, "charter": null});
         let parts = floor_parts(100, &serde_json::Value::Null, &without);
         assert_eq!(size_of(&parts, "carried rules"), 0, "{parts:?}");
-        assert_eq!(parts.iter().map(|(_, n)| n).sum::<usize>(), 100, "{parts:?}");
+        assert_eq!(
+            parts.iter().map(|(_, n)| n).sum::<usize>(),
+            100,
+            "{parts:?}"
+        );
 
         let rules = serde_json::json!([{"address": "bot:gamma#f1"}]);
         let with = serde_json::json!({"bot": {"id": "bot:gamma"}, "charter": null, "rules": rules});

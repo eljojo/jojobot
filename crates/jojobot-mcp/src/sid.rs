@@ -394,9 +394,7 @@ impl SessionRegistry {
     pub(crate) fn take_offer(&self, code: &str, bot: &EntityId) -> Option<jiff::Timestamp> {
         let mut offers = self.offers.lock().expect("the offers are poisoned");
         match offers.get(code) {
-            Some((made_for, _)) if made_for == bot => {
-                offers.remove(code).map(|(_, made)| made)
-            }
+            Some((made_for, _)) if made_for == bot => offers.remove(code).map(|(_, made)| made),
             _ => None,
         }
     }
@@ -905,7 +903,11 @@ mod tests {
             .collect();
         // The oldest is gone; the newest is held.
         assert_eq!(registry.take_offer(&codes[0], &bot("gamma")), None);
-        assert!(registry.take_offer(&codes[OFFERS_KEPT], &bot("gamma")).is_some());
+        assert!(
+            registry
+                .take_offer(&codes[OFFERS_KEPT], &bot("gamma"))
+                .is_some()
+        );
         assert!(registry.take_offer(&codes[1], &bot("gamma")).is_some());
     }
 
