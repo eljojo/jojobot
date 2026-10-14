@@ -31,7 +31,7 @@ use jiff::Timestamp;
 
 use crate::mailbox::{
     Delivered, Delivery, Guarded, MailboxError, MailboxName, Mailboxes, Message, MessageId,
-    NewMessage, Quarantined, TakenBy,
+    MessageState, NewMessage, Quarantined, TakenBy,
 };
 use crate::memory::EntityId;
 
@@ -308,6 +308,10 @@ pub struct Drained {
     pub sent: Vec<MessageId>,
     /// Pushes given up on in this pass, each with the reason it is not coming.
     pub abandoned: Vec<(MessageId, String)>,
+    /// Pushes ended without being tried, because the message no longer needs
+    /// one: the sender replaced it or the operator finished it. Each carries the
+    /// reason. Nothing was lost, so this is not an abandonment.
+    pub withdrawn: Vec<(MessageId, String)>,
     /// Pushes whose outcome the outbox could not record, each with the store's
     /// error. The row stays due, so the next pass tries the push again.
     pub unrecorded: Vec<(MessageId, String)>,
@@ -395,6 +399,23 @@ impl Pushing<'_> {
                 return Ok(());
             }
         };
+        // **A push tells the operator about a message that still asks for
+        // attention.** One the sender replaced is spoken for by its replacement,
+        // and a reader of the page who has finished one needs no word of it.
+        let withdrawn = if message.superseded_by.is_some() {
+            Some("the sender replaced the message before this push went out")
+        } else if message.state == MessageState::Processed {
+            Some("the message was finished before this push went out")
+        } else {
+            None
+        };
+        if let Some(reason) = withdrawn {
+            self.outbox.abandoned(&push.message, now).await?;
+            drained
+                .withdrawn
+                .push((push.message.clone(), reason.to_string()));
+            return Ok(());
+        }
         match self.notifier.deliver(&Notification::of(&message)).await {
             Ok(()) => {
                 self.outbox.sent(&push.message, now).await?;
@@ -683,6 +704,111 @@ mod tests {
             .unwrap();
         assert_eq!(drained, Drained::default());
         assert!(notifier.delivered().is_empty());
+    }
+
+    /// **A message the sender replaced is not pushed when its retry comes due.**
+    /// The first try of the original fails, the sender posts a replacement, and
+    /// the endpoint comes back: the phone is told the replacement and never the
+    /// original. The original's row ends, so it is not chased again. The
+    /// replacement going out is the positive the original's silence depends on.
+    #[tokio::test]
+    async fn a_replaced_message_is_not_pushed_when_its_retry_comes_due() {
+        let boxes = store().await;
+        let outbox = boxes.outbox();
+        let notifier = FakeNotifier::new();
+        notifier.go_down();
+        let original = post(&boxes, "person-ned-flanders", Some("original"), "the old").await;
+        let start = outbox.rows()[0].push.enqueued_at;
+        let down = pushing(&outbox, &boxes, &notifier)
+            .drain(start)
+            .await
+            .unwrap();
+        assert!(down.sent.is_empty(), "{down:?}");
+        assert_eq!(outbox.rows()[0].push.attempts, 1, "the first try failed");
+        let replacement = boxes
+            .post_message(NewMessage {
+                mailbox: MailboxName("person-ned-flanders".into()),
+                body: "the new".into(),
+                subject: Some("replacement".into()),
+                sender: "gamma".into(),
+                sent_at: at(0),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+                supersedes: Some(original.clone()),
+            })
+            .await
+            .expect("the replacement lands");
+        let Guarded::Written(replacement) = replacement else {
+            panic!("the replacement did not land: {replacement:?}");
+        };
+        notifier.come_up();
+
+        let due = outbox.rows()[1]
+            .push
+            .enqueued_at
+            .checked_add(Duration::from_secs(10))
+            .unwrap();
+        let up = pushing(&outbox, &boxes, &notifier)
+            .drain(due)
+            .await
+            .unwrap();
+
+        assert_eq!(up.sent, vec![replacement.id.clone()], "{up:?}");
+        assert_eq!(
+            notifier
+                .delivered()
+                .iter()
+                .map(|n| n.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["replacement"],
+            "only the replacement reached the phone"
+        );
+        assert_eq!(outbox.rows()[0].standing, Standing::Abandoned);
+        assert_eq!(outbox.rows()[1].standing, Standing::Sent);
+        assert_eq!(
+            up.withdrawn.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![&original],
+            "the withdrawal is told apart from an abandonment: {up:?}"
+        );
+        assert!(up.abandoned.is_empty(), "{up:?}");
+    }
+
+    /// **A message the operator already finished is not pushed when its retry
+    /// comes due.** Two pushes fail their first try; one message is marked
+    /// processed; the endpoint comes back and only the other goes out.
+    #[tokio::test]
+    async fn a_processed_message_is_not_pushed_when_its_retry_comes_due() {
+        let boxes = store().await;
+        let outbox = boxes.outbox();
+        let notifier = FakeNotifier::new();
+        notifier.go_down();
+        let finished = post(&boxes, "person-ned-flanders", Some("finished"), "done").await;
+        let waiting = post(&boxes, "person-ned-flanders", Some("waiting"), "open").await;
+        let start = outbox.rows()[1].push.enqueued_at;
+        pushing(&outbox, &boxes, &notifier)
+            .drain(start)
+            .await
+            .unwrap();
+        boxes
+            .mark_processed(&finished, None, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("the operator finishes it");
+        notifier.come_up();
+
+        let up = pushing(&outbox, &boxes, &notifier)
+            .drain(start.checked_add(Duration::from_secs(10)).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(up.sent, vec![waiting], "{up:?}");
+        assert_eq!(notifier.delivered().len(), 1, "only the open one went out");
+        assert_eq!(outbox.rows()[0].standing, Standing::Abandoned);
+        assert_eq!(
+            up.withdrawn.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![&finished],
+            "{up:?}"
+        );
     }
 
     /// **A message with no subject is titled with its sender.**

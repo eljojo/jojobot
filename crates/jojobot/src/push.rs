@@ -285,6 +285,9 @@ async fn run(
                     for message in &drained.sent {
                         tracing::debug!(message = %message, "pushed to the operator's phone");
                     }
+                    for (message, why) in &drained.withdrawn {
+                        tracing::debug!(message = %message, reason = %why, "a push was not needed");
+                    }
                     for (message, why) in &drained.abandoned {
                         tracing::warn!(
                             message = %message,
