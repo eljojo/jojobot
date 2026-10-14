@@ -2897,6 +2897,7 @@ async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
 
     let one_hit = || Hit::Entity {
         entity: Entity {
+            folded_names: Vec::new(),
             id: EntityId("thing:battery".into()),
             kind: EntityKind::THING,
             name: "the spare battery".into(),
@@ -6430,7 +6431,7 @@ async fn an_archived_loop_drops_out_of_the_owed_read_and_is_counted() {
 /// contract, which runs over the real index; the handler this case uses has a
 /// stand-in for search.
 #[tokio::test]
-async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
+async fn a_merge_names_the_duplicates_names_and_leaves_both_pages() {
     use crate::memory::merge_entities::MergeArgs;
     let jojobot = handler();
     let sid = writing_as(&jojobot);
@@ -6518,11 +6519,18 @@ async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
             .expect("recall ok"),
     )["objects"][0]
         .clone();
-    let names = survivor["alternateName"].to_string();
-    for wanted in ["The Tavern", "The Bar", "Evergreen Bar"] {
+    // **The folded names are named, not moved**: the survivor's aliases are the
+    // one it was given, and its read lists what was folded in beside them.
+    assert_eq!(
+        survivor["alternateName"],
+        serde_json::json!(["The Tavern"]),
+        "a name was moved into the survivor's aliases: {survivor}"
+    );
+    let folded = survivor["foldedNames"].to_string();
+    for wanted in ["The Bar", "Evergreen Bar"] {
         assert!(
-            names.contains(wanted),
-            "the survivor does not answer to {wanted}: {survivor}"
+            folded.contains(wanted),
+            "the survivor's read does not name {wanted} as folded in: {survivor}"
         );
     }
     assert_eq!(
@@ -7571,6 +7579,7 @@ async fn a_browse_that_does_not_fit_reads_only_what_it_serves_and_counts_the_res
         // Staged past the near-miss screen, which would hold sixty numbered
         // names against each other; what is under test here is the read.
         memory.past_the_guard(Entity {
+            folded_names: Vec::new(),
             kind: EntityKind::PLACE,
             id: id.clone(),
             name: id.slug().to_string(),

@@ -1879,6 +1879,79 @@ async fn a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer() 
     store.stop().await;
 }
 
+/// **Names an older merge moved onto the survivor read cleanly and are not named
+/// twice.** The build before this one wrote the folded thing's display name and
+/// aliases into the survivor's alias rows and deleted the folded thing's. No row
+/// is rewritten to read such a store: the moved names are the survivor's aliases
+/// as stored, and the survivor's folded names add only what no alias already
+/// holds. **Paired** with a merge made now, which moves nothing and names the
+/// folded thing's names apart.
+#[tokio::test]
+async fn names_an_older_merge_moved_read_cleanly_and_are_not_named_twice() {
+    let scratch = Scratch::new("merge-older-names");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_older_names")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+
+    let listed = |memory: &DoltMemory, id: &EntityId| {
+        let id = id.clone();
+        let memory = memory.clone();
+        async move {
+            memory
+                .list_entities(None)
+                .await
+                .expect("the roster reads")
+                .into_iter()
+                .find(|entity| entity.id == id)
+                .expect("the thing is listed")
+        }
+    };
+    let now = listed(&merged.memory, &merged.survivor).await;
+    assert!(
+        now.aliases.is_empty(),
+        "a merge made now moves nothing: {now:?}"
+    );
+    assert_eq!(
+        now.folded_names,
+        ["Apu", "Squishee Man"],
+        "and names the folded thing's names apart: {now:?}"
+    );
+
+    // The store the older build filled: the names are the survivor's own rows.
+    for (ordinal, alias) in [(1_i64, "Apu"), (2, "Squishee Man")] {
+        sqlx::query("INSERT INTO entity_alias (entity, ordinal, alias) VALUES (?, ?, ?)")
+            .bind(merged.survivor_key.as_str())
+            .bind(ordinal)
+            .bind(alias)
+            .execute(&pool)
+            .await
+            .expect("the older merge's alias row lands");
+    }
+    sqlx::query("DELETE FROM entity_alias WHERE entity = ?")
+        .bind(merged.folded_key.as_str())
+        .execute(&pool)
+        .await
+        .expect("the older merge cleared the folded thing's aliases");
+
+    let older = listed(&merged.memory, &merged.survivor).await;
+    assert_eq!(
+        older.aliases,
+        ["Apu", "Squishee Man"],
+        "the moved names are the survivor's aliases as stored: {older:?}"
+    );
+    assert!(
+        older.folded_names.is_empty(),
+        "and are not named a second time: {older:?}"
+    );
+    store.stop().await;
+}
+
 /// **A claim stored under the folded thing that no merge event lists is named,
 /// not dropped.** The survivor serves every claim the event maps, names the one
 /// it cannot serve as left out with the reason and the address that reads it,

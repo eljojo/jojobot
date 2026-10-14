@@ -17,6 +17,7 @@ use jojobot_domain::memory::{Boot, Entity, EntityId, EntityKind, validate_subjec
 /// A minimal entity a mention can resolve against.
 fn thing(handle: &str, badge: Option<&str>) -> Entity {
     Entity {
+        folded_names: Vec::new(),
         id: EntityId(handle.into()),
         merged_into: None,
         kind: EntityId(handle.into()).kind().expect("a loaded kind"),

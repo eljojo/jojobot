@@ -2150,7 +2150,8 @@ impl Jojobot {
                        it). A merged thing's object can carry `claims_left_out`: claims \
                        stored under a thing folded into it that it cannot serve, each with \
                        a reason and an address. Read one with history_record set to that \
-                       address, and give no subject. WHICH EDGES: follow {shape or relation, direction, depth, \
+                       address, and give no subject. A thing others were folded into lists \
+                       their names as `foldedNames`, apart from its `alternateName`. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \

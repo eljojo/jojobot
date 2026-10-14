@@ -78,6 +78,7 @@ fn holding_companion(who: &EntityId) -> SearchQuery {
 fn the_shipped_view() -> Provisions {
     Provisions::new(vec![Provision::record(
         Entity {
+            folded_names: Vec::new(),
             id: EntityId("view:loops".into()),
             kind: EntityKind::VIEW,
             name: "The Loops".into(),

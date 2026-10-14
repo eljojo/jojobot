@@ -1765,7 +1765,8 @@ attributed, never journalled.
 ```text
 Merge a duplicate into the thing it duplicates — the repair for one thing named twice.
 A deliberate act rather than a flag on an edit, because there is no way back.
-Everything the duplicate held moves to the survivor: its claims, the edges drawn at it, the history under its keys, and its names, which become aliases of the survivor; beside them lands a dated record of the merge itself, naming the handle that went and the reason if you give one.
+Everything the duplicate held moves to the survivor: its claims, the edges drawn at it, the history under its keys; the survivor answers to its names, which a recall lists as `foldedNames`.
+Beside them lands a dated record of the merge itself, naming the handle that went and the reason if you give one.
 NOTHING IS DELETED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves, but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
 It does not answer as the survivor: recall the survivor to read everything.
 USE IT WHEN TWO HANDLES ARE ONE THING.
@@ -2530,6 +2531,7 @@ WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (fields_left_out names what it hid, and a view's shows_keys yields to it).
 A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
 Read one with history_record set to that address, and give no subject.
+A thing others were folded into lists their names as `foldedNames`, apart from its `alternateName`.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.

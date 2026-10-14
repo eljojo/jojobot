@@ -107,6 +107,7 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
     let store = Arc::new(InMemoryMemory::booted());
     seed(store.as_ref()).await;
     store.past_the_guard(Entity {
+        folded_names: Vec::new(),
         id: EntityId("thing:sigma".into()),
         kind: EntityKind::THING,
         name: "Sigma".to_string(),

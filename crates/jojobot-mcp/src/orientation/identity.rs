@@ -1475,6 +1475,7 @@ mod tests {
     #[test]
     fn the_roster_reads_the_kind_column_even_when_the_prefix_disagrees() {
         let looks_like_a_bot_and_is_not = Entity {
+            folded_names: Vec::new(),
             id: EntityId("bot:milhouse".into()),
             kind: EntityKind::PERSON,
             name: "Milhouse".into(),
@@ -1488,6 +1489,7 @@ mod tests {
             archived: None,
         };
         let is_a_bot_and_does_not_look_like_one = Entity {
+            folded_names: Vec::new(),
             id: EntityId("thing:gamma".into()),
             kind: EntityKind::BOT,
             name: "Gamma".into(),

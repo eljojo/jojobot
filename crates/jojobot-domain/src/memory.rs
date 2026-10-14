@@ -456,6 +456,16 @@ pub struct Entity {
     /// Absent in docs written before the field existed, which read as none.
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// **The names of the things folded into this one**, read from the merge
+    /// events when the thing is listed, and written by nobody.
+    ///
+    /// A merge carries no name onto the survivor. The survivor answers to the names
+    /// of what was folded into it because [`Entity::labels`] reads this beside its
+    /// own, and a reader is shown them apart from `aliases`, which holds only what
+    /// a caller wrote. A name the survivor already holds is not repeated here.
+    /// Empty on a thing nobody merged into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded_names: Vec<String>,
     /// Where this entity came from — **never invented**. An entity exists
     /// because the user named it or a real source produced it.
     pub source: String,
@@ -596,7 +606,7 @@ pub fn already_merged(attempted: &EntityId, entity: &Entity) -> Option<MemoryErr
 
 impl Entity {
     /// Every name this entity answers to: its display name first, then its
-    /// aliases, blanks dropped.
+    /// aliases, then the names of what was folded into it, blanks dropped.
     ///
     /// **The one definition of "what is this thing called."** The write guard
     /// screens against it and the search index ingests it, so a nickname cannot
@@ -604,6 +614,7 @@ impl Entity {
     pub fn labels(&self) -> Vec<&str> {
         std::iter::once(self.name.as_str())
             .chain(self.aliases.iter().map(String::as_str))
+            .chain(self.folded_names.iter().map(String::as_str))
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .collect()
@@ -5314,30 +5325,57 @@ pub struct MergeEvent {
     pub claims: Vec<(FactId, FactId)>,
 }
 
-/// **The names a fold carries from the duplicate to the survivor**, in order: the
-/// duplicate's display name, then its aliases. A name the survivor already
-/// answers to is left out, compared without regard to case, and so is a name
-/// repeated within the list. Shared by every store so a fold gives the same
-/// answer in each.
-pub fn names_to_carry(
-    survivor_name: &str,
-    survivor_aliases: &[String],
-    folded_name: &str,
-    folded_aliases: &[String],
-) -> Vec<String> {
-    let mut seen: Vec<String> = std::iter::once(survivor_name)
-        .chain(survivor_aliases.iter().map(String::as_str))
-        .map(str::to_lowercase)
-        .collect();
-    let mut carried = Vec::new();
-    for name in std::iter::once(folded_name).chain(folded_aliases.iter().map(String::as_str)) {
-        let key = name.to_lowercase();
-        if !seen.contains(&key) {
-            seen.push(key);
-            carried.push(name.to_string());
+/// **Name on each survivor the things that were folded into it.** A merge carries
+/// no name: the folded thing keeps its own, and the survivor answers to them
+/// because the stores set [`Entity::folded_names`] from the folds when they list.
+/// The names are the folded display names first, then their aliases, in the order
+/// the walk found the folded things. A name the survivor already answers to is
+/// left out, compared without regard to case, and so is a name repeated within
+/// the list. A thing that was itself folded away is named for nobody. Shared by
+/// every store so a fold gives the same answer in each.
+pub fn with_folded_names(entities: &mut [Entity]) {
+    let mut survivors: Vec<EntityId> = Vec::new();
+    for row in entities.iter() {
+        if let Some(into) = &row.merged_into
+            && !survivors.contains(into)
+        {
+            survivors.push(into.clone());
         }
     }
-    carried
+    for survivor in survivors {
+        let folded = folded_into(&survivor, entities);
+        let named: Vec<String> = {
+            let Some(own) = entities
+                .iter()
+                .find(|row| row.id == survivor && row.merged_into.is_none())
+            else {
+                continue;
+            };
+            let mut seen: Vec<String> = std::iter::once(own.name.as_str())
+                .chain(own.aliases.iter().map(String::as_str))
+                .map(str::to_lowercase)
+                .collect();
+            let mut named = Vec::new();
+            for id in &folded {
+                let Some(row) = entities.iter().find(|row| &row.id == id) else {
+                    continue;
+                };
+                for name in
+                    std::iter::once(row.name.as_str()).chain(row.aliases.iter().map(String::as_str))
+                {
+                    let key = name.to_lowercase();
+                    if !seen.contains(&key) {
+                        seen.push(key);
+                        named.push(name.to_string());
+                    }
+                }
+            }
+            named
+        };
+        if let Some(row) = entities.iter_mut().find(|row| row.id == survivor) {
+            row.folded_names = named;
+        }
+    }
 }
 
 /// The result of a write that names an entity: it either happened, or the write

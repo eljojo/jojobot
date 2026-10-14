@@ -57,8 +57,8 @@ impl Jojobot {
                        thing named twice. A deliberate act rather than a flag on an edit, \
                        because there is no way back. Everything the duplicate held moves to \
                        the survivor: its claims, the edges drawn at it, the history under its \
-                       keys, and its names, which become aliases of the survivor; beside them \
-                       lands a dated record of the merge itself, naming the handle that went \
+                       keys; the survivor answers to its names, which a recall lists as \
+                       `foldedNames`. Beside them lands a dated record of the merge itself, naming the handle that went \
                        and the reason if you give one. NOTHING IS DELETED: the duplicate's \
                        handle keeps answering, so a handle written down anywhere still \
                        resolves, but a recall of it comes back with status merged, names the \

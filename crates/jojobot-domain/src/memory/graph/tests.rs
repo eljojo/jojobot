@@ -181,6 +181,7 @@ fn entity(handle: &str, name: &str) -> Entity {
     let _booted = crate::memory::testing::InMemoryMemory::booted();
     let id = EntityId(handle.to_string());
     Entity {
+        folded_names: Vec::new(),
         kind: id.kind().expect("the fixture uses well-formed handles"),
         id,
         name: name.to_string(),

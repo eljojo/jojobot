@@ -886,6 +886,7 @@ impl Mailboxes for InMemoryMailboxes {
 fn stand_in(owner: &EntityId) -> Result<crate::memory::Entity, MailboxError> {
     crate::memory::validate_subject(owner).map_err(|e| MailboxError::Store(e.to_string()))?;
     Ok(crate::memory::Entity {
+        folded_names: Vec::new(),
         kind: owner.kind().expect("a validated handle names a kind"),
         name: owner.slug().to_string(),
         id: owner.clone(),

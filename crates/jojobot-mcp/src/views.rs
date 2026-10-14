@@ -30,6 +30,7 @@ use jojobot_domain::memory::{Entity, EntityId, EntityKind};
 fn view(handle: &str, name: &str, keys: &[(&str, &str)]) -> Provision {
     Provision::record(
         Entity {
+            folded_names: Vec::new(),
             id: EntityId(handle.to_string()),
             kind: EntityKind::VIEW,
             name: name.to_string(),

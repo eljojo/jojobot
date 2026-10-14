@@ -636,6 +636,7 @@ mod tests {
     #[test]
     fn the_parent_is_read_from_what_a_read_serves() {
         let entity = |id: &str, parent: Option<&str>| jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: jojobot_domain::memory::EntityId(id.into()),
             kind: EntityKind::WORK,
             name: "Atlas Thing".into(),

@@ -620,6 +620,7 @@ mod tests {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let id = EntityId(id.into());
         Entity {
+            folded_names: Vec::new(),
             kind: id.kind().expect("test ids are well-formed"),
             id,
             name: name.into(),
@@ -961,6 +962,7 @@ mod tests {
 
         for (existing_handle, existing_name, incoming_handle, incoming_name, want_block) in CASES {
             let existing = Entity {
+                folded_names: Vec::new(),
                 id: EntityId((*existing_handle).into()),
                 kind: EntityKind::PLACE,
                 name: (*existing_name).into(),

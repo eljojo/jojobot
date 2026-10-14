@@ -320,7 +320,7 @@ pub(crate) fn edge_json(edge: &Edge) -> serde_json::Value {
 /// kind (`Person`, `CreativeWork`, `Organization`); the lowercase kind token
 /// stays the input grammar and the handle's prefix.
 pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
-    serde_json::json!({
+    let mut wire = serde_json::json!({
         "id": entity.id.as_str(),
         "type": type_name(entity.kind),
         "name": entity.name,
@@ -343,7 +343,17 @@ pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
             "at": a.at.to_string(),
             "how_to_restore": "archive_entity with restore: true, this handle and a reason",
         })),
-    })
+    });
+    // **The names of what was folded into this one, apart from the aliases a
+    // caller wrote.** A merge carries no name onto the survivor, so without this
+    // a reader would lose "this was also known as X" without a word. Left out
+    // when nothing was folded in.
+    if !entity.folded_names.is_empty()
+        && let Some(object) = wire.as_object_mut()
+    {
+        object.insert("foldedNames".into(), entity.folded_names.clone().into());
+    }
+    wire
 }
 
 /// **Take the aliases out of a write's receipt when keeping them would take the
@@ -567,6 +577,35 @@ mod tests {
         );
     }
 
+    /// **A survivor's read names what was folded into it apart from its aliases,
+    /// and says nothing when nothing was.** The key is `foldedNames`; the aliases a
+    /// caller wrote stay under `alternateName`.
+    #[test]
+    fn a_survivor_names_what_was_folded_in_apart_from_its_aliases() {
+        let entity = |folded: &[&str]| Entity {
+            folded_names: folded.iter().map(|name| name.to_string()).collect(),
+            id: EntityId::person("person:alpha"),
+            kind: EntityKind::PERSON,
+            name: "Alpha".into(),
+            aliases: vec!["Al".into()],
+            source: "the roster".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        let folded = entity_json(&entity(&["Beta", "Bee"]));
+        assert_eq!(folded["foldedNames"], serde_json::json!(["Beta", "Bee"]));
+        assert_eq!(folded["alternateName"], serde_json::json!(["Al"]));
+        let alone = entity_json(&entity(&[]));
+        assert!(
+            alone.get("foldedNames").is_none(),
+            "a thing nothing was folded into carries no such key: {alone}"
+        );
+    }
+
     /// **A receipt keeps its aliases until they would take it past the ceiling.**
     /// The same entity is served twice: with a few aliases it is left whole, and
     /// with enough to pass one answer the aliases are replaced by a marker, their
@@ -574,6 +613,7 @@ mod tests {
     #[test]
     fn a_receipt_elides_its_aliases_only_when_they_would_pass_the_ceiling() {
         let entity = |count: usize| Entity {
+            folded_names: Vec::new(),
             id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: "Alpha".into(),
@@ -632,6 +672,7 @@ mod tests {
     #[test]
     fn an_entitys_badge_reaches_no_caller() {
         let entity = Entity {
+            folded_names: Vec::new(),
             id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: "Alpha".into(),

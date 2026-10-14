@@ -222,6 +222,7 @@ impl Jojobot {
 /// would name, which is what the boot-ceiling check measures.
 fn entity_as_it_will_be(new: &NewEntity) -> Entity {
     Entity {
+        folded_names: Vec::new(),
         id: new.id.clone(),
         merged_into: None,
         kind: new.id.kind().unwrap_or(EntityKind::THING),

@@ -9024,6 +9024,7 @@ pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>
     let colliding =
         crate::memory::owned::Provisions::new(vec![crate::memory::owned::Provision::record(
             Entity {
+                folded_names: Vec::new(),
                 id: real.clone(),
                 kind: EntityKind::THING,
                 name: "Shipped By Mistake".into(),
@@ -14541,19 +14542,22 @@ pub async fn a_walk_from_a_folded_handle_says_where_it_went<M: Memory>(store: &M
     );
 }
 
-/// **A fold carries the duplicate's names to the survivor and leaves the pages
-/// where they are.**
+/// **A fold names the duplicate's names on the survivor, moves none of them,
+/// and leaves the pages where they are.**
 ///
-/// The duplicate's aliases, and the name it was displayed under, become
-/// aliases of the survivor, so anything that finds a thing by a name it was
-/// known by finds the survivor after the fold. The survivor keeps its own name
-/// and its own aliases and its own page; the duplicate's page stays readable on
-/// the row that forwards.
+/// The survivor answers to every name the duplicate was known by, so anything
+/// that finds a thing by a name it was known by finds the survivor after the
+/// fold. They are NOT among its `aliases`, which hold what a caller wrote: the
+/// survivor's read names them as `folded_names`, and the duplicate keeps its own
+/// aliases on the row that forwards. The survivor keeps its own name and its own
+/// page; the duplicate's page stays readable on the row that forwards.
 ///
-/// **Paired in one read**: the survivor still carries its own alias beside the
-/// moved ones, so a fold that REPLACED the survivor's names with the
-/// duplicate's cannot pass.
-pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store: &M) {
+/// **Paired in one read**: the survivor still carries its own alias, apart from
+/// the folded ones, so a fold that REPLACED the survivor's names with the
+/// duplicate's cannot pass, and one that moved the aliases cannot either.
+pub async fn a_fold_names_the_duplicates_names_on_the_survivor_and_moves_none<M: Memory>(
+    store: &M,
+) {
     let kept = EntityId::person("person:contract-names-kept");
     let spare = EntityId::person("person:contract-names-spare");
     add(
@@ -14593,24 +14597,46 @@ pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store:
         .await
         .expect("the fold lands");
 
-    let survivor = store
+    let listed = store
         .list_entities(None)
         .await
-        .expect("list_entities should succeed")
-        .into_iter()
+        .expect("list_entities should succeed");
+    let survivor = listed
+        .iter()
         .find(|e| e.id == kept)
         .expect("the survivor is listed");
     assert_eq!(
         survivor.name, "Kept Name",
         "the survivor was renamed: {survivor:?}"
     );
+    assert_eq!(
+        survivor.aliases,
+        ["Kept Alias"],
+        "the fold moved a name into the survivor's aliases: {survivor:?}"
+    );
+    assert_eq!(
+        survivor.folded_names,
+        ["Spare Name", "Spare Alias"],
+        "the survivor's read does not name what was folded in: {survivor:?}"
+    );
     for wanted in ["Kept Alias", "Spare Alias", "Spare Name"] {
         assert!(
-            survivor.aliases.iter().any(|a| a == wanted),
+            survivor.labels().contains(&wanted),
             "the survivor does not answer to {wanted:?} after the fold: {:?}",
-            survivor.aliases,
+            survivor.labels(),
         );
     }
+    let duplicate = store
+        .scan_entity(&spare)
+        .await
+        .expect("scan_entity should succeed")
+        .and_then(|doc| doc.entity)
+        .expect("the duplicate's row is there");
+    assert_eq!(
+        duplicate.aliases,
+        ["Spare Alias"],
+        "the duplicate lost an alias to the fold: {duplicate:?}"
+    );
 
     let page = |id: &EntityId| {
         let id = id.clone();
@@ -17324,7 +17350,7 @@ macro_rules! all_cases {
         $m!(a_claim_carries_when_it_was_taken_in($store));
         $m!(folding_a_duplicate_makes_the_split_answer_whole($store));
         $m!(a_fold_carries_the_lineage_that_points_at_what_it_moved($store));
-        $m!(a_fold_moves_the_duplicates_names_to_the_survivor($store));
+        $m!(a_fold_names_the_duplicates_names_on_the_survivor_and_moves_none($store));
         $m!(a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side($store));
         $m!(a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_side($store));
         $m!(a_fold_repoints_a_reference_field_naming_the_folded_side($store));

@@ -27,6 +27,7 @@ async fn a_things_own_word_is_found_stored_and_supplied() {
     let supplied = jojobot_domain::memory::owned::Provisions::new(vec![
         jojobot_domain::memory::owned::Provision::record(
             Entity {
+                folded_names: Vec::new(),
                 id: id.clone(),
                 kind: EntityKind::VIEW,
                 name: "Contract Shipped View".into(),
@@ -187,6 +188,7 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
     );
     last = fake.write_summary().await.expect("answers");
     fake.past_the_guard(Entity {
+        folded_names: Vec::new(),
         id: EntityId::person("person:kenny"),
         kind: EntityKind::PERSON,
         name: "Kenny".into(),
@@ -282,6 +284,7 @@ async fn a_change_made_past_the_writes_is_still_found_by_a_scan() {
     let scans = fake.full_scans();
     let hand_made = EntityId::person("person:kenny");
     fake.past_the_guard(Entity {
+        folded_names: Vec::new(),
         id: hand_made.clone(),
         kind: EntityKind::PERSON,
         name: "Kenny".into(),
@@ -326,6 +329,7 @@ async fn a_write_does_not_hide_a_change_made_past_the_writes() {
         .expect("lands");
     let hand_made = EntityId::person("person:kenny");
     fake.past_the_guard(Entity {
+        folded_names: Vec::new(),
         id: hand_made.clone(),
         kind: EntityKind::PERSON,
         name: "Kenny".into(),
@@ -720,6 +724,7 @@ async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
             "after the {step} the search scanned the store"
         );
         fake.past_the_guard(Entity {
+            folded_names: Vec::new(),
             id: EntityId::person(if step == "archive" {
                 "person:contract-lamplighter"
             } else {
@@ -844,6 +849,7 @@ fn entity(id: &str, name: &str) -> Entity {
     let id = EntityId(id.into());
     assert!(validate_subject(&id).is_ok(), "test ids are well-formed");
     Entity {
+        folded_names: Vec::new(),
         kind: id.kind().expect("a well-formed id has a kind"),
         id,
         name: name.into(),

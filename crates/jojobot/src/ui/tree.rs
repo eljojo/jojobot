@@ -78,6 +78,7 @@ mod tests {
         let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
         let id = EntityId(id.to_string());
         Entity {
+            folded_names: Vec::new(),
             kind: id.kind().expect("a fixture handle names its kind"),
             name: id.as_str().to_string(),
             id,

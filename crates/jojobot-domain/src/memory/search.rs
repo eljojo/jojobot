@@ -940,6 +940,7 @@ mod tests {
         use jiff::civil::date;
 
         let entity = |id: &str| Entity {
+            folded_names: Vec::new(),
             id: EntityId(id.into()),
             kind: EntityId(id.into())
                 .kind()
@@ -1028,6 +1029,7 @@ mod tests {
         use jiff::civil::date;
 
         let entity = |id: &str| Entity {
+            folded_names: Vec::new(),
             id: EntityId(id.into()),
             kind: EntityId(id.into())
                 .kind()

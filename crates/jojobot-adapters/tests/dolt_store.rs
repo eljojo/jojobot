@@ -2718,6 +2718,7 @@ async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
     let under = EntityId("view:my-week".into());
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: shipped.clone(),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -2842,6 +2843,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
 
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -2884,6 +2886,7 @@ async fn dolt_carries_a_claim_on_a_supplied_record_into_its_one_document() {
 
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -2951,6 +2954,7 @@ async fn dolt_answers_every_entity_read_for_a_supplied_record() {
 
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -2992,6 +2996,7 @@ async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
 
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -3033,6 +3038,7 @@ async fn dolt_lands_an_edit_alike_stored_and_supplied() {
 
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -3073,6 +3079,7 @@ async fn dolt_lands_a_retraction_alike_stored_and_supplied() {
 
     let supplied = Provisions::new(vec![Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -3248,6 +3255,7 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
     let theirs = EntityId("view:my-people".into());
     let supplied = Provisions::new(vec![jojobot_domain::memory::owned::Provision::record(
         jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
             id: shipped.clone(),
             kind: jojobot_domain::memory::EntityKind::VIEW,
             name: "The Loops".into(),
@@ -3365,6 +3373,7 @@ impl OwnerIndex for RosterOnly {
             .map(|handle| {
                 let id = EntityId((*handle).to_string());
                 jojobot_domain::memory::Entity {
+                    folded_names: Vec::new(),
                     kind: id.kind().expect("the roster's handles are well-formed"),
                     name: id.slug().to_string(),
                     id,

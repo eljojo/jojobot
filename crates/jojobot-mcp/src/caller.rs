@@ -1548,6 +1548,7 @@ mod tests {
         // populated list rather than an empty one every build would produce.
         let jojobot = handler_with(Arc::new(SpySearch::answering(vec![Hit::Entity {
             entity: Entity {
+                folded_names: Vec::new(),
                 id: EntityId("person:alpha".into()),
                 kind: EntityKind::PERSON,
                 name: "Alpha".into(),

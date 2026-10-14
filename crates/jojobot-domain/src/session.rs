@@ -1846,6 +1846,7 @@ fn projected_shell(
         title: focus.to_string(),
         prose: String::new(),
         entity: Some(crate::memory::Entity {
+            folded_names: Vec::new(),
             id: entity_id,
             kind: crate::memory::EntityKind::SESSION,
             // A run is known by what it was working on, which is what tells two

@@ -3,6 +3,7 @@ use super::*;
 
 fn thing(handle: &str, badge: Option<&str>) -> Entity {
     Entity {
+        folded_names: Vec::new(),
         id: EntityId(handle.into()),
         kind: EntityId(handle.into()).kind().expect("a test handle"),
         name: handle.into(),
@@ -662,6 +663,7 @@ fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table(
 #[test]
 fn a_folded_or_archived_entity_is_not_browsable_and_a_live_one_is() {
     let entity = |merged_into: Option<&str>, archived: bool| Entity {
+        folded_names: Vec::new(),
         id: EntityId("thing:contract-thought-pointer-v1".into()),
         kind: EntityKind::THING,
         name: "Husk".into(),
@@ -1732,6 +1734,7 @@ async fn the_fake_answers_who_points_at_a_thing_without_repeating_whole_reads_pe
 fn fake_knowing_a_supplied_view() -> InMemoryMemory {
     InMemoryMemory::booted().knowing(owned::Provisions::new(vec![owned::Provision::record(
         Entity {
+            folded_names: Vec::new(),
             id: EntityId(contract::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
             kind: EntityKind::VIEW,
             name: "Contract Shipped View".into(),
@@ -2260,6 +2263,7 @@ fn an_alias_is_a_plain_label_and_never_carries_the_separator() {
 #[test]
 fn an_alias_set_is_replaced_whole_or_left_alone() {
     let mut entity = Entity {
+        folded_names: Vec::new(),
         id: EntityId::person("person:alpha"),
         kind: EntityKind::PERSON,
         name: "Alpha".into(),
@@ -2333,6 +2337,7 @@ fn an_alias_set_is_replaced_whole_or_left_alone() {
 #[test]
 fn an_entitys_labels_are_its_name_and_its_aliases() {
     let entity = |name: &str, aliases: Vec<String>| Entity {
+        folded_names: Vec::new(),
         id: EntityId::person("person:alpha"),
         kind: EntityKind::PERSON,
         name: name.into(),
@@ -2430,26 +2435,46 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     );
 }
 
-/// **A fold carries the duplicate's display name and then its aliases, and
-/// leaves out a name the survivor already answers to, whatever its case, and a
-/// name repeated within the carried list.**
+/// **A survivor is named the folded display name and then its aliases, once
+/// each, leaving out a name the survivor already answers to, whatever its case,
+/// and a name repeated within the list.** Through a survivor folded in its turn,
+/// and for nobody that was folded away itself.
 #[test]
-fn a_fold_carries_each_new_name_once() {
-    let carried = names_to_carry(
-        "Kept",
-        &["Shared".to_string()],
-        "Spare",
-        &[
-            "SHARED".to_string(),
-            "Extra".to_string(),
-            "extra".to_string(),
-        ],
-    );
+fn a_survivor_is_named_each_folded_name_once() {
+    let row = |slug: &str, name: &str, aliases: &[&str], into: Option<&str>| {
+        let mut entity = thing(&format!("org:{slug}"), None);
+        entity.name = name.to_string();
+        entity.aliases = aliases.iter().map(|alias| alias.to_string()).collect();
+        entity.merged_into = into.map(|slug| EntityId(format!("org:{slug}")));
+        entity
+    };
+    let mut rows = vec![
+        row("kept", "Kept", &["Shared"], None),
+        row(
+            "spare",
+            "Spare",
+            &["SHARED", "Extra", "extra"],
+            Some("kept"),
+        ),
+        row("older", "Older", &["Ancient"], Some("spare")),
+        row("alone", "Alone", &["Solo"], None),
+    ];
+    with_folded_names(&mut rows);
     assert_eq!(
-        carried,
-        vec!["Spare".to_string(), "Extra".to_string()],
-        "the display name comes first, a name the survivor wears is skipped, and a repeat is kept once",
+        rows[0].folded_names,
+        ["Spare", "Extra", "Older", "Ancient"],
+        "the display name comes first, a name the survivor wears is skipped, a repeat is kept once, and what was folded into the folded thing is named too"
     );
+    assert!(
+        rows[1].folded_names.is_empty(),
+        "a thing that was folded away is named for nobody: {:?}",
+        rows[1].folded_names
+    );
+    assert!(
+        rows[3].folded_names.is_empty(),
+        "nothing was folded into it"
+    );
+    assert_eq!(rows[0].aliases, ["Shared"], "no alias was moved");
 }
 
 /// **A ceiling is a whole number of zero or more, and anything else is refused

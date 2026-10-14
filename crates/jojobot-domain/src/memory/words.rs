@@ -160,6 +160,7 @@ mod tests {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let id = EntityId(id.into());
         Entity {
+            folded_names: Vec::new(),
             kind: id.kind().expect("test ids are well-formed"),
             id,
             name: name.into(),

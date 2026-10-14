@@ -1997,24 +1997,7 @@ impl DoltMemory {
             ))
         })
         .collect::<Result<_, MemoryError>>()?;
-        for (folded, survivor) in &merges {
-            let at = |key: &str| {
-                entities
-                    .iter()
-                    .position(|entity| entity.badge.as_deref() == Some(key))
-            };
-            let (Some(from), Some(into)) = (at(folded), at(survivor)) else {
-                continue;
-            };
-            let carried = jojobot_domain::memory::names_to_carry(
-                &entities[into].name,
-                &entities[into].aliases,
-                &entities[from].name,
-                &entities[from].aliases,
-            );
-            entities[into].aliases.extend(carried);
-            entities[from].aliases.clear();
-        }
+        jojobot_domain::memory::with_folded_names(&mut entities);
         let snapshot = entities.clone();
         for entity in &mut entities {
             if let Some(parent) = &entity.parent {
@@ -2266,6 +2249,7 @@ impl DoltMemory {
             });
         }
         let entity = Entity {
+            folded_names: Vec::new(),
             kind: new.id.kind().expect("a validated id has a kind"),
             id: new.id,
             name: new.name.trim().to_string(),
@@ -4271,6 +4255,7 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
     let id = EntityId(row.try_get::<String, _>("id").map_err(store)?);
     let kind = kind_of_handle(&id)?;
     Ok(Entity {
+        folded_names: Vec::new(),
         kind,
         id,
         name: row.try_get::<String, _>("name").map_err(store)?,
@@ -6322,51 +6307,6 @@ impl Memory for DoltMemory {
             .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
             .collect();
 
-        // **The duplicate's names go to the survivor**: every alias it had and
-        // the name it was displayed under, so a name it was known by now finds
-        // the survivor. The survivor keeps its own name and aliases, and its own
-        // page; the duplicate's page stays on the row that forwards. A name the
-        // survivor already answers to is not added twice.
-        let folded_row = index
-            .iter()
-            .find(|e| &e.id == folded)
-            .expect("checked present above");
-        let survivor_row = index
-            .iter()
-            .find(|e| &e.id == survivor)
-            .expect("checked present above");
-        let carried = jojobot_domain::memory::names_to_carry(
-            &survivor_row.name,
-            &survivor_row.aliases,
-            &folded_row.name,
-            &folded_row.aliases,
-        );
-        if !carried.is_empty() {
-            let mut ordinal: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(ordinal), 0) FROM entity_alias WHERE entity = ?",
-            )
-            .bind(survivor_key.as_str())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(store)?;
-            for alias in &carried {
-                ordinal += 1;
-                sqlx::query("INSERT INTO entity_alias (entity, ordinal, alias) VALUES (?, ?, ?)")
-                    .bind(survivor_key.as_str())
-                    .bind(ordinal)
-                    .bind(alias)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(store)?;
-            }
-            sqlx::query("DELETE FROM entity_alias WHERE entity = ?")
-                .bind(folded_key.as_str())
-                .execute(&mut *tx)
-                .await
-                .map_err(store)?;
-            append_entity_write(&mut tx, survivor, &self.clock, session).await?;
-        }
-
         let record = Fact {
             sets: Default::default(),
             id: account_id,
@@ -6988,7 +6928,7 @@ impl Memory for DoltMemory {
         }
         // **A thing a merge folded into another, or into which another was
         // folded, is named as the whole index names it**: the survivor answers
-        // to the folded thing's names and the folded thing to none.
+        // to the folded things' names, set apart from its own aliases.
         if let Some(badge) = &resolved.badge
             && (Self::is_folded_key(&mut tx, &EntityId(badge.clone())).await?
                 || !Self::merges_into(&mut tx, &EntityId(badge.clone()))
@@ -7001,6 +6941,7 @@ impl Memory for DoltMemory {
                 .find(|known| known.id == resolved.id)
         {
             resolved.aliases = named.aliases;
+            resolved.folded_names = named.folded_names;
         }
         let Some(badge) = resolved.badge.clone() else {
             return Err(MemoryError::Store(format!(

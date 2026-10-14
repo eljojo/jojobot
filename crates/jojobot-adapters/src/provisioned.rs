@@ -1279,6 +1279,7 @@ mod tests {
         let id = EntityId::new(EntityKind::VIEW, slug);
         jojobot_domain::memory::owned::Provision::record(
             Entity {
+                folded_names: Vec::new(),
                 id: id.clone(),
                 kind: EntityKind::VIEW,
                 name: format!("The {slug} view"),

@@ -668,6 +668,84 @@ pub async fn a_name_the_duplicate_wore_finds_the_survivor_after_a_fold<M: Memory
     );
 }
 
+/// **A fold moves no name onto the survivor, and the survivor still answers to
+/// every one.** The folded thing's alias is not among the survivor's aliases; a
+/// search for it still leads to the survivor, because it resolves through the
+/// merge like every other address of the folded thing, and the survivor's read
+/// names them as folded in, apart from its aliases. **Paired** with the
+/// survivor's own alias, which is still its alias.
+pub async fn a_fold_moves_no_name_and_the_survivor_still_answers_to_them<M: Memory, S: Search>(
+    store: &M,
+    search: &S,
+) {
+    let kept = EntityId(format!("org:{}", "contract-search-name-kept"));
+    let spare = EntityId(format!("org:{}", "contract-search-name-spare"));
+    add(
+        store,
+        NewEntity {
+            aliases: vec!["Marblequay".into()],
+            ..NewEntity::new(kept.clone(), "Contract Name Kept", "user-named")
+        },
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            aliases: vec!["Thistledown".into()],
+            ..NewEntity::new(spare.clone(), "Contract Name Spare", "user-named")
+        },
+    )
+    .await;
+    store
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller(), None)
+        .await
+        .expect("the fold lands");
+
+    let survivor = store
+        .list_entities(None)
+        .await
+        .expect("the roster reads")
+        .into_iter()
+        .find(|entity| entity.id == kept)
+        .expect("the survivor is listed");
+    assert!(
+        survivor.aliases.iter().any(|alias| alias == "Marblequay"),
+        "the survivor kept its own alias: {:?}",
+        survivor.aliases
+    );
+    assert!(
+        survivor.aliases.iter().all(|alias| alias != "Thistledown"),
+        "the fold moved the duplicate's alias onto the survivor: {:?}",
+        survivor.aliases
+    );
+    // **The same read names them as folded in**, so a reader who recalls the
+    // survivor still sees what it was also known as, and where that came from.
+    // Paired: the survivor's own alias is not among them.
+    for word in ["Thistledown", "Contract Name Spare"] {
+        assert!(
+            survivor.folded_names.iter().any(|name| name == word),
+            "the survivor's read does not name {word} as folded in: {:?}",
+            survivor.folded_names
+        );
+    }
+    assert!(
+        survivor
+            .folded_names
+            .iter()
+            .all(|name| name != "Marblequay"),
+        "the survivor's own alias is named as folded in: {:?}",
+        survivor.folded_names
+    );
+    for word in ["Thistledown", "Contract Name Spare"] {
+        let hits = found(search, SearchQuery::text(word)).await;
+        assert!(
+            hits.iter()
+                .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == kept)),
+            "{word} does not lead to the survivor: {hits:?}"
+        );
+    }
+}
+
 /// **A child of the folded thing is found with the survivor as its parent.** The
 /// fold writes an event and moves no row, so the child still names the folded
 /// thing in the store and the index has to read it as the survivor's.
@@ -1363,6 +1441,9 @@ macro_rules! retrieval_cases {
             $store, $search
         ));
         $m!(a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold($store, $search));
+        $m!(a_fold_moves_no_name_and_the_survivor_still_answers_to_them(
+            $store, $search
+        ));
         $m!(a_child_of_the_folded_parent_is_found_with_the_survivor_as_its_parent($store, $search));
         $m!(a_claim_of_the_folded_thing_is_found_under_the_survivor_after_a_fold($store, $search));
         $m!(search_finds_things_that_answer_a_type_structurally(

@@ -1126,10 +1126,11 @@ fn the_recall_description_lists_parent_among_the_ways_to_select() {
     );
 }
 
-/// **`merge_entities` says its names become aliases of the survivor.**
+/// **`merge_entities` says where the duplicate's names go: the survivor answers
+/// to them and a recall lists them as `foldedNames`.**
 #[test]
-fn the_merge_description_names_the_aliases_it_carries() {
-    assert_description_names("merge_entities", &["aliases"]);
+fn the_merge_description_names_where_the_duplicates_names_go() {
+    assert_description_names("merge_entities", &["`foldedNames`"]);
 }
 
 /// **`update_fact` says a claim cannot change subject, and how to move one,

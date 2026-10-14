@@ -816,6 +816,7 @@ impl InMemoryMemory {
         self.index_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
+        super::super::with_folded_names(&mut entities);
         let snapshot = entities.clone();
         let merges = self.merges.lock().expect("fake mutex poisoned");
         for entity in &mut entities {
@@ -1948,6 +1949,7 @@ impl Memory for InMemoryMemory {
             });
         }
         let entity = Entity {
+            folded_names: Vec::new(),
             kind: new.id.kind().expect("a validated id has a kind"),
             id: new.id,
             name: new.name.trim().to_string(),
@@ -3879,35 +3881,6 @@ impl Memory for InMemoryMemory {
 
         // **Read before the locks below are taken**, as the held facts are.
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
-
-        // **The duplicate's names go to the survivor**, exactly as the real
-        // store's fold does — see `names_to_carry`. The duplicate's aliases move
-        // and its display name stays as its own.
-        let carried = {
-            let folded_row = entities
-                .iter()
-                .find(|e| e.id == *folded)
-                .expect("checked present above");
-            let survivor_row = entities
-                .iter()
-                .find(|e| e.id == *survivor)
-                .expect("checked present above");
-            crate::memory::names_to_carry(
-                &survivor_row.name,
-                &survivor_row.aliases,
-                &folded_row.name,
-                &folded_row.aliases,
-            )
-        };
-        if !carried.is_empty() {
-            for entity in entities.iter_mut() {
-                if entity.id == *survivor {
-                    entity.aliases.extend(carried.iter().cloned());
-                } else if entity.id == *folded {
-                    entity.aliases.clear();
-                }
-            }
-        }
 
         // **A merge appends its event and moves no row.** A fact id is local to
         // the doc that holds it, so both sides own an `f1`: the event gives each

@@ -1395,6 +1395,7 @@ mod tests {
     fn a_place_hit(slug: &str) -> Hit {
         Hit::Entity {
             entity: Entity {
+                folded_names: Vec::new(),
                 id: EntityId(format!("place:{slug}")),
                 kind: EntityKind::PLACE,
                 name: format!("The {slug}"),
@@ -2234,6 +2235,7 @@ mod tests {
         let hit = || {
             vec![Hit::Entity {
                 entity: Entity {
+                    folded_names: Vec::new(),
                     id: EntityId("person:alpha".into()),
                     kind: EntityKind::PERSON,
                     name: "Alpha".into(),
@@ -2848,6 +2850,7 @@ mod tests {
     #[tokio::test]
     async fn search_renders_a_mixed_list_of_typed_hits() {
         let entity = Entity {
+            folded_names: Vec::new(),
             id: EntityId("work:first-mix".into()),
             kind: EntityKind::WORK,
             name: "First Mix".into(),
@@ -2885,6 +2888,7 @@ mod tests {
             stale_after: None,
         };
         let alpha = Entity {
+            folded_names: Vec::new(),
             id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: "Alpha".into(),
@@ -3096,6 +3100,7 @@ mod tests {
     async fn rank_clock_and_fallbacks_are_reported_on_the_answer() {
         let (undated, undated_too, dated) = fact_missing_and_holding_happened_at();
         let alpha = Entity {
+            folded_names: Vec::new(),
             id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: "Alpha".into(),
@@ -3277,6 +3282,7 @@ mod tests {
     #[tokio::test]
     async fn a_thing_a_search_returned_is_a_thing_a_later_creation_is_asked_about() {
         let place = Entity {
+            folded_names: Vec::new(),
             id: EntityId("place:wonder-wharf".into()),
             kind: EntityKind::PLACE,
             name: "Wonder Wharf".into(),
@@ -3394,6 +3400,7 @@ mod tests {
 
         // The positive: the same call with one hit returns it and no line.
         let place = Entity {
+            folded_names: Vec::new(),
             id: EntityId("place:wonder-wharf".into()),
             kind: EntityKind::PLACE,
             name: "Wonder Wharf".into(),
@@ -3510,6 +3517,7 @@ mod tests {
         (0..count)
             .map(|rank| Hit::Entity {
                 entity: Entity {
+                    folded_names: Vec::new(),
                     id: EntityId(format!("thing:{}", "kiln".repeat(1 + rank % 3))),
                     kind: EntityKind::THING,
                     name: format!("hit {rank:04}"),

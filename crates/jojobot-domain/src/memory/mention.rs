@@ -1867,6 +1867,7 @@ mod tests {
 
     fn thing(handle: &str, badge: Option<&str>) -> Entity {
         Entity {
+            folded_names: Vec::new(),
             id: EntityId(handle.into()),
             kind: EntityId(handle.into()).kind().expect("a test handle"),
             name: handle.into(),
