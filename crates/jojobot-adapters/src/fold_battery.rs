@@ -652,4 +652,69 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
     )
     .await;
     p.agree("after a claim on the survivor of a merge").await;
+
+    // ── thoughts on a thread: who has written into it ─────────────────────────
+    add(w, "thread:simpson-kitchen", "Kitchen line", None).await;
+    for bot in ["bot:omega", "bot:psi", "bot:rho", "bot:upsilon"] {
+        add(w, bot, bot, None).await;
+    }
+    p.agree("after a thread and four bots are added").await;
+    for (bot, thought) in [
+        ("bot:omega", "omega is thinking about the thread"),
+        ("bot:psi", "psi is thinking about the thread"),
+        ("bot:rho", "rho is thinking about the thread"),
+    ] {
+        thinks_about(w, bot, thought, "thread:simpson-kitchen").await;
+    }
+    // A claim that is not a connection, and a bot that wrote nothing: neither
+    // is a writer.
+    say(w, "bot:upsilon", "upsilon keeps to itself", &[]).await;
+    p.agree("after bots write thoughts into a thread").await;
+
+    w.archive_entity(&id("bot:psi"), "retired", Some("fold-battery"))
+        .await
+        .expect("archive");
+    p.agree("after a writing bot is archived").await;
+
+    w.merge(
+        &id("bot:rho"),
+        &id("bot:omega"),
+        Some("the same bot"),
+        date(2026, 9, 9),
+        &caller,
+        Some("fold-battery"),
+    )
+    .await
+    .expect("merge bots");
+    p.agree("after a writing bot is merged into another").await;
+
+    w.rename_entity(
+        &id("thread:simpson-kitchen"),
+        &id("thread:milhouse-moves"),
+        None,
+        date(2026, 9, 10),
+        jojobot_domain::memory::Override::none(),
+        Some("fold-battery"),
+    )
+    .await
+    .expect("rename the thread")
+    .written()
+    .expect("rename blocked");
+    p.agree("after the thread is renamed").await;
+}
+
+/// A thought: a claim on a bot drawing a `connection` edge at a thread.
+async fn thinks_about(store: &dyn Memory, bot: &str, thought: &str, thread: &str) {
+    let mut fact = NewFact::about(id(bot), thought, date(2026, 9, 4));
+    fact.edge = Some(Edge {
+        shape: EdgeShape::Connection,
+        object: id(thread),
+    });
+    fact.session = Some("fold-battery".into());
+    store
+        .capture(fact)
+        .await
+        .expect("capture a thought")
+        .written()
+        .expect("thought blocked");
 }

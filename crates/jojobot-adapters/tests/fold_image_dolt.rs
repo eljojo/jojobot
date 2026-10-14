@@ -37,6 +37,7 @@ const SWITCHED: &[&str] = &[
     "built_on",
     "referring_to",
     "children",
+    "thought_writers",
     "write_summary",
 ];
 

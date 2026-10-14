@@ -690,6 +690,65 @@ mod tests {
         (over, bot)
     }
 
+    /// **Composing prose and naming echoed defaults read no stored row.** The
+    /// fold above this layer forwards both, and they are no reads of the store:
+    /// the first joins what the build ships to the half the instance wrote, the
+    /// second compares the caller's fields with what the build ships. The store
+    /// beneath is aimed at a port nothing listens on, so any read of it fails,
+    /// and both still answer. **Paired**: a read of the store's rows fails on the
+    /// same store, so the answers above were not given by a store that was there.
+    #[tokio::test]
+    async fn composing_prose_and_naming_echoed_defaults_need_no_store() {
+        use crate::dolt::memory::DoltMemory;
+        use crate::fold::Folded;
+        let nowhere = sqlx::mysql::MySqlPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(2))
+            .connect_lazy("mysql://root@127.0.0.1:1/nothing-is-there")
+            .expect("a pool that will never answer");
+        let bot = EntityId("bot:gamma".into());
+        let other = EntityId("bot:delta".into());
+        let over = Folded::new(std::sync::Arc::new(Provisioned::new(
+            DoltMemory::open(nowhere),
+            Provisions::new(vec![
+                Provision::prose(bot.clone(), CORE),
+                Provision::field(bot.clone(), "one_liner", "The disposable implementer."),
+            ]),
+        )));
+
+        let composed = over
+            .composed_prose(&bot, "its own line")
+            .await
+            .expect("the prose the build ships is joined to the instance's, no store needed");
+        assert!(
+            composed.contains(CORE) && composed.contains("its own line"),
+            "both halves are joined: {composed}"
+        );
+        assert_eq!(
+            over.composed_prose(&other, " its own line ")
+                .await
+                .expect("a handle the build ships nothing for answers as the store's default does"),
+            "its own line"
+        );
+        let sent = BTreeMap::from([(
+            "one_liner".to_string(),
+            "The disposable implementer.".to_string(),
+        )]);
+        assert_eq!(
+            over.echoed_defaults(&bot, &sent).await,
+            vec!["one_liner".to_string()],
+            "the key equal to the build's default is named, no store needed"
+        );
+        assert!(
+            over.echoed_defaults(&other, &sent).await.is_empty(),
+            "a handle the build ships no default for names none"
+        );
+        assert!(
+            over.list_entities(None).await.is_err(),
+            "the store cannot be reached, so a read of its rows fails: the answers above did not \
+             need it"
+        );
+    }
+
     /// The layer forwards which keys of a record the store holds off the thing.
     #[tokio::test]
     async fn the_layer_forwards_the_keys_a_switched_store_holds_off_a_thing() {

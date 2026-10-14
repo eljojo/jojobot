@@ -45,6 +45,12 @@ pub(super) struct Doc {
     pub backing: BTreeMap<String, FieldBacking>,
     /// `history` of every key and `keys_kept_off_the_thing` of every record.
     pub trails: KeyTrails,
+    /// **The writes of each claim this thing cannot serve**, read when the
+    /// document is filled. The claim sits under a folded key and no event maps
+    /// it, so no ordinary history holds it; its address reads it. A claim whose
+    /// chain could not be read is absent here, and a read of it goes to the
+    /// store, which answers as it can.
+    pub unmapped_histories: HashMap<FactAddress, Vec<ClaimWrite>>,
 }
 
 impl Doc {
@@ -60,6 +66,12 @@ impl Doc {
         let histories = inner.claim_histories(&handle).await?;
         let backing = inner.backing(&handle).await?;
         let trails = inner.key_trails(&handle).await?;
+        let mut unmapped_histories = HashMap::new();
+        for claim in &scan.unmapped {
+            if let Ok(chain) = inner.claim_history(&claim.address).await {
+                unmapped_histories.insert(claim.address.clone(), chain);
+            }
+        }
         Ok(Doc {
             scan,
             fields,
@@ -68,6 +80,7 @@ impl Doc {
             histories,
             backing,
             trails,
+            unmapped_histories,
         })
     }
 
@@ -339,6 +352,52 @@ impl Image {
                 .iter()
                 .any(|claim| &claim.address == address)
         })
+    }
+
+    /// **The writes of a claim some thing cannot serve**, as they were read when
+    /// that thing's document was filled. `None` when no thing names the address,
+    /// or its chain could not be read then.
+    pub fn unmapped_history(&self, address: &FactAddress) -> Option<Vec<ClaimWrite>> {
+        self.docs
+            .values()
+            .find_map(|doc| doc.unmapped_histories.get(address))
+            .cloned()
+    }
+
+    /// **The bots that have written a thought into `thread`**, off the records
+    /// the image holds: a claim on a bot that draws a `connection` edge at the
+    /// thread, whatever has become of the claim. A bot that is archived writes
+    /// nothing, so it is not a writer. A thread nothing answers to, and one
+    /// folded into another, have none; the thread is found as every other read
+    /// finds a thing, by its handle or one it wore.
+    pub fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        jojobot_domain::memory::validate_subject(thread)?;
+        let Some(thread) = self.entity(thread) else {
+            return Ok(Vec::new());
+        };
+        if thread.merged_into.is_some() {
+            return Ok(Vec::new());
+        }
+        // **In the order the store keeps its rows**: by the key each bot is
+        // filed under, which is its badge, or its handle when it has none.
+        let mut bots: Vec<&Entity> = self
+            .entities
+            .iter()
+            .filter(|entity| entity.kind == EntityKind::BOT && entity.archived.is_none())
+            .collect();
+        bots.sort_by_key(|bot| bot.badge.as_deref().unwrap_or(bot.id.as_str()));
+        let mut writers: Vec<EntityId> = Vec::new();
+        for bot in bots {
+            let Some(doc) = self.docs.get(&bot.id) else {
+                continue;
+            };
+            for writer in jojobot_domain::memory::writers_in(&thread.id, &doc.scan.facts) {
+                if !writers.contains(&writer) {
+                    writers.push(writer);
+                }
+            }
+        }
+        Ok(writers)
     }
 
     /// `claim_history`: the writes of one claim, or the miss the store gives —

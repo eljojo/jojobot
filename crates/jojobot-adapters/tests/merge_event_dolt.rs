@@ -152,3 +152,105 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
     );
     server.stop().await;
 }
+
+/// **The writes of a claim a survivor cannot serve are read from the image over
+/// the real store.** A claim lands under the folded key after the merge, so the
+/// event lists no id for it. The fold reads it again at a start, names it as
+/// unmapped, and holds its chain: asking for the address then makes no call to
+/// the store, and the answer is the one the store gives. Paired with the claim
+/// the event does map, which reads through the fold as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_writes_of_an_unmapped_claim_are_read_from_the_image_over_the_real_store() {
+    let dir = std::env::temp_dir().join(format!("jojobot-unmapped-image-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "unmapped_image")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let store = Arc::new(DoltMemory::open(pool.clone()));
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+
+    let survivor = thing(&folded, "person:krusty", "Krusty").await;
+    let gone = thing(&folded, "person:skinner", "Skinner").await;
+    let mapped = say(&folded, &gone, "plays the saxophone").await;
+    folded
+        .merge(
+            &gone,
+            &survivor,
+            Some("filed twice"),
+            date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
+
+    // A claim lands under the folded key past the merge: the event holds no id
+    // for it.
+    let folded_key: String =
+        sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'person:skinner'")
+            .fetch_one(&pool)
+            .await
+            .expect("the folded thing has a key");
+    for statement in [
+        "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+         VALUES (?, 'f9', 'a stray claim', 'inference', 'active', '2026-09-03')",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
+         VALUES (?, 'f9', 1, 'a stray claim', 'inference', 'active', '2026-09-03')",
+    ] {
+        sqlx::query(statement)
+            .bind(&folded_key)
+            .execute(&pool)
+            .await
+            .expect("the stray claim lands");
+    }
+    let stray = FactAddress::new(gone.clone(), jojobot_domain::memory::FactId("f9".into()));
+
+    // The rows were changed past the fold, as a restart finds them.
+    folded.rebuild().await.expect("the fold loads again");
+    assert_eq!(
+        folded
+            .unmapped_claims(&survivor)
+            .await
+            .expect("reads")
+            .iter()
+            .map(|claim| claim.address.clone())
+            .collect::<Vec<_>>(),
+        vec![stray.clone()],
+        "the survivor names the stray claim, so the case reaches the branch"
+    );
+
+    counted.reset();
+    let from_image = folded
+        .claim_history(&stray)
+        .await
+        .expect("the address reads");
+    assert_eq!(
+        counted.calls(),
+        0,
+        "the writes of an unmapped claim reached the store: {:?}",
+        counted.seen()
+    );
+    assert_eq!(
+        from_image,
+        store.claim_history(&stray).await.expect("the store reads"),
+        "the image answers what the store answers"
+    );
+    assert_eq!(from_image.len(), 1, "the claim has its one write");
+
+    // The positive half: the claim the event maps still reads through the fold.
+    assert!(
+        folded.claim_history(&mapped).await.is_ok(),
+        "a claim the event maps is unaffected"
+    );
+    server.stop().await;
+}

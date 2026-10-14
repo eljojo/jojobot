@@ -2191,8 +2191,19 @@ impl Memory for InMemoryMemory {
     /// a case sees it.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         super::super::validate_subject(thread)?;
+        // **The thread is found as every read finds a thing**, by the handle it
+        // wears or one it wore, and a thread nothing answers to has no writers.
+        // The real store resolves it the same way before it reads a claim.
+        let known = self.known();
+        let Some(thread) = super::resolve_handle(thread, &known, &self.former()) else {
+            return Ok(Vec::new());
+        };
         let facts = self.facts_view();
-        Ok(self.writers_among(&facts, thread))
+        // **In the order the real store reads its rows**, by the key each bot is
+        // filed under, whatever order the claims were written in.
+        let mut writers = self.writers_among(&facts, &thread.id);
+        writers.sort_by_key(|bot| self.storage_key(bot));
+        Ok(writers)
     }
 
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {

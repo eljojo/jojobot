@@ -52,8 +52,13 @@ use jojobot_domain::memory::{
 /// A [`Memory`] wrapped in a RAM image of everything its reads answer.
 ///
 /// Every write verb forwards to the store underneath, then brings the image up
-/// to date. Reads the image does not hold yet (`history`, `backing`,
-/// `referring_to` and the rest) forward to the store.
+/// to date. Once the image is filled, every read that reads stored rows is
+/// answered from it, with ONE exception: `entity_history`, the versions of an
+/// entity's own row, which the image does not hold and which goes to the store.
+/// Two reads forward to the layer beneath and read no row at all:
+/// `composed_prose` and `echoed_defaults` join and compare what the build
+/// supplies. Before the first fill, and after a refresh that failed, every read
+/// goes to the store.
 pub struct Folded {
     inner: Arc<dyn Memory>,
     /// The image, once a [`rebuild`](Folded::rebuild) has filled it; `None`
@@ -420,9 +425,14 @@ impl Memory for Folded {
                         None => self.inner.claim_history(address).await,
                     },
                     // **A claim the survivor names as one it cannot serve** is
-                    // read where it is stored, which only the store holds.
+                    // answered from the chain the image read when it filled the
+                    // survivor's document. A chain that could not be read then is
+                    // read where it is stored.
                     _ if self.held(|image| image.names_as_unmapped(address)) == Some(true) => {
-                        self.inner.claim_history(address).await
+                        match self.held(|image| image.unmapped_history(address)) {
+                            Some(Some(chain)) => Ok(chain),
+                            _ => self.inner.claim_history(address).await,
+                        }
                     }
                     _ => Err(merged),
                 }
@@ -432,9 +442,10 @@ impl Memory for Folded {
         }
     }
 
-    /// **Straight through.** The fold's image holds the fields and the claims;
-    /// the versions of an entity's own row are the store's record, and the image
-    /// keeps no copy of them to disagree with.
+    /// **Straight through, and a read of stored rows: the one the image does not
+    /// answer.** The image holds the fields and the claims; the versions of an
+    /// entity's own row are the store's record, every version under every handle
+    /// the thing wore, and the image keeps no copy of them.
     async fn entity_history(
         &self,
         entity: &EntityId,
@@ -589,6 +600,10 @@ impl Memory for Folded {
         }
     }
 
+    /// **Forwarded, and no read of a stored row.** The layer beneath joins the
+    /// prose the build ships to `own`, and a handle the build ships nothing for
+    /// gets the store's default, `own` trimmed. There is no stored row for the
+    /// image to hold.
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
         self.inner.composed_prose(entity, own).await
     }
@@ -615,9 +630,10 @@ impl Memory for Folded {
         }
     }
 
-    /// **Straight through.** Only `Provisioned` beneath this layer holds what
-    /// the build ships, so a default body here would answer "no echoes" for
-    /// every write in production.
+    /// **Forwarded, and no read of a stored row.** Only `Provisioned` beneath
+    /// this layer holds what the build ships, and the comparison is made against
+    /// that, so a default body here would answer "no echoes" for every write in
+    /// production.
     async fn echoed_defaults(
         &self,
         entity: &EntityId,
@@ -667,10 +683,14 @@ impl Memory for Folded {
         }
     }
 
-    /// **Straight through**: asked by a write, inside the transaction that
-    /// decides it, so it is the store's own answer that matters there.
+    /// **Answered from the image**, which holds each bot's records with their
+    /// edges. The store's own check inside a ceiling write is its own and does
+    /// not pass here.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        self.inner.thought_writers(thread).await
+        match self.held(|image| image.thought_writers(thread)) {
+            Some(answer) => answer,
+            None => self.inner.thought_writers(thread).await,
+        }
     }
 
     /// **A declaration can change how EVERY entity's existing writes fold**
@@ -821,6 +841,64 @@ mod tests {
                 .expect("scanned fields ok"),
             "the folded answer must equal the scanned answer"
         );
+    }
+
+    /// **The writes of a claim a survivor cannot serve are answered from the
+    /// image.** The image names such a claim; its writes are read when the
+    /// document is filled, so asking for them makes no call to the store. Paired
+    /// with the answer being the store's own, and non-empty.
+    #[tokio::test]
+    async fn the_writes_of_a_claim_a_survivor_cannot_serve_are_read_from_the_image() {
+        use crate::counted::Counted;
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store.clone()));
+        let folded = Folded::new(counted.clone());
+        folded.rebuild().await.expect("an empty store fills");
+        seeded(&folded, &alpha(), "Alpha").await;
+        seeded(&folded, &beta(), "Beta").await;
+        folded
+            .capture(NewFact::about(beta(), "plays the cornet", date(2026, 9, 1)))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        folded
+            .merge(
+                &beta(),
+                &alpha(),
+                Some("filed twice"),
+                date(2026, 9, 2),
+                &EntityId("bot:sigma".into()),
+                Some("run"),
+            )
+            .await
+            .expect("merge ok");
+        // A claim lands under the folded key past the fold, as damage does; a
+        // restart reads it.
+        let stray = store.stray_claim_under(&beta(), "a stray claim");
+        folded.rebuild().await.expect("the image fills again");
+        assert!(
+            folded.unmapped_claims(&alpha()).await.expect("reads").len() == 1,
+            "the survivor names the stray claim, so the case reaches the branch"
+        );
+
+        counted.reset();
+        let from_image = folded
+            .claim_history(&stray)
+            .await
+            .expect("the address reads");
+        assert_eq!(
+            counted.calls(),
+            0,
+            "the writes of an unmapped claim reached the store: {:?}",
+            counted.seen()
+        );
+        assert_eq!(
+            from_image,
+            store.claim_history(&stray).await.expect("the store reads"),
+            "the image answers what the store answers"
+        );
+        assert_eq!(from_image.len(), 1, "the claim has its one write");
     }
 
     /// **Write-through keeps the fold current, and reordering after a
