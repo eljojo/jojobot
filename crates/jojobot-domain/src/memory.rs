@@ -565,6 +565,16 @@ pub struct FormerHandle {
     pub changed_at: Date,
 }
 
+/// **The entities sitting directly under `parent`**, from an inventory already
+/// read. The one place "whose child is it" is decided: [`Memory::children`] lists
+/// them by handle and the walk counts them for a subject, so the two cannot
+/// disagree about who is whose. `parent` is the current handle of the parent.
+pub fn children_in<'a>(all: &'a [Entity], parent: &EntityId) -> Vec<&'a Entity> {
+    all.iter()
+        .filter(|e| e.parent.as_ref() == Some(parent))
+        .collect()
+}
+
 /// **Resolve a handle that may be stale.** A direct match wins; failing that,
 /// the handle's own rename history is checked, and the entity now wearing
 /// that badge is returned. `None` means nothing — not now, not ever —
@@ -6686,10 +6696,9 @@ pub trait Memory: Send + Sync {
                 });
             }
         };
-        let mut handles: Vec<EntityId> = all
+        let mut handles: Vec<EntityId> = children_in(&all, &resolved)
             .into_iter()
-            .filter(|e| e.parent.as_ref() == Some(&resolved))
-            .map(|e| e.id)
+            .map(|e| e.id.clone())
             .collect();
         handles.sort();
         Ok(handles)

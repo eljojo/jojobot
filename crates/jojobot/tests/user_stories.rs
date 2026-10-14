@@ -172,6 +172,9 @@ mod owed_receipt;
 mod owed_unreadable;
 #[path = "user_stories/paragraphs.rs"]
 mod paragraphs;
+/// A project says it has parts and a leaf says nothing.
+#[path = "user_stories/parent_or_leaf.rs"]
+mod parent_or_leaf;
 /// An edit names the words to change, and only that span changes.
 #[path = "user_stories/partial_edit.rs"]
 mod partial_edit;

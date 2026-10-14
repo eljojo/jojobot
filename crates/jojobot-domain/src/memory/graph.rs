@@ -1561,6 +1561,10 @@ pub struct Selected {
     /// and were not read, because the caller's window began after them. Zero
     /// unless [`walk_in_window`] read a window.
     pub skipped: usize,
+    /// **The direct children of the subject this selection named**, counted off
+    /// the inventory the walk already read, and `None` when it named none. See
+    /// [`ChildCounts`].
+    pub subject_children: Option<ChildCounts>,
     /// **How many selected objects stand after the last one in `objects`** and
     /// were not read, because the window's room was spent before them. Zero
     /// unless [`walk_in_window`] read a window.
@@ -1622,8 +1626,38 @@ pub fn resolve(
         merged_excluded: ctx.merged_excluded(&query.select),
         decisions_archived,
         skipped: 0,
+        subject_children: None,
         left_over: 0,
     })
+}
+
+/// **How many things sit directly under a subject.** The live ones are counted
+/// apart from the archived ones, and a thing folded into another is not a child
+/// of anything any more. Counted off the inventory a walk has already read, so
+/// asking costs no read of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildCounts {
+    /// The parent, by its current handle.
+    pub parent: EntityId,
+    /// Children that stand.
+    pub live: usize,
+    /// Children that were archived.
+    pub archived: usize,
+}
+
+impl ChildCounts {
+    fn of(all: &[Entity], parent: &EntityId) -> ChildCounts {
+        let children: Vec<&Entity> = super::children_in(all, parent)
+            .into_iter()
+            .filter(|child| child.merged_into.is_none())
+            .collect();
+        let archived = children.iter().filter(|c| c.archived.is_some()).count();
+        ChildCounts {
+            parent: parent.clone(),
+            live: children.len() - archived,
+            archived,
+        }
+    }
 }
 
 impl Ctx<'_> {
@@ -3162,6 +3196,9 @@ where
             objects,
             skipped,
             left_over: total - passed,
+            subject_children: resolved_subject
+                .as_ref()
+                .map(|subject| ChildCounts::of(&entities, subject)),
             ..selected
         });
     }
@@ -3258,6 +3295,9 @@ where
     for object in &mut found.objects {
         fill_ages(store, object).await;
     }
+    found.subject_children = resolved_subject
+        .as_ref()
+        .map(|subject| ChildCounts::of(&entities, subject));
     Ok(found)
 }
 

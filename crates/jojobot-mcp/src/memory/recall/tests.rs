@@ -9653,3 +9653,153 @@ async fn a_walked_object_of_a_narrowed_read_carries_none_of_the_identity_fields(
     }
     assert!(walked["narrowed"]["envelope"].is_string(), "{walked}");
 }
+
+// ---------------------------------------------------------------------------
+// A one-subject recall says whether the thing is a parent.
+// ---------------------------------------------------------------------------
+
+/// A piece of work filed directly under `parent`, through the surface.
+async fn child_work(jojobot: &Jojobot, slug: &str, parent: &str) {
+    let result = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some(parent.into()),
+            sid: Some(writing_as(jojobot)),
+            ..add_args("work", slug, slug)
+        }))
+        .await
+        .expect("add_entity call ok");
+    assert_ne!(
+        json_of(&result)["status"],
+        "blocked",
+        "work:{slug} was blocked: {}",
+        json_of(&result)
+    );
+}
+
+/// A project with three live children and one archived, through the surface.
+async fn project_with_children(jojobot: &Jojobot) {
+    crate::memory::testing::ensure(jojobot, "project:atlas").await;
+    for slug in ["sigma", "tau", "kappa", "omega"] {
+        child_work(jojobot, slug, "project:atlas").await;
+    }
+    jojobot
+        .archive_entity(Parameters(ArchiveEntityArgs {
+            request_id: None,
+            handle: "work:omega".into(),
+            reason: "no longer part of the plan".into(),
+            restore: None,
+            sid: Some(writing_as(jojobot)),
+        }))
+        .await
+        .expect("archive ok");
+}
+
+async fn recall_subject(jojobot: &Jojobot, subject: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some(subject.into()),
+                facts: None,
+                sid: Some(writing_as(jojobot)),
+                ..recall_args(subject)
+            }))
+            .await
+            .expect("recall ok"),
+    )
+}
+
+/// **A parent says it is one.** Recall of a project that three pieces of work
+/// sit under, and a fourth that was archived, carries the count of the live
+/// ones, the archived one counted apart, and the call that lists them.
+#[tokio::test]
+async fn a_one_subject_recall_of_a_parent_counts_its_children_and_names_the_call() {
+    let jojobot = crate::harness::handler_shipped();
+    project_with_children(&jojobot).await;
+
+    let body = recall_subject(&jojobot, "project:atlas").await;
+
+    let children = &body["objects"][0]["children"];
+    assert_eq!(children["count"], 3, "{body}");
+    assert_eq!(children["archived"], 1, "{body}");
+    let call = children["how_to_list"]
+        .as_str()
+        .expect("the call that lists them");
+    assert!(
+        call.contains("parent") && call.contains("project:atlas"),
+        "the answer names the parent call: {call}"
+    );
+}
+
+/// **The call the count names returns those children.** The three live ones are
+/// listed, and the archived one is left out and counted.
+#[tokio::test]
+async fn the_parent_call_a_children_count_names_lists_those_children() {
+    let jojobot = crate::harness::handler_shipped();
+    project_with_children(&jojobot).await;
+
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                parent: Some("project:atlas".into()),
+                subject: None,
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("project:atlas")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+
+    assert_eq!(
+        listed(&body),
+        ["work:kappa", "work:sigma", "work:tau"],
+        "{body}"
+    );
+    assert_eq!(body["archived_excluded"], 1, "{body}");
+}
+
+/// **A leaf carries no children.** A piece of work nothing sits under has no
+/// `children` field, rather than a field that says zero.
+#[tokio::test]
+async fn a_one_subject_recall_of_a_leaf_carries_no_children() {
+    let jojobot = crate::harness::handler_shipped();
+    project_with_children(&jojobot).await;
+
+    let body = recall_subject(&jojobot, "work:sigma").await;
+
+    assert!(body["objects"][0].get("children").is_none(), "{body}");
+    assert_eq!(body["objects"][0]["id"], "work:sigma", "{body}");
+}
+
+/// **Only the subject says it is a parent.** A walk from a leaf that reaches the
+/// project carries no child count on the project it reached.
+#[tokio::test]
+async fn a_thing_reached_by_a_walk_does_not_carry_a_child_count() {
+    let jojobot = crate::harness::handler_shipped();
+    project_with_children(&jojobot).await;
+
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("work:sigma".into()),
+                follow: Some(FollowArgs {
+                    shape: None,
+                    relation: Some("parent".into()),
+                    direction: None,
+                    depth: Some(1),
+                    keeping: None,
+                    fits_type: None,
+                }),
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:sigma")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+
+    assert!(
+        !body.to_string().contains("how_to_list"),
+        "nothing in a leaf's answer says it is a parent: {body}"
+    );
+}

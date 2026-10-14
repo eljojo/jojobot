@@ -3178,6 +3178,7 @@ impl Jojobot {
             merged_excluded,
             decisions_archived,
             skipped: walked_past,
+            subject_children,
             left_over: walked_left,
         } = match view_run::select(self.memory.as_ref(), &session_docs, &query, walk_window).await {
             Ok(answer) => answer,
@@ -3657,6 +3658,26 @@ impl Jojobot {
                         asked_prose,
                         elided_bot_has_charter,
                     );
+                    // **A subject that others sit under says so.** The count is
+                    // the walk's, taken off the inventory it had already read, and
+                    // the call that lists them is named, because a caller cannot
+                    // tell a leaf from a parent without it. No child contents and
+                    // no deeper level. Absent when nothing sits under it.
+                    if let Some(children) = subject_children
+                        .as_ref()
+                        .filter(|c| c.parent == o.entity.id && c.live + c.archived > 0)
+                    {
+                        rendered["children"] = serde_json::json!({
+                            "count": children.live,
+                            "archived": children.archived,
+                            "how_to_list": format!(
+                                "recall with parent: \"{}\" lists the {} that stand; the \
+                                 archived ones are left out of that list and counted there \
+                                 under archived_excluded",
+                                o.entity.id, children.live
+                            ),
+                        });
+                    }
                     // **The room's own count, and the pointer that needs no
                     // second call.** Nothing here is a new verb: the facts
                     // above already carry the aged thought, this only

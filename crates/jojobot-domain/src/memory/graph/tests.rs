@@ -4783,3 +4783,53 @@ fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_renam
         "the handle it was saved under still reaches the thing"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Who sits under a subject: live, archived, and folded away.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn children_are_counted_live_and_archived_apart_and_a_folded_one_is_not_counted() {
+    let parent = EntityId("project:atlas".into());
+    let under = |handle: &str| Entity {
+        parent: Some(parent.clone()),
+        ..entity(handle, handle)
+    };
+    let archived = Entity {
+        archived: Some(crate::memory::Archived {
+            reason: "no longer part of the plan".into(),
+            at: "2026-10-01T00:00:00Z".parse().expect("a moment"),
+        }),
+        ..under("work:omega")
+    };
+    let folded = Entity {
+        merged_into: Some(EntityId("work:sigma".into())),
+        ..under("work:tau")
+    };
+    let elsewhere = Entity {
+        parent: Some(EntityId("project:atlas-two".into())),
+        ..entity("work:kappa", "kappa")
+    };
+    let all = vec![
+        entity("project:atlas", "atlas"),
+        under("work:sigma"),
+        under("work:delta"),
+        archived,
+        folded,
+        elsewhere,
+    ];
+
+    let counts = ChildCounts::of(&all, &parent);
+
+    assert_eq!(counts.live, 2, "sigma and delta stand: {counts:?}");
+    assert_eq!(counts.archived, 1, "omega is counted apart: {counts:?}");
+    assert_eq!(
+        ChildCounts::of(&all, &EntityId("work:sigma".into())),
+        ChildCounts {
+            parent: EntityId("work:sigma".into()),
+            live: 0,
+            archived: 0
+        },
+        "a leaf has none"
+    );
+}
