@@ -3428,7 +3428,7 @@ impl Memory for InMemoryMemory {
         // **The writes that stay on their record**, as the real store keeps them:
         // each with the moment the store stamped, oldest first within a key.
         {
-            let folded = self.keys_folded_into(&storage_key);
+            let folded = self.keys_folded_into(&storage_key)?;
             let is_folded = self
                 .merges
                 .lock()
