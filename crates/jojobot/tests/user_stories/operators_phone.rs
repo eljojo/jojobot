@@ -152,7 +152,11 @@ async fn a_message_for_the_operator_reaches_their_phone_with_its_subject_sender_
     assert!(!published[0].body.to_string().contains(TOKEN));
 
     // The push took nothing out of the box: the message is still waiting there.
-    assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0), "{id}");
+    assert_eq!(
+        story.box_counts_on_the_page("person:lisa").await,
+        (1, 0, 0),
+        "{id}"
+    );
 }
 
 /// **Every way into the operator's box wakes the push, not only the verb that
@@ -185,7 +189,7 @@ async fn a_code_asked_for_at_the_door_reaches_the_phone_with_no_other_post() {
         "the push carries the code's message: {published:?}"
     );
     assert_eq!(
-        story.mail_held_by("person:lisa").await,
+        story.box_counts_on_the_page("person:lisa").await,
         (1, 0, 0),
         "the code is the one message in the box"
     );
@@ -209,7 +213,7 @@ async fn the_server_down_and_then_up_delivers_the_message_once() {
         "the post succeeds while the server is down"
     );
     assert_eq!(
-        story.mail_held_by("person:lisa").await,
+        story.box_counts_on_the_page("person:lisa").await,
         (1, 0, 0),
         "the message landed whatever the push did"
     );
@@ -271,7 +275,7 @@ async fn a_push_that_never_goes_out_is_logged_naming_the_message_and_the_message
     );
     assert!(ntfy.published().is_empty());
     assert_eq!(
-        story.mail_held_by("person:lisa").await,
+        story.box_counts_on_the_page("person:lisa").await,
         (1, 0, 0),
         "the message is still in the operator's box"
     );
@@ -311,7 +315,7 @@ async fn an_instance_with_no_push_service_pushes_nothing_and_logs_nothing_about_
         json!({"to": "person:lisa", "subject": "the lease", "body": "it is signed"}),
     )
     .await;
-    assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
+    assert_eq!(story.box_counts_on_the_page("person:lisa").await, (1, 0, 0));
     tokio::time::sleep(Duration::from_millis(200)).await;
     let text = logged.text().to_lowercase();
     assert!(
@@ -322,6 +326,28 @@ async fn an_instance_with_no_push_service_pushes_nothing_and_logs_nothing_about_
         !text.contains("ntfy"),
         "a word about ntfy was logged: {text}"
     );
+
+    // **The positive the silence rests on**: the same capture, on an instance
+    // that is set up to push and cannot reach its server, does carry a line
+    // about the push. Without it, an empty log would read the same on a capture
+    // that never saw the server's events.
+    let ntfy = FakeNtfy::start().await;
+    ntfy.go_down();
+    let short = Policy {
+        window: Duration::from_millis(300),
+        ..QUICK
+    };
+    let (_pushing, other) = pushing_to(&ntfy, short).await;
+    other
+        .call(
+            "post_message",
+            json!({"to": "person:lisa", "subject": "the lease", "body": "it is signed"}),
+        )
+        .await;
+    eventually("the push was given up on", || {
+        logged.text().contains("A PUSH NEVER WENT OUT")
+    })
+    .await;
 }
 
 /// A body of `bytes` bytes of plain text. One letter and a space, so a cut at
@@ -444,7 +470,7 @@ async fn a_server_that_refuses_the_file_is_sent_the_readable_part_alone_once_and
         );
         assert!(text.len() <= 4096);
         assert_eq!(
-            story.mail_held_by("person:lisa").await,
+            story.box_counts_on_the_page("person:lisa").await,
             (1, 0, 0),
             "the whole message stays in the box"
         );
@@ -596,6 +622,6 @@ async fn a_restart_past_a_pushs_window_gives_it_up_aloud_and_the_message_stays()
         ntfy.published().is_empty(),
         "a push past its window is not sent late"
     );
-    assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
+    assert_eq!(story.box_counts_on_the_page("person:lisa").await, (1, 0, 0));
     restarted.stop_pushing();
 }

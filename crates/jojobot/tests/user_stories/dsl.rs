@@ -992,6 +992,39 @@ impl Story {
             })
     }
 
+    /// **How many messages a person's box holds in each state**, `(new, read,
+    /// processed)`, read off the box's own page the way its owner reads it.
+    /// A story uses it for what a verb cannot say of itself: that a refusal
+    /// left the box as it was and that a post landed. A box nobody has posted to
+    /// has no section on the page and counts as empty.
+    pub async fn box_counts_on_the_page(&self, owner: &str) -> (usize, usize, usize) {
+        let page = self.page(owner).await;
+        let raw = page.raw();
+        if !raw.contains("<h2>Mailbox ") {
+            return (0, 0, 0);
+        }
+        let end = raw
+            .find(" processed.</p>")
+            .unwrap_or_else(|| panic!("the box section carries no counts: {raw}"));
+        let start = raw[..end]
+            .rfind("<p>")
+            .unwrap_or_else(|| panic!("the box counts are not in a paragraph: {raw}"))
+            + 3;
+        let counts: Vec<usize> = raw[start..end]
+            .split(", ")
+            .map(|part| {
+                part.split_whitespace()
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or_else(|| panic!("a box count is not a number: {part:?} in {raw}"))
+            })
+            .collect();
+        match counts[..] {
+            [new, read, processed] => (new, read, processed),
+            _ => panic!("the box counts are not three numbers: {counts:?} in {raw}"),
+        }
+    }
+
     /// **What a person's box holds, oldest first, as `(subject, body)`**, read
     /// from the mail store itself the way the operator's own page reads it. No
     /// bot has a verb that does this, so the story reaches past the surface, as

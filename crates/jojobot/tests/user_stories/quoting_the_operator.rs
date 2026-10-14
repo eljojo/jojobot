@@ -76,7 +76,7 @@ async fn a_quote_of_an_inference_is_refused_naming_the_address_and_the_same_post
         .guess("topic:instance", "probably prefers the east wall")
         .await;
 
-    let held = story.mail_held_by("person:lisa").await;
+    let held = story.box_counts_on_the_page("person:lisa").await;
     s.refused(
         "post_message",
         json!({"to": "person:lisa", "body": format!("You said @{guessed}.")}),
@@ -85,7 +85,7 @@ async fn a_quote_of_an_inference_is_refused_naming_the_address_and_the_same_post
     .says(&guessed)
     .says("testimony");
     assert_eq!(
-        story.mail_held_by("person:lisa").await,
+        story.box_counts_on_the_page("person:lisa").await,
         held,
         "the refused post wrote nothing"
     );
@@ -101,7 +101,7 @@ async fn a_quote_of_an_inference_is_refused_naming_the_address_and_the_same_post
 
     // ── the pair: the same post without the address lands ───────────────────
     post_to_the_operator(&s, "You may prefer the east wall.").await;
-    assert_ne!(story.mail_held_by("person:lisa").await, held);
+    assert_ne!(story.box_counts_on_the_page("person:lisa").await, held);
 
     story.finish().await;
 }
@@ -115,7 +115,7 @@ async fn an_address_shown_in_code_is_posted_as_written_and_the_same_address_outs
     let (story, s, said) = with_an_operator().await;
 
     // ── inside code: an address naming nothing lands, where outside it is refused
-    let held = story.mail_held_by("person:lisa").await;
+    let held = story.box_counts_on_the_page("person:lisa").await;
     s.refused(
         "post_message",
         json!({"to": "person:lisa", "body": "You said @topic:instance#f9999."}),
@@ -124,7 +124,7 @@ async fn an_address_shown_in_code_is_posted_as_written_and_the_same_address_outs
     .says("topic:instance#f9999");
     post_to_the_operator(&s, "Write the form as `@topic:instance#f9999`.").await;
     assert_ne!(
-        story.mail_held_by("person:lisa").await,
+        story.box_counts_on_the_page("person:lisa").await,
         held,
         "the post that shows the form landed"
     );
@@ -180,13 +180,13 @@ async fn a_body_under_the_ceiling_before_expansion_and_over_it_after_is_refused(
     post_to_the_operator(&s, &format!("@{big}")).await;
 
     // Three expansions of it do not fit, though the body is a few dozen characters.
-    let held = story.mail_held_by("person:lisa").await;
+    let held = story.box_counts_on_the_page("person:lisa").await;
     let body = format!("@{big} @{big} @{big}");
     assert!(body.len() < 200, "the body is short before expansion");
     s.refused("post_message", json!({"to": "person:lisa", "body": body}))
         .await
         .says("Split it");
-    assert_eq!(story.mail_held_by("person:lisa").await, held);
+    assert_eq!(story.box_counts_on_the_page("person:lisa").await, held);
 
     story.finish().await;
 }
