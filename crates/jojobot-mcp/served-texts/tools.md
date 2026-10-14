@@ -2256,7 +2256,7 @@ read_document returns the file byte for byte; update_fact edits one section and 
 A section too long for one record is cut at the last blank line that fits.
 The document must already exist (add_entity, kind document).
 Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
-`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` with `as_of` showed it: sections that differ get a new write with their old wording, one archived since comes back as a new record naming it, one made since is archived, and nothing in the history is rewritten; over testimony it needs `confirmed_by_user`.
+`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` showed it at that moment: sections that differ get a new write with their old wording, one archived since comes back as a new record naming it, one made since is archived, and nothing in the history is rewritten; over testimony it needs `confirmed_by_user`.
 Every section is checked before any is written; a write that stops midway answers with the addresses that landed and where the rest begins.
 Answers with a receipt, not the text.
 The receipt's `changed` lists what this call changed, or says nothing.
