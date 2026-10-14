@@ -122,6 +122,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0082_fact_write_stands_for",
     "0083_message_event",
     "0086_push_attempt",
+    "0087_charter_change_write",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

@@ -683,6 +683,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0086_push_attempt.sql"),
         leaves: Leaves::Table("push_attempt"),
     },
+    Migration {
+        version: "0087_charter_change_write",
+        sql: include_str!("../../migrations/0087_charter_change_write.sql"),
+        leaves: Leaves::Table("charter_change_write"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

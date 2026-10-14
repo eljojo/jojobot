@@ -506,8 +506,9 @@ impl jojobot_domain::session::Sessions for UnreachableRuns {
         &self,
         bot: &EntityId,
         change: jojobot_domain::session::CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.note_charter_change(bot, change).await
+        self.0.note_charter_change(bot, change, by_session).await
     }
     async fn charter_change_of(
         &self,

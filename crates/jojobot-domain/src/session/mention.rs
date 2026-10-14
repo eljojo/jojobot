@@ -399,13 +399,14 @@ impl Sessions for Mentioning {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
         let known = self.known().await?;
         let former = self.former().await?;
         let key = Self::storage_key_for(bot, &known, &former);
         let by = Self::storage_key_for(&change.by, &known, &former);
         self.inner
-            .note_charter_change(&key, CharterChange { by, at: change.at })
+            .note_charter_change(&key, CharterChange { by, at: change.at }, by_session)
             .await
     }
 

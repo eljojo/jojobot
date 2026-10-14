@@ -3462,6 +3462,7 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
         _: &EntityId,
         _: jojobot_domain::session::CharterChange,
+        _: Option<&str>,
     ) -> Result<(), jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }

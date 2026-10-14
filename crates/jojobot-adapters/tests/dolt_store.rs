@@ -111,7 +111,7 @@ async fn dolt_satisfies_the_session_contract() {
         .await
         .expect("the store comes up");
 
-    const ROOM: usize = 32;
+    const ROOM: usize = 36;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
         let pool = migrated_database(&store, &format!("case{n}"))
@@ -137,6 +137,87 @@ async fn dolt_satisfies_the_session_contract() {
 
     sessions::run_all(fresh).await;
 
+    store.stop().await;
+}
+
+/// **Every charter change is kept, in the order it was made, whoever made it.**
+/// A change by another identity and then one by the bot itself leave two rows,
+/// each naming who changed it and from which run. The table the reads answer
+/// from still holds the change by another alone.
+#[tokio::test]
+async fn a_charter_changed_by_another_bot_and_then_by_the_bot_itself_leaves_two_rows() {
+    let scratch = Scratch::new("charter-writes");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "charter_writes")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions = DoltSessions::open(pool.clone());
+    let bart = EntityId("bot:bart".into());
+    let lisa = EntityId("bot:lisa".into());
+    let by_lisa = sessions::epoch() + jiff::SignedDuration::from_secs(100);
+    let by_homer = sessions::epoch() + jiff::SignedDuration::from_secs(200);
+
+    sessions
+        .note_charter_change(
+            &bart,
+            jojobot_domain::session::CharterChange {
+                by: lisa.clone(),
+                at: by_lisa,
+            },
+            Some("run-lisa"),
+        )
+        .await
+        .expect("another identity's change is kept");
+    sessions
+        .note_charter_change(
+            &bart,
+            jojobot_domain::session::CharterChange {
+                by: bart.clone(),
+                at: by_homer,
+            },
+            Some("run-bart"),
+        )
+        .await
+        .expect("the bot's own change is kept");
+
+    let rows: Vec<(String, i32, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT bot, ordinal, changed_by, changed_by_session, changed_at
+         FROM charter_change_write ORDER BY bot, ordinal",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    let moments: Vec<jiff::Timestamp> = rows
+        .iter()
+        .map(|row| row.4.parse().expect("a stored moment"))
+        .collect();
+    assert_eq!(
+        rows.iter()
+            .map(|(bot, ordinal, by, session, _)| (
+                bot.as_str(),
+                *ordinal,
+                by.as_str(),
+                session.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("bot:bart", 1, "bot:lisa", Some("run-lisa")),
+            ("bot:bart", 2, "bot:bart", Some("run-bart")),
+        ]
+    );
+    assert_eq!(moments, vec![by_lisa, by_homer]);
+    assert_eq!(
+        sessions.charter_change_of(&bart).await.expect("read ok"),
+        Some(jojobot_domain::session::CharterChange {
+            by: lisa,
+            at: by_lisa
+        }),
+        "the read still answers with the change by another"
+    );
     store.stop().await;
 }
 

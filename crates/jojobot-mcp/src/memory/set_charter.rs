@@ -94,21 +94,22 @@ impl Jojobot {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
         };
-        // **Another identity's rewrite is kept, so the bot's running sessions can
-        // be told.** A bot rewriting its own charter needs no notice and writes
-        // nothing. A write that cannot be kept is logged and does not undo the
-        // charter, which has landed.
-        if caller.bot != bot
-            && let Err(e) = self
-                .sessions
-                .note_charter_change(
-                    &bot,
-                    jojobot_domain::session::CharterChange {
-                        by: caller.bot.clone(),
-                        at: self.clock().now(),
-                    },
-                )
-                .await
+        // **Every rewrite is kept, so the bot's running sessions can be told of
+        // another identity's.** The store tells a bot's own rewrite apart: it
+        // needs no notice and replaces nothing the sessions are told from. A
+        // write that cannot be kept is logged and does not undo the charter,
+        // which has landed.
+        if let Err(e) = self
+            .sessions
+            .note_charter_change(
+                &bot,
+                jojobot_domain::session::CharterChange {
+                    by: caller.bot.clone(),
+                    at: self.clock().now(),
+                },
+                Some(caller.sid.as_str()),
+            )
+            .await
         {
             tracing::warn!(error = %e, bot = %bot, "a charter change could not be kept");
         }

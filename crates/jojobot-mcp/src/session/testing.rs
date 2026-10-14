@@ -280,8 +280,11 @@ impl Sessions for CommitsThenFails {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.inner.note_charter_change(bot, change).await
+        self.inner
+            .note_charter_change(bot, change, by_session)
+            .await
     }
 
     async fn charter_change_of(
@@ -406,8 +409,9 @@ impl Sessions for RefusingFocus {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.0.note_charter_change(bot, change).await
+        self.0.note_charter_change(bot, change, by_session).await
     }
 
     async fn charter_change_of(
@@ -509,8 +513,9 @@ impl Sessions for RefusingWindowClear {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.0.note_charter_change(bot, change).await
+        self.0.note_charter_change(bot, change, by_session).await
     }
 
     async fn charter_change_of(
@@ -675,8 +680,11 @@ impl Sessions for Refusing {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.inner.note_charter_change(bot, change).await
+        self.inner
+            .note_charter_change(bot, change, by_session)
+            .await
     }
 
     async fn charter_change_of(
@@ -833,8 +841,11 @@ impl Sessions for CountingSessions {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.inner.note_charter_change(bot, change).await
+        self.inner
+            .note_charter_change(bot, change, by_session)
+            .await
     }
 
     async fn charter_change_of(
@@ -933,8 +944,9 @@ impl Sessions for RefusingAppend {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.0.note_charter_change(bot, change).await
+        self.0.note_charter_change(bot, change, by_session).await
     }
 
     async fn charter_change_of(
@@ -1095,8 +1107,11 @@ impl Sessions for RefusingClose {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.inner.note_charter_change(bot, change).await
+        self.inner
+            .note_charter_change(bot, change, by_session)
+            .await
     }
 
     async fn charter_change_of(
@@ -1216,8 +1231,9 @@ impl Sessions for Yielding {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.0.note_charter_change(bot, change).await
+        self.0.note_charter_change(bot, change, by_session).await
     }
 
     async fn charter_change_of(

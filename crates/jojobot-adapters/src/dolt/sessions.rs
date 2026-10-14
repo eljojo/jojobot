@@ -1158,18 +1158,44 @@ impl Sessions for DoltSessions {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let held: Option<i32> =
+            sqlx::query_scalar("SELECT MAX(ordinal) FROM charter_change_write WHERE bot = ?")
+                .bind(bot.as_str())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(store)?;
         sqlx::query(
-            "INSERT INTO charter_change (bot, changed_by, changed_at) VALUES (?, ?, ?) \
-             ON DUPLICATE KEY UPDATE changed_by = VALUES(changed_by), \
-             changed_at = VALUES(changed_at)",
+            "INSERT INTO charter_change_write
+               (bot, ordinal, changed_by, changed_by_session, changed_at)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(bot.as_str())
+        .bind(held.unwrap_or(0) + 1)
         .bind(change.by.as_str())
+        .bind(by_session)
         .bind(stamp(change.at))
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(store)?;
+        // A bot's own rewrite is kept above and replaces nothing here: the
+        // reads answer with the newest change by another identity.
+        if change.by != *bot {
+            sqlx::query(
+                "INSERT INTO charter_change (bot, changed_by, changed_at) VALUES (?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE changed_by = VALUES(changed_by), \
+                 changed_at = VALUES(changed_at)",
+            )
+            .bind(bot.as_str())
+            .bind(change.by.as_str())
+            .bind(stamp(change.at))
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        }
+        tx.commit().await.map_err(store)?;
         Ok(())
     }
 

@@ -400,11 +400,14 @@ impl Sessions for InMemorySessions {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        _by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.charter_changes
-            .lock()
-            .expect("charter change lock")
-            .insert(bot.clone(), change);
+        if change.by != *bot {
+            self.charter_changes
+                .lock()
+                .expect("charter change lock")
+                .insert(bot.clone(), change);
+        }
         Ok(())
     }
 
@@ -1844,6 +1847,7 @@ pub mod contract {
                     by: delta.clone(),
                     at: at(100),
                 },
+                None,
             )
             .await
             .expect("a change is kept");
@@ -1869,6 +1873,7 @@ pub mod contract {
                     by: sigma.clone(),
                     at: at(200),
                 },
+                None,
             )
             .await
             .expect("the next change replaces it");
@@ -1879,6 +1884,65 @@ pub mod contract {
                 at: at(200)
             }),
             "only the newest change is kept"
+        );
+    }
+
+    /// **A bot's own rewrite is not the change another identity made.** It
+    /// leaves the newest change by another standing, and on a bot nobody else
+    /// rewrote it leaves none to read.
+    pub async fn a_bots_own_rewrite_leaves_the_newest_change_by_another_standing(
+        store: &dyn Sessions,
+    ) {
+        let gamma = EntityId("bot:gamma".into());
+        let sigma = EntityId("bot:sigma".into());
+        let delta = EntityId("bot:delta".into());
+
+        store
+            .note_charter_change(
+                &sigma,
+                CharterChange {
+                    by: sigma.clone(),
+                    at: at(50),
+                },
+                None,
+            )
+            .await
+            .expect("an own rewrite is kept");
+        assert_eq!(
+            store.charter_change_of(&sigma).await.expect("read ok"),
+            None,
+            "a bot nobody else rewrote has no change to be told of"
+        );
+
+        store
+            .note_charter_change(
+                &gamma,
+                CharterChange {
+                    by: delta.clone(),
+                    at: at(100),
+                },
+                None,
+            )
+            .await
+            .expect("another identity's change is kept");
+        store
+            .note_charter_change(
+                &gamma,
+                CharterChange {
+                    by: gamma.clone(),
+                    at: at(200),
+                },
+                None,
+            )
+            .await
+            .expect("an own rewrite is kept");
+        assert_eq!(
+            store.charter_change_of(&gamma).await.expect("read ok"),
+            Some(CharterChange {
+                by: delta,
+                at: at(100)
+            }),
+            "the change by another stands after the bot rewrote its own"
         );
     }
 
@@ -2069,6 +2133,7 @@ pub mod contract {
         a_wrapped_runs_window_is_stored_read_back_and_cleared(&fresh()).await;
         an_open_window_lets_a_wrapped_run_write_and_the_second_close_ends_it(&fresh()).await;
         a_charter_change_is_kept_per_bot_and_the_newest_replaces_it(&fresh()).await;
+        a_bots_own_rewrite_leaves_the_newest_change_by_another_standing(&fresh()).await;
         the_moment_a_charter_was_handed_over_is_stored_and_can_be_moved(&fresh()).await;
     }
 }

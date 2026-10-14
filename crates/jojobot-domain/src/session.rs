@@ -1422,22 +1422,27 @@ pub trait Sessions: Send + Sync {
     /// [`SessionError::UnknownSession`] on a card that does not exist.
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError>;
 
-    /// **Keep that another identity rewrote `bot`'s charter**, and when. One
-    /// record per bot, rewritten in place by the next change: the question it
-    /// answers is whether the charter changed since a session was last handed
-    /// it, and only the newest change can answer that.
+    /// **Keep that `bot`'s charter was rewritten**, by whom, from which run
+    /// (`by_session`, the run's public name) and when. Every change is kept, in
+    /// the order it was made, the bot's own included.
+    ///
+    /// What [`Self::charter_change_of`] answers is one record per bot, the newest
+    /// change by ANOTHER identity, rewritten in place by the next such change:
+    /// the question it answers is whether the charter changed since a session
+    /// was last handed it, and only the newest change can answer that.
     ///
     /// Kept by the store and not by the process: a session outlives a restart,
     /// so a change recorded only in memory would be lost on the deploy that
     /// follows it, and the session would work to the old text with nothing to
     /// say so.
     ///
-    /// A change by the bot's own identity is never written here: its own
-    /// rewrite needs no notice.
+    /// A change by the bot's own identity is kept with the rest and replaces
+    /// nothing the reads answer with: its own rewrite needs no notice.
     async fn note_charter_change(
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError>;
 
     /// The newest charter change another identity made to `bot`, or `None` when
@@ -2555,8 +2560,9 @@ mod tests {
                 &self,
                 bot: &EntityId,
                 change: CharterChange,
+                by_session: Option<&str>,
             ) -> Result<(), SessionError> {
-                self.0.note_charter_change(bot, change).await
+                self.0.note_charter_change(bot, change, by_session).await
             }
             async fn charter_change_of(
                 &self,

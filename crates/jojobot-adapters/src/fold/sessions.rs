@@ -433,11 +433,18 @@ impl Sessions for FoldedSessions {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
         let _gate = self.writing.lock().await;
-        self.inner.note_charter_change(bot, change.clone()).await?;
+        self.inner
+            .note_charter_change(bot, change.clone(), by_session)
+            .await?;
         self.follow("note_charter_change", |image| {
-            image.charter_changes.insert(bot.clone(), change);
+            // The store keeps a bot's own rewrite apart from the change the
+            // reads answer with, and the image follows the store.
+            if change.by != *bot {
+                image.charter_changes.insert(bot.clone(), change);
+            }
             true
         })
         .await;

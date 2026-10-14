@@ -341,6 +341,7 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
             by: bot("lisa"),
             at: at(80),
         },
+        None,
     )
     .await
     .expect("note_charter_change");
@@ -352,6 +353,7 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
             by: bot("bart"),
             at: at(90),
         },
+        None,
     )
     .await
     .expect("note_charter_change again");
@@ -361,11 +363,25 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
             by: bot("bart"),
             at: at(91),
         },
+        None,
     )
     .await
     .expect("a change to a bot with no run");
     p.agree("after a second change to one bot and one to a bot with no run")
         .await;
+    // A bot rewriting its own charter replaces nothing the reads answer with,
+    // in the image as in the store.
+    w.note_charter_change(
+        &bot("homer"),
+        CharterChange {
+            by: bot("homer"),
+            at: at(95),
+        },
+        None,
+    )
+    .await
+    .expect("a bot's own rewrite");
+    p.agree("after a bot rewrote its own charter").await;
 
     // A run abandoned, taken back, then wrapped, with the window reopened.
     let bart = SessionId("bbbbb1".into());

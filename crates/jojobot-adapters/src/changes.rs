@@ -315,8 +315,11 @@ impl Sessions for SessionChanges {
         &self,
         bot: &EntityId,
         change: CharterChange,
+        by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        self.inner.note_charter_change(bot, change).await
+        self.inner
+            .note_charter_change(bot, change, by_session)
+            .await
     }
 
     async fn charter_change_of(
