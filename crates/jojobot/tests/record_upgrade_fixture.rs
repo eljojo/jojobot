@@ -71,7 +71,8 @@ async fn record_the_upgrade_fixture() {
 
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout));
-    let served = tokio::time::timeout(Duration::from_secs(20), async {
+    let boot_began = std::time::Instant::now();
+    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
@@ -87,7 +88,10 @@ async fn record_the_upgrade_fixture() {
     .unwrap_or(false);
     assert!(
         served,
-        "the old binary at {git_ref} did not reach its own serving line"
+        "the old binary at {git_ref} did not reach its own serving line after {:?} (a boot is \
+         given {:?})",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT
     );
     // **Keep reading.** The binary logs to the pipe for as long as it runs, and
     // a pipe nobody reads fills, after which the binary blocks inside a write

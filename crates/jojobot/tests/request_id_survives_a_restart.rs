@@ -5,7 +5,6 @@
 //! binary, start it again over the same store, and send the write again.
 
 use std::process::Stdio;
-use std::time::Duration;
 
 use jojobot_adapters::testing::free_port;
 use serde_json::{Value, json};
@@ -47,7 +46,8 @@ async fn running(
         .expect("the binary runs");
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
-    let served = tokio::time::timeout(Duration::from_secs(90), async {
+    let boot_began = std::time::Instant::now();
+    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if line.contains("serving http://") {
                 return true;
@@ -57,7 +57,12 @@ async fn running(
     })
     .await
     .unwrap_or(false);
-    assert!(served, "the binary never reached its serving line");
+    assert!(
+        served,
+        "the binary never reached its serving line after {:?} (a boot is given {:?})",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT
+    );
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
             .await

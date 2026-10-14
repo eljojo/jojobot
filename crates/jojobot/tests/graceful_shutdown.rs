@@ -46,9 +46,11 @@ impl Drop for Server {
     }
 }
 
-/// How long a case waits for the server to start. The store is built from
-/// nothing, so this is long; a wait ends the moment the line comes.
-const PATIENCE: Duration = Duration::from_secs(120);
+/// How long a case waits for the server to answer a request it has sent, after
+/// the server is up. This is no boot: a boot is given
+/// [`jojobot_exercise::room::READY_TIMEOUT`], the value every test that boots the
+/// real binary uses.
+const READ_PATIENCE: Duration = Duration::from_secs(120);
 
 /// How long a closed log waits for the process to be gone before the failure
 /// calls it running. A process that closed its log is on its way out; a server
@@ -100,7 +102,7 @@ fn start(name: &str) -> Running {
         .spawn()
         .expect("the binary runs");
     let mut running = watch(child, http_port, stderr_path, scratch);
-    running.wait_for_line("serving http://", PATIENCE);
+    running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
     running
 }
 
@@ -144,6 +146,7 @@ fn watch(
 impl Running {
     /// Wait for a line of the server's log that holds `needle`.
     fn wait_for_line(&mut self, needle: &str, patience: Duration) {
+        let began = Instant::now();
         loop {
             match self.lines.recv_timeout(patience) {
                 Ok(line) => {
@@ -154,8 +157,9 @@ impl Running {
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => panic!(
-                    "the server said nothing for {patience:?} and never said {needle:?}. What it \
-                     said:\n{}",
+                    "the server said nothing for {patience:?} and never said {needle:?}; it had \
+                     been {:?} since the wait began. What it said:\n{}",
+                    began.elapsed(),
                     self.seen.join("\n")
                 ),
                 Err(mpsc::RecvTimeoutError::Disconnected) => panic!(
@@ -232,7 +236,8 @@ impl Running {
     fn open_a_call(&self, path: &str, method: &str, extra: &str, length: usize) -> TcpStream {
         let mut call =
             TcpStream::connect(("127.0.0.1", self.http_port)).expect("the server answers");
-        call.set_read_timeout(Some(PATIENCE)).expect("a timeout");
+        call.set_read_timeout(Some(READ_PATIENCE))
+            .expect("a timeout");
         let head = format!(
             "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{extra}Content-Length: {length}\r\n\
              Expect: 100-continue\r\nConnection: close\r\n\r\n",
@@ -354,7 +359,9 @@ fn a_stream_held_open_is_cut_when_the_drain_window_ends() {
     // is open.
     let mut stream =
         TcpStream::connect(("127.0.0.1", running.http_port)).expect("the server answers");
-    stream.set_read_timeout(Some(PATIENCE)).expect("a timeout");
+    stream
+        .set_read_timeout(Some(READ_PATIENCE))
+        .expect("a timeout");
     let get = format!(
         "GET /mcp HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: text/event-stream\r\n\
          mcp-session-id: {session}\r\nConnection: close\r\n\r\n",
@@ -420,7 +427,7 @@ fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
 
     let started = Instant::now();
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        running.wait_for_line("serving http://", PATIENCE);
+        running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
     }))
     .expect_err("a server that never serves is a failure");
     let said = panic
@@ -461,7 +468,7 @@ fn a_server_that_closes_its_log_and_exits_a_moment_later_is_reported_with_its_ex
     let mut running = watch(child, 0, stderr_path, scratch);
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        running.wait_for_line("serving http://", PATIENCE);
+        running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
     }))
     .expect_err("a server that never serves is a failure");
     let said = panic

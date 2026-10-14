@@ -9,7 +9,6 @@
 //! loop touches. **Paired**: a read the loop does not touch answers as before.
 
 use std::process::Stdio;
-use std::time::Duration;
 
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
@@ -159,7 +158,8 @@ async fn every_read_a_stored_merge_loop_touches_is_answered_as_damage_a_person_r
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
     let mut seen = Vec::new();
-    let served = tokio::time::timeout(Duration::from_secs(60), async {
+    let boot_began = std::time::Instant::now();
+    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
@@ -181,7 +181,10 @@ async fn every_read_a_stored_merge_loop_touches_is_answered_as_damage_a_person_r
     }
     assert!(
         served,
-        "the server did not serve over a store holding a merge loop:\n{}",
+        "the server did not serve over a store holding a merge loop after {:?} (a boot is given \
+         {:?}):\n{}",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT,
         seen.join("\n")
     );
 

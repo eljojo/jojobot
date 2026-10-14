@@ -77,6 +77,8 @@ struct Served {
     said_it_was_serving: bool,
     /// The address accepted a connection.
     answered: bool,
+    /// How long the server was given before the wait ended.
+    waited: Duration,
 }
 
 /// Run the real binary with `RUST_LOG` set to exactly `filter` and nothing else
@@ -123,7 +125,8 @@ fn serve_under_on(filter: &str, name: &str, http_port: u16) -> Served {
         })
     };
 
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let boot_began = Instant::now();
+    let deadline = boot_began + jojobot_exercise::room::READY_TIMEOUT;
     let mut answered = false;
     while Instant::now() < deadline {
         if server.try_wait().expect("checking the server").is_some() {
@@ -140,6 +143,7 @@ fn serve_under_on(filter: &str, name: &str, http_port: u16) -> Served {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    let waited = boot_began.elapsed();
     // The line is printed right after the listener binds. A short grace lets it
     // arrive, and the wait ends the moment it does.
     let grace = Instant::now() + Duration::from_secs(3);
@@ -153,6 +157,7 @@ fn serve_under_on(filter: &str, name: &str, http_port: u16) -> Served {
     Served {
         said_it_was_serving: said.load(Ordering::SeqCst),
         answered,
+        waited,
     }
 }
 
@@ -163,7 +168,9 @@ fn an_empty_log_filter_leaves_the_serving_line_in_place() {
     let served = serve_under("", "jojobot-empty-log-filter");
     assert!(
         served.answered,
-        "the server never answered, so the line cannot be judged"
+        "the server never answered after {:?} (a boot is given {:?}), so the line cannot be judged",
+        served.waited,
+        jojobot_exercise::room::READY_TIMEOUT
     );
     assert!(
         served.said_it_was_serving,
@@ -178,7 +185,10 @@ fn a_non_empty_log_filter_is_still_honoured() {
     let served = serve_under("warn", "jojobot-warn-log-filter");
     assert!(
         served.answered,
-        "the server never answered, so the absence below says nothing"
+        "the server never answered after {:?} (a boot is given {:?}), so the absence below says \
+         nothing",
+        served.waited,
+        jojobot_exercise::room::READY_TIMEOUT
     );
     assert!(
         !served.said_it_was_serving,

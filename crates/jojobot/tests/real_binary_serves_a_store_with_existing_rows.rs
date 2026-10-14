@@ -16,7 +16,6 @@
 //! crash-looping on a store that was perfectly fine.
 
 use std::process::Stdio;
-use std::time::Duration;
 
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -94,7 +93,8 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
     let mut lines = tokio::io::BufReader::new(stdout).lines();
 
     let mut seen = Vec::new();
-    let served = tokio::time::timeout(Duration::from_secs(20), async {
+    let boot_began = std::time::Instant::now();
+    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
@@ -117,9 +117,11 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
     }
     assert!(
         served,
-        "the real server did not reach its own serving line, against a store holding a row it \
-         did not itself write — this is the exact class of the crash-loop this suite exists to \
-         catch. What it said instead:\n{}",
+        "the real server did not reach its own serving line after {:?} (a boot is given {:?}), \
+         against a store holding a row it did not itself write — this is the exact class of the \
+         crash-loop this suite exists to catch. What it said instead:\n{}",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT,
         seen.join("\n")
     );
 

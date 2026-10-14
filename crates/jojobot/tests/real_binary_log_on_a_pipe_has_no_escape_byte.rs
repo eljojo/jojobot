@@ -65,13 +65,17 @@ async fn the_log_of_the_real_binary_on_a_pipe_names_the_tool_and_holds_no_escape
     };
     let said = |needle: &str| String::from_utf8_lossy(&log.lock().unwrap()).contains(needle);
 
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let boot_began = Instant::now();
+    let deadline = boot_began + jojobot_exercise::room::READY_TIMEOUT;
     while !said("serving http://") && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(
         said("serving http://"),
-        "the binary never reached its serving line, so there is no request to log"
+        "the binary never reached its serving line after {:?} (a boot is given {:?}), so there is \
+         no request to log",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT
     );
 
     let surface =

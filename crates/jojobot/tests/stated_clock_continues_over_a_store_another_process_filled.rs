@@ -10,7 +10,6 @@
 
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use jiff::Timestamp;
 use jojobot_adapters::dolt::Dolt;
@@ -100,7 +99,8 @@ async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16
         .expect("the binary runs");
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
-    let served = tokio::time::timeout(Duration::from_secs(60), async {
+    let boot_began = std::time::Instant::now();
+    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if line.contains("serving http://") {
                 return true;
@@ -110,7 +110,12 @@ async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16
     })
     .await
     .unwrap_or(false);
-    assert!(served, "the binary never reached its serving line");
+    assert!(
+        served,
+        "the binary never reached its serving line after {:?} (a boot is given {:?})",
+        boot_began.elapsed(),
+        jojobot_exercise::room::READY_TIMEOUT
+    );
 
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
