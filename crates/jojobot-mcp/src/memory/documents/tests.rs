@@ -1633,3 +1633,75 @@ async fn two_puts_under_two_names_of_one_document_mint_different_keys() {
     let keys: std::collections::BTreeSet<&str> = held.iter().map(|(k, _)| k.as_str()).collect();
     assert_eq!(keys.len(), 3, "every section has its own key: {held:?}");
 }
+
+/// Every whole number in `said`, in the order it is written.
+fn numbers_in(said: &str) -> Vec<usize> {
+    said.split(|c: char| !c.is_ascii_digit())
+        .filter(|digits| !digits.is_empty())
+        .filter_map(|digits| digits.parse().ok())
+        .collect()
+}
+
+/// **A section whose one fenced block is bigger than a record is refused with the
+/// section, the size against the room, and both ways through.** The block is
+/// never cut, so nothing of the put is written. **Paired**: the same put without
+/// the big block is stored, and a document that holds only a section that fits
+/// reads back whole.
+#[tokio::test]
+async fn a_fenced_block_bigger_than_a_record_is_refused_naming_the_section_and_the_ways_through() {
+    let jojobot = handler();
+    ensure(&jojobot, "document:homer").await;
+    let big = "word ".repeat(10_000);
+    let refused = put(
+        &jojobot,
+        put_args(
+            "document:homer",
+            &format!("# Small\n\nfits\n\n## Config\n\n```\n{big}\n```\n"),
+        )
+        .await,
+    )
+    .await;
+
+    let body = blocked(&refused);
+    assert_eq!(body["fix_by"], "change");
+    let said = body.to_string();
+    assert!(said.contains("Config"), "the section is named: {said}");
+    let figures = numbers_in(&said);
+    assert!(
+        figures.windows(2).any(|pair| pair == [2, 2]),
+        "the section is placed as 2 of 2: {said}"
+    );
+    let size = figures
+        .iter()
+        .copied()
+        .find(|n| *n >= big.len())
+        .unwrap_or_else(|| panic!("the size of the block is given: {said}"));
+    let room = figures
+        .iter()
+        .copied()
+        .find(|n| *n >= 1_000 && *n < size)
+        .unwrap_or_else(|| panic!("the room of a record is given: {said}"));
+    assert!(
+        room <= ANSWER_CEILING,
+        "the room is what one answer can carry: {room}"
+    );
+    assert!(said.contains("split"), "the first way through: {said}");
+    assert!(said.contains("outside"), "the second way through: {said}");
+    assert!(
+        !said.contains("name, aliases and keys"),
+        "the document's own keys are not the cause: {said}"
+    );
+    assert_eq!(
+        records(&jojobot, "document:homer").await.len(),
+        0,
+        "a refused put writes no section"
+    );
+
+    // The positive beside it: the section that fits is stored.
+    let stored = put_ok(&jojobot, "document:marge", "# Small\n\nfits\n").await;
+    assert_eq!(stored["sections"], 1, "{stored}");
+    assert_eq!(
+        read_all(&jojobot, "document:marge").await,
+        "# Small\n\nfits\n"
+    );
+}

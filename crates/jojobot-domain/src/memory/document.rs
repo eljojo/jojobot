@@ -399,10 +399,41 @@ pub fn from_record(
     ))
 }
 
-/// A section that cannot be cut small enough: not one character of it fits.
+/// A section that cannot be cut small enough for a record. It carries the piece
+/// no cut could get under the record's room, so a caller can say which part is in
+/// the way and how big it is.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("not even the first character of the section fits in a record")]
-pub struct TooBig;
+#[error("a section cannot be cut small enough for a record")]
+pub struct TooBig {
+    /// The piece that does not fit, as a record of its own: a fenced block, which
+    /// no cut falls inside, or the first character of the text.
+    pub unit: Box<Section>,
+    /// Whether that piece is a fenced block.
+    pub fenced: bool,
+}
+
+/// **The piece a cut could not get under the room**, from the text that was left
+/// when no cut passed: the fenced block the text begins with, or its first
+/// character when it begins with anything else.
+fn too_big(rest: &str) -> TooBig {
+    let start = rest.len() - rest.trim_start().len();
+    let block = fenced_blocks(rest)
+        .into_iter()
+        .find(|block| block.start == start);
+    let (text, fenced) = match block {
+        Some(block) => (rest[block].to_string(), true),
+        None => (
+            rest[start..].chars().next().unwrap_or(' ').to_string(),
+            false,
+        ),
+    };
+    let mut unit = section_of(&text, 0);
+    unit.continues = true;
+    TooBig {
+        unit: Box::new(unit),
+        fenced,
+    }
+}
 
 /// **Cut a section into chunks that each pass `fits`**, and no more chunks than
 /// that takes. The text is cut at the last blank line that leaves a chunk
@@ -436,7 +467,9 @@ pub fn fit(
             chunks.push(whole);
             return Ok(chunks);
         }
-        let cut = largest_cut(&rest, &mut |prefix| fits(&as_chunk(prefix))).ok_or(TooBig)?;
+        let Some(cut) = largest_cut(&rest, &mut |prefix| fits(&as_chunk(prefix))) else {
+            return Err(too_big(&rest));
+        };
         let chunk = as_chunk(&rest[..cut]);
         chunks.push(chunk);
         rest = rest[cut..].to_string();
@@ -738,7 +771,9 @@ mod tests {
     #[test]
     fn a_section_no_piece_of_which_fits_is_refused() {
         let section = split("# Title\nbody\n").expect("splits").remove(0);
-        assert_eq!(fit(section, &mut |_| false), Err(TooBig));
+        let refused = fit(section, &mut |_| false).expect_err("nothing fits");
+        assert!(!refused.fenced, "a plain text is not a fenced block");
+        assert_eq!(refused.unit.first_line, "#");
     }
 
     /// **The coarsest cut that leaves a chunk passing wins**, even when a finer
@@ -787,7 +822,13 @@ mod tests {
         let fenced = split("# H\n\n```\nxxxx\n\nyyyy\n```\n")
             .expect("splits")
             .remove(0);
-        assert_eq!(fit(fenced, &mut |s| size_of(s) <= 12), Err(TooBig));
+        let refused = fit(fenced, &mut |s| size_of(s) <= 12).expect_err("the block is bigger");
+        assert!(refused.fenced, "the piece in the way is a fenced block");
+        assert_eq!(
+            join(std::slice::from_ref(&*refused.unit)),
+            "```\nxxxx\n\nyyyy\n```\n",
+            "the piece is the block alone, fences and all"
+        );
         let plain = split("# H\n\nxxxx\n\nyyyy\n").expect("splits").remove(0);
         let chunks = fit(plain, &mut |s| size_of(s) <= 12).expect("fits");
         assert!(chunks.len() > 1);

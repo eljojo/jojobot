@@ -210,23 +210,39 @@ impl Jojobot {
             new
         };
         let mut chunks: Vec<Section> = Vec::new();
-        for section in sections {
+        let sections_in_all = sections.len();
+        for (at, section) in sections.into_iter().enumerate() {
             let pieces = match &room {
                 Some(room) => document::fit(section.clone(), &mut |piece| {
                     self.record_passes(room, &record_of(piece, &widest), ordinal)
                 }),
                 None => Ok(vec![section.clone()]),
             };
-            let Ok(pieces) = pieces else {
-                return memory_declined(
-                    "put_document",
-                    MemoryError::InvalidFact(format!(
-                        "no part of the section '{}' fits in a record on {}: the document's \
-                         own name, aliases and keys leave no room, so shorten them \
-                         with update_entity",
-                        section.first_line, args.document
-                    )),
-                );
+            let pieces = match pieces {
+                Ok(pieces) => pieces,
+                Err(too_big) => {
+                    // Only a store that measured a room can have refused a piece.
+                    let (size, room) = room
+                        .as_ref()
+                        .map(|room| {
+                            self.record_size_and_room(
+                                room,
+                                &record_of(&too_big.unit, &widest),
+                                ordinal,
+                            )
+                        })
+                        .unwrap_or_default();
+                    return memory_declined(
+                        "put_document",
+                        section_too_big(
+                            &args.document,
+                            (at + 1, sections_in_all),
+                            &section.first_line,
+                            &too_big,
+                            (size, room),
+                        ),
+                    );
+                }
             };
             chunks.extend(pieces);
         }
@@ -342,6 +358,49 @@ impl Jojobot {
     }
 }
 
+/// **The refusal for a section no cut gets under a record**, built here for every
+/// path that reaches [`document::TooBig`]. It names the section by its place and
+/// its heading, says how big the piece in the way is against what one record on the
+/// document can carry, and gives the two ways through. The cause is told apart: a
+/// fenced block is never cut, while a piece with no room even for its first
+/// character means the document's own name, aliases and keys take the room.
+///
+/// `at` is the section's place, counted from 1, and the number of sections in
+/// the put; `sizes` is the piece as a record reads it and the room for one.
+fn section_too_big(
+    document: &str,
+    at: (usize, usize),
+    heading: &str,
+    too_big: &document::TooBig,
+    sizes: (usize, usize),
+) -> MemoryError {
+    let (place, of) = at;
+    let (size, room) = sizes;
+    let name = if heading.trim().is_empty() {
+        format!("section {place} of {of} (the text before the first heading)")
+    } else {
+        format!("section {place} of {of} ('{}')", heading.trim())
+    };
+    MemoryError::InvalidFact(if too_big.fenced {
+        format!(
+            "{name} holds a fenced block that does not fit in one record: as a record reads \
+             it, the block is {size} characters, and one record on {document} can carry \
+             {room}. A fenced block is never cut. Two ways through: split the block into \
+             several fenced blocks, each with its own opening and closing fence and each \
+             under {room} characters; or keep the code as a page outside the store and put a \
+             line in the section that says where it is"
+        )
+    } else {
+        format!(
+            "{name} cannot be stored: not one character of it fits beside the document's own \
+             name, aliases and keys. A record on {document} would be {size} characters, and \
+             one can carry {room}. Two ways through: shorten the name or the aliases of \
+             {document} with update_entity; or take keys off it with update_fact and \
+             clear_fields"
+        )
+    })
+}
+
 /// **A refusal that came after some sections had landed**, carrying what landed
 /// and where the rest of the text begins. Nothing is taken back behind the
 /// caller: the sections that are there stay, and `after` the last of them is
@@ -376,4 +435,62 @@ fn stopped_midway(
         carried,
         format!("the store stopped partway: {to_finish}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(too_big: &document::TooBig, heading: &str) -> String {
+        match section_too_big("document:homer", (3, 7), heading, too_big, (4_000, 900)) {
+            MemoryError::InvalidFact(said) => said,
+            other => panic!("an invalid fact is what a caller is told: {other:?}"),
+        }
+    }
+
+    fn unit(fenced: bool) -> document::TooBig {
+        let section = document::split("# Unit\n\nbody\n")
+            .expect("splits")
+            .remove(0);
+        document::TooBig {
+            unit: Box::new(section),
+            fenced,
+        }
+    }
+
+    /// **One builder serves both causes, and each says its own.** A piece with no
+    /// room even for its first character is the document's own name, aliases and
+    /// keys, so the ways through shrink those; a fenced block is the section's own
+    /// text, so the ways through change the block. Each names the section by place
+    /// and heading and gives the size against the room.
+    #[test]
+    fn the_refusal_names_the_cause_the_section_and_the_sizes() {
+        let name_and_keys = refusal(&unit(false), "## Setup");
+        assert!(name_and_keys.contains("section 3 of 7"), "{name_and_keys}");
+        assert!(name_and_keys.contains("## Setup"), "{name_and_keys}");
+        assert!(
+            name_and_keys.contains("4000") && name_and_keys.contains("900"),
+            "{name_and_keys}"
+        );
+        assert!(name_and_keys.contains("update_entity"), "{name_and_keys}");
+        assert!(name_and_keys.contains("clear_fields"), "{name_and_keys}");
+        assert!(!name_and_keys.contains("fenced"), "{name_and_keys}");
+
+        let block = refusal(&unit(true), "## Setup");
+        assert!(block.contains("section 3 of 7"), "{block}");
+        assert!(block.contains("4000") && block.contains("900"), "{block}");
+        assert!(block.contains("split"), "{block}");
+        assert!(block.contains("outside"), "{block}");
+        assert!(!block.contains("update_entity"), "{block}");
+    }
+
+    /// A section with no heading of its own (the text before the first heading)
+    /// is named by its place and says so, instead of an empty pair of quotes.
+    #[test]
+    fn a_section_with_no_heading_is_named_by_its_place() {
+        let said = refusal(&unit(true), "  ");
+        assert!(said.contains("section 3 of 7"), "{said}");
+        assert!(said.contains("before the first heading"), "{said}");
+        assert!(!said.contains("''"), "{said}");
+    }
 }

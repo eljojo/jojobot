@@ -137,9 +137,22 @@ impl Jojobot {
     /// whole write has landed. The arithmetic is the guard's own, not a copy:
     /// a record that passes here is a record the guard lets in.
     pub(crate) fn record_passes(&self, room: &RecordRoom, new: &NewFact, held: usize) -> bool {
+        let (size, room) = self.record_size_and_room(room, new, held);
+        size <= room
+    }
+
+    /// **The same measurement as [`Self::record_passes`], as the two numbers it
+    /// compares**: the record as a read serves it and the most characters one
+    /// record on the thing can carry.
+    pub(crate) fn record_size_and_room(
+        &self,
+        room: &RecordRoom,
+        new: &NewFact,
+        held: usize,
+    ) -> (usize, usize) {
         let fact = prospective_fact(new, held, Some(widest_stamp(self.clock().now())));
         let measured = self.measured_beside(&fact, &room.entity, room.folded.clone());
-        measured.size <= measured.room
+        (measured.size, measured.room)
     }
 
     /// **The same check for an edit**, asked of the record as the edit would
