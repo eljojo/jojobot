@@ -370,9 +370,15 @@ impl Jojobot {
                         .fields
                         .insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
                     claim.sets.insert(guard::TOLD_APART_BY.to_string());
+                    // `FoldBehind` is a write that landed with only the fold's
+                    // re-read failed (rule 130), so the reason is kept.
                     let kept = matches!(
                         jojobot_domain::request::armed(self.memory.capture(claim)).await,
                         Ok(Guarded::Written(_))
+                            | Err(MemoryError::FoldBehind {
+                                landed: Landed::Fact(_),
+                                ..
+                            })
                     );
                     if !kept && let Some(obj) = body.as_object_mut() {
                         obj.insert(
@@ -685,6 +691,80 @@ mod tests {
         );
         assert_ne!(forced["status"], "blocked");
         assert_eq!(forced["id"], "person:alphaa");
+    }
+
+    /// **A reason that landed is never reported as lost** (rule 130): the
+    /// `told_apart_by` capture can land while only the fold behind it fails to
+    /// refresh, and that is `MemoryError::FoldBehind`, not a failed write.
+    /// Paired in one read with the key being on the renamed thing, so the
+    /// absence of `reason_not_kept` cannot be a reason that never went in.
+    #[tokio::test]
+    async fn a_rename_past_a_name_only_near_miss_keeps_its_reason_when_the_fold_is_behind() {
+        let jojobot = Jojobot::new(
+            Arc::new(FoldBehindMemory(Arc::new(InMemoryMemory::booted()))),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("person", "person:ralph", "Moes")))
+            .await
+            .expect("add ok");
+        jojobot
+            .add_entity(Parameters(add_args(
+                "place",
+                "place:leftorium",
+                "Leftorium",
+            )))
+            .await
+            .expect("add ok");
+
+        let rename = |token: Option<String>, reason: Option<&str>| RenameEntityArgs {
+            override_token: token,
+            override_reason: reason.map(str::to_string),
+            ..args("place:leftorium", "place:moes", &sid)
+        };
+        let refused = json_of(
+            &jojobot
+                .rename_entity(Parameters(rename(None, None)))
+                .await
+                .expect("the call succeeds; the guard answers in the body"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(
+            refused["candidates"][0]["reason"], "same-name-other-kind",
+            "{refused}"
+        );
+        let token = refused["how_to_proceed"]
+            .as_str()
+            .and_then(|how| how.split_once("override_token: \""))
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .expect("the advice hands over the token it mints")
+            .0
+            .to_string();
+
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(rename(
+                    Some(token),
+                    Some("a place, not a person"),
+                )))
+                .await
+                .expect("rename ok"),
+        );
+        assert_eq!(renamed["id"], "place:moes", "{renamed}");
+        assert_eq!(
+            fields_of(&jojobot, "place:moes").await["told_apart_by"],
+            "a place, not a person",
+            "the reason landed on the renamed thing: {renamed}"
+        );
+        assert!(
+            renamed.get("reason_not_kept").is_none(),
+            "a reason that landed is not reported as lost: {renamed}"
+        );
     }
 
     /// `rename_entity` moves the handle and leaves the metadata alone.
