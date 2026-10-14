@@ -17361,6 +17361,7 @@ macro_rules! all_cases {
         $m!(an_address_from_before_a_chain_of_merges_names_its_claim_at_the_end($store));
         $m!(what_was_built_on_a_folded_claim_is_found_from_every_address_it_has_had($store));
         $m!(a_bot_that_reported_to_a_folded_bot_reports_to_the_survivor($store));
+        $m!(a_receipt_of_a_survivor_names_the_folded_names_the_roster_shows($store));
         $m!(merged_testimony_is_rewritten_only_by_the_session_that_made_it($store));
         $m!(a_key_only_the_folded_thing_wrote_has_a_trail_on_the_survivor($store));
         $m!(a_claims_lineage_is_walkable_from_its_source($store));

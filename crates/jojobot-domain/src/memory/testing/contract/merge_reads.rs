@@ -277,3 +277,105 @@ pub async fn a_manager_folded_through_a_long_chain_is_the_bot_it_became<M: Memor
         moved.map(|_| ())
     );
 }
+
+/// **Every receipt of a survivor names what was folded into it, as the roster
+/// does.** The merge's own receipt, an edit of the survivor, its rename and its
+/// archive each serve the survivor, and each lists the same `folded_names` a
+/// listing of the roster lists, in the same order. **Paired** with a thing nobody
+/// merged into, whose receipt names nothing.
+pub async fn a_receipt_of_a_survivor_names_the_folded_names_the_roster_shows<M: Memory>(store: &M) {
+    let kept = EntityId(format!("org:{}", "contract-receipt-names-kept"));
+    let spare = EntityId(format!("org:{}", "contract-receipt-names-spare"));
+    let alone = EntityId(format!("org:{}", "contract-receipt-names-alone"));
+    let renamed = EntityId(format!("org:{}", "contract-receipt-names-renamed"));
+    for (id, name, alias) in [
+        (&kept, "Receipt Names Kept", "Marblequay Receipt"),
+        (&spare, "Receipt Names Spare", "Thistledown Receipt"),
+        (&alone, "Receipt Names Alone", "Driftwood Receipt"),
+    ] {
+        add(
+            store,
+            NewEntity {
+                aliases: vec![alias.into()],
+                ..NewEntity::new(id.clone(), name, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    let merged = store
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller(), None)
+        .await
+        .expect("the fold lands");
+    let wanted = ["Receipt Names Spare", "Thistledown Receipt"];
+    let shown = |id: &EntityId| {
+        let id = id.clone();
+        async move {
+            store
+                .list_entities(None)
+                .await
+                .expect("the roster reads")
+                .into_iter()
+                .find(|entity| entity.id == id)
+                .expect("the thing is listed")
+                .folded_names
+        }
+    };
+    assert_eq!(
+        shown(&kept).await,
+        wanted,
+        "the roster names what was folded in"
+    );
+    assert_eq!(
+        merged.survivor.folded_names, wanted,
+        "the merge's receipt names what was folded in"
+    );
+
+    let edited = store
+        .update_entity(
+            &kept,
+            EntityPatch {
+                crm: Some("card:2332".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the edit lands")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(edited.folded_names, wanted, "the edit's receipt");
+    let alone_edited = store
+        .update_entity(
+            &alone,
+            EntityPatch {
+                crm: Some("card:2332".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the edit lands")
+        .written()
+        .expect("nothing blocks it");
+    assert!(
+        alone_edited.folded_names.is_empty(),
+        "a thing nobody merged into names nothing: {alone_edited:?}"
+    );
+
+    let archived = store
+        .archive_entity(&kept, "filed twice over", None)
+        .await
+        .expect("the archive lands");
+    assert_eq!(archived.folded_names, wanted, "the archive's receipt");
+    store
+        .restore_entity(&kept, None)
+        .await
+        .expect("the restore lands");
+
+    let moved = store
+        .rename_entity(&kept, &renamed, None, date(2026, 7, 3), None, None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the destination");
+    assert_eq!(moved.folded_names, wanted, "the rename's receipt");
+    assert_eq!(shown(&renamed).await, wanted, "and the roster still agrees");
+}

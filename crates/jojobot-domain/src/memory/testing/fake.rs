@@ -158,6 +158,17 @@ fn claim_moves(
     }
 }
 
+/// **An entity as a receipt serves it**: with the names of what was folded into
+/// it, as a listing of the roster serves them. The stored row carries none, so a
+/// receipt built from the row alone would disagree with the listing.
+fn naming_folded_in(rows: &[Entity], entity: &mut Entity) {
+    let mut listed = rows.to_vec();
+    super::super::with_folded_names(&mut listed);
+    if let Some(row) = listed.into_iter().find(|row| row.id == entity.id) {
+        entity.folded_names = row.folded_names;
+    }
+}
+
 /// **Where the merges sent a thing**, as the thing walk asks: the survivor of the
 /// newest merge that folded it, `None` when nothing did.
 fn survivor_in(
@@ -2253,6 +2264,7 @@ impl Memory for InMemoryMemory {
                     .unwrap_or_else(|| parent.clone()),
             );
         }
+        naming_folded_in(&entities, &mut served);
         Ok(Guarded::Written(served))
     }
 
@@ -2299,7 +2311,9 @@ impl Memory for InMemoryMemory {
             at: self.clock().now(),
         });
         self.touched(entity, session);
-        Ok(entity.clone())
+        let mut served = entity.clone();
+        naming_folded_in(&entities, &mut served);
+        Ok(served)
     }
 
     async fn restore_entity(
@@ -2340,7 +2354,9 @@ impl Memory for InMemoryMemory {
         self.spend_request(|| format!("{{\"handle\":\"{id}\"}}"))?;
         let was = entity.archived.take().expect("checked just above");
         self.touched(entity, session);
-        Ok((entity.clone(), was))
+        let mut served = entity.clone();
+        naming_folded_in(&entities, &mut served);
+        Ok((served, was))
     }
 
     async fn rename_entity(
@@ -2505,6 +2521,8 @@ impl Memory for InMemoryMemory {
                 held.merged_into = Some(to.clone());
             }
         }
+        let mut renamed = renamed;
+        naming_folded_in(&entities, &mut renamed);
         drop(entities);
         self.touched(&entity, session);
         // **A same-handle reparent is not a former handle of itself.** The
@@ -3952,11 +3970,12 @@ impl Memory for InMemoryMemory {
                 entity.merged_into = Some(survivor.clone());
             }
         }
-        let survived = entities
+        let mut survived = entities
             .iter()
             .find(|e| &e.id == survivor)
             .cloned()
             .expect("the survivor was checked present");
+        naming_folded_in(&entities, &mut survived);
         drop(entities);
         self.append_writes(
             &record.home,
