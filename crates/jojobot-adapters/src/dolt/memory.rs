@@ -1818,6 +1818,19 @@ impl DoltMemory {
         Ok(())
     }
 
+    /// **A stored list served as a merge's repoint would leave it**: each item is
+    /// the handle its target answers to now, and a handle that two items forward
+    /// to is kept once, at its first place.
+    fn serve_list(items: Vec<EntityId>) -> String {
+        let mut served: Vec<String> = Vec::with_capacity(items.len());
+        for handle in items {
+            if !served.iter().any(|held| held == handle.as_str()) {
+                served.push(handle.to_string());
+            }
+        }
+        served.join(", ")
+    }
+
     /// **The other direction**: every reference-typed field value, composed
     /// from the permanent id it is stored as to the handle it answers to
     /// today — the mirror of [`Self::lower_reference_fields`], run once,
@@ -1837,11 +1850,10 @@ impl DoltMemory {
                 let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
                 composed.push(
                     self.pointer_handle(tx, &EntityId(stored.to_string()))
-                        .await?
-                        .to_string(),
+                        .await?,
                 );
             }
-            fields.insert(key.clone(), composed.join(", "));
+            fields.insert(key.clone(), Self::serve_list(composed));
         }
         // **Every other value, served as the handle it answers to now.** A value
         // stored behind the mark is the thing's id. One stored as plain handle
@@ -1860,14 +1872,10 @@ impl DoltMemory {
                 let mut composed = Vec::with_capacity(items.len());
                 for item in items {
                     if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
-                        composed.push(
-                            self.pointer_handle(tx, &EntityId(id.to_string()))
-                                .await?
-                                .to_string(),
-                        );
+                        composed.push(self.pointer_handle(tx, &EntityId(id.to_string())).await?);
                     }
                 }
-                fields.insert(key, composed.join(", "));
+                fields.insert(key, Self::serve_list(composed));
             } else {
                 let handles = jojobot_domain::memory::handles_in_value(&value);
                 if handles.is_empty() {

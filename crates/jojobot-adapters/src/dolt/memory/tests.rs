@@ -854,7 +854,27 @@ impl Merged {
         // A third thing's claim that points at the folded thing in every way a
         // claim can: an edge, a reference, a field naming it, the claim it was
         // derived from, and a mark naming that claim.
-        let mut pointer = said(&pointing, "knows the grocer", &[("friend", "person:apu")]);
+        // Two lists that name both sides of the merge, one under a key nothing
+        // declares and one under a declared reference list.
+        memory
+            .declare_type(jojobot_domain::memory::types::DeclaredType::new(
+                "regulars-fixture",
+                vec![jojobot_domain::memory::types::Field::listing(
+                    "regulars",
+                    jojobot_domain::memory::types::ValueType::Reference,
+                )],
+            ))
+            .await
+            .expect("the type is declared");
+        let mut pointer = said(
+            &pointing,
+            "knows the grocer",
+            &[
+                ("friend", "person:apu"),
+                ("friends", "person:apu, person:homer"),
+                ("regulars", "person:apu, person:homer"),
+            ],
+        );
         pointer.edge = Some(Edge::new(EdgeShape::Connection, folded.clone()));
         pointer.refs = vec![folded.clone()];
         pointer.derived_from = Some(first.clone());
@@ -1040,6 +1060,51 @@ impl Merged {
         .await
         .expect("the field goes back");
         tx.commit().await.expect("the pointers commit");
+        // A list that named both sides was cut to one item by the merge, and
+        // putting the link back cannot bring the other item back: each list is
+        // written as it stood, naming the folded thing and the survivor. An
+        // undeclared list keeps the mark on its ids; a declared one holds them
+        // bare.
+        let marked = |id: &EntityId| jojobot_domain::memory::marked_stored_handle(id.as_str());
+        for (key, both) in [
+            (
+                "friends",
+                format!(
+                    "{}, {}",
+                    marked(&self.folded_key),
+                    marked(&self.survivor_key)
+                ),
+            ),
+            (
+                "regulars",
+                format!(
+                    "{}, {}",
+                    self.folded_key.as_str(),
+                    self.survivor_key.as_str()
+                ),
+            ),
+        ] {
+            let cut =
+                sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ?")
+                    .bind(&both)
+                    .bind(self.pointing_key.as_str())
+                    .bind(key)
+                    .execute(&self.pool)
+                    .await
+                    .expect("the list goes back");
+            assert_eq!(cut.rows_affected(), 1, "one write of {key}");
+            sqlx::query(
+                "INSERT IGNORE INTO field_link (entity, `key`, ordinal, target)
+                 SELECT entity, `key`, ordinal, ? FROM field_write
+                 WHERE entity = ? AND `key` = ?",
+            )
+            .bind(self.folded_key.as_str())
+            .bind(self.pointing_key.as_str())
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .expect("the link goes back");
+        }
     }
 }
 
@@ -1512,6 +1577,41 @@ async fn touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_move
     merged.leave_in_place().await;
 
     assert_eq!(answers().await, moved);
+    store.stop().await;
+}
+
+/// **A list that named both sides of a merge reads as the survivor, once,
+/// whether the merge rewrote the list or left it.** The values are read, so a
+/// case that read nothing cannot pass for one that read the same.
+#[tokio::test]
+async fn a_list_naming_both_sides_of_a_merge_reads_the_survivor_once() {
+    let scratch = Scratch::new("merged-lists");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_lists")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+
+    for placed in ["moved", "left"] {
+        if placed == "left" {
+            merged.leave_in_place().await;
+        }
+        let held = merged
+            .memory
+            .fields(&merged.pointing)
+            .await
+            .expect("the fields read");
+        for key in ["friends", "regulars"] {
+            assert_eq!(
+                held.get(key).map(String::as_str),
+                Some("person:homer"),
+                "{placed}: {key}: {held:?}"
+            );
+        }
+    }
     store.stop().await;
 }
 
