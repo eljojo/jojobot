@@ -248,6 +248,7 @@ const ORDINARY: &[&str] = &[
     // its handle**, so this scan reads it on the same terms as every other
     // name — a slug handed to a constructor on its own would carry no handle
     // for the scan to find.
+    "view:board",
     "view:colleagues",
     "view:contract-no-such-view",
     "view:contract-asked-by-view",

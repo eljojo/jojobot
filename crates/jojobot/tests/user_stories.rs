@@ -182,6 +182,9 @@ mod partial_edit;
 mod party;
 #[path = "user_stories/pets.rs"]
 mod pets;
+/// The views the software ships for work, asked by name with one project.
+#[path = "user_stories/premade_views.rs"]
+mod premade_views;
 /// A server acting out a day, and the day it fills in when nobody types one.
 #[path = "user_stories/pretending.rs"]
 mod pretending;

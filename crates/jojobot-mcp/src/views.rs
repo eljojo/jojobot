@@ -10,9 +10,9 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Four views ship, and that is deliberate rather than a first instalment of
-//! a catalogue.** Two are the ones the operator named and two ask about work:
-//! what can be started and what a plan holds. A rich set is generated once the
+//! **Five views ship, and that is deliberate rather than a first instalment of
+//! a catalogue.** Two are the ones the operator named and three ask about work:
+//! what can be started, what a plan holds and what a project's board shows. A rich set is generated once the
 //! shape is settled. If this file starts growing a query
 //! per question somebody asks, it has taken the wrong turn.
 
@@ -119,6 +119,27 @@ pub fn provisions() -> Vec<Provision> {
             &[
                 ("selects", "work"),
                 ("asks", jojobot_domain::memory::readiness::ASK_PLAN),
+                // **Only one project's plan, when a call names it**, as `ready`
+                // does. Left out, the question is every project's plan.
+                ("inputs", "project: kind project?"),
+                ("parent", "$project"),
+            ],
+        ),
+        // **The work of one project as a board.** Each piece with the three keys
+        // a board is read by, grouped by status. The order is the status words
+        // as text, so the groups run done, next, now, someday, waiting: the
+        // engine orders a key it has no declared sequence for as text.
+        // **The project is required**: a board with no project is every piece of
+        // work, which is not a board.
+        view(
+            "view:board",
+            "Board",
+            &[
+                ("selects", "work"),
+                ("inputs", "project: kind project"),
+                ("parent", "$project"),
+                ("order", "status"),
+                ("shows_keys", "status, depends_on, owner"),
             ],
         ),
     ]
