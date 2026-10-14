@@ -199,13 +199,14 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
     )
     .await
     .says("no-such-message");
-    // The operator's box: a person reads it and no bot reads it back.
+    // The operator's box takes a replacement like any other box, and refuses one
+    // that names a message from another box the same way.
     s.refused(
         "post_message",
         json!({"to": "person:lisa", "body": "no", "supersedes": &wrong}),
     )
     .await
-    .says("operator");
+    .says("gamma");
 
     // ── a sent message is not retracted ─────────────────────────────────────
     s.refused("retract", json!({"address": &wrong}))

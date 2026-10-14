@@ -231,6 +231,57 @@ async fn the_server_down_and_then_up_delivers_the_message_once() {
     assert_eq!(ntfy.published().len(), 1, "delivered once, never twice");
 }
 
+/// **A bot that corrects a message to the operator is heard once, with the
+/// correction.** The server is down while the first message is tried and tried
+/// again; the bot then replaces it; the server comes back. The phone is told the
+/// replacement and never the mistake, and the box counts one new message, not
+/// two. The replacement going out is the positive the mistake's silence depends
+/// on.
+#[tokio::test]
+async fn a_replaced_message_is_never_pushed_after_its_replacement() {
+    let ntfy = FakeNtfy::start().await;
+    ntfy.go_down();
+    let (story, s) = pushing_to(&ntfy, QUICK).await;
+
+    let first = s
+        .call(
+            "post_message",
+            json!({"to": "person:lisa", "subject": "the mistake", "body": "the wrong figure"}),
+        )
+        .await
+        .json();
+    let first = first["id"].as_str().expect("a post hands back its id");
+    eventually("the first push was tried and tried again", || {
+        ntfy.attempts() >= 2
+    })
+    .await;
+    s.call(
+        "post_message",
+        json!({"to": "person:lisa", "subject": "the correction", "body": "the right figure",
+               "supersedes": first}),
+    )
+    .await;
+
+    ntfy.come_up();
+    eventually("the correction was published", || {
+        !ntfy.published().is_empty()
+    })
+    .await;
+    // A late retry of the mistake would be a second publish: give it time to show up.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let titles: Vec<_> = ntfy
+        .published()
+        .iter()
+        .map(|p| p.body["title"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(titles, vec!["the correction"], "{titles:?}");
+    assert_eq!(
+        story.mail_held_by("person:lisa").await,
+        (1, 0, 0),
+        "the operator has one new message, and the mistake is not counted beside it"
+    );
+}
+
 #[tokio::test]
 async fn a_push_that_never_goes_out_is_logged_naming_the_message_and_the_message_stays() {
     let (logged, _guard) = capture_logs();

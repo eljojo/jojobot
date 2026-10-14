@@ -93,7 +93,9 @@ pub struct PostMessageArgs {
     /// nothing. If the reader already has the original, this message arrives
     /// saying it replaces one they have seen. The original is not deleted or
     /// edited: read_message returns it with `superseded_by`, and list_sent
-    /// shows you the same. Not available on a post to the operator.
+    /// shows you the same. On a post to the operator, the page they read marks
+    /// the original as replaced and names this message, and no push goes out for
+    /// the original.
     #[serde(default)]
     pub(crate) supersedes: Option<String>,
 }
@@ -385,24 +387,12 @@ impl Jojobot {
         // **A person is addressed by their handle, and only the operator has a
         // box.** Posting to the operator is what opens it the first time.
         let to_the_operator = addressee.kind() == Some(EntityKind::PERSON);
-        // **Not into the operator's box.** A person reads that box and no bot
-        // reads it back, so there is no delivery to withhold from and nobody
-        // to tell what replaced what.
         let supersedes = args
             .supersedes
             .as_deref()
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .map(|id| MessageId(id.to_string()));
-        if supersedes.is_some() && to_the_operator {
-            return Ok(misused(
-                "Nothing was written: supersedes does not work on a post to the operator. A \
-                 person reads that box and jojobot does not withhold or mark mail in it. To \
-                 correct something you sent them, post a new message that says what it \
-                 corrects, and drop supersedes."
-                    .to_string(),
-            ));
-        }
         let destination = match addressee.kind() {
             Some(EntityKind::PERSON) => match self.operators_box(&addressee).await {
                 Ok(name) => name,

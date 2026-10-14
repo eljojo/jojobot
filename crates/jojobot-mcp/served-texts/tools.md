@@ -2226,7 +2226,9 @@ other message has replaced; each refusal names its reason and writes
 nothing. If the reader already has the original, this message arrives
 saying it replaces one they have seen. The original is not deleted or
 edited: read_message returns it with `superseded_by`, and list_sent
-shows you the same. Not available on a post to the operator.
+shows you the same. On a post to the operator, the page they read marks
+the original as replaced and names this message, and no push goes out for
+the original.
 ```
 
 #### `post_message` — argument `/inputSchema.to`
