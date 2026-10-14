@@ -1,0 +1,17 @@
+# The one-time store passes, each with a hash of the code that drives it.
+#
+# A pass is marked finished in `store_pass` under its name. A store where the
+# old code already finished holds that name, so changed code under the same name
+# never runs there. The test in lints.rs recomputes each hash from the source and
+# compares it with this file.
+#
+# When a pass's code changes, give the pass a new name. If running it again is
+# unnecessary, update the line here and say why in the commit.
+#
+# Format: CONSTANT | the name stores record | hash of the driving function
+FORWARD_NAMES_PASS | forwarding rows name the current handle | c885732eb81b9a74
+FORWARDED_LINKS_PASS | forwarded field links repaired | 3cd70a0421f0afc3
+FIELD_LOWERING_PASS | field value lowering | a9df5739a4d7f0d0
+REFERENCE_LOWERING_PASS | reference field lowering | b6aa9da881d3044c
+UNREADABLE_DUE_PASS | unreadable due day | b384876c0e046352
+OLD_ROLE_CLAIMS_PASS | old role claims | 7e7ba879caa06b46

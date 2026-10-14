@@ -1017,4 +1017,6 @@ fn failure(version: &str, e: sqlx::Error) -> MigrateError {
 }
 
 #[cfg(test)]
+mod lints;
+#[cfg(test)]
 pub(crate) mod tests;
