@@ -2579,9 +2579,12 @@ pub fn chart_wanted_by_change(
 /// rows stay and forward, and their names are carried onto the survivor, so they
 /// are the survivor's own earlier selves. A screen of a rename against other
 /// things leaves them out, or the survivor would be a near miss of itself.
-/// A forwarding row that loops is followed at most once, by the one walk in
-/// [`claim_walk`].
-pub fn folded_into(survivor: &EntityId, index: &[Entity]) -> Vec<EntityId> {
+/// A forwarding row that loops is the walk's [`claim_walk::MergeLoop`], by the
+/// one walk in [`claim_walk`].
+pub fn folded_into(
+    survivor: &EntityId,
+    index: &[Entity],
+) -> Result<Vec<EntityId>, claim_walk::MergeLoop> {
     claim_walk::folded_into_walk(survivor.clone(), |at| {
         index
             .iter()
@@ -5364,7 +5367,7 @@ pub struct MergeEvent {
 /// left out, compared without regard to case, and so is a name repeated within
 /// the list. A thing that was itself folded away is named for nobody. Shared by
 /// every store so a fold gives the same answer in each.
-pub fn with_folded_names(entities: &mut [Entity]) {
+pub fn with_folded_names(entities: &mut [Entity]) -> Result<(), claim_walk::MergeLoop> {
     let mut survivors: Vec<EntityId> = Vec::new();
     for row in entities.iter() {
         if let Some(into) = &row.merged_into
@@ -5374,7 +5377,7 @@ pub fn with_folded_names(entities: &mut [Entity]) {
         }
     }
     for survivor in survivors {
-        let mut folded = folded_into(&survivor, entities);
+        let mut folded = folded_into(&survivor, entities)?;
         // One order in every store, whatever order the rows were listed in.
         folded.sort();
         let named: Vec<String> = {
@@ -5409,6 +5412,7 @@ pub fn with_folded_names(entities: &mut [Entity]) {
             row.folded_names = named;
         }
     }
+    Ok(())
 }
 
 /// The result of a write that names an entity: it either happened, or the write
@@ -6184,6 +6188,23 @@ pub enum MemoryError {
     /// if it were this is the wrong advice for the commoner case.
     #[error("store error: {0}")]
     Store(String),
+    /// **The store holds something a person has to repair.** It was reached and it
+    /// answered, but what it holds is damaged: merge events that lead back to
+    /// where they began, a row edited by hand into a shape no write makes. The
+    /// same call sent again meets the same damage, so it is not
+    /// [`Store`](Self::Store), which says the store could not be reached and that
+    /// trying again is reasonable; and it is not
+    /// [`Refused`](Self::Refused), which says the call broke a rule. Nothing the
+    /// caller changes in the call helps.
+    ///
+    /// `what` names the damage and the things in it, as handles, for the person
+    /// who repairs it. An adapter that keys things by an id names them by the
+    /// handle they answer to before it answers.
+    #[error("the store holds damage a person must repair: {what}")]
+    StoredDamage {
+        /// What is damaged and which things are in it.
+        what: String,
+    },
     /// **The store was reached and refused the write**: a rule it enforces
     /// itself (a key that would be held twice, a reference to nothing, a
     /// required value left out) stopped it. The word is the rule's kind and

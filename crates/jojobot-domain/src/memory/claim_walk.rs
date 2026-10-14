@@ -24,14 +24,22 @@ use super::FactId;
 /// thing into itself, so none made here closes a loop; a store edited by hand
 /// can. A walk that meets one stops and says so, because ending at any address on
 /// the loop would serve a claim, a pointer or a manager at a place nobody put it.
-/// Every store turns this one value into its one error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the merge events in the store lead back to where they began")]
-pub struct MergeLoop;
+/// The loop names the things in it, in the order the walk met them, so a person
+/// can find the damage. Every store turns this one value into its one error,
+/// [`MemoryError::StoredDamage`](super::MemoryError::StoredDamage).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the merge events in the store lead back to where they began: {}", things.join(", "))]
+pub struct MergeLoop {
+    /// The things (or the claim addresses) the loop passes through, in the order
+    /// the walk met them, as the store keys them.
+    pub things: Vec<String>,
+}
 
 impl From<MergeLoop> for super::MemoryError {
-    fn from(_: MergeLoop) -> Self {
-        super::MemoryError::Store(MergeLoop.to_string())
+    fn from(looped: MergeLoop) -> Self {
+        super::MemoryError::StoredDamage {
+            what: looped.to_string(),
+        }
     }
 }
 
@@ -54,16 +62,18 @@ pub struct ClaimWalk<K> {
     at: (K, FactId),
     moved: bool,
     passed: HashSet<(K, FactId)>,
-    looped: bool,
+    path: Vec<(K, FactId)>,
+    looped: Option<usize>,
 }
 
-impl<K: Clone + Eq + Hash> ClaimWalk<K> {
+impl<K: Clone + Eq + Hash + std::fmt::Display> ClaimWalk<K> {
     pub fn new(home: K, local: FactId) -> Self {
         ClaimWalk {
             passed: HashSet::from([(home.clone(), local.clone())]),
+            path: vec![(home.clone(), local.clone())],
             at: (home, local),
             moved: false,
-            looped: false,
+            looped: None,
         }
     }
 
@@ -87,9 +97,10 @@ impl<K: Clone + Eq + Hash> ClaimWalk<K> {
         };
         let next = (newest.survivor, newest.survivor_id);
         if !self.passed.insert(next.clone()) {
-            self.looped = true;
+            self.looped = self.path.iter().position(|held| *held == next);
             return false;
         }
+        self.path.push(next.clone());
         self.at = next;
         self.moved = true;
         true
@@ -100,15 +111,20 @@ impl<K: Clone + Eq + Hash> ClaimWalk<K> {
     /// merged before events were kept. [`MergeLoop`] when the events led back to
     /// an address the walk had already stood at.
     pub fn finish(self) -> Result<Option<(K, FactId)>, MergeLoop> {
-        if self.looped {
-            return Err(MergeLoop);
+        if let Some(from) = self.looped {
+            return Err(MergeLoop {
+                things: self.path[from..]
+                    .iter()
+                    .map(|(home, local)| format!("{home}#{local}"))
+                    .collect(),
+            });
         }
         Ok(self.moved.then_some(self.at))
     }
 }
 
 /// [`ClaimWalk`] over a store that answers at once.
-pub fn follow_claim<K: Clone + Eq + Hash, E: From<MergeLoop>>(
+pub fn follow_claim<K: Clone + Eq + Hash + std::fmt::Display, E: From<MergeLoop>>(
     home: K,
     local: FactId,
     mut moved_from: impl FnMut(&K, &FactId) -> Result<Vec<ClaimMove<K>>, E>,
@@ -132,15 +148,17 @@ pub fn follow_claim<K: Clone + Eq + Hash, E: From<MergeLoop>>(
 pub struct ThingWalk<K> {
     at: K,
     passed: HashSet<K>,
-    looped: bool,
+    path: Vec<K>,
+    looped: Option<usize>,
 }
 
-impl<K: Clone + Eq + Hash> ThingWalk<K> {
+impl<K: Clone + Eq + Hash + std::fmt::Display> ThingWalk<K> {
     pub fn new(start: K) -> Self {
         ThingWalk {
             passed: HashSet::from([start.clone()]),
+            path: vec![start.clone()],
             at: start,
-            looped: false,
+            looped: None,
         }
     }
 
@@ -157,9 +175,10 @@ impl<K: Clone + Eq + Hash> ThingWalk<K> {
             return false;
         };
         if !self.passed.insert(next.clone()) {
-            self.looped = true;
+            self.looped = self.path.iter().position(|held| *held == next);
             return false;
         }
+        self.path.push(next.clone());
         self.at = next;
         true
     }
@@ -167,15 +186,17 @@ impl<K: Clone + Eq + Hash> ThingWalk<K> {
     /// The thing the walk ended at: the start when nothing folded it.
     /// [`MergeLoop`] when the events led back to a thing already passed.
     pub fn finish(self) -> Result<K, MergeLoop> {
-        if self.looped {
-            return Err(MergeLoop);
+        if let Some(from) = self.looped {
+            return Err(MergeLoop {
+                things: self.path[from..].iter().map(ToString::to_string).collect(),
+            });
         }
         Ok(self.at)
     }
 }
 
 /// [`ThingWalk`] over a store that answers at once.
-pub fn follow_thing<K: Clone + Eq + Hash, E: From<MergeLoop>>(
+pub fn follow_thing<K: Clone + Eq + Hash + std::fmt::Display, E: From<MergeLoop>>(
     start: K,
     mut survivor_of: impl FnMut(&K) -> Result<Option<K>, E>,
 ) -> Result<K, E> {
@@ -190,58 +211,92 @@ pub fn follow_thing<K: Clone + Eq + Hash, E: From<MergeLoop>>(
 
 /// **Every thing folded into one thing**, directly or through things folded into
 /// those, found by asking the store what was folded into each in turn. Each thing
-/// counts once and the start never counts, so a loop in the events ends at the
-/// repeat. The caller asks for [`pending`](Self::pending) things until none is
-/// left, and hands what it found for each to [`reach`](Self::reach).
+/// counts once and the start never counts. A thing folded into itself through the
+/// things between is a [`MergeLoop`], found when a thing reaches one of the things
+/// it was reached through. The caller asks for [`pending`](Self::pending) things
+/// until none is left, and hands what it found for each to [`reach`](Self::reach).
 #[derive(Debug, Clone)]
 pub struct FoldedInto<K> {
-    start: K,
     reached: HashSet<K>,
     found: Vec<K>,
     pending: Vec<K>,
+    came_through: std::collections::HashMap<K, K>,
+    asked: Option<K>,
+    looped: Option<Vec<String>>,
 }
 
-impl<K: Clone + Eq + Hash> FoldedInto<K> {
+impl<K: Clone + Eq + Hash + std::fmt::Display> FoldedInto<K> {
     pub fn new(start: K) -> Self {
         FoldedInto {
             reached: HashSet::from([start.clone()]),
             pending: vec![start.clone()],
             found: Vec::new(),
-            start,
+            came_through: std::collections::HashMap::new(),
+            asked: None,
+            looped: None,
         }
     }
 
     /// The next thing to ask the store about, or `None` when every one was asked.
     pub fn pending(&mut self) -> Option<K> {
-        self.pending.pop()
+        self.asked = self.pending.pop();
+        self.asked.clone()
     }
 
     /// **Take what was folded into the thing just asked about**, and answer which
-    /// of it the walk had not reached before. A thing already reached, and the
-    /// start, are left out.
+    /// of it the walk had not reached before. A thing already reached is left out.
+    /// One that is the start, or the thing asked about, or a thing the asked-about
+    /// thing was reached through, closes a loop, which [`finish`](Self::finish)
+    /// reports.
     pub fn reach(&mut self, folded: impl IntoIterator<Item = K>) -> Vec<K> {
         let mut new = Vec::new();
+        let Some(asked) = self.asked.clone() else {
+            return new;
+        };
         for key in folded {
-            if key != self.start && self.reached.insert(key.clone()) {
+            if self.reached.insert(key.clone()) {
+                self.came_through.insert(key.clone(), asked.clone());
                 self.found.push(key.clone());
                 self.pending.push(key.clone());
                 new.push(key);
+            } else if self.looped.is_none() {
+                // The thing is reached again: a loop when it is one the asked-about
+                // thing was reached through, itself included.
+                let mut through = vec![asked.clone()];
+                let mut at = asked.clone();
+                while let Some(before) = self.came_through.get(&at) {
+                    through.push(before.clone());
+                    at = before.clone();
+                }
+                if let Some(from) = through.iter().position(|held| *held == key) {
+                    let mut around: Vec<String> = through[..=from]
+                        .iter()
+                        .rev()
+                        .map(ToString::to_string)
+                        .collect();
+                    around.dedup();
+                    self.looped = Some(around);
+                }
             }
         }
         new
     }
 
-    /// Everything reached, in the order it was found.
-    pub fn finish(self) -> Vec<K> {
-        self.found
+    /// Everything reached, in the order it was found. [`MergeLoop`] when a thing
+    /// was folded into one of the things it was reached through.
+    pub fn finish(self) -> Result<Vec<K>, MergeLoop> {
+        match self.looped {
+            Some(things) => Err(MergeLoop { things }),
+            None => Ok(self.found),
+        }
     }
 }
 
 /// [`FoldedInto`] over a store that answers at once.
-pub fn folded_into_walk<K: Clone + Eq + Hash>(
+pub fn folded_into_walk<K: Clone + Eq + Hash + std::fmt::Display>(
     survivor: K,
     mut folded_into: impl FnMut(&K) -> Vec<K>,
-) -> Vec<K> {
+) -> Result<Vec<K>, MergeLoop> {
     let mut walk = FoldedInto::new(survivor);
     while let Some(at) = walk.pending() {
         let folded = folded_into(&at);
@@ -315,7 +370,13 @@ mod tests {
             asked += 1;
             Ok(moves(&events, home, local))
         });
-        assert_eq!(end, Err(MergeLoop), "the loop is reported, not answered");
+        assert_eq!(
+            end,
+            Err(MergeLoop {
+                things: vec!["a#f1".into(), "b#f1".into()]
+            }),
+            "the loop is reported, naming the addresses in it, and not answered"
+        );
         assert_eq!(asked, 2, "each address is asked once");
     }
 
@@ -374,15 +435,34 @@ mod tests {
     #[test]
     fn things_that_lead_back_to_where_they_began_are_a_merge_loop() {
         let looped: &'static [(&str, &str)] = &[("a", "b"), ("b", "c"), ("c", "a")];
-        assert_eq!(follow_thing("a", survivors(looped)), Err(MergeLoop));
+        assert_eq!(
+            follow_thing("a", survivors(looped)),
+            Err(MergeLoop {
+                things: vec!["a".into(), "b".into(), "c".into()]
+            }),
+            "the loop names the things in it"
+        );
         let into_itself: &'static [(&str, &str)] = &[("a", "a")];
-        assert_eq!(follow_thing("a", survivors(into_itself)), Err(MergeLoop));
+        assert_eq!(
+            follow_thing("a", survivors(into_itself)),
+            Err(MergeLoop {
+                things: vec!["a".into()]
+            })
+        );
+        let tail: &'static [(&str, &str)] = &[("x", "a"), ("a", "b"), ("b", "a")];
+        assert_eq!(
+            follow_thing("x", survivors(tail)),
+            Err(MergeLoop {
+                things: vec!["a".into(), "b".into()]
+            }),
+            "a thing that leads into a loop names the loop and not the way in"
+        );
     }
 
     fn folded_in(
         pairs: &'static [(&'static str, &'static str)],
         survivor: &'static str,
-    ) -> Vec<&'static str> {
+    ) -> Result<Vec<&'static str>, MergeLoop> {
         folded_into_walk(survivor, |at| {
             pairs
                 .iter()
@@ -395,18 +475,45 @@ mod tests {
     #[test]
     fn everything_folded_into_a_thing_is_found_through_what_was_folded_into_those() {
         let pairs: &'static [(&str, &str)] = &[("b", "a"), ("c", "b"), ("d", "b"), ("x", "y")];
-        let mut found = folded_in(pairs, "a");
+        let mut found = folded_in(pairs, "a").expect("no loop");
         found.sort();
         assert_eq!(found, ["b", "c", "d"]);
-        assert!(
-            folded_in(pairs, "c").is_empty(),
+        assert_eq!(
+            folded_in(pairs, "c"),
+            Ok(Vec::new()),
             "nothing was folded into c"
         );
     }
 
     #[test]
-    fn a_loop_among_the_folded_things_ends_and_never_counts_the_start() {
-        let pairs: &'static [(&str, &str)] = &[("b", "a"), ("a", "b")];
-        assert_eq!(folded_in(pairs, "a"), ["b"]);
+    fn a_loop_among_the_folded_things_is_a_merge_loop_naming_the_things_in_it() {
+        let two: &'static [(&str, &str)] = &[("b", "a"), ("a", "b")];
+        assert_eq!(
+            folded_in(two, "a"),
+            Err(MergeLoop {
+                things: vec!["a".into(), "b".into()]
+            }),
+            "a thing folded into what was folded into it"
+        );
+        let beside: &'static [(&str, &str)] = &[("b", "a"), ("c", "b"), ("b", "c")];
+        assert_eq!(
+            folded_in(beside, "a"),
+            Err(MergeLoop {
+                things: vec!["b".into(), "c".into()]
+            }),
+            "a loop that does not pass through the start names only the loop"
+        );
+        let into_itself: &'static [(&str, &str)] = &[("a", "a")];
+        assert_eq!(
+            folded_in(into_itself, "a"),
+            Err(MergeLoop {
+                things: vec!["a".into()]
+            }),
+            "a thing folded into itself"
+        );
+        let twice: &'static [(&str, &str)] = &[("b", "a"), ("c", "a"), ("d", "b"), ("d", "c")];
+        let mut found = folded_in(twice, "a").expect("a diamond is not a loop");
+        found.sort();
+        assert_eq!(found, ["b", "c", "d"], "a thing reached twice counts once");
     }
 }

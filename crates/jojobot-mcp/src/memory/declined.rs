@@ -308,6 +308,9 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::SuppliedRecordCollidesWithStoredRow { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => Some(FixBy::Person),
+        // Stored damage, which sending the call again or changing it cannot help:
+        // only a person repairs it.
+        MemoryError::StoredDamage { .. } => Some(FixBy::Person),
         // A held role frees when its lease ends; a collision clears on the next try.
         MemoryError::RoleTaken { .. } | MemoryError::Conflict => Some(FixBy::Retry),
         // The claim moved on after the caller read it: read it again, then send the
@@ -1532,6 +1535,12 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        // **Damage is not an outage.** The store answered and what it holds is
+        // wrong; the sentence names the damage and says a person must repair it,
+        // and never says to try again.
+        MemoryError::StoredDamage { what } => {
+            McpError::internal_error(crate::boundary::damaged("this call", &what), None)
+        }
         // **A refusal is not an outage** — see the domain's own doc on
         // [`MemoryError::Refused`]. The sentence says the store answered and that
         // sending the same call again meets the same refusal.
@@ -1856,6 +1865,36 @@ pub(crate) mod tests {
             "a caller needs its next move: {}",
             err.message
         );
+    }
+
+    /// **Stored damage is told as damage a person repairs, and never as an
+    /// outage.** The caller is told which things are damaged, in the handles it
+    /// knows, and that sending the call again meets the same damage; the
+    /// sentence an outage gets (try once more) is nowhere in it. **Paired** with
+    /// the outage, which still says to try once more and wears `retry`.
+    #[test]
+    fn stored_damage_names_the_damage_and_never_says_to_try_again() {
+        let what = "the merge events in the store lead back to where they began: \
+                    person:alpha, person:beta";
+        let damage = memory_error(MemoryError::StoredDamage { what: what.into() });
+        assert!(
+            damage.message.contains("person:alpha") && damage.message.contains("person:beta"),
+            "the damaged things are named: {}",
+            damage.message
+        );
+        assert!(
+            !damage.message.contains("Try once more"),
+            "damage was told the way an outage is: {}",
+            damage.message
+        );
+        assert_error_word("StoredDamage", &damage, Some("person"));
+        let outage = memory_error(MemoryError::Store("the store is gone".into()));
+        assert!(
+            outage.message.contains("Try once more"),
+            "{}",
+            outage.message
+        );
+        assert_error_word("Store", &outage, Some("retry"));
     }
 
     /// **`memory_error` routes `Refused` through `refused`, not `store_failed`**
@@ -2303,6 +2342,16 @@ pub(crate) mod tests {
                 "Store",
                 MemoryError::Store(s("connection refused")),
                 Some("retry"),
+            ),
+            // **Damage a person repairs, set beside the outage it is not.**
+            (
+                "StoredDamage",
+                MemoryError::StoredDamage {
+                    what: s(
+                        "the merge events in the store lead back to where they began: person:alpha, person:beta",
+                    ),
+                },
+                Some("person"),
             ),
         ];
         rows

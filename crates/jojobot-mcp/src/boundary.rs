@@ -53,6 +53,21 @@ pub(crate) fn conflict(verb: &str, detail: &str) -> String {
     )
 }
 
+/// **Damage in what jojobot stores, told apart from a store failure.** `what` names
+/// the damage and the things in it, as handles, and is returned: it is for the
+/// person who repairs it. The store is reachable and answered, so sending the
+/// call again meets the same damage, and no change to the call helps; the
+/// sentence says what `store_failed`'s must not, that a retry is the wrong move.
+pub(crate) fn damaged(verb: &str, what: &str) -> String {
+    tracing::error!(verb, what, "stored damage reached the boundary");
+    format!(
+        "{verb} could not be completed — what jojobot stores is damaged: {what}. The store is \
+         working and answered, so sending the same call again will meet the same damage, and \
+         nothing in the call changes it. Only a person can repair it, and it is not something \
+         you can do from here: tell the operator what is named here."
+    )
+}
+
 /// A record jojobot cannot read, told the same way: logged, not returned.
 pub(crate) fn unreadable(what: &str, detail: &str) -> String {
     tracing::error!(what, detail, "unreadable record reached the boundary");

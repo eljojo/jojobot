@@ -163,7 +163,8 @@ fn claim_moves(
 /// receipt built from the row alone would disagree with the listing.
 fn naming_folded_in(rows: &[Entity], entity: &mut Entity) {
     let mut listed = rows.to_vec();
-    super::super::with_folded_names(&mut listed);
+    super::super::with_folded_names(&mut listed)
+        .expect("the fake merges nothing into itself, so its merges never loop");
     if let Some(row) = listed.into_iter().find(|row| row.id == entity.id) {
         entity.folded_names = row.folded_names;
     }
@@ -833,7 +834,8 @@ impl InMemoryMemory {
         self.index_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
-        super::super::with_folded_names(&mut entities);
+        super::super::with_folded_names(&mut entities)
+            .expect("the fake merges nothing into itself, so its merges never loop");
         let snapshot = entities.clone();
         let merges = self.merges.lock().expect("fake mutex poisoned");
         for entity in &mut entities {
@@ -1151,7 +1153,10 @@ impl InMemoryMemory {
 
     /// **Every key a merge folded into this one**, and every key folded into
     /// those earlier. A key never counts twice, so a loop in the merges ends.
-    fn keys_folded_into(&self, key: &EntityId) -> std::collections::HashSet<EntityId> {
+    fn keys_folded_into(
+        &self,
+        key: &EntityId,
+    ) -> Result<std::collections::HashSet<EntityId>, MergeLoop> {
         let merges = self.merges.lock().expect("fake mutex poisoned");
         folded_into_walk(key.clone(), |at| {
             merges
@@ -1160,8 +1165,7 @@ impl InMemoryMemory {
                 .map(|merge| merge.folded.clone())
                 .collect()
         })
-        .into_iter()
-        .collect()
+        .map(|folded| folded.into_iter().collect())
     }
 
     fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
@@ -2463,7 +2467,7 @@ impl Memory for InMemoryMemory {
         // Screened like a creation, with the thing's own row excluded from
         // the index it is screened against — or it would collide with its
         // own former name the moment the new one is close to it.
-        let earlier_selves = super::super::folded_into(from, &known);
+        let earlier_selves = super::super::folded_into(from, &known)?;
         let others: Vec<Entity> = known
             .iter()
             .filter(|e| &e.id != from && !earlier_selves.contains(&e.id))
@@ -3247,7 +3251,7 @@ impl Memory for InMemoryMemory {
         // real store reads them, and none for a key that was folded away: what it
         // still stores is its survivor's now.
         let keys: std::collections::BTreeSet<String> = {
-            let folded = self.keys_folded_into(&storage_key);
+            let folded = self.keys_folded_into(&storage_key)?;
             let is_folded = self
                 .merges
                 .lock()

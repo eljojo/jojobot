@@ -767,6 +767,16 @@ answer: protocol error: this call could not be completed — jojobot's own stora
 }
 ```
 
+### Memory refusal `StoredDamage`
+
+```text
+reads: the store holds damage a person must repair: the merge events in the store lead back to where they began: person:alpha, person:beta
+answer: protocol error: this call could not be completed — what jojobot stores is damaged: the merge events in the store lead back to where they began: person:alpha, person:beta. The store is working and answered, so sending the same call again will meet the same damage, and nothing in the call changes it. Only a person can repair it, and it is not something you can do from here: tell the operator what is named here.
+{
+  "fix_by": "person"
+}
+```
+
 ### Mailbox refusal `InvalidName`
 
 ```text

@@ -1758,6 +1758,16 @@ async fn two_events_for_one_claim_serve_it_where_the_walk_says_it_went() {
     store.stop().await;
 }
 
+/// **The account of stored damage in an answer**, or a failure of the test that says
+/// what came back instead. Damage is not an outage: it is its own error, and the
+/// outage's error is not it.
+fn damage_of<T: std::fmt::Debug>(answer: Result<T, MemoryError>, what_it_is: &str) -> String {
+    match answer {
+        Err(MemoryError::StoredDamage { what }) => what,
+        other => panic!("{what_it_is}, and is answered as stored damage: {other:?}"),
+    }
+}
+
 /// **Events that lead back to where they began end the walk with an error.** A
 /// store edited by hand can hold them; no count of merges is the limit, so only a
 /// repeated address stops the walk, and serving a claim at any address on the loop
@@ -1813,9 +1823,16 @@ async fn events_that_lead_back_to_where_they_began_are_an_error_and_not_an_answe
 
     let old = FactAddress::new(merged.folded.clone(), FactId(first_was.clone()));
     let looped = merged.memory.moved_address(&old).await;
+    let what = damage_of(looped, "a loop is damage");
+    // **The things in the loop are named by their handles**, and the keys the
+    // store files them under are told to nobody.
     assert!(
-        matches!(looped, Err(MemoryError::Store(_))),
-        "a loop is an error: {looped:?}"
+        what.contains(merged.folded.as_str()) && what.contains(merged.survivor.as_str()),
+        "the loop names its things: {what}"
+    );
+    assert!(
+        !what.contains(merged.folded_key.as_str()) && !what.contains(merged.survivor_key.as_str()),
+        "a key the store files them under reached the answer: {what}"
     );
     let untouched = FactAddress::new(merged.folded.clone(), FactId(second_was.clone()));
     assert!(
@@ -1871,10 +1888,10 @@ async fn a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer() 
     .expect("the loop's event lands");
 
     let pointing = merged.memory.recall(&merged.pointing).await;
+    let what = damage_of(pointing, "a pointer into a loop is damage");
     assert!(
-        matches!(pointing, Err(MemoryError::Store(_))),
-        "a pointer into a loop is an error: {:?}",
-        pointing.map(|facts| facts.len())
+        what.contains(merged.folded.as_str()) && what.contains(merged.survivor.as_str()),
+        "the loop names its things: {what}"
     );
     store.stop().await;
 }
@@ -2015,6 +2032,137 @@ async fn forwarding_rows_that_loop_are_listed_and_left_by_the_link_pass() {
             .expect("a second pass runs")
             .settled,
         "a pass that skipped a forward is not marked finished"
+    );
+    store.stop().await;
+}
+
+/// **Two things folded into each other hold nothing, and the read says why.** A
+/// key that was folded away holds nothing of its own, and a pair folded into each
+/// other have no survivor to hold it. The read that met the pair answered with no
+/// claims, which says the thing has none. It answers stored damage, naming both.
+/// **Paired**: the survivor held its claims before the loop.
+#[tokio::test]
+async fn things_folded_into_each_other_are_damage_and_not_an_empty_thing() {
+    let scratch = Scratch::new("merge-pair-loop");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_pair_loop")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+    let held = merged
+        .memory
+        .recall(&merged.survivor)
+        .await
+        .expect("the survivor reads while the merges end");
+    assert!(!held.is_empty(), "the survivor holds its claims");
+
+    let at = merged
+        .memory
+        .merge_events(Some(&merged.survivor))
+        .await
+        .expect("events read")[0]
+        .merged_at
+        .to_string();
+    let first_no: i64 = sqlx::query_scalar("SELECT merge_no FROM merge_event WHERE ordinal = 0")
+        .fetch_one(&pool)
+        .await
+        .expect("the event is there");
+    sqlx::query(
+        "INSERT INTO merge_event (merge_no, ordinal, folded, survivor, merged_at, session)
+         VALUES (?, 0, ?, ?, ?, 'run-b')",
+    )
+    .bind(first_no + 1)
+    .bind(merged.survivor_key.as_str())
+    .bind(merged.folded_key.as_str())
+    .bind(&at)
+    .execute(&pool)
+    .await
+    .expect("the loop's event lands");
+
+    let what = damage_of(
+        merged.memory.recall(&merged.survivor).await,
+        "a pair folded into each other is damage",
+    );
+    assert!(
+        what.contains(merged.folded.as_str()) && what.contains(merged.survivor.as_str()),
+        "the loop names its things: {what}"
+    );
+    store.stop().await;
+}
+
+/// **A loop among the things folded into a survivor is damage, though the
+/// survivor is in none of it.** One thing folded into the survivor, a second
+/// folded into the first, and the first folded into the second: the survivor
+/// still stands, and the things beneath it have no end. The read of the
+/// survivor names the two, and not the survivor. **Paired**: the survivor held
+/// its claims before the loop.
+#[tokio::test]
+async fn a_loop_beneath_a_survivor_is_damage_naming_the_things_in_it() {
+    let scratch = Scratch::new("merge-beneath-loop");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_beneath_loop")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+    let held = merged
+        .memory
+        .recall(&merged.survivor)
+        .await
+        .expect("the survivor reads while the merges end");
+    assert!(!held.is_empty(), "the survivor holds its claims");
+
+    let at = merged
+        .memory
+        .merge_events(Some(&merged.survivor))
+        .await
+        .expect("events read")[0]
+        .merged_at
+        .to_string();
+    let first_no: i64 = sqlx::query_scalar("SELECT merge_no FROM merge_event WHERE ordinal = 0")
+        .fetch_one(&pool)
+        .await
+        .expect("the event is there");
+    // The third thing is folded into the folded one, and the folded one into the
+    // third: the two lead to each other, below the survivor.
+    for (offset, (folded, survivor)) in [
+        (&merged.pointing_key, &merged.folded_key),
+        (&merged.folded_key, &merged.pointing_key),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO merge_event (merge_no, ordinal, folded, survivor, merged_at, session)
+             VALUES (?, 0, ?, ?, ?, 'run-b')",
+        )
+        .bind(first_no + 1 + offset as i64)
+        .bind(folded.as_str())
+        .bind(survivor.as_str())
+        .bind(&at)
+        .execute(&pool)
+        .await
+        .expect("the loop's event lands");
+    }
+
+    let what = damage_of(
+        merged.memory.recall(&merged.survivor).await,
+        "a loop beneath a survivor is damage",
+    );
+    assert!(
+        what.contains(merged.folded.as_str()) && what.contains(merged.pointing.as_str()),
+        "the loop names the things in it: {what}"
+    );
+    assert!(
+        !what.contains(merged.survivor.as_str()),
+        "and not the survivor, which is in none of it: {what}"
     );
     store.stop().await;
 }

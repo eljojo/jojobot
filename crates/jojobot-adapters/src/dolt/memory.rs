@@ -31,7 +31,7 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::claim_walk::{
-    ClaimMove, ClaimWalk, FoldedInto, ThingWalk, follow_claim, follow_thing,
+    ClaimMove, ClaimWalk, FoldedInto, MergeLoop, ThingWalk, follow_claim, follow_thing,
 };
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::unmapped::UnmappedClaim;
@@ -1341,7 +1341,10 @@ impl DoltMemory {
     }
 
     /// **Whether a merge folded this key into another thing.** The events say
-    /// so whether or not the rows were moved.
+    /// so whether or not the rows were moved. **A key that was folded away holds
+    /// nothing of its own because its survivor holds it**, so a key whose
+    /// survivors lead back to it has nowhere to be held and is damage, never an
+    /// empty thing: the walk to its survivor says so.
     async fn is_folded_key(
         tx: &mut Transaction<'_, MySql>,
         key: &EntityId,
@@ -1353,6 +1356,9 @@ impl DoltMemory {
         .fetch_optional(&mut **tx)
         .await
         .map_err(store)?;
+        if found.is_some() {
+            Self::forward_key(tx, key).await?;
+        }
         Ok(found.is_some())
     }
 
@@ -1388,6 +1394,9 @@ impl DoltMemory {
                     steps.push((merge_no, name, key.clone()));
                 }
             }
+        }
+        if let Err(looped) = walk.finish() {
+            return Err(Self::damage_of(tx, looped).await);
         }
         steps.sort();
         let mut out = Vec::with_capacity(steps.len());
@@ -1485,16 +1494,18 @@ impl DoltMemory {
             .collect();
         for (key, value) in writes.iter_mut() {
             let Some(held) = value else { continue };
-            if let Some(now) =
+            let forwarded =
                 jojobot_domain::memory::forward_field_value(key, held, &declared, |thing| {
-                    Ok::<_, MemoryError>(
+                    Ok::<_, MergeLoop>(
                         survivors
                             .get(thing.as_str())
                             .map(|survivor| EntityId((*survivor).to_string())),
                     )
-                })?
-            {
-                *held = now;
+                });
+            match forwarded {
+                Ok(Some(now)) => *held = now,
+                Ok(None) => {}
+                Err(looped) => return Err(Self::damage_of(tx, looped).await),
             }
         }
         Ok(())
@@ -1576,7 +1587,7 @@ impl DoltMemory {
                 .map(|(_, _, id, ..)| id)
                 .collect();
             for id in ids {
-                let end = follow_claim::<_, MemoryError>(
+                let end = follow_claim::<_, MergeLoop>(
                     EntityId(step.folded.clone()),
                     id.clone(),
                     |home, local| {
@@ -1590,7 +1601,11 @@ impl DoltMemory {
                             })
                             .collect())
                     },
-                )?;
+                );
+                let end = match end {
+                    Ok(end) => end,
+                    Err(looped) => return Err(Self::damage_of(tx, looped).await),
+                };
                 if let Some((home, now)) = end
                     && home == *survivor
                 {
@@ -2006,17 +2021,21 @@ impl DoltMemory {
             ))
         })
         .collect::<Result<_, MemoryError>>()?;
-        jojobot_domain::memory::with_folded_names(&mut entities);
+        jojobot_domain::memory::with_folded_names(&mut entities)?;
         let snapshot = entities.clone();
         for entity in &mut entities {
             if let Some(parent) = &entity.parent {
-                let parent = follow_thing::<_, MemoryError>(parent.clone(), |at| {
+                let parent = follow_thing::<_, MergeLoop>(parent.clone(), |at| {
                     Ok(merges
                         .iter()
                         .rev()
                         .find(|(folded, _)| folded == at.as_str())
                         .map(|(_, survivor)| EntityId(survivor.clone())))
-                })?;
+                });
+                let parent = match parent {
+                    Ok(parent) => parent,
+                    Err(looped) => return Err(Self::damage_of(tx, looped).await),
+                };
                 entity.parent = Some(
                     jojobot_domain::memory::entity_wearing(parent.as_str(), &snapshot)
                         .map(|found| found.id.clone())
@@ -4832,7 +4851,7 @@ impl Memory for DoltMemory {
         // Screened like a creation, with the thing's own row excluded — or
         // it would collide with its own former name the moment the new one
         // is close to it.
-        let earlier_selves = jojobot_domain::memory::folded_into(from, &known);
+        let earlier_selves = jojobot_domain::memory::folded_into(from, &known)?;
         let others: Vec<Entity> = known
             .into_iter()
             .filter(|e| &e.id != from && !earlier_selves.contains(&e.id))

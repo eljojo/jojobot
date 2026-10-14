@@ -2481,7 +2481,9 @@ fn a_field_value_is_forwarded_to_the_end_of_the_merges() {
     let looped: &'static [(&str, &str)] = &[("a", "b"), ("b", "a")];
     assert_eq!(
         forward_field_value("friends", &marked(&["a"]), &[], survivor_of(looped)),
-        Err(MergeLoop),
+        Err(MergeLoop {
+            things: vec!["a".into(), "b".into()]
+        }),
         "a loop among the merges is the one error"
     );
 }
@@ -2510,7 +2512,7 @@ fn a_survivor_is_named_each_folded_name_once() {
         row("older", "Older", &["Ancient"], Some("spare")),
         row("alone", "Alone", &["Solo"], None),
     ];
-    with_folded_names(&mut rows);
+    with_folded_names(&mut rows).expect("no loop");
     assert_eq!(
         rows[0].folded_names,
         ["Older", "Ancient", "Spare", "Extra"],
@@ -2521,7 +2523,7 @@ fn a_survivor_is_named_each_folded_name_once() {
         row.folded_names.clear();
     }
     reversed.reverse();
-    with_folded_names(&mut reversed);
+    with_folded_names(&mut reversed).expect("no loop");
     let survivor = reversed
         .iter()
         .find(|row| row.id.as_str() == format!("org:{}", "kept"))
@@ -2540,6 +2542,42 @@ fn a_survivor_is_named_each_folded_name_once() {
         "nothing was folded into it"
     );
     assert_eq!(rows[0].aliases, ["Shared"], "no alias was moved");
+}
+
+/// **Things folded into each other are a loop, and no survivor is named for them.**
+/// The listing names the folded things on a survivor through the walk of what was
+/// folded in, and a loop among the rows is the walk's one error, naming the
+/// things in it. **Paired** with the same rows without the loop.
+#[test]
+fn a_loop_among_the_rows_is_the_one_error_and_not_a_survivor_named_for_it() {
+    let row = |slug: &str, name: &str, into: Option<&str>| {
+        let mut entity = thing(&format!("org:{slug}"), None);
+        entity.name = name.to_string();
+        entity.merged_into = into.map(|slug| EntityId(format!("org:{slug}")));
+        entity
+    };
+    let mut sound = vec![
+        row("kept", "Kept", None),
+        row("spare", "Spare", Some("kept")),
+    ];
+    with_folded_names(&mut sound).expect("rows that end name their survivor");
+    assert_eq!(sound[0].folded_names, ["Spare"]);
+
+    // The spare thing and the older one are each folded into the other.
+    let mut looped = vec![
+        row("kept", "Kept", None),
+        row("spare", "Spare", Some("older")),
+        row("older", "Older", Some("spare")),
+    ];
+    let refused = with_folded_names(&mut looped);
+    let Err(found) = refused else {
+        panic!("a loop among the rows named a survivor: {looped:?}");
+    };
+    assert_eq!(
+        found.things.len(),
+        2,
+        "the two things in the loop are named, and no more: {found:?}"
+    );
 }
 
 /// **A ceiling is a whole number of zero or more, and anything else is refused

@@ -4,7 +4,7 @@
 //! from the `merge_event` table and nothing that decides where a walk goes or
 //! when it ends.
 
-use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, ThingWalk};
+use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, MergeLoop, ThingWalk};
 use jojobot_domain::memory::{EntityId, FactAddress, FactId, MemoryError};
 use sqlx::{MySql, Row, Transaction};
 
@@ -39,9 +39,10 @@ impl DoltMemory {
                 });
             }
             if !walk.step(moves) {
-                return Ok(walk
-                    .finish()?
-                    .map(|(home, local)| FactAddress::new(home, local)));
+                return match walk.finish() {
+                    Ok(end) => Ok(end.map(|(home, local)| FactAddress::new(home, local))),
+                    Err(looped) => Err(Self::damage_of(tx, looped).await),
+                };
             }
         }
     }
@@ -89,7 +90,10 @@ impl DoltMemory {
         loop {
             let survivor = Self::survivor_of(tx, walk.at()).await?;
             if !walk.step(survivor) {
-                return Ok(walk.finish()?);
+                return match walk.finish() {
+                    Ok(end) => Ok(end),
+                    Err(looped) => Err(Self::damage_of(tx, looped).await),
+                };
             }
         }
     }
@@ -110,5 +114,40 @@ impl DoltMemory {
         .await
         .map_err(store)?;
         Ok(survivor.map(EntityId))
+    }
+
+    /// **A merge loop as damage a person can find.** The walk names the things in
+    /// the loop by the keys this store files them under, which no caller is told;
+    /// each is named here by the handle it answers to, and a claim address by its
+    /// handle and local id. The answer is [`MemoryError::StoredDamage`], which a
+    /// caller is told only a person can repair.
+    pub(super) async fn damage_of(
+        tx: &mut Transaction<'_, MySql>,
+        looped: MergeLoop,
+    ) -> MemoryError {
+        let mut named = Vec::with_capacity(looped.things.len());
+        for thing in &looped.things {
+            let (key, local) = match thing.split_once('#') {
+                Some((key, local)) => (key, Some(local)),
+                None => (thing.as_str(), None),
+            };
+            let handle: Option<String> =
+                sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
+                    .bind(key)
+                    .fetch_optional(&mut **tx)
+                    .await
+                    .ok()
+                    .flatten();
+            let handle = handle.unwrap_or_else(|| key.to_string());
+            named.push(match local {
+                Some(local) => format!("{handle}#{local}"),
+                None => handle,
+            });
+        }
+        tracing::error!(
+            things = ?named,
+            "stored damage: the merge events lead back to where they began"
+        );
+        MergeLoop { things: named }.into()
     }
 }
