@@ -46,6 +46,8 @@ jobs:
   # Every room suite except the year room. `make rooms` builds the workspace
   # in the same command, because a room spawns the built server.
   rooms:
+    # A red check spends no more slots on this pull request.
+    needs: check
     runs-on: nix
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +57,7 @@ jobs:
 
   # The year room is the slowest suite and no other target runs it.
   year:
+    needs: check
     runs-on: nix
     steps:
       - uses: actions/checkout@v4
