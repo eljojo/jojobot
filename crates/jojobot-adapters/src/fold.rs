@@ -66,8 +66,9 @@ pub struct Folded {
     /// reach the image in the order they reached the store, so a slower re-read
     /// of an earlier state cannot land after a faster one of a later state.
     writing: tokio::sync::Mutex<()>,
-    /// Set by the first successful `rebuild`. A write after a refresh failed
-    /// drops the image, and this is what tells the next write to fill it again.
+    /// Set by the first `rebuild`, whether or not its fill succeeded. A fill that
+    /// failed, or a refresh that failed, leaves no image, and this is what tells
+    /// the next write to fill it again.
     wanted: AtomicBool,
     /// **How many times the image has changed**, bumped under the same lock
     /// that installs the change, so a reader that sees a number sees at least the
@@ -97,6 +98,9 @@ impl Folded {
     /// how many things were held.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
         let _gate = self.writing.lock().await;
+        // **Wanted from the first attempt, whether or not it succeeds**: a fill that
+        // failed leaves no image, and the next write fills it again.
+        self.wanted.store(true, Ordering::SeqCst);
         self.fill().await
     }
 
@@ -111,7 +115,6 @@ impl Folded {
                     *slot = Some(image);
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
-                self.wanted.store(true, Ordering::SeqCst);
                 Ok(held)
             }
             Err(e) => {
@@ -843,6 +846,53 @@ mod tests {
                 .await
                 .expect("scanned fields ok"),
             "the folded answer must equal the scanned answer"
+        );
+    }
+
+    /// **A first fill that failed is filled again by the next write.** The store
+    /// was unreachable when the server booted and recovered a moment later. The
+    /// next write fills the image, and the read after it comes from the image,
+    /// makes no call to the store, and carries that write.
+    #[tokio::test]
+    async fn a_first_fill_that_failed_is_filled_again_by_the_next_write() {
+        use crate::counted::Counted;
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store.clone()));
+        let folded = Folded::new(counted.clone());
+        counted.set_unreachable(true);
+        folded
+            .rebuild()
+            .await
+            .expect_err("the store cannot be reached");
+        counted.set_unreachable(false);
+
+        seeded(&folded, &alpha(), "Alpha").await;
+        folded
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
+                ..NewFact::about(
+                    alpha(),
+                    "written after the store came back",
+                    date(2026, 9, 1),
+                )
+            }))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        counted.reset();
+        let fields = folded.fields(&alpha()).await.expect("fields ok");
+        assert_eq!(
+            counted.calls(),
+            0,
+            "the read reached the store: {:?}",
+            counted.seen()
+        );
+        assert_eq!(
+            fields.get("due_on").map(String::as_str),
+            Some("2026-09-14"),
+            "the image does not carry the write"
         );
     }
 

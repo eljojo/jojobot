@@ -486,3 +486,132 @@ async fn a_begin_retried_after_an_uncertain_commit_holds_the_one_begin_the_store
         );
     }
 }
+
+/// **A first fill that failed is filled again by the next write.** The store was
+/// unreachable when the server booted and recovered a moment later. After one
+/// write the next read comes from the image (the store counts none) and carries
+/// that write.
+#[tokio::test]
+async fn a_sessions_image_that_failed_to_fill_is_filled_again_by_the_next_write() {
+    use jojobot_domain::session::{NewSession, Sessions, Sid};
+    let store = Arc::new(InMemorySessions::new());
+    let counted = Arc::new(CountedSessions::new(store.clone()));
+    let folded = FoldedSessions::new(counted.clone(), store.write_stamp(), Clock::Real);
+    counted.calls.set_unreachable(true);
+    folded
+        .rebuild()
+        .await
+        .expect_err("the store cannot be reached");
+    counted.calls.set_unreachable(false);
+
+    let begun = folded
+        .begin(NewSession {
+            bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+            sid: Sid("s001".into()),
+            focus: "reading the hand-off".into(),
+            started_at: jiff::Timestamp::from_second(1_780_000_000).expect("a valid instant"),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("the begin lands");
+
+    counted.calls.reset();
+    let read = folded
+        .read_session(&begun.id)
+        .await
+        .expect("the image answers");
+    assert_eq!(counted.calls.reads(), 0, "{:?}", counted.calls.seen());
+    assert_eq!(read.focus, "reading the hand-off");
+}
+
+#[tokio::test]
+async fn a_mail_image_that_failed_to_fill_is_filled_again_by_the_next_write() {
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
+    jojobot_domain::memory::kinds::load_shipped();
+    let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    let counted = Arc::new(CountedMailboxes::new(store.clone()));
+    let folded = FoldedMailboxes::new(counted.clone());
+    counted.calls.set_unreachable(true);
+    folded
+        .rebuild()
+        .await
+        .expect_err("the store cannot be reached");
+    counted.calls.set_unreachable(false);
+
+    folded
+        .create_mailbox(
+            &MailboxName("alpha".into()),
+            &jojobot_domain::memory::EntityId("bot:alpha".into()),
+            None,
+        )
+        .await
+        .expect("the box is made");
+    let posted = folded
+        .post_message(NewMessage {
+            mailbox: MailboxName("alpha".into()),
+            body: "written after the store came back".into(),
+            subject: None,
+            sender: "beta".into(),
+            sent_at: jiff::Timestamp::UNIX_EPOCH,
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: None,
+        })
+        .await
+        .expect("the post lands")
+        .written()
+        .expect("nothing blocks it");
+
+    counted.calls.reset();
+    let read = folded
+        .message_by_id(&posted.id)
+        .await
+        .expect("the image answers")
+        .expect("the message is held");
+    assert_eq!(counted.calls.reads(), 0, "{:?}", counted.calls.seen());
+    assert_eq!(read.body, "written after the store came back");
+}
+
+#[tokio::test]
+async fn a_teaching_ledger_that_failed_to_fill_is_filled_again_by_the_next_write() {
+    use jojobot_domain::session::Sid;
+    use jojobot_domain::teaching::Teachings;
+    let store = Arc::new(InMemoryTeachings::new());
+    let counted = Arc::new(CountedTeachings::new(store.clone()));
+    let folded = FoldedTeachings::new(counted.clone());
+    counted.calls.set_unreachable(true);
+    folded
+        .rebuild()
+        .await
+        .expect_err("the store cannot be reached");
+    counted.calls.set_unreachable(false);
+
+    let sid = Sid("s001".into());
+    let at = jiff::Timestamp::UNIX_EPOCH;
+    assert!(
+        folded
+            .first_contact(&sid, "claims", at)
+            .await
+            .expect("the write lands"),
+        "the first contact is a first contact"
+    );
+
+    counted.calls.reset();
+    assert!(
+        !folded
+            .first_contact(&sid, "claims", at)
+            .await
+            .expect("the ledger answers"),
+        "the second contact is not"
+    );
+    assert_eq!(
+        (counted.calls.reads(), counted.calls.writes()),
+        (0, 0),
+        "the repeat reached the store: {:?}",
+        counted.calls.seen()
+    );
+}

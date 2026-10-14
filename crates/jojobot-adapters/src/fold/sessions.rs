@@ -179,8 +179,9 @@ pub struct FoldedSessions {
     /// **Held across a write and the image's following it.** Two writes then
     /// reach the image in the order they reached the store.
     writing: tokio::sync::Mutex<()>,
-    /// Set by the first successful `rebuild`. A write the image could not follow
-    /// drops the image, and this is what tells the next write to fill it again.
+    /// Set by the first `rebuild`, whether or not its fill succeeded. A fill that
+    /// failed, or a write the image could not follow, leaves no image, and this is
+    /// what tells the next write to fill it again.
     wanted: AtomicBool,
     /// **The moment of the write in flight, shared with the store beneath.** The
     /// image takes the moment once per write and holds it here while the store
@@ -219,6 +220,9 @@ impl FoldedSessions {
     /// or a row it cannot read, leaves no image: the reads go to the store.
     pub async fn rebuild(&self) -> Result<usize, SessionError> {
         let _gate = self.writing.lock().await;
+        // **Wanted from the first attempt, whether or not it succeeds**: a fill that
+        // failed leaves no image, and the next write fills it again.
+        self.wanted.store(true, Ordering::SeqCst);
         self.fill().await
     }
 
@@ -234,7 +238,6 @@ impl FoldedSessions {
             Ok((runs, Some(changes), histories)) => {
                 let held = runs.len();
                 *self.image.write().expect("fold lock") = Some(Image::of(runs, changes, histories));
-                self.wanted.store(true, Ordering::SeqCst);
                 Ok(held)
             }
             Ok((_, None, _)) => {

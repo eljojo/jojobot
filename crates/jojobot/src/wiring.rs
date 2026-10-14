@@ -890,7 +890,8 @@ pub async fn boot_store_pushing(
         Err(e) => tracing::warn!(
             error = %e,
             "TEACHING LEDGER NOT HELD IN MEMORY — the boot read failed, so every first contact \
-             goes to the store. Nothing is wrong; every answer stays correct and only slower."
+             goes to the store until a write through this process fills the ledger again. \
+             Nothing is wrong; every answer stays correct and only slower until then."
         ),
     }
 

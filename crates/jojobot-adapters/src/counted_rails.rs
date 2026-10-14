@@ -38,6 +38,8 @@ enum Kind {
 #[derive(Default)]
 pub struct Calls {
     seen: std::sync::Mutex<BTreeMap<&'static str, (Kind, usize)>>,
+    /// While set, the reads that fill an image fail.
+    unreachable: std::sync::atomic::AtomicBool,
 }
 
 impl Calls {
@@ -84,6 +86,22 @@ impl Calls {
     pub fn reset(&self) {
         self.seen.lock().expect("count lock").clear();
     }
+
+    /// **A store that cannot be reached for the reads that fill an image.** Those
+    /// reads fail while `down` is set; every other call, writes included, goes
+    /// through, so a case can fail a first fill and let the store recover.
+    pub fn set_unreachable(&self, down: bool) {
+        self.unreachable
+            .store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The message a fill read fails with while the store is unreachable.
+    fn outage(&self) -> Result<(), String> {
+        match self.unreachable.load(std::sync::atomic::Ordering::SeqCst) {
+            true => Err("the store is unreachable".to_string()),
+            false => Ok(()),
+        }
+    }
 }
 
 /// A sessions store that counts the calls made to it.
@@ -125,6 +143,7 @@ impl Sessions for CountedSessions {
     }
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
         self.calls.hit("all_sessions", Kind::Read);
+        self.calls.outage().map_err(SessionError::Store)?;
         self.inner.all_sessions().await
     }
     async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
@@ -213,6 +232,9 @@ impl Sessions for CountedSessions {
         jojobot_domain::session::SessionError,
     > {
         self.calls.hit("scan_session_history", Kind::Read);
+        self.calls
+            .outage()
+            .map_err(jojobot_domain::session::SessionError::Store)?;
         self.inner.scan_session_history().await
     }
 
@@ -262,6 +284,7 @@ impl Sessions for CountedSessions {
         &self,
     ) -> Result<Option<BTreeMap<EntityId, CharterChange>>, SessionError> {
         self.calls.hit("charter_changes", Kind::Read);
+        self.calls.outage().map_err(SessionError::Store)?;
         self.inner.charter_changes().await
     }
 }
@@ -305,10 +328,12 @@ impl Mailboxes for CountedMailboxes {
     }
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         self.calls.hit("list_mailboxes", Kind::Read);
+        self.calls.outage().map_err(MailboxError::Store)?;
         self.inner.list_mailboxes().await
     }
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
         self.calls.hit("scan_messages", Kind::Read);
+        self.calls.outage().map_err(MailboxError::Store)?;
         self.inner.scan_messages().await
     }
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
@@ -379,6 +404,9 @@ impl Mailboxes for CountedMailboxes {
         jojobot_domain::mailbox::MailboxError,
     > {
         self.calls.hit("scan_message_events", Kind::Read);
+        self.calls
+            .outage()
+            .map_err(jojobot_domain::mailbox::MailboxError::Store)?;
         self.inner.scan_message_events().await
     }
 }
@@ -415,6 +443,7 @@ impl Teachings for CountedTeachings {
     }
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
         self.calls.hit("taught", Kind::Read);
+        self.calls.outage().map_err(TeachingError::Store)?;
         self.inner.taught().await
     }
 }

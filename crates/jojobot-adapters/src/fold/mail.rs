@@ -241,7 +241,7 @@ pub struct FoldedMailboxes {
     image: RwLock<Option<Image>>,
     /// **Held across a write and the image's following it.**
     writing: tokio::sync::Mutex<()>,
-    /// Set by the first successful `rebuild`.
+    /// Set by the first `rebuild`, whether or not its fill succeeded.
     wanted: AtomicBool,
 }
 
@@ -262,6 +262,9 @@ impl FoldedMailboxes {
     /// image: the reads go to the store.
     pub async fn rebuild(&self) -> Result<usize, MailboxError> {
         let _gate = self.writing.lock().await;
+        // **Wanted from the first attempt, whether or not it succeeds**: a fill that
+        // failed leaves no image, and the next write fills it again.
+        self.wanted.store(true, Ordering::SeqCst);
         self.fill().await
     }
 
@@ -277,7 +280,6 @@ impl FoldedMailboxes {
             Ok((boxes, messages, events)) => {
                 let held = messages.len();
                 *self.image.write().expect("fold lock") = Some(Image::of(boxes, messages, events));
-                self.wanted.store(true, Ordering::SeqCst);
                 Ok(held)
             }
             Err(e) => {

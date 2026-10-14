@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use jiff::civil::Date;
@@ -26,6 +26,8 @@ pub struct Counted {
     inner: Arc<dyn Memory>,
     total: AtomicUsize,
     by_name: std::sync::Mutex<BTreeMap<&'static str, usize>>,
+    /// While set, the listing every fill of the image starts with fails.
+    unreachable: AtomicBool,
 }
 
 impl Counted {
@@ -34,7 +36,15 @@ impl Counted {
             inner,
             total: AtomicUsize::new(0),
             by_name: std::sync::Mutex::default(),
+            unreachable: AtomicBool::new(false),
         }
+    }
+
+    /// **A store that cannot be reached for the reads that fill an image.** The
+    /// listing fails while `down` is set; every other call, writes included,
+    /// goes through, so a case can fail a first fill and let the store recover.
+    pub fn set_unreachable(&self, down: bool) {
+        self.unreachable.store(down, Ordering::SeqCst);
     }
 
     /// Calls made since the last [`reset`](Self::reset).
@@ -91,6 +101,9 @@ impl Memory for Counted {
     }
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.hit("list_entities");
+        if self.unreachable.load(Ordering::SeqCst) {
+            return Err(MemoryError::Store("the store is unreachable".into()));
+        }
         self.inner.list_entities(kind).await
     }
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
