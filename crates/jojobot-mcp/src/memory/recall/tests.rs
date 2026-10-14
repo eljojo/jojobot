@@ -78,6 +78,7 @@ fn of(subject: &str) -> RecallArgs {
         values_most: None,
         built_on: None,
         backing: None,
+        held: None,
     }
 }
 
@@ -4131,15 +4132,19 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
     assert!(guest["fields"].get("mood").is_none(), "{walked}");
     assert!(guest["fields"].get("shoe").is_none(), "{walked}");
     assert!(guest["fields"].get("absent").is_none(), "{walked}");
-    // What it left out is named, and the way to read it is the argument.
-    let left_out = guest["fields_left_out"]
+    // What it left out is said once, for the answer, and the way to read it is the
+    // argument; no object carries a note of its own.
+    assert!(guest.get("fields_left_out").is_none(), "{walked}");
+    let left_out = walked["narrowed"]["fields"]
         .as_str()
-        .unwrap_or_else(|| panic!("the guest names what it left out: {walked}"));
-    assert!(
-        left_out.contains("mood") && left_out.contains("shoe") && left_out.contains("keys"),
-        "{left_out}"
+        .unwrap_or_else(|| panic!("the answer names what it left out: {walked}"));
+    assert!(left_out.contains("keys"), "{left_out}");
+    assert_eq!(walked["narrowed"]["keys"][0], "nick", "{walked}");
+    assert_eq!(
+        walked["narrowed"]["left_out_keys"],
+        serde_json::json!(["mood", "shoe"]),
+        "the walked object's other keys are named once: {walked}"
     );
-    assert!(!left_out.contains("nick"), "{left_out}");
     // The root held no other key, so there is nothing to say about it.
     assert!(
         walked["objects"][0].get("fields_left_out").is_none(),
@@ -4161,6 +4166,7 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
         whole["objects"][0].get("fields_left_out").is_none(),
         "{whole}"
     );
+    assert!(whole.get("narrowed").is_none(), "{whole}");
 }
 
 /// **A wide inbound fan-in is capped, and the cap says what it left out.**
@@ -4913,6 +4919,7 @@ fn of_nothing() -> RecallArgs {
         values_most: None,
         built_on: None,
         backing: None,
+        held: None,
     }
 }
 
@@ -9245,4 +9252,230 @@ async fn a_large_journal_history_reads_back_in_parts_and_a_small_one_whole() {
     assert_eq!(history["shown"], 2, "{whole}");
     assert!(history.get("not_shown").is_none(), "{whole}");
     assert!(whole.get("not_shown").is_none(), "{whole}");
+}
+
+// ---------------------------------------------------------------------------
+// A read that names keys ships those keys, and says once what it left out
+// ---------------------------------------------------------------------------
+
+/// Make a piece of work under a parent, with its first fields.
+async fn work_under(jojobot: &Jojobot, parent: &str, slug: &str, sets: &[(&str, &str)]) {
+    let result = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some(parent.into()),
+            sets: Some(
+                sets.iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            ),
+            sid: Some(writing_as(jojobot)),
+            ..add_args("work", slug, slug)
+        }))
+        .await
+        .expect("add_entity call ok");
+    assert_ne!(
+        json_of(&result)["status"],
+        "blocked",
+        "work:{slug} was blocked: {}",
+        json_of(&result)
+    );
+}
+
+/// A project that exists, to be a parent.
+async fn project_named(jojobot: &Jojobot, slug: &str) {
+    let result = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            sid: Some(writing_as(jojobot)),
+            ..add_args("project", slug, slug)
+        }))
+        .await
+        .expect("add_entity call ok");
+    assert_ne!(
+        json_of(&result)["status"],
+        "blocked",
+        "{}",
+        json_of(&result)
+    );
+}
+
+/// The `ready` view over one project's work, naming the keys it wants.
+async fn ready_under(
+    jojobot: &Jojobot,
+    parent: &str,
+    keys: Option<&[&str]>,
+    facts: Option<bool>,
+) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("ready".into()),
+                subject: None,
+                parent: Some(parent.into()),
+                keys: keys.map(|keys| keys.iter().map(|key| key.to_string()).collect()),
+                facts,
+                sid: Some(writing_as(jojobot)),
+                ..recall_args("work:phi")
+            }))
+            .await
+            .expect("recall ok"),
+    )
+}
+
+/// **A read that names keys carries, on each row, its handle, name, the keys it
+/// asked and what the read computes, and nothing else; the answer says once what
+/// every row left out.** The `held` block and the per-row notes were on every row
+/// of a narrowed read. **Paired**: the same read asking for the records brings the
+/// `held` block back, and a read that names no keys is unchanged.
+#[tokio::test]
+async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out() {
+    let jojobot = crate::harness::handler_shipped();
+    project_named(&jojobot, "omega").await;
+    for slug in ["sigma", "tau", "phi"] {
+        work_under(
+            &jojobot,
+            "project:omega",
+            slug,
+            &[
+                ("status", "next"),
+                ("area", "kitchen"),
+                ("note", "keep this"),
+            ],
+        )
+        .await;
+    }
+
+    let narrowed = ready_under(&jojobot, "project:omega", Some(&["status"]), None).await;
+    let rows = narrowed["objects"].as_array().expect("objects");
+    assert_eq!(rows.len(), 3, "{narrowed}");
+    for row in rows {
+        assert!(row.get("held").is_none(), "no held block unasked: {row}");
+        assert!(
+            row.get("fields_left_out").is_none(),
+            "no per-row note: {row}"
+        );
+        assert!(row.get("records").is_none(), "no per-row note: {row}");
+        assert!(
+            row.get("fields_backing_note").is_none(),
+            "no per-row note: {row}"
+        );
+        let kept: Vec<&str> = row["fields"]
+            .as_object()
+            .expect("fields")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(kept, ["status"], "only the keys asked: {row}");
+        assert_eq!(row["ready"], true, "the computed answer stays: {row}");
+        assert!(row["id"].is_string() && row["name"].is_string(), "{row}");
+    }
+    let said = &narrowed["narrowed"];
+    assert!(
+        said.is_object(),
+        "the answer says once what was left out: {narrowed}"
+    );
+    for left_out in ["fields", "records", "held", "backing"] {
+        assert!(
+            said[left_out].is_string(),
+            "{left_out} is named once: {narrowed}"
+        );
+    }
+    assert!(
+        said["held"]
+            .as_str()
+            .is_some_and(|how| how.contains("held")),
+        "and names the argument that returns it: {narrowed}"
+    );
+
+    // The positive beside it: asked for, the records and the held block return.
+    let with_records = ready_under(&jojobot, "project:omega", Some(&["status"]), Some(true)).await;
+    for row in with_records["objects"].as_array().expect("objects") {
+        assert!(
+            row.get("held").is_some(),
+            "facts: true brings held back: {row}"
+        );
+        assert!(row.get("facts").is_some(), "{row}");
+    }
+    assert!(
+        with_records["narrowed"].get("held").is_none(),
+        "{with_records}"
+    );
+
+    // A read that names no keys is what it was.
+    let whole = ready_under(&jojobot, "project:omega", None, None).await;
+    for row in whole["objects"].as_array().expect("objects") {
+        assert!(
+            row.get("held").is_some(),
+            "an unnarrowed read ships held: {row}"
+        );
+    }
+    assert!(whole.get("narrowed").is_none(), "{whole}");
+}
+
+/// Make `count` pieces of work with long, unlike slugs under one parent.
+async fn hostile_children(jojobot: &Jojobot, parent: &str, count: u64) {
+    for n in 0..count {
+        let mut state = 0x9e37_79b9_u64.wrapping_mul(n + 1);
+        let slug: String = (0..110)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                char::from(b'a' + ((state >> 33) % 26) as u8)
+            })
+            .collect();
+        work_under(
+            jojobot,
+            parent,
+            &slug,
+            &[("status", "next"), ("note", "keep this")],
+        )
+        .await;
+    }
+}
+
+/// **A narrowed read of many long-named things is far smaller than the same read
+/// that brings `held` back, and the answer says once what it left out.** Sixty
+/// ready pieces of work with long slugs under one project: each object of a
+/// narrowed read carries its handle, name, the key asked and `ready`, so more of
+/// them fit under the answer ceiling.
+#[tokio::test]
+async fn a_narrowed_read_of_many_things_is_smaller_than_one_that_asks_for_held() {
+    let jojobot = crate::harness::handler_shipped();
+    project_named(&jojobot, "omega").await;
+    hostile_children(&jojobot, "project:omega", 60).await;
+
+    let narrowed = ready_under(&jojobot, "project:omega", Some(&["status"]), None).await;
+    let with_held = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("ready".into()),
+                subject: None,
+                parent: Some("project:omega".into()),
+                keys: Some(vec!["status".into()]),
+                facts: None,
+                held: Some(true),
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:phi")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let (small, big) = (narrowed.to_string().len(), with_held.to_string().len());
+    let (small_rows, big_rows) = (
+        narrowed["objects"].as_array().expect("objects").len(),
+        with_held["objects"].as_array().expect("objects").len(),
+    );
+    assert!(small < big, "{small} bytes against {big}");
+    assert!(
+        small_rows > big_rows,
+        "more objects fit when none carries held: {small_rows} against {big_rows}"
+    );
+    for row in with_held["objects"].as_array().expect("objects") {
+        assert!(
+            row.get("held").is_some(),
+            "held: true brings it back: {row}"
+        );
+    }
+    assert!(narrowed["narrowed"]["held"].is_string(), "{narrowed}");
+    assert!(with_held["narrowed"].get("held").is_none(), "{with_held}");
 }

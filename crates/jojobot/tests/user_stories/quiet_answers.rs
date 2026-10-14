@@ -241,18 +241,20 @@ async fn backing_answers_the_keys_asked_for_and_a_shared_claims_note_arrives_onc
         "the note is found by the claim that carries it: {}",
         asked.raw(),
     );
-    // The keys left out are named, for the fields and for their backing.
-    for left_out in ["valve", "gauge", "colour"] {
-        for place in ["fields_left_out", "fields_backing_left_out"] {
-            assert!(
-                object[place]
-                    .as_str()
-                    .is_some_and(|said| said.contains(left_out)),
-                "{place} does not name {left_out}: {}",
-                asked.raw(),
-            );
-        }
+    // The keys left out are named once, for the answer, and no object repeats it.
+    for place in ["fields_left_out", "fields_backing_left_out"] {
+        assert!(
+            object.get(place).is_none(),
+            "{place} on the object: {}",
+            asked.raw()
+        );
     }
+    assert_eq!(
+        asked.json()["narrowed"]["left_out_keys"],
+        json!(["colour", "gauge", "valve"]),
+        "{}",
+        asked.raw(),
+    );
 
     // ── no keys asked for: all five are backed, the note is still once ──────
     let whole = s

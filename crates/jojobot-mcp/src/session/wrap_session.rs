@@ -1020,6 +1020,7 @@ mod tests {
                     values_most: None,
                     built_on: None,
                     backing: None,
+                    held: None,
                 }))
                 .await
                 .expect("recall answers rather than failing the protocol"),

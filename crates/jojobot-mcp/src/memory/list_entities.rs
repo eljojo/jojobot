@@ -212,6 +212,7 @@ mod tests {
             history_most: None,
             offset: None,
             backing: None,
+            held: None,
             built_on: None,
             values: None,
             values_most: None,

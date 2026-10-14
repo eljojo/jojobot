@@ -281,10 +281,11 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
         json!({"one_liner": "keeps the books", "reports_to": "bot:omega"}),
         "{walked}"
     );
+    assert!(reached.get("fields_left_out").is_none(), "{walked}");
     assert!(
-        reached["fields_left_out"]
-            .as_str()
-            .is_some_and(|note| note.contains("nudge/quiet")),
+        walked["narrowed"]["left_out_keys"]
+            .as_array()
+            .is_some_and(|keys| keys.iter().any(|key| key == "nudge/quiet")),
         "{walked}"
     );
     // The pairing: a bot that holds no operational key has nothing to name.
@@ -381,7 +382,8 @@ async fn the_note_a_view_leaves_names_calls_that_return_the_keys_it_left_out() {
         .await
         .json();
     let direct_omega = field_of(&direct, "bot:omega");
-    let direct_note = direct_omega["fields_left_out"]
+    assert!(direct_omega.get("fields_left_out").is_none(), "{direct}");
+    let direct_note = direct["narrowed"]["fields"]
         .as_str()
         .unwrap_or_else(|| panic!("the direct call names what it left out: {direct}"));
     assert!(direct_note.contains("keys"), "{direct_note}");

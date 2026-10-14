@@ -198,6 +198,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         values_most: None,
         built_on: None,
         backing: None,
+        held: None,
     }
 }
 

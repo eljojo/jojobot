@@ -399,6 +399,14 @@ pub struct RecallArgs {
     /// day an overdue question is asked about.
     #[serde(default)]
     pub(crate) keys: Option<Vec<String>>,
+    /// **Bring the `held` block back on a read that names `keys`.** A read that
+    /// names keys carries, on each object, its handle, name, the keys asked and what
+    /// the read computes, and says once, for the answer, what the objects left out.
+    /// Who holds what points at an object (`held`) is one of those: send `held: true`
+    /// to have it on each object, or `facts: true`, which reads the records the block
+    /// is made of. A read that names no keys carries `held` as it always did.
+    #[serde(default)]
+    pub(crate) held: Option<bool>,
     /// **The writes behind one key, oldest first** — name the key, and each
     /// object comes back carrying every write of it, with the record each one
     /// arrived in and that record's date.
@@ -1606,6 +1614,76 @@ struct KeyNarrowing<'a> {
     by_view: bool,
 }
 
+/// **Whether a read names its keys itself**, as opposed to a view that supplied
+/// them. The caller who names keys has said which of an object it wants, so what
+/// else rows would carry is left out and said once for the answer.
+fn names_keys(narrowing: Option<KeyNarrowing<'_>>) -> bool {
+    narrowing.is_some_and(|narrowing| !narrowing.by_view)
+}
+
+/// **Whether a row of this read carries its `held` block.** The one place that
+/// decides it: a read that names no keys carries it as it always did, and a read
+/// that names keys carries it only when asked, by `held: true` or by `facts:
+/// true`.
+fn ships_held(asked_held: Option<bool>, facts: bool, names_keys: bool) -> bool {
+    !names_keys || asked_held == Some(true) || facts
+}
+
+/// **The keys the objects of an answer hold that a read naming `keys` did not
+/// bring**, across the objects and everything walked from them, sorted and once
+/// each.
+fn keys_left_out(
+    objects: &[graph::Object],
+    asked: &[String],
+    into: &mut std::collections::BTreeSet<String>,
+) {
+    for object in objects {
+        into.extend(
+            object
+                .fields
+                .keys()
+                .filter(|key| !asked.iter().any(|asked| asked == *key))
+                .cloned(),
+        );
+        keys_left_out(&object.connected, asked, into);
+    }
+}
+
+/// **What a read that names keys left out, said once for the answer** instead of
+/// on every row. Each sentence is present only when it is true of the answer, and
+/// names the argument that returns what it left out.
+fn narrowed_note(
+    keys: &[String],
+    left_out_keys: &std::collections::BTreeSet<String>,
+    records_left_out: bool,
+    held_left_out: bool,
+    backing_left_out: bool,
+) -> serde_json::Value {
+    let mut note = serde_json::json!({ "keys": keys });
+    if !left_out_keys.is_empty() {
+        note["fields"] = "every object carries only these keys; its other keys are not here — \
+                          ask again without keys to read them all"
+            .into();
+        note["left_out_keys"] = serde_json::json!(left_out_keys);
+    }
+    if records_left_out {
+        note["records"] = "the records behind each object are not here — ask again with facts: \
+                           true to read them, each with the address that edits it"
+            .into();
+    }
+    if held_left_out {
+        note["held"] =
+            "who holds each object is not here — ask again with held: true to read it".into();
+    }
+    if backing_left_out {
+        note["backing"] = "who backs each value is not in this answer: ask again with backing: \
+                           true and every key names the claim its value came from, with that \
+                           claim's provenance and standing"
+            .into();
+    }
+    note
+}
+
 /// **The characters of record one part of a read of a single thing can carry**,
 /// once the rest of the answer, the thing's own row and the pointer that names
 /// what follows are counted. A fact is served whole or not at all, so this is
@@ -1966,7 +2044,7 @@ fn object_json(
         .map(String::as_str)
         .filter(|key| !wanted(key))
         .collect();
-    if !left_out.is_empty() {
+    if !left_out.is_empty() && !names_keys(only) {
         // **The way back depends on who narrowed.** Keys the caller named come
         // back by asking again without them. Keys a view supplied do not: the
         // view supplies them again, so the advice would loop. The note names
@@ -2080,7 +2158,7 @@ fn object_json(
                 .into(),
             );
         }
-    } else if object.facts_held > 0 {
+    } else if object.facts_held > 0 && !names_keys(only) {
         fields.insert(
             "records".into(),
             format!(
@@ -2989,11 +3067,16 @@ impl Jojobot {
             keys,
             by_view: keys_from_view,
         });
-        let held_floor = [entitlement::Widen::Never, entitlement::Widen::WhenEmpty]
-            .into_iter()
-            .map(|widen| crate::answer::served_len(&held_json(&[], today, widen)) + 1)
-            .min()
-            .unwrap_or_default();
+        let ships_held = ships_held(args.held, include.facts, names_keys(narrowing));
+        let held_floor = if ships_held {
+            [entitlement::Widen::Never, entitlement::Widen::WhenEmpty]
+                .into_iter()
+                .map(|widen| crate::answer::served_len(&held_json(&[], today, widen)) + 1)
+                .min()
+                .unwrap_or_default()
+        } else {
+            0
+        };
         let floor = |object: &graph::Object| -> usize {
             crate::answer::served_len(&object_json(object, include, today, narrowing, day_frame))
                 + 1
@@ -3189,6 +3272,11 @@ impl Jojobot {
         }
         let mut held = Vec::with_capacity(found.len());
         for object in &found {
+            // A read that names keys and did not ask for `held` reads none of it.
+            if !ships_held {
+                held.push(None);
+                continue;
+            }
             let pointing = match self.memory.referring_to(&object.entity.id).await {
                 Ok(pointing) => pointing,
                 Err(e) => return memory_declined("recall", e),
@@ -3199,11 +3287,11 @@ impl Jojobot {
             } else {
                 entitlement::Widen::WhenEmpty
             };
-            held.push(held_json(
+            held.push(Some(held_json(
                 &entitlement::ranked(&pointing, &object.entity.id, day, &keys, widen),
                 day,
                 widen,
-            ));
+            )));
         }
         // **Lineage, when the call asked for it.** It is a claim-level question
         // rather than an object-level one, so it rides beside the objects
@@ -3532,7 +3620,9 @@ impl Jojobot {
                             "in_force": standing.in_force,
                         });
                     }
-                    rendered["held"] = held;
+                    if let Some(held) = held {
+                        rendered["held"] = held;
+                    }
                     match backing {
                         Some(backing) => {
                             // **Backing obeys the keys the call kept, exactly
@@ -3577,7 +3667,7 @@ impl Jojobot {
                                 .map(String::as_str)
                                 .filter(|key| !wanted(key))
                                 .collect();
-                            if !left_out.is_empty() {
+                            if !left_out.is_empty() && !names_keys(narrowing) {
                                 let way_back = if keys_from_view {
                                     "the view named the ones it shows; ask again without view, \
                                      sending its kind yourself, or with keys naming these"
@@ -3598,7 +3688,7 @@ impl Jojobot {
                         // exists and names the call that returns it — an
                         // omission a reader cannot see is the one it will get
                         // wrong. Only where there are values to stand behind.
-                        None if !o.fields.is_empty() => {
+                        None if !o.fields.is_empty() && !names_keys(narrowing) => {
                             rendered["fields_backing_note"] = serde_json::json!(
                                 "who backs each of these values is not in this answer: recall \
                                  again with backing: true and every key names the claim its \
@@ -3611,6 +3701,21 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        // **What a read that names keys left out is said here, once**, not on
+        // every row; the argument that returns each is named beside it.
+        if names_keys(narrowing)
+            && let Some(keys) = only_keys.as_deref()
+        {
+            let mut left_out_keys = std::collections::BTreeSet::new();
+            keys_left_out(&found, keys, &mut left_out_keys);
+            body["narrowed"] = narrowed_note(
+                keys,
+                &left_out_keys,
+                !include.facts,
+                !ships_held,
+                !args.backing.unwrap_or(false),
+            );
+        }
         // **An empty selection names what it looked through.** A filter that
         // matched nothing and a store with nothing look the same to a caller,
         // and a caller acts on "nothing among these" as if it were "nothing".

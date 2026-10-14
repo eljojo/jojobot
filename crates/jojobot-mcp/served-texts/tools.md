@@ -2779,6 +2779,13 @@ Each argument's own description holds the rest.
           }
         ]
       },
+      "held": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "history": {
         "default": null,
         "type": [
@@ -3397,6 +3404,17 @@ selection chooses. A key's declared value type licenses how you compare it
 (`before`/`after` on a date, `less`/`greater` on a number, `equals` on
 anything), and nothing is gated by a declaration: an undeclared record is
 still found by the keys it carries.
+```
+
+#### `recall` — argument `/inputSchema.held`
+
+```text
+**Bring the `held` block back on a read that names `keys`.** A read that
+names keys carries, on each object, its handle, name, the keys asked and what
+the read computes, and says once, for the answer, what the objects left out.
+Who holds what points at an object (`held`) is one of those: send `held: true`
+to have it on each object, or `facts: true`, which reads the records the block
+is made of. A read that names no keys carries `held` as it always did.
 ```
 
 #### `recall` — argument `/inputSchema.history`
