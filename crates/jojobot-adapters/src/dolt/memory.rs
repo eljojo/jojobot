@@ -2040,6 +2040,32 @@ impl DoltMemory {
             ))
         })
         .collect::<Result<_, MemoryError>>()?;
+        // **A fold made before events were kept is found on its forwarding
+        // row**, which names the handle the survivor wears: the same answer
+        // [`Self::survivor_of`] gives a pointer, read here from the rows already
+        // in hand. A thing an event names is left to the event.
+        let mut merges = merges;
+        for folded in &entities {
+            let Some(into) = &folded.merged_into else {
+                continue;
+            };
+            let key = folded
+                .badge
+                .clone()
+                .unwrap_or_else(|| folded.id.as_str().to_string());
+            if merges.iter().any(|(held, _)| *held == key) {
+                continue;
+            }
+            if let Some(survivor) = entities.iter().find(|row| &row.id == into) {
+                let survivor = survivor
+                    .badge
+                    .clone()
+                    .unwrap_or_else(|| survivor.id.as_str().to_string());
+                if survivor != key {
+                    merges.push((key, survivor));
+                }
+            }
+        }
         jojobot_domain::memory::with_folded_names(&mut entities)?;
         let snapshot = entities.clone();
         for entity in &mut entities {
