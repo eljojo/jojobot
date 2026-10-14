@@ -13,6 +13,14 @@
 //! one with no `to` names something that is gone. Text — a claim's words, its
 //! details, a page's prose — is named by its size and never by its words,
 //! because the caller wrote those words and an echo teaches it nothing.
+//!
+//! **The limit: the block is a before-read and an after-read, not a lock.** The
+//! thing is read just before the write and just after it. A write by another
+//! session to the same thing between the two reads can appear in this call's
+//! block, and a write this call made can appear in theirs. Only a document
+//! section's placing holds a per-thing lock (`Jojobot::hold_placing`); no other
+//! write holds one across its reads, and widening that lock to every write is a
+//! design question of its own rather than part of the receipt.
 
 use jojobot_domain::memory::search::DocScan;
 use jojobot_domain::memory::types::{DeclaredType, Field};
