@@ -3162,8 +3162,10 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
 }
 
 /// The mail half's twin of the corpus-failure race above. A board read
-/// already in flight when another one fails must not clear that failure:
-/// its own snapshot was taken before the board stopped answering.
+/// already in flight when a failure is marked on the index must not clear that
+/// failure: its own snapshot was taken before the failure. The failure is marked
+/// on the index itself, because a second board read cannot start while one holds
+/// the order of the mail half.
 #[tokio::test]
 async fn a_board_read_in_flight_does_not_clear_a_failure_it_predates() {
     let board = Board::new(vec![message(
@@ -3192,17 +3194,14 @@ async fn a_board_read_in_flight_does_not_clear_a_failure_it_predates() {
         tokio::task::yield_now().await;
     }
 
-    // Underneath it: another read cannot reach the board at all. It fails
-    // on the blind check before it can park.
-    board.blinded();
-    Refresh::refresh(mail.as_ref()).await;
+    // While it is in flight, a failure is marked on the index.
+    index.mail_refresh_failed();
     assert_eq!(
         index.mail_coverage(),
         Coverage::Partial(Behind::Stale),
         "the index says the mail half is behind, which is what must survive"
     );
 
-    board.sighted();
     board.release_reads();
     refreshing.await.expect("the refresh task");
 
@@ -7509,6 +7508,17 @@ struct Metered {
     hold_post: std::sync::atomic::AtomicBool,
     post_started: tokio::sync::Notify,
     post_release: tokio::sync::Notify,
+    /// The next board copy is held after it is taken: the reader has the board as
+    /// it was, and nothing it holds changes while it waits.
+    hold_scan: std::sync::atomic::AtomicBool,
+    scan_started: tokio::sync::Notify,
+    scan_release: tokio::sync::Notify,
+    /// The next listing of the boxes is held before it answers. A verb lists the
+    /// boxes after the store has answered it and before it writes the index, so
+    /// this holds a verb between the two with the message it read.
+    hold_listing: std::sync::atomic::AtomicBool,
+    listing_started: tokio::sync::Notify,
+    listing_release: tokio::sync::Notify,
 }
 
 impl Metered {
@@ -7521,6 +7531,12 @@ impl Metered {
             hold_post: std::sync::atomic::AtomicBool::new(false),
             post_started: tokio::sync::Notify::new(),
             post_release: tokio::sync::Notify::new(),
+            hold_scan: std::sync::atomic::AtomicBool::new(false),
+            scan_started: tokio::sync::Notify::new(),
+            scan_release: tokio::sync::Notify::new(),
+            hold_listing: std::sync::atomic::AtomicBool::new(false),
+            listing_started: tokio::sync::Notify::new(),
+            listing_release: tokio::sync::Notify::new(),
         })
     }
 
@@ -7560,6 +7576,13 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         self.listings
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .hold_listing
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.listing_started.notify_one();
+            self.listing_release.notified().await;
+        }
         if self.listing_down.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(MailboxError::Store("the boxes cannot be listed".into()));
         }
@@ -7567,7 +7590,15 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
     }
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
         self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.inner.scan_messages().await
+        let board = self.inner.scan_messages().await;
+        if self
+            .hold_scan
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.scan_started.notify_one();
+            self.scan_release.notified().await;
+        }
+        board
     }
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
         self.inner.message_by_id(id).await
@@ -7989,12 +8020,10 @@ async fn a_quarantine_still_sends_the_next_refresh_to_the_board() {
 }
 
 /// **A change the index cannot take in itself, made while a post is in flight,
-/// still sends the next refresh to the board.** The post read the port's count
-/// before it wrote; the other verb counted and finished before the post did. If
-/// the post then moved the index's count to the port's, it would carry the other
-/// verb's change with it and the index would never read it. A quarantine, a box
-/// made and a box repointed are the verbs that leave their change to the board
-/// read; each runs to the end inside the gap here.
+/// still sends the next refresh to the board.** A quarantine, a box made and a
+/// box repointed leave their change to the board read. Each is started while a
+/// post is held at the store; it waits for the post, and afterwards the count the
+/// index holds is behind the port's, so the next refresh reads the board.
 #[tokio::test]
 async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_refresh_to_the_board()
 {
@@ -8009,32 +8038,38 @@ async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_re
         let post = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
         let in_the_gap = async {
             metered.post_started.notified().await;
-            match intruder {
-                "quarantine" => {
-                    mail.quarantine(
-                        &doomed.id,
-                        &MailboxName("pm".into()),
-                        "unreadable",
-                        jojobot_domain::mailbox::Acting::anyone_anytime(),
-                    )
-                    .await
-                    .expect("quarantine ok");
-                }
-                "create_mailbox" => {
-                    mail_contract::create(&mail, "springfield").await;
-                }
-                _ => {
-                    // Whether a box moves is not the question: the call counts
-                    // whatever it answers.
-                    let _ = mail
-                        .repoint_owner(
-                            &jojobot_domain::memory::EntityId("bot:bart".into()),
-                            &jojobot_domain::memory::EntityId("bot:marge".into()),
+            let other = async {
+                match intruder {
+                    "quarantine" => {
+                        mail.quarantine(
+                            &doomed.id,
+                            &MailboxName("pm".into()),
+                            "unreadable",
+                            jojobot_domain::mailbox::Acting::anyone_anytime(),
                         )
-                        .await;
+                        .await
+                        .expect("quarantine ok");
+                    }
+                    "create_mailbox" => {
+                        mail_contract::create(&mail, "springfield").await;
+                    }
+                    _ => {
+                        // Whether a box moves is not the question: the call
+                        // counts whatever it answers.
+                        let _ = mail
+                            .repoint_owner(
+                                &jojobot_domain::memory::EntityId("bot:bart".into()),
+                                &jojobot_domain::memory::EntityId("bot:marge".into()),
+                            )
+                            .await;
+                    }
                 }
-            }
+            };
+            tokio::pin!(other);
+            let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut other).await;
+            assert!(early.is_err(), "{intruder}: it did not wait for the post");
             metered.post_release.notify_one();
+            other.await;
         };
         tokio::join!(post, in_the_gap);
         mail.refresh().await;
@@ -8042,7 +8077,7 @@ async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_re
         assert_eq!(
             metered.scans() - before,
             1,
-            "{intruder}: the post carried the count past a change the index never read"
+            "{intruder}: the next refresh did not read the board"
         );
         assert_eq!(
             mail_hits(&index, "glaze").len(),
@@ -8058,11 +8093,10 @@ async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_re
     }
 }
 
-/// **A post whose re-index failed still sends the next refresh to the board,
-/// even when another post that was in flight with it finishes afterwards.** The
-/// failed post changed the store and the index does not hold it. The other post
-/// read the port's count before either wrote; if it moved the index's count to
-/// the port's, it would carry the failed post's change with it.
+/// **A post whose re-index failed sends the next refresh to the board, and a post
+/// that overlapped it does not hide it.** The first post is held at the store and
+/// fails to index. The second waits for it, succeeds, and the count the index
+/// holds stays behind the port's.
 #[tokio::test]
 async fn a_post_whose_reindex_failed_is_read_from_the_board_after_a_post_that_overlapped_it() {
     let (metered, _counted, mail, index) = booted_mail().await;
@@ -8071,33 +8105,193 @@ async fn a_post_whose_reindex_failed_is_read_from_the_board_after_a_post_that_ov
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let before = metered.scans();
 
-    let overlapped = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
-    let failing = async {
+    let failing = mail.post_message(new_message("the anvil is forged", None));
+    let overlapping = async {
         metered.post_started.notified().await;
+        let second = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
+        tokio::pin!(second);
+        let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut second).await;
+        assert!(early.is_err(), "it did not wait for the held post");
         index.fail_next_commit();
-        let failed = mail
-            .post_message(new_message("the anvil is forged", None))
-            .await;
-        assert!(failed.is_err(), "the injected fault must surface");
         metered.post_release.notify_one();
+        second.await
     };
-    tokio::join!(overlapped, failing);
+    let (failed, _) = tokio::join!(failing, overlapping);
+    assert!(failed.is_err(), "the injected fault must surface");
     mail.refresh().await;
 
     assert_eq!(
         metered.scans() - before,
         1,
-        "the overlapped post carried the count past the failed one"
+        "the second post carried the count past the one whose re-index failed"
     );
     assert_eq!(
         mail_hits(&index, "anvil").len(),
         1,
-        "the failed post's message is read in"
+        "the failed post is read in"
+    );
+    assert_eq!(mail_hits(&index, "glaze").len(), 1, "the second post stays");
+}
+
+/// How long a verb that has to wait for another is given to show that it is
+/// waiting. A verb that is not held finishes in far less.
+const LONG_ENOUGH_TO_SEE_A_WAIT: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// **A verb that read an older state of a message cannot write it over a newer
+/// one.** A reads a new message (the store answers `read`) and is held before it
+/// writes the index. B retires the same message. Whatever order the two end in,
+/// the index must end holding `processed`, and the next search must not skip the
+/// board while it holds anything else.
+#[tokio::test]
+async fn a_verb_holding_an_older_state_of_a_message_does_not_bury_a_newer_one() {
+    let (metered, _counted, mail, index) = booted_mail().await;
+    let kept = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 1).await;
+    let acting = jojobot_domain::mailbox::Acting::anyone_anytime;
+    metered
+        .hold_listing
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let reading = mail.read_message(&kept.id, acting());
+    let in_the_gap = async {
+        metered.listing_started.notified().await;
+        let retiring = mail.mark_processed(&kept.id, Some("filed"), acting());
+        tokio::pin!(retiring);
+        let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut retiring).await;
+        metered.listing_release.notify_one();
+        match early {
+            Ok(done) => done,
+            Err(_) => retiring.await,
+        }
+    };
+    let (read, retired) = tokio::join!(reading, in_the_gap);
+    read.expect("the read succeeds");
+    retired.expect("the retirement succeeds");
+    mail.refresh().await;
+
+    assert_eq!(
+        mail_hits(&index, "glaze")[0].state,
+        MessageState::Processed,
+        "the older state of the message was written over the newer one"
+    );
+}
+
+/// **A board copy taken before two posts cannot erase the first of them.** A
+/// refresh copies the board and is held. Two posts overlap with it: the second
+/// has read the count and is held at the store, the first goes through. The
+/// refresh then ingests the board it copied, and the second post finishes. Both
+/// messages must be findable at the end, whichever way the verbs and the refresh
+/// were ordered.
+#[tokio::test]
+async fn a_board_copy_taken_before_two_posts_does_not_erase_the_first() {
+    let (metered, _counted, mail, index) = booted_mail().await;
+    // A rename makes the refresh read the board although no count moved.
+    index.names_changed();
+    metered
+        .hold_scan
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    metered
+        .hold_post
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let refreshing = mail.refresh();
+    let in_the_gap = async {
+        metered.scan_started.notified().await;
+        // The second post is first in the list, so it is the one held at the store.
+        let both = async {
+            tokio::join!(
+                mail_contract::post(&mail, "pm", "dev", "the anvil is forged", 3),
+                mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2),
+            )
+        };
+        tokio::pin!(both);
+        let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut both).await;
+        assert!(early.is_err(), "the held post cannot have finished");
+        // The refresh goes on first and ingests the board it copied; only then
+        // is the held post let through to the store and the index.
+        metered.scan_release.notify_one();
+        tokio::time::sleep(LONG_ENOUGH_TO_SEE_A_WAIT).await;
+        metered.post_release.notify_one();
+        both.await;
+    };
+    tokio::join!(refreshing, in_the_gap);
+    mail.refresh().await;
+
+    assert_eq!(
+        mail_hits(&index, "glaze").len(),
+        1,
+        "the first post was erased"
+    );
+    assert_eq!(
+        mail_hits(&index, "anvil").len(),
+        1,
+        "the second post is there"
+    );
+}
+
+/// **A write that does not pass through the port, made while a verb is in
+/// flight, is read from the board.** The verb counts its own change; the other
+/// write is counted too and nobody indexed it. The count the verb found is not
+/// one change past the count it started from, so it publishes nothing.
+#[tokio::test]
+async fn a_write_past_the_port_made_during_a_verb_is_read_from_the_board() {
+    let (metered, counted, mail, index) = booted_mail().await;
+    metered
+        .hold_post
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let before = metered.scans();
+
+    let through_the_port = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
+    let past_the_port = async {
+        metered.post_started.notified().await;
+        mail_contract::post(counted.as_ref(), "pm", "dev", "the anvil is forged", 3).await;
+        metered.post_release.notify_one();
+    };
+    tokio::join!(through_the_port, past_the_port);
+    mail.refresh().await;
+
+    assert_eq!(
+        metered.scans() - before,
+        1,
+        "the verb carried the count past a write nobody indexed"
+    );
+    assert_eq!(
+        mail_hits(&index, "anvil").len(),
+        1,
+        "the write past the port is read in"
     );
     assert_eq!(
         mail_hits(&index, "glaze").len(),
         1,
-        "the overlapped post's message stays"
+        "the verb's own message stays"
+    );
+}
+
+/// **A write that does not pass through the port, made before a verb, is read
+/// from the board.** The index was behind the port when the verb started, so the
+/// verb's own re-index cannot say the index holds the board.
+#[tokio::test]
+async fn a_write_past_the_port_made_before_a_verb_is_read_from_the_board() {
+    let (metered, counted, mail, index) = booted_mail().await;
+    mail_contract::post(counted.as_ref(), "pm", "dev", "the anvil is forged", 3).await;
+    mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2).await;
+    let before = metered.scans();
+
+    mail.refresh().await;
+
+    assert_eq!(
+        metered.scans() - before,
+        1,
+        "the verb carried the count past a write nobody indexed"
+    );
+    assert_eq!(
+        mail_hits(&index, "anvil").len(),
+        1,
+        "the write past the port is read in"
+    );
+    assert_eq!(
+        mail_hits(&index, "glaze").len(),
+        1,
+        "the verb's own message stays"
     );
 }
 

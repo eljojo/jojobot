@@ -801,14 +801,19 @@ pub struct IndexedMailboxes {
     /// **The port's change count when the index last held the whole board**,
     /// or `NOT_SEEN`. A refresh that finds the same count and no failure on
     /// record has nothing to read: every change to mail goes through the port.
-    /// A verb that re-indexes its own change moves the count along with it, so
-    /// a post, a delivery, a read or a retirement leaves nothing to read; a verb
-    /// that cannot (a quarantine, a box made or repointed) sets it to `NOT_SEEN`.
+    /// [`IndexedMailboxes::publish`] is the only writer of it.
     board_seen_at: std::sync::atomic::AtomicU64,
     /// **The naming epoch at that read.** A mention in a message is served as the
     /// handle a thing wears now, so a rename changes the text the index should
     /// hold without a single write to mail.
     board_seen_epoch: std::sync::atomic::AtomicU64,
+    /// **The order of the writes to the index and of the board reads.** A verb
+    /// holds it from the call that changes the store to the end of its re-index
+    /// and its publication; a board read holds it from the count it captures to
+    /// its publication. So no index write is older than a count published after
+    /// it, and no board copy is older than a change that a later count covers.
+    /// A search that finds the count current takes no part in it.
+    ordering: tokio::sync::Mutex<()>,
 }
 
 /// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
@@ -823,12 +828,14 @@ impl IndexedMailboxes {
             index,
             board_seen_at: std::sync::atomic::AtomicU64::new(NOT_SEEN),
             board_seen_epoch: std::sync::atomic::AtomicU64::new(NOT_SEEN),
+            ordering: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Load the mail half from a full board read — the boot path. Returns how
     /// many messages were indexed.
     pub async fn rebuild(&self) -> Result<usize, MailboxError> {
+        let _ordered = self.ordering.lock().await;
         // Before the read, never after — the point has to predate the board
         // read it will be handed back with.
         let began = self.index.reading_begins();
@@ -838,12 +845,7 @@ impl IndexedMailboxes {
         self.index
             .ingest_mail_changes(&messages, began)
             .map_err(indexing)?;
-        self.board_seen_epoch
-            .store(epoch, std::sync::atomic::Ordering::SeqCst);
-        self.board_seen_at.store(
-            changes.unwrap_or(NOT_SEEN),
-            std::sync::atomic::Ordering::SeqCst,
-        );
+        self.publish(changes, Some(epoch));
         Ok(messages.len())
     }
 
@@ -929,47 +931,54 @@ impl IndexedMailboxes {
         Ok(())
     }
 
-    /// **Record that a verb's own re-index brought the index up to the port's
-    /// count**, so the next refresh has no board to read for it.
-    ///
-    /// `before` is the count read ahead of the verb. The count moves only if the
-    /// index held the whole board as of `before` (the swap fails otherwise, and
-    /// the next refresh reads as it did), and it moves to the count the port
-    /// holds now. A re-index that failed forgets the count instead: the verb
-    /// changed the store and the index does not hold what it wrote.
-    ///
-    /// **A write that counted between the read and the swap is covered because
-    /// the verbs that cannot re-index their own change forget the count after
-    /// it** (see [`Self::board_unknown`]); one that lands after the swap moves
-    /// the count past it.
-    fn indexed_through(
+    /// **The one place the count of the board the index holds is published.**
+    /// The refresh, the rebuild and the four verbs that re-index their own change
+    /// all end here, and each holds [`Self::ordering`] when it does. `epoch` is
+    /// given by the readers of the whole board, which are the only ones that
+    /// know the names they read under.
+    fn publish(&self, count: Option<u64>, epoch: Option<u64>) {
+        if let Some(epoch) = epoch {
+            self.board_seen_epoch
+                .store(epoch, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.board_seen_at.store(
+            count.unwrap_or(NOT_SEEN),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+
+    /// **Whether the index holds the board as of the port's count now**, with no
+    /// failure on record and under the names it was read in.
+    fn board_held(&self) -> bool {
+        let Some(changes) = self.inner.changes() else {
+            return false;
+        };
+        !self.index.mail_refresh_pending()
+            && self.board_seen_at.load(std::sync::atomic::Ordering::SeqCst) == changes
+            && self
+                .board_seen_epoch
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == self.index.names_epoch()
+    }
+
+    /// **End a verb that put its own change in the index.** Called with
+    /// [`Self::ordering`] held. The count moves to the port's only when the index
+    /// held the whole board before the verb and the verb is the only change the
+    /// port has counted since (`before` was read under the same hold). Any other
+    /// state leaves the count where it is, and the next refresh reads the board.
+    fn settle(
         &self,
         before: Option<u64>,
         indexed: Result<(), MailboxError>,
     ) -> Result<(), MailboxError> {
-        match (indexed, before, self.inner.changes()) {
-            (Ok(()), Some(before), Some(now)) => {
-                let _ = self.board_seen_at.compare_exchange(
-                    before,
-                    now,
-                    std::sync::atomic::Ordering::SeqCst,
-                    std::sync::atomic::Ordering::SeqCst,
-                );
-                Ok(())
-            }
-            (Ok(()), _, _) => Ok(()),
-            (Err(e), _, _) => {
-                self.board_unknown();
-                Err(e)
-            }
+        indexed?;
+        if let (Some(before), Some(now)) = (before, self.inner.changes())
+            && now == before.wrapping_add(1)
+            && self.board_seen_at.load(std::sync::atomic::Ordering::SeqCst) == before
+        {
+            self.publish(Some(now), None);
         }
-    }
-
-    /// **Forget that the index holds the board**, so the next refresh reads it.
-    /// For a verb whose change this decorator does not put in the index itself.
-    fn board_unknown(&self) {
-        self.board_seen_at
-            .store(NOT_SEEN, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -1116,32 +1125,26 @@ impl Refresh for IndexedMailboxes {
     /// touched vanished from search after an unrelated commit), green with
     /// it.
     async fn refresh(&self) {
+        if self.board_held() {
+            return;
+        }
+        // **Held from the count to the publication.** A verb that finished while
+        // this waited has published, so the check is made again.
+        let _ordered = self.ordering.lock().await;
+        if self.board_held() {
+            return;
+        }
         // **Read before the board, never after**: a write that lands while the
         // board is read leaves the next refresh to read again.
         let changes = self.inner.changes();
         let epoch = self.index.names_epoch();
-        if let Some(changes) = changes
-            && !self.index.mail_refresh_pending()
-            && self.board_seen_at.load(std::sync::atomic::Ordering::SeqCst) == changes
-            && self
-                .board_seen_epoch
-                .load(std::sync::atomic::Ordering::SeqCst)
-                == epoch
-        {
-            return;
-        }
         let began = self.index.reading_begins();
         match self.indexable_board().await {
             Ok(messages) => {
                 if self.index.ingest_mail_changes(&messages, began).is_err() {
                     self.index.mail_refresh_failed();
                 } else {
-                    self.board_seen_epoch
-                        .store(epoch, std::sync::atomic::Ordering::SeqCst);
-                    self.board_seen_at.store(
-                        changes.unwrap_or(NOT_SEEN),
-                        std::sync::atomic::Ordering::SeqCst,
-                    );
+                    self.publish(changes, Some(epoch));
                 }
             }
             Err(_) => self.index.mail_refresh_failed(),
@@ -1170,11 +1173,11 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
     {
         // A box holds no text of its own — nothing to index until a message
-        // lands in it. It can change which messages the index may hold, so the
-        // next refresh reads the board.
-        let made = self.inner.create_mailbox(name, owner, override_token).await;
-        self.board_unknown();
-        made
+        // lands in it. It can change which messages the index may hold, so it
+        // publishes nothing: the port counts it, and the next refresh reads the
+        // board.
+        let _ordered = self.ordering.lock().await;
+        self.inner.create_mailbox(name, owner, override_token).await
     }
 
     async fn repoint_owner(
@@ -1184,9 +1187,8 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         // Same reason as create_mailbox: a box holds no text of its own, so
         // there is nothing here to reindex.
-        let moved = self.inner.repoint_owner(from, to).await;
-        self.board_unknown();
-        moved
+        let _ordered = self.ordering.lock().await;
+        self.inner.repoint_owner(from, to).await
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
@@ -1212,6 +1214,7 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         message: jojobot_domain::mailbox::NewMessage,
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
+        let _ordered = self.ordering.lock().await;
         let before = self.inner.changes();
         let written = self.inner.post_message(message).await?;
         let indexed = match &written {
@@ -1243,7 +1246,7 @@ impl Mailboxes for IndexedMailboxes {
             }
             _ => Ok(()),
         };
-        self.indexed_through(before, indexed)?;
+        self.settle(before, indexed)?;
         Ok(written)
     }
 
@@ -1254,6 +1257,7 @@ impl Mailboxes for IndexedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
+        let _ordered = self.ordering.lock().await;
         let before = self.inner.changes();
         let delivered = self.inner.read_mailbox(name, taken_by, acting).await?;
         let indexed = match &delivered {
@@ -1264,7 +1268,7 @@ impl Mailboxes for IndexedMailboxes {
             }
             _ => Ok(()),
         };
-        self.indexed_through(before, indexed)?;
+        self.settle(before, indexed)?;
         Ok(delivered)
     }
 
@@ -1273,10 +1277,11 @@ impl Mailboxes for IndexedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+        let _ordered = self.ordering.lock().await;
         let before = self.inner.changes();
         let delivered = self.inner.read_message(id, acting).await?;
         let indexed = self.reindex(&[&delivered.message]).await;
-        self.indexed_through(before, indexed)?;
+        self.settle(before, indexed)?;
         Ok(delivered)
     }
 
@@ -1286,10 +1291,11 @@ impl Mailboxes for IndexedMailboxes {
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
+        let _ordered = self.ordering.lock().await;
         let before = self.inner.changes();
         let processed = self.inner.mark_processed(id, notes, acting).await?;
         let indexed = self.reindex(&[&processed]).await;
-        self.indexed_through(before, indexed)?;
+        self.settle(before, indexed)?;
         Ok(processed)
     }
 
@@ -1306,9 +1312,8 @@ impl Mailboxes for IndexedMailboxes {
         reason: &str,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        let quarantined = self.inner.quarantine(id, by, reason, acting).await;
-        self.board_unknown();
-        quarantined
+        let _ordered = self.ordering.lock().await;
+        self.inner.quarantine(id, by, reason, acting).await
     }
 
     async fn message_history(
