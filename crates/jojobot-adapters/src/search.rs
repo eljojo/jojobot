@@ -11,7 +11,9 @@
 //!   is backed by.
 //! * [`Retrieval`] — the [`Search`] port itself, over that index plus one
 //!   [`Refresh`] half per store. It refreshes every half before it answers, so
-//!   an answer is backed by a reading taken for it.
+//!   an answer is backed by a reading taken for it. A half whose store has not
+//!   changed since the index last held it reads nothing: every write passes
+//!   through jojobot, and the verbs that re-index their own change say so.
 //! * [`IndexedMemory`] — the same Memory port, wrapped so that **read-back
 //!   extends to the index**: after any successful write, the touched document is
 //!   re-scanned *from the store* and re-indexed, so a fact captured a moment ago

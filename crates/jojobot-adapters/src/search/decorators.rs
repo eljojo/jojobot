@@ -798,9 +798,12 @@ impl Refresh for IndexedMemory {
 pub struct IndexedMailboxes {
     inner: Arc<dyn Mailboxes>,
     index: Arc<FullTextIndex>,
-    /// **The port's change count when the index last took in the whole board**,
+    /// **The port's change count when the index last held the whole board**,
     /// or `NOT_SEEN`. A refresh that finds the same count and no failure on
     /// record has nothing to read: every change to mail goes through the port.
+    /// A verb that re-indexes its own change moves the count along with it, so
+    /// a post, a delivery, a read or a retirement leaves nothing to read; a verb
+    /// that cannot (a quarantine, a box made or repointed) sets it to `NOT_SEEN`.
     board_seen_at: std::sync::atomic::AtomicU64,
     /// **The naming epoch at that read.** A mention in a message is served as the
     /// handle a thing wears now, so a rename changes the text the index should
@@ -924,6 +927,49 @@ impl IndexedMailboxes {
             self.index.ingest_message(message).map_err(indexing)?;
         }
         Ok(())
+    }
+
+    /// **Record that a verb's own re-index brought the index up to the port's
+    /// count**, so the next refresh has no board to read for it.
+    ///
+    /// `before` is the count read ahead of the verb. The count moves only if the
+    /// index held the whole board as of `before` (the swap fails otherwise, and
+    /// the next refresh reads as it did), and it moves to the count the port
+    /// holds now. A re-index that failed forgets the count instead: the verb
+    /// changed the store and the index does not hold what it wrote.
+    ///
+    /// **A write that counted between the read and the swap is covered because
+    /// the verbs that cannot re-index their own change forget the count after
+    /// it** (see [`Self::board_unknown`]); one that lands after the swap moves
+    /// the count past it.
+    fn indexed_through(
+        &self,
+        before: Option<u64>,
+        indexed: Result<(), MailboxError>,
+    ) -> Result<(), MailboxError> {
+        match (indexed, before, self.inner.changes()) {
+            (Ok(()), Some(before), Some(now)) => {
+                let _ = self.board_seen_at.compare_exchange(
+                    before,
+                    now,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                Ok(())
+            }
+            (Ok(()), _, _) => Ok(()),
+            (Err(e), _, _) => {
+                self.board_unknown();
+                Err(e)
+            }
+        }
+    }
+
+    /// **Forget that the index holds the board**, so the next refresh reads it.
+    /// For a verb whose change this decorator does not put in the index itself.
+    fn board_unknown(&self) {
+        self.board_seen_at
+            .store(NOT_SEEN, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1124,8 +1170,11 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
     {
         // A box holds no text of its own — nothing to index until a message
-        // lands in it.
-        self.inner.create_mailbox(name, owner, override_token).await
+        // lands in it. It can change which messages the index may hold, so the
+        // next refresh reads the board.
+        let made = self.inner.create_mailbox(name, owner, override_token).await;
+        self.board_unknown();
+        made
     }
 
     async fn repoint_owner(
@@ -1135,7 +1184,9 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         // Same reason as create_mailbox: a box holds no text of its own, so
         // there is nothing here to reindex.
-        self.inner.repoint_owner(from, to).await
+        let moved = self.inner.repoint_owner(from, to).await;
+        self.board_unknown();
+        moved
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
@@ -1161,10 +1212,38 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         message: jojobot_domain::mailbox::NewMessage,
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
+        let before = self.inner.changes();
         let written = self.inner.post_message(message).await?;
-        if let jojobot_domain::mailbox::Guarded::Written(message) = &written {
-            self.reindex(&[message]).await?;
-        }
+        let indexed = match &written {
+            jojobot_domain::mailbox::Guarded::Written(message) => {
+                // **A message that replaces another changes the replaced one's
+                // `superseded_by`**, with no verb on it, so it is re-read and
+                // re-indexed with the new one.
+                let replaced = match &message.supersedes {
+                    Some(old) => match self.inner.message_by_id(old).await {
+                        Ok(old) => old,
+                        Err(e) => {
+                            self.index.mail_refresh_failed();
+                            tracing::warn!(
+                                error = %e,
+                                mailbox = %message.mailbox,
+                                "SEARCH INDEX BEHIND — a message replaced another and the \
+                                 replaced one could not be read, so its hit does not name \
+                                 its replacement. Mail search reports itself stale until a \
+                                 board read lands."
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                let touched: Vec<&Message> =
+                    std::iter::once(message).chain(replaced.iter()).collect();
+                self.reindex(&touched).await
+            }
+            _ => Ok(()),
+        };
+        self.indexed_through(before, indexed)?;
         Ok(written)
     }
 
@@ -1175,11 +1254,17 @@ impl Mailboxes for IndexedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
+        let before = self.inner.changes();
         let delivered = self.inner.read_mailbox(name, taken_by, acting).await?;
-        if let jojobot_domain::mailbox::Guarded::Written(delivery) = &delivered {
-            let delivered: Vec<&Message> = delivery.messages.iter().map(|d| &d.message).collect();
-            self.reindex(&delivered).await?;
-        }
+        let indexed = match &delivered {
+            jojobot_domain::mailbox::Guarded::Written(delivery) => {
+                let delivered: Vec<&Message> =
+                    delivery.messages.iter().map(|d| &d.message).collect();
+                self.reindex(&delivered).await
+            }
+            _ => Ok(()),
+        };
+        self.indexed_through(before, indexed)?;
         Ok(delivered)
     }
 
@@ -1188,8 +1273,10 @@ impl Mailboxes for IndexedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+        let before = self.inner.changes();
         let delivered = self.inner.read_message(id, acting).await?;
-        self.reindex(&[&delivered.message]).await?;
+        let indexed = self.reindex(&[&delivered.message]).await;
+        self.indexed_through(before, indexed)?;
         Ok(delivered)
     }
 
@@ -1199,8 +1286,10 @@ impl Mailboxes for IndexedMailboxes {
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
+        let before = self.inner.changes();
         let processed = self.inner.mark_processed(id, notes, acting).await?;
-        self.reindex(&[&processed]).await?;
+        let indexed = self.reindex(&[&processed]).await;
+        self.indexed_through(before, indexed)?;
         Ok(processed)
     }
 
@@ -1217,7 +1306,9 @@ impl Mailboxes for IndexedMailboxes {
         reason: &str,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        self.inner.quarantine(id, by, reason, acting).await
+        let quarantined = self.inner.quarantine(id, by, reason, acting).await;
+        self.board_unknown();
+        quarantined
     }
 
     async fn message_history(

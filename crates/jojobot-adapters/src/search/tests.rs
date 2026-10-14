@@ -7502,7 +7502,13 @@ async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
 struct Metered {
     inner: InMemoryMailboxes,
     listings: std::sync::atomic::AtomicUsize,
+    scans: std::sync::atomic::AtomicUsize,
     listing_down: std::sync::atomic::AtomicBool,
+    /// The next post waits inside the store until released, so a test can run
+    /// another verb to completion while that post is in flight.
+    hold_post: std::sync::atomic::AtomicBool,
+    post_started: tokio::sync::Notify,
+    post_release: tokio::sync::Notify,
 }
 
 impl Metered {
@@ -7510,12 +7516,21 @@ impl Metered {
         Arc::new(Metered {
             inner,
             listings: std::sync::atomic::AtomicUsize::new(0),
+            scans: std::sync::atomic::AtomicUsize::new(0),
             listing_down: std::sync::atomic::AtomicBool::new(false),
+            hold_post: std::sync::atomic::AtomicBool::new(false),
+            post_started: tokio::sync::Notify::new(),
+            post_release: tokio::sync::Notify::new(),
         })
     }
 
     fn listings(&self) -> usize {
         self.listings.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times the whole board was read.
+    fn scans(&self) -> usize {
+        self.scans.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn stop_listing(&self) {
@@ -7551,6 +7566,7 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
         self.inner.list_mailboxes().await
     }
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.inner.scan_messages().await
     }
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
@@ -7563,6 +7579,13 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
         &self,
         message: jojobot_domain::mailbox::NewMessage,
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
+        if self
+            .hold_post
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.post_started.notify_one();
+            self.post_release.notified().await;
+        }
         self.inner.post_message(message).await
     }
     async fn read_mailbox(
@@ -7756,6 +7779,350 @@ async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_ma
     assert!(
         metered.listings() - before >= 1,
         "a rename did not send the refresh to the board"
+    );
+}
+
+/// **The production stack's mail half: a store, a count of the writes through
+/// it, the mail decorator over both, and the index it fills.** Booted the way the
+/// server boots, with one board read. Every case below counts board reads from
+/// here on.
+async fn booted_mail() -> (
+    Arc<Metered>,
+    Arc<crate::changes::MailChanges>,
+    IndexedMailboxes,
+    Arc<FullTextIndex>,
+) {
+    jojobot_domain::memory::kinds::load_shipped();
+    let metered = Metered::new(InMemoryMailboxes::new());
+    let counted = Arc::new(crate::changes::MailChanges::new(metered.clone()));
+    mail_contract::create(counted.as_ref(), "pm").await;
+    mail_contract::post(counted.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = IndexedMailboxes::new(counted.clone(), index.clone());
+    mail.rebuild().await.expect("rebuild");
+    (metered, counted, mail, index)
+}
+
+/// A message into the `pm` box, optionally replacing another.
+fn new_message(body: &str, supersedes: Option<MessageId>) -> jojobot_domain::mailbox::NewMessage {
+    jojobot_domain::mailbox::NewMessage {
+        mailbox: MailboxName("pm".into()),
+        body: body.into(),
+        subject: None,
+        sender: "dev".into(),
+        sent_at: jiff::Timestamp::from_second(1_700_000_100).expect("a moment"),
+        in_reply_to: None,
+        sender_mail_waiting_at_send: None,
+        posted_by_session: None,
+        supersedes,
+    }
+}
+
+fn mail_hits(index: &FullTextIndex, word: &str) -> Vec<Message> {
+    index
+        .search(&asking_for_mail(word))
+        .expect("search ok")
+        .into_iter()
+        .filter_map(|hit| match hit {
+            Hit::Message { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A message posted through the port is findable by the next search without a
+/// board read.** The post already put the message in the index, so the refresh
+/// has nothing left to read. Paired with the positive it depends on: the message
+/// is found, and a write that did NOT pass through the port still sends the
+/// refresh to the board.
+#[tokio::test]
+async fn a_message_posted_through_the_port_is_found_without_a_board_read() {
+    let (metered, counted, mail, index) = booted_mail().await;
+
+    mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 1).await;
+    let before = metered.scans();
+    mail.refresh().await;
+    assert_eq!(
+        metered.scans() - before,
+        0,
+        "the refresh after a post through the port read the board"
+    );
+    assert_eq!(
+        mail_hits(&index, "glaze").len(),
+        1,
+        "the message posted through the port is findable"
+    );
+
+    // A message that arrives past the port is only seen by reading the board.
+    mail_contract::post(counted.as_ref(), "pm", "dev", "the anvil is forged", 2).await;
+    mail.refresh().await;
+    assert_eq!(
+        metered.scans() - before,
+        1,
+        "a write past the port did not send the refresh to the board"
+    );
+    assert_eq!(mail_hits(&index, "anvil").len(), 1);
+}
+
+/// **A delivery, a single read and a retirement keep the index current in the
+/// same step, and the next refresh reads no board.** The state on a hit is the
+/// positive: it follows the message.
+#[tokio::test]
+async fn a_delivery_a_read_and_a_retirement_leave_the_next_refresh_nothing_to_read() {
+    let (metered, _counted, mail, index) = booted_mail().await;
+    let second = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 1).await;
+    let acting = jojobot_domain::mailbox::Acting::anyone_anytime;
+    let before = metered.scans();
+
+    let delivery = mail
+        .read_mailbox(
+            &MailboxName("pm".into()),
+            jojobot_domain::mailbox::TakenBy::Reading,
+            acting(),
+        )
+        .await
+        .expect("delivery ok")
+        .written()
+        .expect("the box is there");
+    assert_eq!(delivery.messages.len(), 2, "both messages were delivered");
+    mail.refresh().await;
+    assert_eq!(
+        metered.scans() - before,
+        0,
+        "a delivery sent the refresh to the board"
+    );
+    assert_eq!(mail_hits(&index, "glaze")[0].state, MessageState::Read);
+
+    mail.read_message(&second.id, acting())
+        .await
+        .expect("read ok");
+    mail.refresh().await;
+    assert_eq!(
+        metered.scans() - before,
+        0,
+        "a single read sent the refresh to the board"
+    );
+
+    mail.mark_processed(&second.id, Some("filed"), acting())
+        .await
+        .expect("retire ok");
+    mail.refresh().await;
+    assert_eq!(
+        metered.scans() - before,
+        0,
+        "a retirement sent the refresh to the board"
+    );
+    assert_eq!(mail_hits(&index, "glaze")[0].state, MessageState::Processed);
+}
+
+/// **A message that replaces another leaves the replaced one's hit saying so,
+/// with no board read.** The replaced message changes without a verb on it, so
+/// the post that replaces it re-indexes it too.
+#[tokio::test]
+async fn a_replacement_posted_through_the_port_updates_the_replaced_hit_without_a_board_read() {
+    let (metered, _counted, mail, index) = booted_mail().await;
+    let old = mail_contract::post(&mail, "pm", "dev", "the flue is forged by hand", 1).await;
+    let before = metered.scans();
+
+    let new = mail
+        .post_message(new_message(
+            "the chimney is pressed by machine",
+            Some(old.id.clone()),
+        ))
+        .await
+        .expect("post ok")
+        .written()
+        .expect("the box is there");
+    mail.refresh().await;
+
+    assert_eq!(
+        metered.scans() - before,
+        0,
+        "the replacement sent the refresh to the board"
+    );
+    let hits = mail_hits(&index, "forged");
+    assert_eq!(hits.len(), 1, "the replaced message is still findable");
+    assert_eq!(
+        hits[0].superseded_by.as_ref(),
+        Some(&new.id),
+        "its hit names the message that replaced it"
+    );
+}
+
+/// **A quarantine is not indexed by its verb, so the next refresh reads the
+/// board and the card stops answering.** Paired with the cases above: a write
+/// that cannot update the index in its own step must still send the refresh to
+/// the board, even when a verb that does update it ran in between.
+#[tokio::test]
+async fn a_quarantine_still_sends_the_next_refresh_to_the_board() {
+    let (metered, _counted, mail, index) = booted_mail().await;
+    let doomed = mail_contract::post(&mail, "pm", "dev", "the damper is hand-cut", 1).await;
+    assert_eq!(mail_hits(&index, "damper").len(), 1, "it is indexed first");
+
+    mail.quarantine(
+        &doomed.id,
+        &MailboxName("pm".into()),
+        "unreadable",
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("quarantine ok");
+    // A verb that does update the index runs after it, as in production.
+    mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2).await;
+    let before = metered.scans();
+    mail.refresh().await;
+
+    assert_eq!(
+        metered.scans() - before,
+        1,
+        "the quarantine did not send the refresh to the board"
+    );
+    assert!(
+        mail_hits(&index, "damper").is_empty(),
+        "the quarantined card still answers search"
+    );
+    assert_eq!(
+        mail_hits(&index, "glaze").len(),
+        1,
+        "the other message stays"
+    );
+}
+
+/// **A change the index cannot take in itself, made while a post is in flight,
+/// still sends the next refresh to the board.** The post read the port's count
+/// before it wrote; the other verb counted and finished before the post did. If
+/// the post then moved the index's count to the port's, it would carry the other
+/// verb's change with it and the index would never read it. A quarantine, a box
+/// made and a box repointed are the verbs that leave their change to the board
+/// read; each runs to the end inside the gap here.
+#[tokio::test]
+async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_refresh_to_the_board()
+{
+    for intruder in ["quarantine", "create_mailbox", "repoint_owner"] {
+        let (metered, _counted, mail, index) = booted_mail().await;
+        let doomed = mail_contract::post(&mail, "pm", "dev", "the damper is hand-cut", 1).await;
+        metered
+            .hold_post
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let before = metered.scans();
+
+        let post = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
+        let in_the_gap = async {
+            metered.post_started.notified().await;
+            match intruder {
+                "quarantine" => {
+                    mail.quarantine(
+                        &doomed.id,
+                        &MailboxName("pm".into()),
+                        "unreadable",
+                        jojobot_domain::mailbox::Acting::anyone_anytime(),
+                    )
+                    .await
+                    .expect("quarantine ok");
+                }
+                "create_mailbox" => {
+                    mail_contract::create(&mail, "springfield").await;
+                }
+                _ => {
+                    // Whether a box moves is not the question: the call counts
+                    // whatever it answers.
+                    let _ = mail
+                        .repoint_owner(
+                            &jojobot_domain::memory::EntityId("bot:pm".into()),
+                            &jojobot_domain::memory::EntityId("bot:ops".into()),
+                        )
+                        .await;
+                }
+            }
+            metered.post_release.notify_one();
+        };
+        tokio::join!(post, in_the_gap);
+        mail.refresh().await;
+
+        assert_eq!(
+            metered.scans() - before,
+            1,
+            "{intruder}: the post carried the count past a change the index never read"
+        );
+        assert_eq!(
+            mail_hits(&index, "glaze").len(),
+            1,
+            "{intruder}: the post itself is findable"
+        );
+        if intruder == "quarantine" {
+            assert!(
+                mail_hits(&index, "damper").is_empty(),
+                "the quarantined card still answers search"
+            );
+        }
+    }
+}
+
+/// **A post whose re-index failed still sends the next refresh to the board,
+/// even when another post that was in flight with it finishes afterwards.** The
+/// failed post changed the store and the index does not hold it. The other post
+/// read the port's count before either wrote; if it moved the index's count to
+/// the port's, it would carry the failed post's change with it.
+#[tokio::test]
+async fn a_post_whose_reindex_failed_is_read_from_the_board_after_a_post_that_overlapped_it() {
+    let (metered, _counted, mail, index) = booted_mail().await;
+    metered
+        .hold_post
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let before = metered.scans();
+
+    let overlapped = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
+    let failing = async {
+        metered.post_started.notified().await;
+        index.fail_next_commit();
+        let failed = mail
+            .post_message(new_message("the anvil is forged", None))
+            .await;
+        assert!(failed.is_err(), "the injected fault must surface");
+        metered.post_release.notify_one();
+    };
+    tokio::join!(overlapped, failing);
+    mail.refresh().await;
+
+    assert_eq!(
+        metered.scans() - before,
+        1,
+        "the overlapped post carried the count past the failed one"
+    );
+    assert_eq!(
+        mail_hits(&index, "anvil").len(),
+        1,
+        "the failed post's message is read in"
+    );
+    assert_eq!(
+        mail_hits(&index, "glaze").len(),
+        1,
+        "the overlapped post's message stays"
+    );
+}
+
+/// **A message gone from the store by hand is gone from search after a restart.**
+/// The boot rebuild reads the whole board and evicts what the board no longer
+/// holds.
+#[tokio::test]
+async fn a_message_removed_from_the_store_is_gone_from_search_after_the_boot_rebuild() {
+    let (_metered, _counted, _mail, index) = booted_mail().await;
+    assert_eq!(
+        mail_hits(&index, "kiln").len(),
+        1,
+        "it is indexed at the first boot"
+    );
+
+    // The restarted process: the same text in the index is replaced by a board
+    // that no longer carries the message.
+    let emptied = Metered::new(InMemoryMailboxes::new());
+    mail_contract::create(emptied.as_ref(), "pm").await;
+    let restarted = IndexedMailboxes::new(emptied, index.clone());
+    restarted.rebuild().await.expect("rebuild");
+
+    assert!(
+        mail_hits(&index, "kiln").is_empty(),
+        "the removed message still answers"
     );
 }
 
