@@ -700,6 +700,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: "0084_session_write_history",
         sql: include_str!("../../migrations/0084_session_write_history.sql"),
+        leaves: Leaves::Column("session_write", "written_at"),
+    },
+    Migration {
+        version: "0084_session_write_history_changed",
+        sql: include_str!("../../migrations/0084_session_write_history_changed.sql"),
+        leaves: Leaves::Column("session_write", "changed"),
+    },
+    Migration {
+        version: "0084_session_write_history_value",
+        sql: include_str!("../../migrations/0084_session_write_history_value.sql"),
         leaves: Leaves::Column("session_write", "value"),
     },
     Migration {

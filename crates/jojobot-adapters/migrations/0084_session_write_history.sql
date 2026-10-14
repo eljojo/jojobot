@@ -23,8 +23,7 @@
 -- and the rows that predate this, so a change nothing searches for is recorded
 -- and moves no signal.
 --
--- One statement, so the runner can ask whether it landed.
-ALTER TABLE session_write
-    ADD COLUMN written_at VARCHAR(40) NULL,
-    ADD COLUMN changed    VARCHAR(32) NULL,
-    ADD COLUMN value      TEXT        NULL;
+-- Column 1 of 3. One column to a file, so the runner can ask whether each one
+-- landed: 0084_session_write_history_changed and
+-- 0084_session_write_history_value add the other two.
+ALTER TABLE session_write ADD COLUMN written_at VARCHAR(40) NULL;
