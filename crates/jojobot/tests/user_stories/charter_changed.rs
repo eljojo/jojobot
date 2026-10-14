@@ -121,7 +121,7 @@ async fn a_charter_rewritten_by_another_identity_is_told_to_the_running_session_
 }
 
 #[tokio::test]
-async fn a_bot_rewriting_its_own_charter_and_a_session_booted_after_a_change_are_told_nothing() {
+async fn a_bot_rewriting_its_own_charter_and_a_first_boot_after_a_change_are_told_nothing() {
     let story = Story::begin("bot:gamma").await;
     let gamma = story.session().await;
     gamma.add("bot:delta", "Delta").await;
@@ -165,9 +165,27 @@ async fn a_bot_rewriting_its_own_charter_and_a_session_booted_after_a_change_are
         idle_told.raw()
     );
 
-    // ── a gamma booted after the change was handed the new text ─────────────
+    // ── a gamma that answered `new` after the change was handed no charter, so
+    // ── it is told until it reads it ────────────────────────────────────────
     let later = story.as_bot("bot:gamma").await;
+    let told = later.call("list_entities", json!({ "kind": "bot" })).await;
+    assert_eq!(entrant(&told)["by"], "bot:delta", "{}", told.raw());
+    later
+        .call("recall", json!({ "subject": "bot:gamma", "charter": true }))
+        .await;
     let quiet = later.call("list_entities", json!({ "kind": "bot" })).await;
+    assert_eq!(entrant(&quiet), Value::Null, "{}", quiet.raw());
+
+    // ── a first boot after a change is handed the new text ──────────────────
+    gamma.add("bot:epsilon", "Epsilon").await;
+    delta
+        .call(
+            "set_charter",
+            json!({ "bot": "bot:epsilon", "prose": "Written before the first boot." }),
+        )
+        .await;
+    let first = story.as_bot("bot:epsilon").await;
+    let quiet = first.call("list_entities", json!({ "kind": "bot" })).await;
     assert_eq!(entrant(&quiet), Value::Null, "{}", quiet.raw());
 
     story.finish().await;
@@ -398,4 +416,81 @@ async fn reading_ones_own_bots_prose_ends_the_notice_and_another_bots_does_not()
     assert_eq!(entrant(&after), Value::Null, "{}", after.raw());
 
     story.finish().await;
+}
+
+/// The code an offering boot carries, to send back beside the answer.
+fn offer_code(door: &Answer) -> String {
+    door.json()["session"]["offer_code"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the offer carries no code: {}", door.raw()))
+        .to_string()
+}
+
+/// **An answer that starts a new run is told about a charter rewritten after the
+/// offer.** The offering boot handed the charter over. Another identity rewrote
+/// it before the caller answered `new`, so the new run works to text that is
+/// already out of date, and it is told until it reads the charter. Run once with
+/// the offer's code, whose answer leaves the charter out because the offer
+/// shipped it, and once without, whose answer leaves it out and shipped it
+/// nowhere.
+#[tokio::test]
+async fn a_new_run_is_told_of_a_charter_rewritten_between_the_offer_and_the_answer() {
+    for (with_the_code, rewritten_between) in
+        [(true, false), (true, true), (false, false), (false, true)]
+    {
+        let story = Story::begin("bot:gamma").await;
+        let gamma = story.session().await;
+        gamma.add("bot:delta", "Delta").await;
+        // A write makes the run a card, which is what a later boot offers back.
+        gamma.journal("working to the first charter").await;
+        let delta = story.as_bot("bot:delta").await;
+
+        // ── a rewrite BEFORE the offer: the offering boot ships that text ───
+        delta
+            .call(
+                "set_charter",
+                json!({ "bot": "bot:gamma", "prose": "Written before the offer." }),
+            )
+            .await;
+        let (door, none) = story
+            .call("start_here", json!({ "bot": "gamma", "brief": true }))
+            .await;
+        assert!(none.is_none(), "an offer, not a handle: {}", door.raw());
+        let code = offer_code(&door);
+
+        // ── and, in two of the four, a rewrite between the offer and the answer
+        if rewritten_between {
+            delta
+                .call(
+                    "set_charter",
+                    json!({ "bot": "bot:gamma", "prose": "Written after the offer." }),
+                )
+                .await;
+        }
+        let mut answer = json!({ "bot": "gamma", "brief": true, "resume": "new" });
+        if with_the_code {
+            answer["offer_code"] = json!(code);
+        }
+        let (door, fresh) = story.call("start_here", answer).await;
+        let fresh = fresh.unwrap_or_else(|| panic!("`new` hands back a handle: {}", door.raw()));
+        let held = fresh.call("list_entities", json!({ "kind": "bot" })).await;
+        // The offer shipped the text it held, so only a rewrite after it is news.
+        // An answer with no code was handed the charter by no call at all.
+        let told = rewritten_between || !with_the_code;
+        let case =
+            format!("with the code: {with_the_code}, rewritten between: {rewritten_between}");
+        match told {
+            true => assert_eq!(entrant(&held)["by"], "bot:delta", "{case}: {}", held.raw()),
+            false => assert_eq!(entrant(&held), Value::Null, "{case}: {}", held.raw()),
+        }
+
+        // ── and reading the charter ends it ─────────────────────────────────
+        fresh
+            .call("recall", json!({ "subject": "bot:gamma", "charter": true }))
+            .await;
+        let after = fresh.call("list_entities", json!({ "kind": "bot" })).await;
+        assert_eq!(entrant(&after), Value::Null, "{case}: {}", after.raw());
+
+        story.finish().await;
+    }
 }

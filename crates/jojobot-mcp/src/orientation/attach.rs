@@ -128,7 +128,13 @@ impl Jojobot {
         let mut block = match resume {
             // ── the caller answered the offer ───────────────────────────────
             Some(answer) if answer.eq_ignore_ascii_case(sid::NEW) => {
-                let run = self.mint_or_say_why(bot)?;
+                // The charter this run holds is the one the offering call shipped,
+                // when the answer carries that offer's code.
+                let told = match answering {
+                    Answering::Offer(offered_at) => Some(offered_at),
+                    _ => None,
+                };
+                let run = self.mint_or_say_why(bot, told)?;
                 self.end_windows(&windows_open).await;
                 self.registry
                     .set_zone(&run.name, timezone.map(str::to_string));
@@ -283,7 +289,8 @@ impl Jojobot {
             }
             // ── a first boot: the two branches ──────────────────────────────
             None if live.is_empty() && offerable.is_none() => {
-                let run = self.mint_or_say_why(bot)?;
+                // This boot ships the charter, so the run holds it from now.
+                let run = self.mint_or_say_why(bot, Some(self.clock().now()))?;
                 self.end_windows(&windows_open).await;
                 self.registry
                     .set_zone(&run.name, timezone.map(str::to_string));

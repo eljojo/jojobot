@@ -126,12 +126,16 @@ impl Jojobot {
             Some(told) => told,
             // A session this process did not mint is compared from the moment
             // its card says it was last handed the charter, else from the
-            // moment its run began.
-            None => {
-                let card = asking.card.as_ref()?;
-                let card = self.sessions.read_session(card).await.ok()?;
-                card.charter_told_at.unwrap_or(card.started_at)
-            }
+            // moment its run began. **A run with no card and no stamp was never
+            // handed the charter** (it began by answering `new` with no offer
+            // code), so any rewrite by another identity is news to it.
+            None => match asking.card.as_ref() {
+                Some(card) => {
+                    let card = self.sessions.read_session(card).await.ok()?;
+                    card.charter_told_at.unwrap_or(card.started_at)
+                }
+                None => jiff::Timestamp::UNIX_EPOCH,
+            },
         };
         (change.at > told).then(|| {
             serde_json::json!({

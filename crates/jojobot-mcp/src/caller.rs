@@ -675,12 +675,22 @@ impl Jojobot {
 
     /// Mint a run (its name and its key), or turn the one failure into an answer
     /// rather than a 500.
-    pub(crate) fn mint_or_say_why(&self, bot: &EntityId) -> Result<sid::Minted, CallToolResult> {
+    ///
+    /// **`charter_told` is the moment a boot handed the run its charter**, and
+    /// `None` when none did. A first boot ships the charter, so it is now. An
+    /// answer to an offer ships none: the offering call did, at the moment of
+    /// the offer, and an answer that carries no live offer code has no moment
+    /// at all. A run never handed the charter is not stamped as if it had been.
+    pub(crate) fn mint_or_say_why(
+        &self,
+        bot: &EntityId,
+        charter_told: Option<jiff::Timestamp>,
+    ) -> Result<sid::Minted, CallToolResult> {
         let minted = self.registry.mint(bot).inspect(|run| {
             let now = self.clock().now();
-            // A session is handed its bot's charter by the boot that mints it,
-            // and that boot is the moment the run begins.
-            self.registry.note_charter_told(run.name.as_str(), now);
+            if let Some(told) = charter_told {
+                self.registry.note_charter_told(run.name.as_str(), told);
+            }
             self.registry.note_began(run.name.as_str(), now);
         });
         minted.map_err(|_| {
