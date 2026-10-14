@@ -758,18 +758,24 @@ async fn view_section(
     let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
     let today = state.clock.today_in(&frame);
     // **The type the view names is looked up as the verb looks it up**, and a
-    // name nobody declared is a view that cannot be run.
-    let answers_type = match asked.answers_type.as_deref().map(str::trim) {
-        None | Some("") => None,
+    // name nobody declared is a view that cannot be run. **An empty value is a
+    // stored value and not a removed key**: the verb resolves it as a name and
+    // finds none, so the page does too, and does not list the whole kind.
+    let answers_type = match asked.answers_type.as_deref() {
+        None => None,
         Some(wanted) => match state.memory.declared_types().await {
             Ok(known) => match DeclaredType::named(&known, wanted) {
                 Some(declared) => Some(declared.clone()),
                 None => {
-                    return cannot_run(&format!(
-                        "it asks for things that answer the type <code>{}</code>, and no type is \
-                         called that.",
-                        escape(wanted)
-                    ));
+                    return cannot_run(&match wanted.trim() {
+                        "" => "its <code>answers_type</code> is empty, which names no type."
+                            .to_string(),
+                        name => format!(
+                            "it asks for things that answer the type <code>{}</code>, and no \
+                             type is called that.",
+                            escape(name)
+                        ),
+                    });
                 }
             },
             Err(err) => {

@@ -4060,6 +4060,23 @@ fn listed_handles(page: &str) -> Vec<String> {
 /// the handles it answers with in the order it answers them. Over the server's
 /// own port, so the call travels the path a client's does.
 async fn recall_of_view(addr: SocketAddr, view: &str) -> Vec<String> {
+    let body = recall_body_of_view(addr, view).await;
+    body["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("recall answers with objects: {body}"))
+        .iter()
+        .map(|object| {
+            object["id"]
+                .as_str()
+                .expect("an object has an id")
+                .to_string()
+        })
+        .collect()
+}
+
+/// **The whole body the served `recall` of a view answers with**, a refusal
+/// included.
+async fn recall_body_of_view(addr: SocketAddr, view: &str) -> serde_json::Value {
     let http = reqwest::Client::new();
     let url = format!("http://{addr}/mcp");
     let (session, _) = support::open_with(&http, &url, "2025-06-18").await;
@@ -4080,18 +4097,7 @@ async fn recall_of_view(addr: SocketAddr, view: &str) -> Vec<String> {
         asking = asking.header("mcp-session-id", session);
     }
     let answered = asking.send().await.unwrap().text().await.unwrap();
-    let body = support::tool_body(&support::event_stream_result(&answered));
-    body["objects"]
-        .as_array()
-        .unwrap_or_else(|| panic!("recall answers with objects: {body}"))
-        .iter()
-        .map(|object| {
-            object["id"]
-                .as_str()
-                .expect("an object has an id")
-                .to_string()
-        })
-        .collect()
+    support::tool_body(&support::event_stream_result(&answered))
 }
 
 /// **The page of a view and a `recall` of it select the same things.** The
@@ -4263,6 +4269,65 @@ async fn a_ready_view_over_something_that_is_not_work_cannot_be_run() {
     assert!(
         !page.contains("id=\"answer\""),
         "…and answers nothing: {page}"
+    );
+    ct.cancel();
+}
+
+/// **A view that holds an EMPTY `answers_type` cannot be run, by the page or by
+/// the verb.** An empty value is a stored value and not a removed key: recall
+/// resolves it as a type name, finds none and refuses, so the page says the
+/// same and lists nothing, where it once listed the whole kind.
+#[tokio::test]
+async fn a_view_holding_an_empty_type_cannot_be_run_by_the_page_or_the_verb() {
+    let memory = memory_with_views().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:unscoped".into()),
+            "Unscoped",
+            "the operator",
+        ))
+        .await
+        .expect("the view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "work".to_string()),
+                ("answers_type".to_string(), String::new()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:unscoped".into()),
+                "all work, with a type that was left empty",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let refused = recall_body_of_view(addr, "unscoped").await;
+    assert_eq!(
+        refused["status"], "blocked",
+        "the verb refuses a view whose type is empty: {refused}"
+    );
+
+    let page = read(&client, addr, "/view:unscoped/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    refusal_on(&page);
+    assert!(
+        !page.contains("id=\"answer\""),
+        "…and the page lists nothing, as the verb does: {page}"
     );
     ct.cancel();
 }
