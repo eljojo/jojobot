@@ -159,6 +159,10 @@ mod charter_changed;
 mod kitchensink;
 #[path = "user_stories/labels.rs"]
 mod labels;
+/// "Will my client be told when jojobot's tools change?" — a listen on the newest
+/// revision is acknowledged for the tool list and held open.
+#[path = "user_stories/listening.rs"]
+mod listening;
 #[path = "user_stories/mentioning.rs"]
 mod mentioning;
 #[path = "user_stories/moving.rs"]

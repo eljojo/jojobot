@@ -322,3 +322,63 @@ async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks
     );
     story.finish().await;
 }
+
+/// "Is Kenny ready?" Readiness is a question about work, so the ready view
+/// turns a person away, whether the person is named as the subject or the kind
+/// asked for is people, and says to name a piece of work. The same view still
+/// answers for a piece of work, so the refusal is about what was asked and not
+/// about the view. A record's address is no subject for it either.
+#[tokio::test]
+async fn the_ready_view_turns_a_person_away_and_still_answers_for_work() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("person:kenny", "Kenny").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "work", "handle": "omega", "name": "omega",
+               "source": "user-named", "sets": {"status": "now"}}),
+    )
+    .await;
+
+    // The positive the refusals rest on: a piece of work answers.
+    let work = s
+        .call("recall", json!({"view": "ready", "subject": "work:omega"}))
+        .await;
+    assert_eq!(work.json()["objects"][0]["ready"], true, "{}", work.raw());
+
+    // A person named as the subject is refused, and the refusal names who.
+    let person = s
+        .refused(
+            "recall",
+            json!({"view": "ready", "subject": "person:kenny"}),
+        )
+        .await;
+    assert_eq!(person.json()["fix_by"], "change", "{}", person.raw());
+    assert!(
+        person.raw().contains("person:kenny"),
+        "the refusal names the subject it turned away: {}",
+        person.raw()
+    );
+
+    // A kind other than work is refused the same way.
+    let kind = s
+        .refused("recall", json!({"view": "ready", "kind": "person"}))
+        .await;
+    assert_eq!(kind.json()["fix_by"], "change", "{}", kind.raw());
+
+    // A record's address is no subject for the view, as it is no subject for any
+    // recall: it is refused as no handle, and the piece of work it belongs to
+    // still answers by its own handle.
+    let facts = s
+        .call("recall", json!({"subject": "work:omega", "facts": true}))
+        .await;
+    let address = facts.json()["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the piece of work has a record: {}", facts.raw()))
+        .to_string();
+    let by_record = s
+        .refused("recall", json!({"view": "ready", "subject": address}))
+        .await;
+    assert_eq!(by_record.json()["fix_by"], "change", "{}", by_record.raw());
+    story.finish().await;
+}
