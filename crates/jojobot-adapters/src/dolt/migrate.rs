@@ -698,6 +698,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Table("message_event"),
     },
     Migration {
+        version: "0084_session_write_history",
+        sql: include_str!("../../migrations/0084_session_write_history.sql"),
+        leaves: Leaves::Column("session_write", "value"),
+    },
+    Migration {
+        version: "0085_journal_entry_write",
+        sql: include_str!("../../migrations/0085_journal_entry_write.sql"),
+        leaves: Leaves::Table("journal_entry_write"),
+    },
+    Migration {
         version: "0086_push_attempt",
         sql: include_str!("../../migrations/0086_push_attempt.sql"),
         leaves: Leaves::Table("push_attempt"),

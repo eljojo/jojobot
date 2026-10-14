@@ -771,8 +771,13 @@ impl Story {
             let _ = indexed.rebuild().await;
         }
         let indexed_for_seed = indexed.clone();
-        let wired =
-            jojobot::wiring::assemble_ports(indexed.clone(), mail_store.clone(), runs.clone());
+        let wired = jojobot::wiring::assemble_ports(
+            indexed.clone(),
+            mail_store.clone(),
+            runs.clone(),
+            runs.write_stamp(),
+            jojobot_domain::clock::Clock::Real,
+        );
         // **Mail and runs are held in memory here exactly as the binary holds
         // them**, filled before anything is served, so a story reads through the
         // image and not past it.

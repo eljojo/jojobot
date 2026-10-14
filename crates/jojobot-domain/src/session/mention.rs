@@ -388,6 +388,56 @@ impl Sessions for Mentioning {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<crate::session::history::SessionHistories, crate::session::SessionError> {
+        self.inner.scan_session_history().await
+    }
+
+    /// **Rendered on the way out**, as the focus is: a focus a run began with or
+    /// set is kept with its handles written as permanent ids, so a rename reaches
+    /// it here. No other change holds text a caller wrote.
+    async fn session_history(
+        &self,
+        id: &crate::session::SessionId,
+    ) -> Result<Vec<crate::session::history::SessionChange>, crate::session::SessionError> {
+        use crate::session::history::ChangeKind;
+        let mut changes = self.inner.session_history(id).await?;
+        if !changes
+            .iter()
+            .any(|c| matches!(c.changed, Some(ChangeKind::Begin | ChangeKind::Focus)))
+        {
+            return Ok(changes);
+        }
+        let known = self.known().await?;
+        for change in &mut changes {
+            if matches!(change.changed, Some(ChangeKind::Begin | ChangeKind::Focus)) {
+                change.value = change
+                    .value
+                    .as_deref()
+                    .map(|value| mention::rendered(value, &known));
+            }
+        }
+        Ok(changes)
+    }
+
+    /// **Rendered on the way out**, as the entry's own text is.
+    async fn journal_history(
+        &self,
+        id: &crate::session::SessionId,
+        entry: &crate::session::EntryId,
+    ) -> Result<Vec<crate::session::history::Wording>, crate::session::SessionError> {
+        let mut wordings = self.inner.journal_history(id, entry).await?;
+        if wordings.is_empty() {
+            return Ok(wordings);
+        }
+        let known = self.known().await?;
+        for wording in &mut wordings {
+            wording.text = mention::rendered(&wording.text, &known);
+        }
+        Ok(wordings)
+    }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.inner.set_key_hash(id, hash).await
     }

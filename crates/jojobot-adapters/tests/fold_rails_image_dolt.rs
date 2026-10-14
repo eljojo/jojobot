@@ -25,8 +25,10 @@ use jojobot_adapters::fold_rails_battery::{
     walk_every_kind_of_session_write, walk_every_kind_of_teaching,
 };
 use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::session::history::WriteStamp;
 
 /// The session reads the image serves. Each is added in the commit that
 /// switches it.
@@ -39,6 +41,9 @@ const SWITCHED_SESSIONS: &[&str] = &[
     "run_counts",
     "all_sessions",
     "charter_change_of",
+    "session_history",
+    "journal_history",
+    "scan_session_history",
 ];
 
 /// The mail reads the image serves.
@@ -107,9 +112,10 @@ async fn the_session_image_answers_as_the_real_store_does_after_every_kind_of_wr
         .await
         .expect("the store comes up");
     let pool = database(&server, "sessions").await;
-    let store = Arc::new(DoltSessions::open(pool));
+    let stamp = WriteStamp::new();
+    let store = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone());
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
     folded.rebuild().await.expect("the image loads");
     let rails = SessionRails {
         folded: &folded,
@@ -474,6 +480,121 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
     assert_eq!(asked[1].1[1].reason.as_deref(), Some("not trusted"));
 }
 
+/// **A boot reads the history a store already holds, and the histories then
+/// answer with the store gone.** The changes and the wordings were written
+/// before the image existed, as the deployed build's store holds them. The store
+/// is stopped after the boot, so a history that reached it would fail, and the
+/// counted wrapper says no read was made.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gone() {
+    use jojobot_domain::session::history::ChangeKind;
+    use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+    let scratch = Scratch::new("run-history-boot");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database(&server, "run_history_boot").await;
+    let stamp = WriteStamp::new();
+    let store = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
+    let at = |second: i64| {
+        jiff::Timestamp::from_second(1_790_000_000 + second).expect("a valid instant")
+    };
+    let run = store
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid("hb01".into()),
+            focus: "reading".into(),
+            started_at: at(0),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: Some("a-hash-that-must-not-be-read-back".into()),
+        })
+        .await
+        .expect("begin");
+    let entry = store
+        .append(&run.id, NewEntry::manual("first wording", at(1), None))
+        .await
+        .expect("append");
+    store
+        .amend_last(&run.id, "second wording")
+        .await
+        .expect("amend");
+    store.set_focus(&run.id, "writing").await.expect("focus");
+    store
+        .set_key_hash(&run.id, "another-hash")
+        .await
+        .expect("rekey");
+
+    let counted = Arc::new(CountedSessions::new(store.clone()));
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
+    folded.rebuild().await.expect("the image loads");
+    let changes_from_store = store
+        .session_history(&run.id)
+        .await
+        .expect("the store answers");
+    let wordings_from_store = store
+        .journal_history(&run.id, &entry.id)
+        .await
+        .expect("the store answers");
+    server.stop().await;
+    counted.calls.reset();
+
+    assert_eq!(
+        folded
+            .session_history(&run.id)
+            .await
+            .expect("the image answers"),
+        changes_from_store
+    );
+    assert_eq!(
+        folded
+            .journal_history(&run.id, &entry.id)
+            .await
+            .expect("the image answers"),
+        wordings_from_store
+    );
+    assert_eq!(
+        counted.calls.reads(),
+        0,
+        "a history reached the store: {:?}",
+        counted.calls.seen()
+    );
+    // Pinned from what the store wrote, not from the comparison above.
+    assert_eq!(
+        changes_from_store
+            .iter()
+            .map(|c| c.changed)
+            .collect::<Vec<_>>(),
+        [
+            ChangeKind::Begin,
+            ChangeKind::Entry,
+            ChangeKind::AmendLast,
+            ChangeKind::Focus,
+            ChangeKind::Key
+        ]
+        .map(Some)
+    );
+    assert_eq!(
+        changes_from_store
+            .iter()
+            .map(|c| c.ordinal)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5]
+    );
+    assert_eq!(
+        wordings_from_store
+            .iter()
+            .map(|w| w.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first wording", "second wording"]
+    );
+    assert!(
+        !format!("{changes_from_store:?}").contains("hash"),
+        "a hash is in the account: {changes_from_store:?}"
+    );
+}
+
 /// **A run the store cannot read leaves no image, and the reads stay correct**
 /// because they go to the store, which refuses the way it always did.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -491,9 +612,10 @@ async fn a_run_the_store_cannot_read_leaves_no_image_and_the_reads_go_to_the_sto
     .execute(&pool)
     .await
     .expect("the board takes the row");
-    let store = Arc::new(DoltSessions::open(pool));
+    let stamp = WriteStamp::new();
+    let store = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone());
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
     assert!(
         folded.rebuild().await.is_err(),
         "a board with a run nobody can read does not fill an image"

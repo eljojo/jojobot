@@ -23,7 +23,8 @@ use jiff::civil::date;
 use jojobot_domain::mailbox::{Mailbox, MailboxName, Mailboxes, MessageId, NewMessage, TakenBy};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{
-    CharterChange, NewEntry, NewSession, SessionId, SessionState, Sessions, Sid, WrapWindow,
+    CharterChange, EntryId, NewEntry, NewSession, SessionId, SessionState, Sessions, Sid,
+    WrapWindow,
 };
 use jojobot_domain::teaching::Teachings;
 
@@ -195,7 +196,55 @@ impl SessionRails<'_> {
                 d.summary_of(id),
             )
             .await;
+            check(
+                when,
+                "session_history",
+                id.as_str(),
+                calls,
+                s,
+                f.session_history(id),
+                d.session_history(id),
+            )
+            .await;
         }
+        // **The wordings of every entry the runs hold**, and of ids that are no
+        // entry of the run, beside a run that does not exist.
+        for run in &all {
+            let mut entries: Vec<EntryId> = run.entries.iter().map(|e| e.id.clone()).collect();
+            entries.push(EntryId("nonesuch".into()));
+            for entry in &entries {
+                check(
+                    when,
+                    "journal_history",
+                    &format!("{}/{}", run.id.as_str(), entry.as_str()),
+                    calls,
+                    s,
+                    f.journal_history(&run.id, entry),
+                    d.journal_history(&run.id, entry),
+                )
+                .await;
+            }
+        }
+        check(
+            when,
+            "journal_history",
+            "no run",
+            calls,
+            s,
+            f.journal_history(&SessionId("zzzzzz".into()), &EntryId("e1".into())),
+            d.journal_history(&SessionId("zzzzzz".into()), &EntryId("e1".into())),
+        )
+        .await;
+        check(
+            when,
+            "scan_session_history",
+            "",
+            calls,
+            s,
+            f.scan_session_history(),
+            d.scan_session_history(),
+        )
+        .await;
     }
 }
 

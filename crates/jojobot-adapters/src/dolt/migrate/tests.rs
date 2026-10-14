@@ -121,6 +121,8 @@ const ALL_VERSIONS: &[&str] = &[
     "0081_fact_write_refs",
     "0082_fact_write_stands_for",
     "0083_message_event",
+    "0084_session_write_history",
+    "0085_journal_entry_write",
     "0086_push_attempt",
     "0087_charter_change_write",
     "0088_type_write",

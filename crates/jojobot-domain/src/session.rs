@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::memory::EntityId;
 
+pub mod history;
 pub mod mention;
 pub mod role_keys;
 
@@ -1413,6 +1414,40 @@ pub trait Sessions: Send + Sync {
     /// said. [`SessionError::UnknownSession`] on a card that does not exist.
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError>;
 
+    /// **Every change a run went through, oldest first**, each with the moment
+    /// the store made its record and what was kept of it. A read: nothing moves
+    /// and every current read answers as it did.
+    ///
+    /// **A change made before the store kept this has a record that says only
+    /// that the run was written**, with no kind and no moment, and a run changed
+    /// only before has nothing more. An empty answer for a run says nothing was
+    /// recorded, never that nothing happened. The key a run works through is
+    /// recorded as changed and its hash is never in an answer, and neither is the
+    /// code of a wrap window. [`SessionError::UnknownSession`] on a card that
+    /// does not exist.
+    async fn session_history(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<history::SessionChange>, SessionError>;
+
+    /// **Every record of every run in one read**, for the image that answers
+    /// [`session_history`](Sessions::session_history) and
+    /// [`journal_history`](Sessions::journal_history) from memory. A run with
+    /// none is not listed. A read: nothing moves.
+    async fn scan_session_history(&self) -> Result<history::SessionHistories, SessionError>;
+
+    /// **Every wording of one journal entry, oldest first**: the text it was
+    /// appended with and the text of each rewrite after it. The entry itself
+    /// stays the newest wording, and every current read answers as it did. An
+    /// entry written before the store kept this has no wordings. An entry the
+    /// run does not hold is [`SessionError::NoEntries`], and a run that does not
+    /// exist [`SessionError::UnknownSession`].
+    async fn journal_history(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+    ) -> Result<Vec<history::Wording>, SessionError>;
+
     /// **Write the hash of the key this run holds, or [`KEY_VOID`] when its key
     /// is taken away.** The row is written before the call that rotated or
     /// removed the key returns, so a restart cannot bring an old key back.
@@ -2553,6 +2588,24 @@ mod tests {
                 at: Timestamp,
             ) -> Result<(), SessionError> {
                 self.0.set_charter_told(id, at).await
+            }
+            async fn scan_session_history(
+                &self,
+            ) -> Result<history::SessionHistories, SessionError> {
+                self.0.scan_session_history().await
+            }
+            async fn session_history(
+                &self,
+                id: &SessionId,
+            ) -> Result<Vec<history::SessionChange>, SessionError> {
+                self.0.session_history(id).await
+            }
+            async fn journal_history(
+                &self,
+                id: &SessionId,
+                entry: &EntryId,
+            ) -> Result<Vec<history::Wording>, SessionError> {
+                self.0.journal_history(id, entry).await
             }
             async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
                 self.0.set_key_hash(id, hash).await

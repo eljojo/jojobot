@@ -19,7 +19,12 @@
 
 use async_trait::async_trait;
 use jiff::Timestamp;
+use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::{Entity, EntityId, mention};
+use jojobot_domain::session::history::{
+    Change, ChangeKind, SessionChange, SessionHistories, Wording, WriteStamp, next_change,
+    next_wording,
+};
 use jojobot_domain::session::{
     CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
     SessionState, Sessions, Sid, WrapWindow, is_readable_sid, normalize_entry, validate_entry,
@@ -59,6 +64,12 @@ pub struct DoltSessions {
     /// full reads cannot show: whether a write that only needs the row to
     /// exist asked a question of its own first.
     existence_checks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// **The clock the changes of a run are stamped with.** The real one unless
+    /// an operator stated a day for the whole run.
+    clock: Clock,
+    /// **The moment a layer above holds for the write in flight**, which a
+    /// record is stamped with instead of the clock when one is held.
+    held: WriteStamp,
 }
 
 impl DoltSessions {
@@ -76,7 +87,32 @@ impl DoltSessions {
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            clock: Clock::Real,
+            held: WriteStamp::new(),
         }
+    }
+
+    /// **The store, told which clock it stamps with.** The real one unless an
+    /// operator stated a day for the whole run.
+    #[must_use]
+    pub fn on_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// **The store, told which moment a layer above holds for its writes.** The
+    /// layer takes the moment once per write and the records the store makes for
+    /// that write carry the same one.
+    #[must_use]
+    pub fn stamped_by(mut self, stamp: WriteStamp) -> Self {
+        self.held = stamp;
+        self
+    }
+
+    /// The moment to stamp a record with: the one held for the write in flight,
+    /// else this store's clock.
+    fn moment(&self) -> Timestamp {
+        self.held.current().unwrap_or_else(|| self.clock.now())
     }
 
     /// How many sessions have been read in full since this store opened.
@@ -229,6 +265,8 @@ impl DoltSessions {
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            clock: Clock::Real,
+            held: WriteStamp::new(),
         }
     }
 
@@ -246,6 +284,8 @@ impl DoltSessions {
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            clock: Clock::Real,
+            held: WriteStamp::new(),
         }
     }
 
@@ -352,27 +392,80 @@ impl DoltSessions {
         row.try_get::<i32, _>(0).map_err(store)
     }
 
-    /// **Keep that this session was written, and once per write** — the
-    /// cheap signal [`DoltSessions::write_summary`] reads. See the
-    /// migration's own doc for why no moment rides along with it.
-    async fn append_session_write(
+    /// **Keep one change of a run, in the transaction that made it.** The record
+    /// is made by [`next_change`], numbered one past the highest the run holds
+    /// and stamped on this store's clock, so every site that changes a session
+    /// row calls this and none of them decides the number, the value or what a
+    /// value must not hold (rule 498).
+    ///
+    /// The search index reads the count of these records through
+    /// [`DoltSessions::write_summary`], and only the kinds that
+    /// [`ChangeKind::moves_the_index`] names move it.
+    async fn keep_change(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
+        change: Change<'_>,
     ) -> Result<(), SessionError> {
-        let row = sqlx::query(
-            "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM session_write WHERE session = ?",
+        // **Only the highest, never the list**: a run is served an answer many
+        // times, and a read of every record it holds would grow with them.
+        let highest: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(ordinal) FROM session_write WHERE session = ?")
+                .bind(id.as_str())
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(store)?;
+        let made = next_change(highest.map(|n| n.max(0) as usize), change, self.moment());
+        sqlx::query(
+            "INSERT INTO session_write (session, ordinal, written_at, changed, value)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(id.as_str())
+        .bind(made.ordinal as i64)
+        .bind(made.written_at.map(stamp))
+        .bind(made.changed.map(ChangeKind::as_token))
+        .bind(made.value.as_deref())
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(())
+    }
+
+    /// **Keep one wording of a journal entry, in the transaction that wrote
+    /// it**, made by [`next_wording`] for the reason [`Self::keep_change`] is.
+    async fn keep_wording(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &SessionId,
+        written: &JournalEntry,
+    ) -> Result<(), SessionError> {
+        let highest: Option<i32> = sqlx::query_scalar(
+            "SELECT MAX(ordinal) FROM journal_entry_write WHERE session = ? AND entry = ?",
+        )
+        .bind(id.as_str())
+        .bind(written.id.as_str())
         .fetch_one(&mut **tx)
         .await
         .map_err(store)?;
-        let ordinal: i64 = row.try_get(0).map_err(store)?;
-        sqlx::query("INSERT INTO session_write (session, ordinal) VALUES (?, ?)")
-            .bind(id.as_str())
-            .bind(ordinal)
-            .execute(&mut **tx)
-            .await
-            .map_err(store)?;
+        let made = next_wording(
+            highest.map(|n| n.max(0) as usize),
+            &written.text,
+            written.touched,
+            self.moment(),
+        );
+        sqlx::query(
+            "INSERT INTO journal_entry_write (session, entry, ordinal, text, touched, written_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id.as_str())
+        .bind(written.id.as_str())
+        .bind(made.revision as i32)
+        .bind(&made.text)
+        .bind(made.touched.map(stamp))
+        .bind(stamp(made.written_at))
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
         Ok(())
     }
 }
@@ -540,6 +633,46 @@ fn day(raw: Option<String>) -> Result<Option<jiff::civil::Date>, SessionError> {
 }
 
 /// An instant as it is stored: RFC 3339, nanoseconds intact.
+/// One `session_write` row as the domain's record. A record an older build
+/// appended has no kind and no moment, and reads as unrecorded.
+fn change_from_row(row: &sqlx::mysql::MySqlRow) -> Result<SessionChange, SessionError> {
+    let changed = row
+        .try_get::<Option<String>, _>("changed")
+        .map_err(store)?
+        .map(|token| {
+            ChangeKind::from_token(&token).ok_or_else(|| {
+                SessionError::Store(
+                    "a stored session change is of a kind this build does not know".into(),
+                )
+            })
+        })
+        .transpose()?;
+    Ok(SessionChange {
+        ordinal: row.try_get::<i64, _>("ordinal").map_err(store)?.max(0) as usize,
+        changed,
+        value: row.try_get("value").map_err(store)?,
+        written_at: row
+            .try_get::<Option<String>, _>("written_at")
+            .map_err(store)?
+            .map(|at| instant(&at))
+            .transpose()?,
+    })
+}
+
+/// One `journal_entry_write` row as the domain's record.
+fn wording_from_row(row: &sqlx::mysql::MySqlRow) -> Result<Wording, SessionError> {
+    Ok(Wording {
+        revision: row.try_get::<i32, _>("ordinal").map_err(store)?.max(0) as usize,
+        text: row.try_get("text").map_err(store)?,
+        touched: row
+            .try_get::<Option<String>, _>("touched")
+            .map_err(store)?
+            .map(|at| instant(&at))
+            .transpose()?,
+        written_at: instant(&row.try_get::<String, _>("written_at").map_err(store)?)?,
+    })
+}
+
 fn stamp(at: Timestamp) -> String {
     at.to_string()
 }
@@ -578,15 +711,29 @@ impl Sessions for DoltSessions {
         Ok(found)
     }
 
-    /// **One aggregate, not a read of any run.** `session_write` is written
-    /// on every mutation of every session (see the migration's own doc), so
-    /// its count answers "has anything changed" without touching a run's
-    /// chronology. No moment rides along — see the same doc for why.
+    /// **One aggregate, not a read of any run.** `session_write` is written on
+    /// every change of every session, and its count over the changes the search
+    /// index reads answers "has anything changed" without touching a run's
+    /// chronology. No moment rides along: this is a signal, and each record
+    /// carries its own moment for a reader of the history.
     async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_write")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(store)?;
+        // **The changes the index reads, and the records that predate the kind**:
+        // a change nothing searches for is recorded and moves nothing, so an
+        // answer's size added to a run does not make the index read every run.
+        let moving: Vec<&str> = ChangeKind::ALL
+            .into_iter()
+            .filter(|kind| kind.moves_the_index())
+            .map(ChangeKind::as_token)
+            .collect();
+        let marks = vec!["?"; moving.len()].join(", ");
+        let sql = format!(
+            "SELECT COUNT(*) FROM session_write WHERE changed IS NULL OR changed IN ({marks})"
+        );
+        let mut count = sqlx::query_scalar(&sql);
+        for token in moving {
+            count = count.bind(token);
+        }
+        let count: i64 = count.fetch_one(&self.pool).await.map_err(store)?;
         Ok(Some((count, None)))
     }
 
@@ -776,7 +923,8 @@ impl Sessions for DoltSessions {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
-        Self::append_session_write(&mut tx, &id).await?;
+        self.keep_change(&mut tx, &id, Change::Begin(new.focus.trim()))
+            .await?;
         let session = self.read_in(&mut tx, &id).await?;
         tx.commit().await.map_err(store)?;
         // **The near end of the run's span.** It fixes what the store looked
@@ -828,8 +976,10 @@ impl Sessions for DoltSessions {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        self.keep_change(&mut tx, id, Change::Entry(&entry_id))
+            .await?;
         let written = read_entry(&mut tx, id, &entry_id).await?;
+        self.keep_wording(&mut tx, id, &written).await?;
         tx.commit().await.map_err(store)?;
         Ok(written)
     }
@@ -856,8 +1006,10 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        self.keep_change(&mut tx, id, Change::AmendLast(&entry_id))
+            .await?;
         let written = read_entry(&mut tx, id, &entry_id).await?;
+        self.keep_wording(&mut tx, id, &written).await?;
         tx.commit().await.map_err(store)?;
         Ok(written)
     }
@@ -891,8 +1043,10 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        self.keep_change(&mut tx, id, Change::AmendBeat(entry))
+            .await?;
         let written = read_entry(&mut tx, id, entry).await?;
+        self.keep_wording(&mut tx, id, &written).await?;
         tx.commit().await.map_err(store)?;
         Ok(written)
     }
@@ -908,7 +1062,8 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        self.keep_change(&mut tx, id, Change::Focus(focus.trim()))
+            .await?;
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -928,15 +1083,12 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // **No `append_session_write` here** — the same exemption
-        // `add_served` already carries, for the same reason: a timezone is
-        // no more indexed than `served_chars` is (`write_session_entry`
-        // reads an entry's text and a session's focus, never this column),
-        // so signalling on it would invalidate every bot's sessions for a
-        // rescan with nothing new to find. Unlike `add_served`, there is no
-        // second saving to make here: this call already needs the full read
-        // below for its own answer, so there is no cheap existence check to
-        // swap in.
+        self.keep_change(
+            &mut tx,
+            id,
+            Change::Timezone(timezone.map(str::trim).filter(|z| !z.is_empty())),
+        )
+        .await?;
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -956,9 +1108,8 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // **No `append_session_write` here**, for the same reason
-        // `set_timezone` carries none: the stated day is no more indexed
-        // than the zone is.
+        self.keep_change(&mut tx, id, Change::StatedDay(day))
+            .await?;
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -986,8 +1137,8 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // **No `append_session_write`**, for the reason `set_timezone` carries
-        // none: the window is not indexed.
+        self.keep_change(&mut tx, id, Change::WrapWindow(window.as_ref()))
+            .await?;
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -1013,16 +1164,12 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // **No `append_session_write` here** — `state` is never indexed
-        // either (the same column `write_session_entry` never reads). A
-        // sweep's own close to `Abandoned` writes no content at all: the
-        // one signal that case ever had was this one, and it was pure
-        // overhead. Closing to `Wrapped` writes no content here either —
-        // `wrap_session` (the only production caller) always appends the
-        // closing story as an ordinary entry FIRST, which already signals
-        // on its own, before this call ever runs. Signalling twice for one
-        // logical write is the same overhead `add_served` was built to
-        // avoid, just reached from the other end.
+        // A close that ends an open window records the window going as well.
+        self.keep_change(&mut tx, id, Change::State(to)).await?;
+        if held.wrap_window.is_some() {
+            self.keep_change(&mut tx, id, Change::WrapWindow(None))
+                .await?;
+        }
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         // The far end of the span, whichever ending this was: a run that told
@@ -1060,14 +1207,8 @@ impl Sessions for DoltSessions {
         if added.rows_affected() == 0 {
             self.exists(&mut tx, id).await?;
         }
-        // **No `append_session_write` here.** That signal exists to tell the
-        // search half of the index when to pay for a full re-read of every
-        // session — see its own migration doc — and `served_chars` is never
-        // part of what gets indexed (search.rs's `write_session_entry` reads
-        // an entry's text and a session's focus, never this column). Signalling
-        // on a change nothing searches for would invalidate every bot's
-        // sessions on every served answer, for a rescan with nothing new to
-        // find.
+        self.keep_change(&mut tx, id, Change::ServedChars(chars))
+            .await?;
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -1086,6 +1227,7 @@ impl Sessions for DoltSessions {
         if reset.rows_affected() == 0 {
             self.exists(&mut tx, id).await?;
         }
+        self.keep_change(&mut tx, id, Change::ServedReset).await?;
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -1105,9 +1247,8 @@ impl Sessions for DoltSessions {
                     .execute(&mut *tx)
                     .await
                     .map_err(store)?;
-                // **No `append_session_write` here** — same reasoning as
-                // `close`'s own: `state` is never indexed, and walking a run
-                // back to `active` writes no content of its own.
+                self.keep_change(&mut tx, id, Change::State(SessionState::Active))
+                    .await?;
                 self.read_in(&mut tx, id).await?
             }
             SessionState::Wrapped => {
@@ -1132,7 +1273,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // No `append_session_write`: a hash is never indexed or served.
+        self.keep_change(&mut tx, id, Change::Key).await?;
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -1148,10 +1289,106 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // No `append_session_write`: the moment is never indexed, as with
-        // `served_chars`.
+        self.keep_change(&mut tx, id, Change::CharterTold(at))
+            .await?;
         tx.commit().await.map_err(store)?;
         Ok(())
+    }
+
+    async fn scan_session_history(&self) -> Result<SessionHistories, SessionError> {
+        let change_rows = sqlx::query(
+            "SELECT session, ordinal, written_at, changed, value FROM session_write
+             ORDER BY session, ordinal",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let mut changes: Vec<(SessionId, Vec<SessionChange>)> = Vec::new();
+        for row in &change_rows {
+            let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
+            let change = change_from_row(row)?;
+            match changes.last_mut() {
+                Some((held, kept)) if *held == run => kept.push(change),
+                _ => changes.push((run, vec![change])),
+            }
+        }
+        let wording_rows = sqlx::query(
+            "SELECT session, entry, ordinal, text, touched, written_at FROM journal_entry_write
+             ORDER BY session, entry, ordinal",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let mut wordings: Vec<(SessionId, EntryId, Vec<Wording>)> = Vec::new();
+        for row in &wording_rows {
+            let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
+            let entry = EntryId(row.try_get::<String, _>("entry").map_err(store)?);
+            let wording = wording_from_row(row)?;
+            match wordings.last_mut() {
+                Some((held, held_entry, kept)) if *held == run && *held_entry == entry => {
+                    kept.push(wording)
+                }
+                _ => wordings.push((run, entry, vec![wording])),
+            }
+        }
+        Ok(SessionHistories { changes, wordings })
+    }
+
+    async fn session_history(&self, id: &SessionId) -> Result<Vec<SessionChange>, SessionError> {
+        validate_session_id(id)?;
+        let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store)?;
+        found.ok_or_else(|| SessionError::UnknownSession {
+            attempted: id.to_string(),
+        })?;
+        let rows = sqlx::query(
+            "SELECT ordinal, written_at, changed, value FROM session_write
+             WHERE session = ? ORDER BY ordinal",
+        )
+        .bind(id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        rows.iter().map(change_from_row).collect()
+    }
+
+    async fn journal_history(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+    ) -> Result<Vec<Wording>, SessionError> {
+        validate_session_id(id)?;
+        let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store)?;
+        found.ok_or_else(|| SessionError::UnknownSession {
+            attempted: id.to_string(),
+        })?;
+        let held: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM journal_entry WHERE session = ? AND id = ?")
+                .bind(id.as_str())
+                .bind(entry.as_str())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(store)?;
+        held.ok_or_else(|| SessionError::NoEntries {
+            attempted: id.to_string(),
+        })?;
+        let rows = sqlx::query(
+            "SELECT ordinal, text, touched, written_at FROM journal_entry_write
+             WHERE session = ? AND entry = ? ORDER BY ordinal",
+        )
+        .bind(id.as_str())
+        .bind(entry.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        rows.iter().map(wording_from_row).collect()
     }
 
     async fn note_charter_change(

@@ -8744,3 +8744,206 @@ async fn recall_of_a_survivor_names_the_claim_the_merge_did_not_list() {
         "{clean}"
     );
 }
+
+/// Journal an entry with a focus, through the verb a caller uses.
+async fn journal_with_focus(
+    jojobot: &Jojobot,
+    sid: &str,
+    entry: &str,
+    focus: &str,
+) -> serde_json::Value {
+    let body = json_of(
+        &jojobot
+            .journal(Parameters(crate::session::JournalArgs {
+                entry: entry.into(),
+                focus: Some(focus.into()),
+                sid: sid.into(),
+            }))
+            .await
+            .expect("journal answers"),
+    );
+    assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+    body
+}
+
+/// Amend the newest entry, through the verb a caller uses.
+async fn amend_newest(jojobot: &Jojobot, sid: &str, entry: &str) {
+    let body = json_of(
+        &jojobot
+            .amend_journal(Parameters(crate::session::AmendJournalArgs {
+                entry: entry.into(),
+                sid: sid.into(),
+            }))
+            .await
+            .expect("amend_journal answers"),
+    );
+    assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+}
+
+/// **A run's own history is recalled through `history`, as a thing's key is.**
+/// `history: "focus"` traces the field and returns each change oldest first with
+/// its time and value, the key a run works through is traced as changed and never
+/// valued, and `history: "journal"` returns the wordings of each amended entry.
+/// Paired with the ordinary read of the same run, which answers as it always did.
+#[tokio::test]
+async fn a_runs_history_is_recalled_through_the_history_argument() {
+    let jojobot = crate::harness::handler();
+    let sid = writing_as(&jojobot);
+    journal_with_focus(&jojobot, &sid, "first beat", "reading the card").await;
+    let receipt = journal_with_focus(&jojobot, &sid, "second beat", "writing the fix").await;
+    amend_newest(&jojobot, &sid, "second beat, said better").await;
+    amend_newest(&jojobot, &sid, "second beat, said best").await;
+    let handle = format!(
+        "session:{}",
+        receipt["session"].as_str().expect("the run it landed in")
+    );
+    let traced = |key: &'static str| {
+        let (jojobot, sid, handle) = (&jojobot, sid.clone(), handle.clone());
+        async move {
+            json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        sid: Some(sid),
+                        history: Some(key.into()),
+                        ..of(&handle)
+                    }))
+                    .await
+                    .expect("recall answers"),
+            )
+        }
+    };
+
+    let plain = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid.clone()),
+                ..of(&handle)
+            }))
+            .await
+            .expect("recall answers"),
+    );
+
+    // The field's changes, oldest first, each with its place, its kind, its
+    // moment and the focus it set. The run began with the focus the first
+    // journal carried, and each journal after it sets one.
+    let focus = traced("focus").await;
+    let object = &focus["objects"][0];
+    assert_eq!(object["history"]["key"], "focus", "{focus}");
+    assert_eq!(object["history"]["count"], 3, "{focus}");
+    let writes = object["history"]["writes"]
+        .as_array()
+        .expect("the changes come back as a list");
+    assert_eq!(
+        writes
+            .iter()
+            .map(|w| w["change"].as_str())
+            .collect::<Vec<_>>(),
+        [Some("begin"), Some("focus"), Some("focus")],
+        "{focus}"
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .map(|w| w["value"].as_str())
+            .collect::<Vec<_>>(),
+        [
+            Some("reading the card"),
+            Some("reading the card"),
+            Some("writing the fix")
+        ],
+        "{focus}"
+    );
+    let ordinals: Vec<u64> = writes
+        .iter()
+        .map(|w| w["ordinal"].as_u64().unwrap())
+        .collect();
+    assert!(ordinals.windows(2).all(|w| w[0] < w[1]), "{ordinals:?}");
+    assert!(
+        writes.iter().all(|w| w["written_at"].is_string()),
+        "{focus}"
+    );
+    // The ordinary read of the same run is what it was: the same fields, and no
+    // `history` unless asked for.
+    assert_eq!(object["fields"], plain["objects"][0]["fields"]);
+    assert!(plain["objects"][0].get("history").is_none(), "{plain}");
+
+    // The wordings of the entry that was amended twice, and only that entry.
+    let journal = traced("journal").await;
+    let history = &journal["objects"][0]["history"];
+    assert_eq!(history["key"], "journal", "{journal}");
+    assert_eq!(history["count"], 1, "one entry was written more than once");
+    let wordings = history["entries"][0]["wordings"]
+        .as_array()
+        .expect("the wordings come back as a list");
+    assert_eq!(
+        wordings
+            .iter()
+            .map(|w| w["text"].as_str())
+            .collect::<Vec<_>>(),
+        [
+            Some("second beat"),
+            Some("second beat, said better"),
+            Some("second beat, said best")
+        ],
+        "{journal}"
+    );
+    assert_eq!(
+        wordings
+            .iter()
+            .map(|w| w["revision"].as_u64())
+            .collect::<Vec<_>>(),
+        [Some(1), Some(2), Some(3)]
+    );
+
+    // A field nobody changed comes back as no writes, as a key nobody wrote does.
+    let unwritten = traced("colour").await;
+    assert_eq!(
+        unwritten["objects"][0]["history"]["count"], 0,
+        "{unwritten}"
+    );
+
+    // The key: a wrap takes it away, the history says it changed and when, and no
+    // value of any kind is in the answer. Read by a second run of the same bot,
+    // because the wrapped run's own key is gone.
+    let story = json_of(
+        &jojobot
+            .wrap_session(Parameters(crate::session::wrap_session::WrapSessionArgs {
+                story: "done".into(),
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("wrap_session answers"),
+    );
+    assert_ne!(story["status"], "blocked", "{story}");
+    let reader = jojobot
+        .registry
+        .mint(&EntityId("bot:otto".into()))
+        .expect("a second run of the same bot")
+        .to_string();
+    let keyed = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(reader),
+                history: Some("key".into()),
+                ..of(&handle)
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    let writes = keyed["objects"][0]["history"]["writes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the key's changes come back: {keyed}"));
+    assert!(!writes.is_empty(), "wrapping changed the key: {keyed}");
+    for write in writes {
+        assert_eq!(write["change"], "key", "{keyed}");
+        assert_eq!(write["changed"], true, "{keyed}");
+        assert!(
+            write.get("value").is_none(),
+            "a value is in the key's history: {keyed}"
+        );
+    }
+    assert!(
+        !keyed.to_string().contains(&sid),
+        "the key is in the answer: {keyed}"
+    );
+}

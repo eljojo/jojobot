@@ -503,6 +503,34 @@ impl jojobot_domain::session::Sessions for UnreachableRuns {
     ) -> Result<(), jojobot_domain::session::SessionError> {
         self.0.set_charter_told(id, at).await
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.0.journal_history(id, entry).await
+    }
     async fn note_charter_change(
         &self,
         bot: &EntityId,

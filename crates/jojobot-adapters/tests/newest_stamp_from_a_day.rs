@@ -12,6 +12,7 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 
@@ -65,7 +66,9 @@ async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_da
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
-    let sessions = DoltSessions::open(pool.clone());
+    // **The store is clocked on the day the case writes on**, as a server acting
+    // out that day is: the moment it stamps a record with is part of the answer.
+    let sessions = DoltSessions::open(pool.clone()).on_clock(Clock::stating(date(2026, 6, 1)));
 
     let first = sessions
         .begin(run("nss1", at("2026-06-01T10:00:00Z")))
@@ -147,7 +150,7 @@ async fn a_stamp_on_a_later_day_is_the_newest_and_a_store_with_only_the_day_answ
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
-    let sessions = DoltSessions::open(pool.clone());
+    let sessions = DoltSessions::open(pool.clone()).on_clock(Clock::stating(date(2026, 6, 1)));
     sessions
         .begin(run("nss5", at("2026-06-01T10:00:00Z")))
         .await
@@ -185,6 +188,7 @@ async fn a_store_stamped_only_before_the_day_has_no_newest_stamp() {
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     DoltSessions::open(pool.clone())
+        .on_clock(Clock::stating(date(2026, 5, 31)))
         .begin(run("nss4", at("2026-05-31T23:00:00Z")))
         .await
         .expect("begin ok");

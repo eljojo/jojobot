@@ -167,13 +167,13 @@ impl Mailboxes for MailChanges {
 
 /// A [`Sessions`] that answers `write_summary` with a count of its own writes.
 ///
-/// **The store counts a row appended to `session_write`, and writes one for a
-/// run begun, an entry appended or amended, and a focus set — and for nothing
-/// else.** A run's state, zone, stated day, wrap window, served count, key hash
-/// and charter marks are never indexed, so changing one leaves the index
-/// current. This counts exactly those five calls: counting more would send the
-/// index back to read every run after each answer, which is what the signal
-/// exists to avoid.
+/// **The store counts the rows it appends to `session_write` for a run begun, an
+/// entry appended or amended, and a focus set — and for nothing else.** It
+/// records every other change of a run too, but a run's state, zone, stated
+/// day, wrap window, served count, key hash and charter marks are never indexed,
+/// so changing one leaves the index current. This counts exactly those five
+/// calls: counting more would send the index back to read every run after each
+/// answer, which is what the signal exists to avoid.
 pub struct SessionChanges {
     inner: Arc<dyn Sessions>,
     changes: AtomicU64,
@@ -305,6 +305,34 @@ impl Sessions for SessionChanges {
 
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
+    }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.inner.journal_history(id, entry).await
     }
 
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {

@@ -4796,6 +4796,128 @@ async fn deploy_4_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row()
     .await;
 }
 
+/// **A `session_write` row an older build appended reads as NULL in the three
+/// columns that keep what changed, and the first writes the current binary makes
+/// keep all three.** The old rows are counted before the binary touches the
+/// store, and the same number is found with no kind afterwards: the migration
+/// neither filled them nor lost them. The positives are the new rows, which name
+/// the run beginning and the entry written and carry a moment, and the wording
+/// the entry was written with: no entry of an older build has one, so a NULL or
+/// an absence on the old rows is a choice and not a column that is never written.
+async fn old_session_write_rows_read_as_null_and_new_writes_keep_their_record(
+    fixture_dir: &str,
+    label: &str,
+) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let old: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_write")
+        .fetch_one(store.pool())
+        .await
+        .expect("the old rows are countable");
+    store.stop().await;
+    assert!(
+        old > 0,
+        "recorded at {git_ref}: the recording holds no session_write row"
+    );
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let boot: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    )
+    .expect("the boot answers in JSON");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
+        .to_string();
+    let wrote = surface
+        .call(
+            "journal",
+            json!({"entry": "an entry written by the current binary", "sid": sid}),
+        )
+        .await;
+    assert!(
+        !wrote.contains("\"status\":\"blocked\""),
+        "recorded at {git_ref}: journalling: {wrote}"
+    );
+    surface.finish().await;
+    booted.stop().await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let unkept: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_write WHERE changed IS NULL")
+            .fetch_one(store.pool())
+            .await
+            .expect("the unkept rows are countable");
+    let no_moment: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_write WHERE written_at IS NULL")
+            .fetch_one(store.pool())
+            .await
+            .expect("the rows with no moment are countable");
+    let kinds: Vec<String> = sqlx::query_scalar(
+        "SELECT changed FROM session_write WHERE changed IS NOT NULL ORDER BY written_at",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the new rows are readable");
+    let wordings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journal_entry_write")
+        .fetch_one(store.pool())
+        .await
+        .expect("the wordings are countable");
+    store.stop().await;
+    drop(scratch);
+
+    assert_eq!(
+        unkept, old,
+        "recorded at {git_ref}: the rows an older build appended are the rows with no kind"
+    );
+    assert_eq!(
+        no_moment, old,
+        "recorded at {git_ref}: the rows an older build appended are the rows with no moment"
+    );
+    for wanted in ["begin", "entry"] {
+        assert!(
+            kinds.iter().any(|kind| kind == wanted),
+            "recorded at {git_ref}: no {wanted} among the changes the current binary made: {kinds:?}"
+        );
+    }
+    assert_eq!(
+        wordings, 1,
+        "recorded at {git_ref}: only the entry the current binary wrote has a wording"
+    );
+}
+
+#[tokio::test]
+async fn deploy_3_session_write_rows_read_as_null_and_new_writes_keep_their_record() {
+    old_session_write_rows_read_as_null_and_new_writes_keep_their_record(
+        DEPLOY_3_FIXTURE_DIR,
+        "session-write-3",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn deploy_4_session_write_rows_read_as_null_and_new_writes_keep_their_record() {
+    old_session_write_rows_read_as_null_and_new_writes_keep_their_record(
+        DEPLOY_4_FIXTURE_DIR,
+        "session-write-4",
+    )
+    .await;
+}
+
 /// **A `fact_write` row an older build appended reads as NULL in the two columns
 /// that keep references and the mark, and the first claim the current binary
 /// writes keeps both.** The old rows are counted before the binary touches the

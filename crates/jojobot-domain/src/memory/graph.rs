@@ -1216,6 +1216,11 @@ pub struct Object {
     /// reason [`Object::record_history`] is. `None` when the query named no
     /// thing to trace.
     pub entity_history: Option<EntityHistory>,
+    /// **A run's own history**, when the query traced one field of it or its
+    /// journal and the object is a run. A run's changes are the session port's,
+    /// not the memory store's, so the walk leaves this `None` and the verb that
+    /// holds both fills it.
+    pub run_history: Option<RunHistory>,
     /// **When the store took in what this object holds** — the moment of its
     /// newest write of any kind, and for each key the moment of the write
     /// holding its value. Filled by the store, not by this pure walk, for every
@@ -1258,6 +1263,42 @@ impl KeyHistory {
     /// elision noise.
     pub fn elided(&self) -> usize {
         self.total.saturating_sub(self.writes.len())
+    }
+}
+
+/// **One run's own history on the wire**, as `history` asks for it of a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunHistory {
+    /// The changes of one field, oldest first, the newest window of them, and
+    /// how many there are.
+    Field {
+        /// The field asked for, as the caller spelled it.
+        field: String,
+        /// The changes that came back.
+        changes: Vec<crate::session::history::SessionChange>,
+        /// How many changes the field has, whatever came back.
+        total: usize,
+    },
+    /// The wordings of each entry written more than once, and how many such
+    /// entries there are.
+    Journal {
+        /// The entries that came back, each with its wordings oldest first.
+        entries: Vec<(
+            crate::session::EntryId,
+            Vec<crate::session::history::Wording>,
+        )>,
+        /// How many entries were written more than once, whatever came back.
+        total: usize,
+    },
+}
+
+impl RunHistory {
+    /// How many records the window left out.
+    pub fn elided(&self) -> usize {
+        match self {
+            RunHistory::Field { changes, total, .. } => total.saturating_sub(changes.len()),
+            RunHistory::Journal { entries, total } => total.saturating_sub(entries.len()),
+        }
     }
 }
 
@@ -2463,6 +2504,7 @@ impl<'a> Ctx<'a> {
             history: None,
             record_history: None,
             entity_history: None,
+            run_history: None,
             fact_revisions: std::collections::HashMap::new(),
             ages: None,
             standing_for: None,
@@ -3256,6 +3298,9 @@ where
 {
     Box::pin(async move {
         match &wanted.of {
+            // A run is not in the memory store: its history is the session
+            // port's, and the verb that holds both fills it.
+            Trace::Key(_) if object.entity.kind == super::EntityKind::SESSION => {}
             Trace::Key(key) => {
                 let mut writes = store.history(&object.entity.id, key).await?;
                 let total = writes.len();

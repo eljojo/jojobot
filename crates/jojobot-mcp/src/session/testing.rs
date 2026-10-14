@@ -272,6 +272,34 @@ impl Sessions for CommitsThenFails {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.inner.journal_history(id, entry).await
+    }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.inner.set_key_hash(id, hash).await
     }
@@ -401,6 +429,34 @@ impl Sessions for RefusingFocus {
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.0.journal_history(id, entry).await
+    }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.0.set_key_hash(id, hash).await
     }
@@ -504,6 +560,34 @@ impl Sessions for RefusingWindowClear {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
+    }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.0.journal_history(id, entry).await
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.0.set_key_hash(id, hash).await
@@ -661,6 +745,34 @@ impl Sessions for Refusing {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
+    }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.inner.journal_history(id, entry).await
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         let voiding = hash == jojobot_domain::session::KEY_VOID;
@@ -833,6 +945,34 @@ impl Sessions for CountingSessions {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.inner.journal_history(id, entry).await
+    }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.inner.set_key_hash(id, hash).await
     }
@@ -935,6 +1075,34 @@ impl Sessions for RefusingAppend {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
+    }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.0.journal_history(id, entry).await
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.0.set_key_hash(id, hash).await
@@ -1099,6 +1267,34 @@ impl Sessions for RefusingClose {
     ) -> Result<(), SessionError> {
         self.inner.set_charter_told(id, at).await
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.inner.journal_history(id, entry).await
+    }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.inner.set_key_hash(id, hash).await
     }
@@ -1222,6 +1418,34 @@ impl Sessions for Yielding {
         at: jiff::Timestamp,
     ) -> Result<(), SessionError> {
         self.0.set_charter_told(id, at).await
+    }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.scan_session_history().await
+    }
+
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.0.session_history(id).await
+    }
+
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.0.journal_history(id, entry).await
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.0.set_key_hash(id, hash).await

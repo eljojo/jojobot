@@ -14,6 +14,9 @@ use std::sync::Mutex;
 use jiff::Timestamp;
 use jiff::civil::Date;
 
+use super::history::{
+    Change, SessionChange, SessionHistories, Wording, WriteStamp, next_change, next_wording,
+};
 use super::{
     CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
     SessionState, Sessions, Sid, WRAP_CODE_PREFIX, WrapWindow, is_readable_sid, normalize_entry,
@@ -28,6 +31,17 @@ pub struct InMemorySessions {
     sessions: Mutex<Vec<Session>>,
     next_id: Mutex<u64>,
     charter_changes: Mutex<std::collections::BTreeMap<EntityId, CharterChange>>,
+    /// Every change of every run, in the order they were made.
+    changes: Mutex<Vec<(SessionId, SessionChange)>>,
+    /// Every wording of every entry, in the order they were made.
+    wordings: Mutex<Vec<(SessionId, EntryId, Wording)>>,
+    /// The seconds the last record was stamped at. **The fake stamps by counting,
+    /// never by a clock**: a case reads the same on every run, and every record
+    /// is later than the one before it.
+    ticks: Mutex<i64>,
+    /// The moment a layer above holds for the write in flight, which this
+    /// stamps with instead of counting.
+    held: WriteStamp,
 }
 
 impl InMemorySessions {
@@ -52,6 +66,61 @@ impl InMemorySessions {
         {
             session.sid = None;
         }
+    }
+
+    /// **The moment a layer above holds for the write in flight**, shared with
+    /// it: hand this to the layer, and the records the fake makes carry the
+    /// moment the layer took.
+    pub fn write_stamp(&self) -> WriteStamp {
+        self.held.clone()
+    }
+
+    /// The moment of the next record: the one a layer above holds for the write
+    /// in flight, else one second after the last.
+    fn stamp(&self) -> Timestamp {
+        if let Some(held) = self.held.current() {
+            return held;
+        }
+        let mut ticks = self.ticks.lock().expect("tick lock");
+        *ticks += 1;
+        Timestamp::from_second(1_790_000_000 + *ticks).expect("a valid instant")
+    }
+
+    /// Keep one change of a run, made by [`next_change`].
+    fn record(&self, id: &SessionId, change: Change<'_>) {
+        let at = self.stamp();
+        let mut changes = self.changes.lock().expect("change lock");
+        let made = next_change(
+            changes
+                .iter()
+                .filter(|(held, _)| held == id)
+                .map(|(_, c)| c.ordinal),
+            change,
+            at,
+        );
+        changes.push((id.clone(), made));
+    }
+
+    /// Keep one wording of an entry, made by [`next_wording`].
+    fn keep_wording(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        touched: Option<Timestamp>,
+    ) {
+        let at = self.stamp();
+        let mut wordings = self.wordings.lock().expect("wording lock");
+        let made = next_wording(
+            wordings
+                .iter()
+                .filter(|(run, held, _)| run == id && held == entry)
+                .map(|(_, _, w)| w.revision),
+            text,
+            touched,
+            at,
+        );
+        wordings.push((id.clone(), entry.clone(), made));
     }
 
     /// **An id of the shape the real store draws**: six characters of the
@@ -201,6 +270,7 @@ impl Sessions for InMemorySessions {
             .lock()
             .expect("session lock")
             .push(session.clone());
+        self.record(&session.id, Change::Begin(&session.focus));
         Ok(session)
     }
 
@@ -220,6 +290,8 @@ impl Sessions for InMemorySessions {
             closing: entry.closing,
         };
         sessions[at].entries.push(recorded.clone());
+        self.record(id, Change::Entry(&recorded.id));
+        self.keep_wording(id, &recorded.id, &recorded.text, None);
         Ok(recorded)
     }
 
@@ -235,7 +307,10 @@ impl Sessions for InMemorySessions {
                 attempted: id.to_string(),
             })?;
         last.text = normalize_entry(text);
-        Ok(last.clone())
+        let kept = last.clone();
+        self.record(id, Change::AmendLast(&kept.id));
+        self.keep_wording(id, &kept.id, &kept.text, kept.touched);
+        Ok(kept)
     }
 
     async fn amend_beat(
@@ -265,7 +340,10 @@ impl Sessions for InMemorySessions {
         held.text = normalize_entry(text);
         // The beat keeps its place in the chronology and records that it moved.
         held.touched = Some(at);
-        Ok(held.clone())
+        let kept = held.clone();
+        self.record(id, Change::AmendBeat(&kept.id));
+        self.keep_wording(id, &kept.id, &kept.text, kept.touched);
+        Ok(kept)
     }
 
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
@@ -274,6 +352,7 @@ impl Sessions for InMemorySessions {
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = Self::writable(&mut sessions, id)?;
         sessions[at].focus = focus.trim().to_string();
+        self.record(id, Change::Focus(&sessions[at].focus));
         Ok(sessions[at].clone())
     }
 
@@ -289,6 +368,7 @@ impl Sessions for InMemorySessions {
             .map(str::trim)
             .filter(|z| !z.is_empty())
             .map(str::to_string);
+        self.record(id, Change::Timezone(sessions[at].timezone.as_deref()));
         Ok(sessions[at].clone())
     }
 
@@ -301,6 +381,7 @@ impl Sessions for InMemorySessions {
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = Self::writable(&mut sessions, id)?;
         sessions[at].stated_day = day;
+        self.record(id, Change::StatedDay(day));
         Ok(sessions[at].clone())
     }
 
@@ -324,6 +405,7 @@ impl Sessions for InMemorySessions {
             });
         }
         sessions[at].wrap_window = window;
+        self.record(id, Change::WrapWindow(sessions[at].wrap_window.as_ref()));
         Ok(sessions[at].clone())
     }
 
@@ -340,8 +422,13 @@ impl Sessions for InMemorySessions {
                 state: sessions[at].state,
             });
         }
+        let had_window = sessions[at].wrap_window.is_some();
         sessions[at].state = to;
         sessions[at].wrap_window = None;
+        self.record(id, Change::State(to));
+        if had_window {
+            self.record(id, Change::WrapWindow(None));
+        }
         Ok(sessions[at].clone())
     }
 
@@ -356,6 +443,7 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at].served_chars += chars;
+        self.record(id, Change::ServedChars(chars));
         Ok(())
     }
 
@@ -368,7 +456,87 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at].served_chars = 0;
+        self.record(id, Change::ServedReset);
         Ok(())
+    }
+
+    async fn scan_session_history(&self) -> Result<SessionHistories, SessionError> {
+        let changes = self.changes.lock().expect("change lock");
+        let mut runs: Vec<&SessionId> = changes.iter().map(|(id, _)| id).collect();
+        runs.sort();
+        runs.dedup();
+        let wordings = self.wordings.lock().expect("wording lock");
+        let mut entries: Vec<(&SessionId, &EntryId)> = wordings
+            .iter()
+            .map(|(run, entry, _)| (run, entry))
+            .collect();
+        entries.sort();
+        entries.dedup();
+        Ok(SessionHistories {
+            changes: runs
+                .into_iter()
+                .map(|run| {
+                    let mut kept: Vec<SessionChange> = changes
+                        .iter()
+                        .filter(|(held, _)| held == run)
+                        .map(|(_, change)| change.clone())
+                        .collect();
+                    kept.sort_by_key(|change| change.ordinal);
+                    (run.clone(), kept)
+                })
+                .collect(),
+            wordings: entries
+                .into_iter()
+                .map(|(run, entry)| {
+                    let mut kept: Vec<Wording> = wordings
+                        .iter()
+                        .filter(|(held, e, _)| held == run && e == entry)
+                        .map(|(_, _, wording)| wording.clone())
+                        .collect();
+                    kept.sort_by_key(|wording| wording.revision);
+                    (run.clone(), entry.clone(), kept)
+                })
+                .collect(),
+        })
+    }
+
+    async fn session_history(&self, id: &SessionId) -> Result<Vec<SessionChange>, SessionError> {
+        validate_session_id(id)?;
+        self.read_session(id).await?;
+        let mut kept: Vec<SessionChange> = self
+            .changes
+            .lock()
+            .expect("change lock")
+            .iter()
+            .filter(|(held, _)| held == id)
+            .map(|(_, change)| change.clone())
+            .collect();
+        kept.sort_by_key(|change| change.ordinal);
+        Ok(kept)
+    }
+
+    async fn journal_history(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+    ) -> Result<Vec<Wording>, SessionError> {
+        validate_session_id(id)?;
+        let session = self.read_session(id).await?;
+        if !session.entries.iter().any(|e| &e.id == entry) {
+            return Err(SessionError::NoEntries {
+                attempted: id.to_string(),
+            });
+        }
+        let mut kept: Vec<Wording> = self
+            .wordings
+            .lock()
+            .expect("wording lock")
+            .iter()
+            .filter(|(run, held, _)| run == id && held == entry)
+            .map(|(_, _, wording)| wording.clone())
+            .collect();
+        kept.sort_by_key(|wording| wording.revision);
+        Ok(kept)
     }
 
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
@@ -380,6 +548,7 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at_index].key_hash = Some(hash.to_string());
+        self.record(id, Change::Key);
         Ok(())
     }
 
@@ -393,6 +562,7 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at_index].charter_told_at = Some(at);
+        self.record(id, Change::CharterTold(at));
         Ok(())
     }
 
@@ -448,7 +618,13 @@ impl Sessions for InMemorySessions {
                 state: sessions[at].state,
             });
         }
+        // A run already open is resumed, which changes nothing and records
+        // nothing.
+        let was = sessions[at].state;
         sessions[at].state = SessionState::Active;
+        if was != SessionState::Active {
+            self.record(id, Change::State(SessionState::Active));
+        }
         Ok(sessions[at].clone())
     }
 }
@@ -2101,6 +2277,409 @@ pub mod contract {
         );
     }
 
+    /// **The changes of a run come back in order, each with its time and what was
+    /// kept of it**, while every current read answers as it always did. Paired:
+    /// the run's other changes are not in another run's account, and the focus,
+    /// zone, day and window read back on the card as before.
+    pub async fn a_runs_changes_are_kept_in_order_with_their_time_and_value(store: &dyn Sessions) {
+        use super::super::history::ChangeKind as K;
+        let run = begin(store, "gamma", "reading", 0).await;
+        let other = begin(store, "delta", "elsewhere", 1).await;
+        store
+            .set_focus(&run.id, "writing")
+            .await
+            .expect("focus is set");
+        store
+            .set_timezone(&run.id, Some("Europe/Madrid"))
+            .await
+            .expect("zone is set");
+        store
+            .set_stated_day(&run.id, Some(Date::constant(2026, 3, 15)))
+            .await
+            .expect("day is stated");
+        let entry = journal(store, &run.id, "read the task", 30).await;
+        store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        for window in [
+            Some(WrapWindow::Offered(code(2))),
+            Some(WrapWindow::Open(code(2))),
+            None,
+        ] {
+            store
+                .set_wrap_window(&run.id, window)
+                .await
+                .expect("a wrapped run takes a window");
+        }
+
+        let history = store.session_history(&run.id).await.expect("history reads");
+
+        assert_eq!(
+            history.iter().map(|c| c.changed).collect::<Vec<_>>(),
+            [
+                K::Begin,
+                K::Focus,
+                K::Timezone,
+                K::StatedDay,
+                K::Entry,
+                K::State,
+                K::WrapWindow,
+                K::WrapWindow,
+                K::WrapWindow
+            ]
+            .map(Some)
+        );
+        assert_eq!(
+            history
+                .iter()
+                .map(|c| c.value.as_deref())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("reading"),
+                Some("writing"),
+                Some("Europe/Madrid"),
+                Some("2026-03-15"),
+                Some(entry.id.as_str()),
+                Some("wrapped"),
+                Some("offered"),
+                Some("open"),
+                None
+            ]
+        );
+        assert_eq!(
+            history.iter().map(|c| c.ordinal).collect::<Vec<_>>(),
+            (1..=9).collect::<Vec<_>>()
+        );
+        let times: Vec<_> = history.iter().map(|c| c.written_at).collect();
+        assert!(
+            times.iter().all(Option::is_some) && times.windows(2).all(|w| w[0] <= w[1]),
+            "every change carries its moment and they do not run backwards: {times:?}"
+        );
+        // The projection answers as before.
+        let card = store.read_session(&run.id).await.expect("read ok");
+        assert_eq!(card.focus, "writing");
+        assert_eq!(card.timezone.as_deref(), Some("Europe/Madrid"));
+        assert_eq!(card.stated_day, Some(Date::constant(2026, 3, 15)));
+        assert_eq!(card.wrap_window, None);
+        // …and the other run has an account of its own.
+        let elsewhere = store
+            .session_history(&other.id)
+            .await
+            .expect("history reads");
+        assert_eq!(
+            elsewhere
+                .iter()
+                .map(|c| (c.ordinal, c.changed))
+                .collect::<Vec<_>>(),
+            vec![(1, Some(K::Begin))]
+        );
+    }
+
+    /// **A close that ends an open window records both**, and one that finds no
+    /// window records the state alone. The wrap code is in no value anywhere.
+    pub async fn closing_a_run_with_a_window_records_the_state_and_the_window_going(
+        store: &dyn Sessions,
+    ) {
+        use super::super::history::ChangeKind as K;
+        let run = begin(store, "gamma", "told its story", 0).await;
+        store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        store
+            .set_wrap_window(&run.id, Some(WrapWindow::Open(code(3))))
+            .await
+            .expect("window opens");
+        store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("the second close ends the window");
+
+        let history = store.session_history(&run.id).await.expect("history reads");
+
+        assert_eq!(
+            history.iter().map(|c| c.changed).collect::<Vec<_>>(),
+            [K::Begin, K::State, K::WrapWindow, K::State, K::WrapWindow].map(Some)
+        );
+        assert_eq!(history[4].value, None, "the window going has no value");
+        assert!(
+            !format!("{history:?}").contains(&code(3)),
+            "the wrap code is in the account: {history:?}"
+        );
+    }
+
+    /// **What is served, the key, the charter moment and an abandon and a
+    /// walk-back are each recorded, and the key's hash is in no value.** A resume
+    /// of a run that is already active changes nothing and records nothing.
+    pub async fn served_key_charter_and_the_ends_of_a_run_are_recorded(store: &dyn Sessions) {
+        use super::super::history::ChangeKind as K;
+        let name = SessionId("k3m9qz".into());
+        let run = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: Sid("k3m9qz".into()),
+                id: Some(name.clone()),
+                key_hash: Some("hash-seed".into()),
+                focus: "a keyed run".into(),
+                started_at: at(1),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin with a key");
+        store.add_served(&run.id, 40).await.expect("served");
+        store.add_served(&run.id, 2).await.expect("served");
+        store.reset_served(&run.id).await.expect("reset");
+        store
+            .set_key_hash(&run.id, "hash-one")
+            .await
+            .expect("rekey");
+        store
+            .set_key_hash(&run.id, super::super::KEY_VOID)
+            .await
+            .expect("void");
+        store
+            .set_charter_told(&run.id, at(7))
+            .await
+            .expect("charter told");
+        store.reopen(&run.id).await.expect("an active run resumes");
+        store
+            .close(&run.id, SessionState::Abandoned)
+            .await
+            .expect("abandon");
+        store.reopen(&run.id).await.expect("walk back");
+
+        let history = store.session_history(&run.id).await.expect("history reads");
+
+        assert_eq!(
+            history.iter().map(|c| c.changed).collect::<Vec<_>>(),
+            [
+                K::Begin,
+                K::ServedChars,
+                K::ServedChars,
+                K::ServedReset,
+                K::Key,
+                K::Key,
+                K::CharterTold,
+                K::State,
+                K::State
+            ]
+            .map(Some)
+        );
+        assert_eq!(
+            history
+                .iter()
+                .map(|c| c.value.as_deref())
+                .collect::<Vec<_>>()[1..],
+            [
+                Some("40"),
+                Some("2"),
+                None,
+                None,
+                None,
+                Some(at(7).to_string().as_str()),
+                Some("abandoned"),
+                Some("active")
+            ]
+        );
+        let shown = format!("{history:?}");
+        for secret in ["hash-seed", "hash-one"] {
+            assert!(
+                !shown.contains(secret),
+                "{secret} is in the account: {shown}"
+            );
+        }
+        assert!(history.iter().all(|c| c.written_at.is_some()));
+    }
+
+    /// **Every wording of an amended entry comes back in order**, the entry itself
+    /// stays the newest, and an entry nobody amended has the one it was written
+    /// with. An automatic beat keeps the moment each correction marked.
+    pub async fn every_wording_of_an_amended_entry_is_kept(store: &dyn Sessions) {
+        let run = begin(store, "gamma", "reading", 0).await;
+        let first = journal(store, &run.id, "first wording", 10).await;
+        store
+            .amend_last(&run.id, "second wording")
+            .await
+            .expect("amend");
+        store
+            .amend_last(&run.id, "third wording")
+            .await
+            .expect("amend");
+        let beat = store
+            .append(
+                &run.id,
+                NewEntry::beat("capture", "captured facts: one (1)", at(60), None),
+            )
+            .await
+            .expect("beat");
+        store
+            .amend_beat(&run.id, &beat.id, "captured facts: one, two (2)", at(600))
+            .await
+            .expect("amend_beat");
+        store
+            .amend_beat(
+                &run.id,
+                &beat.id,
+                "captured facts: one, two, three (3)",
+                at(700),
+            )
+            .await
+            .expect("amend_beat");
+        let plain = journal(store, &run.id, "never amended", 90).await;
+
+        let wordings = store
+            .journal_history(&run.id, &first.id)
+            .await
+            .expect("wordings read");
+        assert_eq!(
+            wordings
+                .iter()
+                .map(|w| (w.revision, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, "first wording"),
+                (2, "second wording"),
+                (3, "third wording")
+            ]
+        );
+        assert!(
+            wordings
+                .windows(2)
+                .all(|w| w[0].written_at <= w[1].written_at)
+        );
+        let moved = store
+            .journal_history(&run.id, &beat.id)
+            .await
+            .expect("wordings read");
+        assert_eq!(
+            moved
+                .iter()
+                .map(|w| (w.text.as_str(), w.touched))
+                .collect::<Vec<_>>(),
+            vec![
+                ("captured facts: one (1)", None),
+                ("captured facts: one, two (2)", Some(at(600))),
+                ("captured facts: one, two, three (3)", Some(at(700)))
+            ]
+        );
+        let only = store
+            .journal_history(&run.id, &plain.id)
+            .await
+            .expect("wordings read");
+        assert_eq!(
+            only.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(),
+            vec!["never amended"],
+            "an entry nobody amended has the wording it was written with"
+        );
+        // The entry is the newest wording, and the account of the run names the
+        // amendments in order beside the rest of its changes.
+        let card = store.read_session(&run.id).await.expect("read ok");
+        assert_eq!(card.entries[0].text, "third wording");
+        let kinds: Vec<_> = store
+            .session_history(&run.id)
+            .await
+            .expect("history reads")
+            .iter()
+            .map(|c| c.changed.map(|k| k.as_token()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "begin",
+                "entry",
+                "amend_last",
+                "amend_last",
+                "entry",
+                "amend_beat",
+                "amend_beat",
+                "entry"
+            ]
+            .map(Some)
+        );
+    }
+
+    /// **A history of a run or an entry that is not there is a miss.**
+    pub async fn the_history_of_what_is_not_there_is_a_miss(store: &dyn Sessions) {
+        let run = begin(store, "gamma", "reading", 0).await;
+        assert!(matches!(
+            store.session_history(&SessionId("zzzzzz".into())).await,
+            Err(SessionError::UnknownSession { .. })
+        ));
+        assert!(matches!(
+            store
+                .journal_history(&SessionId("zzzzzz".into()), &EntryId("e1".into()))
+                .await,
+            Err(SessionError::UnknownSession { .. })
+        ));
+        assert!(matches!(
+            store
+                .journal_history(&run.id, &EntryId("nonesuch".into()))
+                .await,
+            Err(SessionError::NoEntries { .. })
+        ));
+    }
+
+    /// **One scan lists every run's changes and every entry's wordings, each as
+    /// the reads of one run and one entry give them.** An entry nobody wrote
+    /// twice has the one wording it was written with, and an entry of another run
+    /// has its own.
+    pub async fn a_scan_of_every_record_gives_what_the_reads_of_each_give(store: &dyn Sessions) {
+        let first = begin(store, "gamma", "reading", 0).await;
+        let second = begin(store, "delta", "elsewhere", 1).await;
+        let entry = journal(store, &first.id, "first wording", 10).await;
+        store
+            .amend_last(&first.id, "second wording")
+            .await
+            .expect("amend");
+        store
+            .set_focus(&second.id, "writing")
+            .await
+            .expect("focus is set");
+        let other = journal(store, &second.id, "an entry of the other run", 11).await;
+
+        let scanned = store.scan_session_history().await.expect("the scan reads");
+
+        let mut runs: Vec<&SessionId> = scanned.changes.iter().map(|(id, _)| id).collect();
+        runs.sort();
+        let mut both = vec![&first.id, &second.id];
+        both.sort();
+        assert_eq!(runs, both, "both runs have changes: {scanned:?}");
+        for (id, changes) in &scanned.changes {
+            assert_eq!(
+                changes,
+                &store.session_history(id).await.expect("history reads"),
+                "the scan and the history of {id:?} disagree"
+            );
+        }
+        let mut entries: Vec<(&SessionId, &EntryId)> = scanned
+            .wordings
+            .iter()
+            .map(|(run, e, _)| (run, e))
+            .collect();
+        entries.sort();
+        let mut both = vec![(&first.id, &entry.id), (&second.id, &other.id)];
+        both.sort();
+        assert_eq!(entries, both, "both entries have wordings: {scanned:?}");
+        for (run, entry, wordings) in &scanned.wordings {
+            assert_eq!(
+                wordings,
+                &store
+                    .journal_history(run, entry)
+                    .await
+                    .expect("wordings read"),
+                "the scan and the wordings of {entry:?} disagree"
+            );
+        }
+        let first_wordings = scanned
+            .wordings
+            .iter()
+            .find(|(run, e, _)| run == &first.id && e == &entry.id)
+            .expect("the amended entry is listed");
+        assert_eq!(first_wordings.2.len(), 2);
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_runs_key_hash_is_stored_with_the_card_and_can_be_replaced(&fresh()).await;
         a_begun_session_is_active_and_empty(&fresh()).await;
@@ -2135,5 +2714,11 @@ pub mod contract {
         a_charter_change_is_kept_per_bot_and_the_newest_replaces_it(&fresh()).await;
         a_bots_own_rewrite_leaves_the_newest_change_by_another_standing(&fresh()).await;
         the_moment_a_charter_was_handed_over_is_stored_and_can_be_moved(&fresh()).await;
+        a_runs_changes_are_kept_in_order_with_their_time_and_value(&fresh()).await;
+        closing_a_run_with_a_window_records_the_state_and_the_window_going(&fresh()).await;
+        served_key_charter_and_the_ends_of_a_run_are_recorded(&fresh()).await;
+        every_wording_of_an_amended_entry_is_kept(&fresh()).await;
+        the_history_of_what_is_not_there_is_a_miss(&fresh()).await;
+        a_scan_of_every_record_gives_what_the_reads_of_each_give(&fresh()).await;
     }
 }

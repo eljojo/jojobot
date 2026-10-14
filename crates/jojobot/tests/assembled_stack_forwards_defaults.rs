@@ -92,8 +92,15 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         jojobot::wiring::assemble_memory(resolved.clone()).expect("the index opens");
     let owners = Arc::new(MemoryOwners::new(indexed.clone()));
     let mail = Arc::new(DoltMailboxes::open(server.pool().clone(), owners));
-    let sessions = Arc::new(DoltSessions::open(server.pool().clone()));
-    let wired = jojobot::wiring::assemble_ports(indexed.clone(), mail, sessions.clone());
+    let stamp = jojobot_domain::session::history::WriteStamp::new();
+    let sessions = Arc::new(DoltSessions::open(server.pool().clone()).stamped_by(stamp.clone()));
+    let wired = jojobot::wiring::assemble_ports(
+        indexed.clone(),
+        mail,
+        sessions.clone(),
+        stamp,
+        jojobot_domain::clock::Clock::Real,
+    );
 
     let gamma = created(indexed.as_ref(), "bot:gamma", "Gamma").await;
     let piano = created(indexed.as_ref(), "thing:piano", "Piano").await;

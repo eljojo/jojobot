@@ -56,6 +56,7 @@ use jojobot_domain::memory::mention;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
+use jojobot_domain::session::history::WriteStamp;
 use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::teaching::Teachings;
 
@@ -190,6 +191,8 @@ pub fn assemble_ports(
     indexed: Arc<IndexedMemory>,
     bare_mail: Arc<dyn Mailboxes>,
     bare_sessions: Arc<dyn Sessions>,
+    stamp: WriteStamp,
+    clock: Clock,
 ) -> Wired {
     // **Mentions resolve above the raw store and below the index here too**
     // — the same placement as memory's own `Mentioning`.
@@ -202,7 +205,9 @@ pub fn assemble_ports(
     // (decision log 292): the image answers every read once its `rebuild` has
     // run, and the count above it sees every write on its way to the store.
     let mail_image = Arc::new(FoldedMailboxes::new(bare_mail));
-    let sessions_image = Arc::new(FoldedSessions::new(bare_sessions));
+    // **The run image and the store beneath it share one stamp**, so the records
+    // of a change are one record rather than two with different times.
+    let sessions_image = Arc::new(FoldedSessions::new(bare_sessions, stamp, clock));
     let bare_mail: Arc<dyn Mailboxes> = Arc::new(jojobot_adapters::changes::MailChanges::new(
         mail_image.clone(),
     ));
@@ -683,7 +688,12 @@ pub async fn boot_store_pushing(
     };
     let bare_mail_store = Arc::new(bare_mail_store);
     let outbox: Arc<dyn jojobot_domain::push::Outbox> = bare_mail_store.clone();
-    let bare_sessions = Arc::new(DoltSessions::open(store.pool().clone()));
+    let session_stamp = WriteStamp::new();
+    let bare_sessions = Arc::new(
+        DoltSessions::open(store.pool().clone())
+            .on_clock(clock)
+            .stamped_by(session_stamp.clone()),
+    );
 
     // **The one-time text migration (rule 260).** A journal beat or a
     // mailbox message written before mention resolution reached these ports
@@ -774,7 +784,13 @@ pub async fn boot_store_pushing(
 
     // **Wrapped in the same decorators the story harness shares** — see this
     // module's own doc.
-    let wired = assemble_ports(indexed.clone(), bare_mail_store, bare_sessions);
+    let wired = assemble_ports(
+        indexed.clone(),
+        bare_mail_store,
+        bare_sessions,
+        session_stamp,
+        clock,
+    );
     let sessions = wired.sessions.clone();
 
     // **Mail, runs and the teaching ledger are held in memory too, before
@@ -1188,7 +1204,13 @@ mod tests {
         folded.rebuild().await.expect("the memory image fills");
         let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let runs = Arc::new(InMemorySessions::new());
-        let wired = assemble_ports(indexed, mail.clone(), runs.clone());
+        let wired = assemble_ports(
+            indexed,
+            mail.clone(),
+            runs.clone(),
+            runs.write_stamp(),
+            Clock::Real,
+        );
         wired.mail_image.rebuild().await.expect("the board fills");
         wired.sessions_image.rebuild().await.expect("the runs fill");
 

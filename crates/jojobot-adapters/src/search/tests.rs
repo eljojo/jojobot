@@ -3455,6 +3455,34 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
     ) -> Result<(), jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
+
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+
+    async fn session_history(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+
+    async fn journal_history(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+        _: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
     async fn set_key_hash(
         &self,
         _: &jojobot_domain::session::SessionId,

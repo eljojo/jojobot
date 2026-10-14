@@ -418,6 +418,10 @@ pub struct RecallArgs {
     /// nobody wrote comes back as no writes, never as a refusal. A long history is
     /// cut to its newest twenty, saying how many exist and how many it left out;
     /// `history_most` raises the window.
+    ///
+    /// On a session it traces the run's own fields, named focus, timezone,
+    /// stated_day, wrap_window, state, served_chars, charter_told or key, and
+    /// `journal` returns the wordings of each entry written more than once.
     #[serde(default)]
     pub(crate) history: Option<String>,
     /// **The writes behind one RECORD, oldest first** — name a record's address
@@ -932,6 +936,88 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
             "older".into(),
             format!(
                 "{} older writes are not here — ask again with a bigger history_most to reach \
+                 them",
+                history.elided()
+            )
+            .into(),
+        );
+    }
+    body
+}
+
+/// **One run's history on the wire.** A field comes back as the changes it went
+/// through, oldest first, each with its place in the run's order, what kind of
+/// change it was, when the store made the record and what was kept of it. A
+/// change that kept no value says what it was instead: a cleared field is
+/// `cleared`, a key that changed is `changed` and never carries the key, and
+/// served characters set back to nothing are `reset`. The journal comes back as
+/// the wordings of each entry that was written more than once.
+fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
+    use jojobot_domain::session::history::ChangeKind;
+    let mut body = match history {
+        graph::RunHistory::Field {
+            field,
+            changes,
+            total,
+        } => serde_json::json!({
+            "key": field,
+            "count": total,
+            "shown": changes.len(),
+            "writes": changes.iter().map(|change| {
+                let mut rendered = serde_json::json!({
+                    "ordinal": change.ordinal,
+                    "change": change.changed.map(ChangeKind::as_token),
+                });
+                if let Some(fields) = rendered.as_object_mut() {
+                    if let Some(at) = change.written_at {
+                        fields.insert("written_at".into(), at.to_string().into());
+                    }
+                    match (&change.value, change.changed) {
+                        (Some(value), _) => {
+                            fields.insert("value".into(), value.as_str().into());
+                        }
+                        (None, Some(ChangeKind::Key)) => {
+                            fields.insert("changed".into(), true.into());
+                        }
+                        (None, Some(ChangeKind::ServedReset)) => {
+                            fields.insert("reset".into(), true.into());
+                        }
+                        (None, _) => {
+                            fields.insert("cleared".into(), true.into());
+                        }
+                    }
+                }
+                rendered
+            }).collect::<Vec<_>>(),
+        }),
+        graph::RunHistory::Journal { entries, total } => serde_json::json!({
+            "key": jojobot_domain::session::history::JOURNAL,
+            "count": total,
+            "shown": entries.len(),
+            "entries": entries.iter().map(|(entry, wordings)| serde_json::json!({
+                "entry": entry.as_str(),
+                "count": wordings.len(),
+                "wordings": wordings.iter().map(|wording| {
+                    let mut rendered = serde_json::json!({
+                        "revision": wording.revision,
+                        "text": wording.text,
+                        "written_at": wording.written_at.to_string(),
+                    });
+                    if let (Some(fields), Some(touched)) = (rendered.as_object_mut(), wording.touched) {
+                        fields.insert("touched".into(), touched.to_string().into());
+                    }
+                    rendered
+                }).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        }),
+    };
+    if let Some(fields) = body.as_object_mut()
+        && history.elided() > 0
+    {
+        fields.insert(
+            "older".into(),
+            format!(
+                "{} older records are not here — ask again with a bigger history_most to reach \
                  them",
                 history.elided()
             )
@@ -1841,6 +1927,11 @@ fn object_json(
     // and it is not the same one.
     if let Some(history) = object.history.as_ref() {
         fields.insert("history".into(), history_json(history));
+    }
+    // **A run's own history**, under the same key a thing's is: the call asked one
+    // question of an object and an object is a run or a thing, never both.
+    if let Some(history) = object.run_history.as_ref() {
+        fields.insert("history".into(), run_history_json(history));
     }
     // **The writes behind the record the call named**, on the one object it is
     // filed under. Under its own key rather than beside the key history: they
@@ -2783,6 +2874,17 @@ impl Jojobot {
                 return refused;
             }
         }
+        // **A run's own history**, when `history` traced a field of it or its
+        // journal. The key is the same argument a thing's key is traced with.
+        if let Some(traced) = args.history.as_deref().map(str::trim) {
+            let caller_sid = caller.as_ref().map(|c| c.sid.as_str()).unwrap_or_default();
+            if let Some(refused) = self
+                .fill_run_history(&mut found, traced, history_most, caller_sid)
+                .await
+            {
+                return refused;
+            }
+        }
         // **The arithmetic is the domain's and the selection is here.** It is
         // asked of the object's FOLDED fields — every write on it, one value
         // per key — because a rhythm is described a record at a time: the
@@ -3642,6 +3744,62 @@ impl Jojobot {
                 }
                 if let Some(refused) = self
                     .fill_session_prose(&mut object.connected, caller_sid)
+                    .await
+                {
+                    return Some(refused);
+                }
+            }
+            None
+        })
+    }
+
+    /// **The history of a run the call named a field or the journal of.** A run
+    /// is not in the memory store, so the walk leaves it unfilled and the
+    /// session port is asked here, once for each run in the answer. `field` is
+    /// the name `history` took.
+    fn fill_run_history<'a>(
+        &'a self,
+        objects: &'a mut [graph::Object],
+        field: &'a str,
+        most: usize,
+        caller_sid: &'a str,
+    ) -> FillSessionProseFuture<'a> {
+        Box::pin(async move {
+            use jojobot_domain::session::history::{JOURNAL, trace_field, trace_journal};
+            for object in objects {
+                if object.entity.kind == EntityKind::SESSION {
+                    let id =
+                        jojobot_domain::session::SessionId(object.entity.id.slug().to_string());
+                    let traced = if field == JOURNAL {
+                        let run = match self.sessions.read_session(&id).await {
+                            Ok(run) => run,
+                            Err(e) => return Some(session_declined(e, caller_sid)),
+                        };
+                        let mut entries = Vec::with_capacity(run.entries.len());
+                        for entry in &run.entries {
+                            match self.sessions.journal_history(&id, &entry.id).await {
+                                Ok(wordings) => entries.push((entry.id.clone(), wordings)),
+                                Err(e) => return Some(session_declined(e, caller_sid)),
+                            }
+                        }
+                        let (entries, total) = trace_journal(entries, most);
+                        graph::RunHistory::Journal { entries, total }
+                    } else {
+                        let changes = match self.sessions.session_history(&id).await {
+                            Ok(changes) => changes,
+                            Err(e) => return Some(session_declined(e, caller_sid)),
+                        };
+                        let (changes, total) = trace_field(field, &changes, most);
+                        graph::RunHistory::Field {
+                            field: field.to_string(),
+                            changes,
+                            total,
+                        }
+                    };
+                    object.run_history = Some(traced);
+                }
+                if let Some(refused) = self
+                    .fill_run_history(&mut object.connected, field, most, caller_sid)
                     .await
                 {
                     return Some(refused);

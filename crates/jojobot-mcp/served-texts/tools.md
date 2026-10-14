@@ -3391,6 +3391,10 @@ records once each time something happens is how you count occurrences. A key
 nobody wrote comes back as no writes, never as a refusal. A long history is
 cut to its newest twenty, saying how many exist and how many it left out;
 `history_most` raises the window.
+
+On a session it traces the run's own fields, named focus, timezone,
+stated_day, wrap_window, state, served_chars, charter_told or key, and
+`journal` returns the wordings of each entry written more than once.
 ```
 
 #### `recall` — argument `/inputSchema.history_most`

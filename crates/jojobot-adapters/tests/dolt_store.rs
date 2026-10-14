@@ -111,7 +111,7 @@ async fn dolt_satisfies_the_session_contract() {
         .await
         .expect("the store comes up");
 
-    const ROOM: usize = 36;
+    const ROOM: usize = 44;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
         let pool = migrated_database(&store, &format!("case{n}"))
@@ -8384,6 +8384,204 @@ async fn dolt_takes_an_edit_back_with_the_claim_it_was_made_with() {
         pool.clone(),
     ))
     .await;
+
+    store.stop().await;
+}
+
+/// **A change nothing searches for is recorded and moves no signal.** The
+/// history gains a record for each of them, and the count the search index
+/// reads stays where it was; the one change it does read moves it by one.
+/// Paired in one run, so a signal that stopped counting and a history that
+/// stopped recording both fail here.
+#[tokio::test]
+async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
+    let scratch = Scratch::new("session-history-signal");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "session_history_signal")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions_store = DoltSessions::open(pool);
+    let run = sessions_store
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid("hs01".into()),
+            focus: "working".into(),
+            started_at: sessions::epoch(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("begin ok");
+    let signal = || async {
+        sessions_store
+            .write_summary()
+            .await
+            .expect("write_summary ok")
+            .expect("the signal")
+            .0
+    };
+    let before = signal().await;
+    let recorded_before = sessions_store
+        .session_history(&run.id)
+        .await
+        .expect("history reads")
+        .len();
+
+    sessions_store.add_served(&run.id, 5).await.expect("served");
+    sessions_store
+        .set_timezone(&run.id, Some("Europe/Madrid"))
+        .await
+        .expect("zone");
+    sessions_store
+        .set_stated_day(&run.id, Some(date(2026, 3, 15)))
+        .await
+        .expect("day");
+    sessions_store
+        .set_key_hash(&run.id, "hash-one")
+        .await
+        .expect("rekey");
+    sessions_store
+        .set_charter_told(&run.id, sessions::epoch())
+        .await
+        .expect("charter");
+    sessions_store
+        .close(&run.id, SessionState::Abandoned)
+        .await
+        .expect("abandon");
+    sessions_store.reopen(&run.id).await.expect("reopen");
+
+    assert_eq!(
+        signal().await,
+        before,
+        "a change nothing searches for moved the signal"
+    );
+    let recorded = sessions_store
+        .session_history(&run.id)
+        .await
+        .expect("history reads");
+    assert_eq!(
+        recorded.len() - recorded_before,
+        7,
+        "each of the seven changes left a record: {recorded:?}"
+    );
+
+    sessions_store
+        .set_focus(&run.id, "reading")
+        .await
+        .expect("focus");
+    assert_eq!(
+        signal().await,
+        before + 1,
+        "the one change the index reads moves the signal by one"
+    );
+
+    store.stop().await;
+}
+
+/// **A record the store kept before it recorded what changed reads as
+/// unrecorded, and the history goes on from it.** Its kind, value and moment are
+/// NULL in the store and absent in the answer; it still counts toward the signal,
+/// as it did; the next change is numbered after it; and an entry written before
+/// its wordings were kept has none.
+#[tokio::test]
+async fn a_record_from_before_the_history_reads_as_unrecorded() {
+    let scratch = Scratch::new("session-history-old");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "session_history_old")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions_store = DoltSessions::open(pool.clone());
+    let run = sessions_store
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid("hs02".into()),
+            focus: "working".into(),
+            started_at: sessions::epoch(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("begin ok");
+    let entry = sessions_store
+        .append(
+            &run.id,
+            NewEntry::manual("written long ago", sessions::epoch(), None),
+        )
+        .await
+        .expect("append ok");
+    // The shape an older build left: a bare record, and no wordings.
+    sqlx::query(
+        "UPDATE session_write SET written_at = NULL, changed = NULL, value = NULL
+         WHERE session = ?",
+    )
+    .bind(run.id.as_str())
+    .execute(&pool)
+    .await
+    .expect("the records go back to the old shape");
+    sqlx::query("DELETE FROM journal_entry_write WHERE session = ?")
+        .bind(run.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the wordings go");
+    let before = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal")
+        .0;
+
+    sessions_store
+        .set_focus(&run.id, "reading")
+        .await
+        .expect("focus");
+
+    let history = sessions_store
+        .session_history(&run.id)
+        .await
+        .expect("history reads");
+    assert_eq!(history.len(), 3, "{history:?}");
+    for old in &history[..2] {
+        assert_eq!(
+            (old.changed, old.value.as_deref(), old.written_at),
+            (None, None, None)
+        );
+    }
+    assert_eq!(
+        (history[2].ordinal, history[2].value.as_deref()),
+        (3, Some("reading")),
+        "the next change is numbered after the old records"
+    );
+    assert!(history[2].written_at.is_some());
+    assert_eq!(
+        sessions_store
+            .write_summary()
+            .await
+            .expect("write_summary ok")
+            .expect("the signal")
+            .0,
+        before + 1,
+        "the old records still count, and the focus adds one"
+    );
+    assert!(
+        sessions_store
+            .journal_history(&run.id, &entry.id)
+            .await
+            .expect("wordings read")
+            .is_empty(),
+        "an entry written before its wordings were kept has none"
+    );
 
     store.stop().await;
 }

@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::session::testing::InMemorySessions;
 use jojobot_domain::teaching::testing::InMemoryTeachings;
@@ -32,6 +33,9 @@ const SWITCHED_SESSIONS: &[&str] = &[
     "run_counts",
     "all_sessions",
     "charter_change_of",
+    "session_history",
+    "journal_history",
+    "scan_session_history",
 ];
 
 /// The mail reads served from memory once the image has loaded.
@@ -51,7 +55,7 @@ const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
 async fn session_walk(switched: &[&str]) {
     let store = Arc::new(InMemorySessions::new());
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone());
+    let folded = FoldedSessions::new(counted.clone(), store.write_stamp(), Clock::Real);
     folded.rebuild().await.expect("the image loads");
     let rails = SessionRails {
         folded: &folded,
