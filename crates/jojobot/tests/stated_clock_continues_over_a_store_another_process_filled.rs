@@ -13,14 +13,29 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jiff::Timestamp;
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::testing::free_port;
+use jojobot_domain::mailbox::{
+    MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
+};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
 use tokio::io::AsyncBufReadExt;
 
 const DAY: &str = "2026-06-01";
+
+/// An owner index that answers for anybody: the case needs a box a person owns,
+/// not the roster that decides who may.
+struct AnyOwner;
+
+#[async_trait::async_trait]
+impl OwnerIndex for AnyOwner {
+    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
+        Ok(OwnerLookup::Known)
+    }
+}
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -36,6 +51,17 @@ impl Drop for Scratch {
 /// begun at that moment by an earlier process, after `earlier_boots` boots of
 /// the binary over the same store.
 async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>, earlier_boots: usize) -> Timestamp {
+    stamp_of_a_beat_over(seeded_at, earlier_boots, false).await
+}
+
+/// [`stamp_of_a_beat_after`], with the earlier process also having left a push
+/// queued for the operator when `queued_push` is set. The outbox stamps that row
+/// on the wall clock, whatever day the run is acting out.
+async fn stamp_of_a_beat_over(
+    seeded_at: Option<Timestamp>,
+    earlier_boots: usize,
+    queued_push: bool,
+) -> Timestamp {
     // One directory per call: two seeded cases run side by side in this process.
     static CALLS: AtomicUsize = AtomicUsize::new(0);
     let state_dir = std::env::temp_dir().join(format!(
@@ -48,6 +74,43 @@ async fn stamp_of_a_beat_after(seeded_at: Option<Timestamp>, earlier_boots: usiz
     let _scratch = Scratch(state_dir.clone());
     let store_port = free_port();
 
+    if queued_push {
+        let mut seeding = Dolt::start(&state_dir.join("db"), store_port)
+            .await
+            .expect("the store comes up");
+        migrate::run(seeding.pool())
+            .await
+            .expect("the schema applies");
+        migrate::seed_kinds(seeding.pool())
+            .await
+            .expect("the kinds are seeded");
+        let mail =
+            DoltMailboxes::open(seeding.pool().clone(), std::sync::Arc::new(AnyOwner)).pushing();
+        let person = EntityId("person:ned-flanders".into());
+        mail.create_mailbox(&MailboxName::named_for(&person), &person, None)
+            .await
+            .expect("the operator's box opens")
+            .written()
+            .expect("not blocked");
+        // Stamped at the day's first second, so the beat the binary writes is
+        // still within minutes of midnight when nothing else moves the clock.
+        mail.post_message(NewMessage {
+            mailbox: MailboxName::named_for(&person),
+            body: "a word for the person".into(),
+            subject: None,
+            sender: "gamma".into(),
+            sent_at: format!("{DAY}T00:00:01Z").parse().expect("a moment"),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: None,
+        })
+        .await
+        .expect("the post lands")
+        .written()
+        .expect("not blocked");
+        seeding.stop().await;
+    }
     if let Some(started_at) = seeded_at {
         // The exact path `wiring::resolve_store_dir` derives from `STATE_DIRECTORY`.
         let mut seeding = Dolt::start(&state_dir.join("db"), store_port)
@@ -233,5 +296,22 @@ async fn a_stated_day_survives_a_boot_that_finished_a_store_pass() {
         stamp.to_zoned(jiff::tz::TimeZone::UTC).date(),
         Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date(),
         "the beat is stamped on the real day, so the stated clock moved to today"
+    );
+}
+
+/// **A push queued for the operator leaves the stated day where it was.** The
+/// earlier process queued a push, which the outbox stamps on the real clock. A
+/// beat the binary writes over that store is still stamped within minutes of the
+/// stated day's start, on [`DAY`] and not on the real day. The same store without
+/// the push is the control in the case above it.
+#[tokio::test]
+async fn a_stated_day_survives_a_push_queued_by_an_earlier_process() {
+    let midnight: Timestamp = format!("{DAY}T00:00:00Z").parse().expect("a moment");
+
+    let stamp = stamp_of_a_beat_over(None, 0, true).await;
+
+    assert!(
+        stamp >= midnight && stamp.duration_since(midnight).as_secs() < 600,
+        "the beat is stamped {stamp}, which is not within ten minutes of {midnight}"
     );
 }
