@@ -337,8 +337,8 @@ mod tests {
         ledger.record(
             "s1",
             vec![
-                place("place:contract-atlas", "Old Mill Road"),
-                place("place:bet", "Mill Pond"),
+                place("place:contract-atlas", "Old Evergreen Terrace"),
+                place("place:bet", "Evergreen Park"),
             ],
         );
         let noticed = ledger
@@ -347,7 +347,7 @@ mod tests {
                 &Creation {
                     handle: "place:springfield-mall",
                     kind: "place",
-                    name: "Mill Road Bridge",
+                    name: "Evergreen Terrace Bridge",
                     aliases: &[],
                     parent: None,
                 },

@@ -1484,13 +1484,13 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     for (thing, fields, said) in [
         (
             &first,
-            with(&[("owner", "amy"), ("status", "open")]),
-            "amy owns it and it is open",
+            with(&[("owner", "homer"), ("status", "open")]),
+            "homer owns it and it is open",
         ),
         (
             &second,
-            with(&[("owner", "bea"), ("status", "open")]),
-            "bea owns it and it is open",
+            with(&[("owner", "marge"), ("status", "open")]),
+            "marge owns it and it is open",
         ),
         (&neither, with(&[("mood", "curious")]), "it has no owner"),
     ] {
@@ -1550,12 +1550,12 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     let owned = ids(&found(search, holding(&[("owner", None)])).await);
     assert_eq!(owned, [first.clone(), second.clone()], "{owned:?}");
     // The key and a value: one of the two.
-    let amys = ids(&found(search, holding(&[("owner", Some("amy"))])).await);
-    assert_eq!(amys, std::slice::from_ref(&first), "{amys:?}");
-    // Every entry must hold: both are open, only one is amy's.
+    let homers = ids(&found(search, holding(&[("owner", Some("homer"))])).await);
+    assert_eq!(homers, std::slice::from_ref(&first), "{homers:?}");
+    // Every entry must hold: both are open, only one is homer's.
     let both = ids(&found(
         search,
-        holding(&[("owner", Some("amy")), ("status", Some("open"))]),
+        holding(&[("owner", Some("homer")), ("status", Some("open"))]),
     )
     .await);
     assert_eq!(both, std::slice::from_ref(&first), "{both:?}");
