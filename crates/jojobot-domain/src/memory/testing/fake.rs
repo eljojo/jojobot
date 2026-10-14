@@ -17,6 +17,118 @@ struct StoredMerge {
     claims: Vec<(FactId, FactId)>,
 }
 
+/// The rows of the fake as a reader sees them once the merges are applied.
+/// What a [`World`] was made from.
+type WorldKey = (usize, usize, usize, usize, u64);
+
+struct World {
+    facts: Vec<Fact>,
+    writes: Vec<StoredWrite>,
+    claim_writes: Vec<(EntityId, FactId, ClaimWrite)>,
+}
+
+impl World {
+    /// **One merge applied to the rows**: the claims it mapped are served under the
+    /// survivor, and what pointed at the folded thing or at one of those claims
+    /// points at the survivor now.
+    fn apply(&mut self, merge: &StoredMerge, declared: &[crate::memory::types::DeclaredType]) {
+        let (folded_key, survivor_key) = (&merge.folded, &merge.survivor);
+        let now_of = |was: &FactId| {
+            merge
+                .claims
+                .iter()
+                .find(|(old, _)| old == was)
+                .map(|(_, now)| now)
+        };
+        for fact in self.facts.iter_mut() {
+            if fact.home == *folded_key
+                && let Some(now) = now_of(&fact.id)
+            {
+                fact.home = survivor_key.clone();
+                fact.id = now.clone();
+            }
+            if fact.subject == *folded_key && fact.home != *folded_key {
+                fact.subject = survivor_key.clone();
+            }
+            // An edge drawn AT the folded thing, a ref and a field value naming it
+            // read as the survivor's.
+            if let Some(edge) = &mut fact.edge
+                && edge.object == *folded_key
+            {
+                edge.object = survivor_key.clone();
+            }
+            for target in fact.refs.iter_mut() {
+                if *target == *folded_key {
+                    *target = survivor_key.clone();
+                }
+            }
+            for (key, value) in fact.fields.iter_mut() {
+                if let Some(repointed) = super::super::repoint_field_value(
+                    key,
+                    value,
+                    declared,
+                    folded_key.as_str(),
+                    survivor_key.as_str(),
+                ) {
+                    *value = repointed;
+                }
+            }
+        }
+        // A lineage pointer or a mark at a mapped claim follows it.
+        let follow = |address: &mut FactAddress| {
+            if address.home == *folded_key {
+                if let Some(now) = now_of(&address.local) {
+                    address.local = now.clone();
+                    address.home = survivor_key.clone();
+                }
+            }
+        };
+        for fact in self.facts.iter_mut() {
+            if let Some(source) = &mut fact.derived_from {
+                follow(source);
+            }
+            for named in fact.stands_for.iter_mut() {
+                follow(named);
+            }
+        }
+        for write in self.writes.iter_mut() {
+            if write.entity == *folded_key
+                && let Some(now) = now_of(&write.fact)
+            {
+                write.entity = survivor_key.clone();
+                write.fact = now.clone();
+            }
+            if let Some(value) = &write.value
+                && let Some(repointed) = super::super::repoint_field_value(
+                    &write.key,
+                    value,
+                    declared,
+                    folded_key.as_str(),
+                    survivor_key.as_str(),
+                )
+            {
+                write.value = Some(repointed);
+            }
+        }
+        for (home, id, write) in self.claim_writes.iter_mut() {
+            if *home == *folded_key
+                && let Some(now) = now_of(id)
+            {
+                *home = survivor_key.clone();
+                *id = now.clone();
+            }
+            if let Some(edge) = &mut write.edge
+                && edge.object == *folded_key
+            {
+                edge.object = survivor_key.clone();
+            }
+            if let Some(source) = &mut write.derived_from {
+                follow(source);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct InMemoryMemory {
     /// **Whether a key sent as an own field reaches its thing**, as it did
@@ -78,6 +190,12 @@ pub struct InMemoryMemory {
     /// the real store keeps `entity_write`: creation, an edit, a rename, an
     /// archive or restore, a merge and a prose write each leave a moment.
     entity_writes: Mutex<Vec<(EntityId, jiff::Timestamp)>>,
+    /// The rows as the merges served them, kept until a write changes what they
+    /// are made of: the number of rows of each kind, the merges and the edits in
+    /// place. A read that serves every claim asks for it once per claim.
+    world_cache: Mutex<Option<(WorldKey, std::sync::Arc<World>)>>,
+    /// **How many rows have been rewritten in place**, which no length shows.
+    edits: std::sync::atomic::AtomicU64,
     /// **Every merge made, as the real store appends it**: the two storage
     /// keys, the moment, the run, and each folded claim's old and new local id.
     merges: Mutex<Vec<StoredMerge>>,
@@ -485,10 +603,9 @@ impl InMemoryMemory {
             Some(badge) => EntityId(badge.clone()),
             None => entity.id.clone(),
         };
-        let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let id = FactId(format!(
             "f{}",
-            facts.iter().filter(|f| f.home == home).count() + 1
+            self.facts_view().iter().filter(|f| f.home == home).count() + 1
         ));
         let stored = Fact {
             sets: Default::default(),
@@ -523,7 +640,7 @@ impl InMemoryMemory {
                 .map(|(key, value)| (key.to_string(), Some(value.to_string()))),
             &Default::default(),
         );
-        facts.push(stored);
+        self.push_stored(stored);
     }
 
     /// **Move a row to another handle, keeping the badge it wears** — staged
@@ -563,7 +680,7 @@ impl InMemoryMemory {
     /// The documents of `rows`, each built the way a scan builds it: its
     /// frontmatter, its prose, the facts homed in it and what the thing holds.
     fn docs_of(&self, rows: Vec<Entity>) -> Vec<search::DocScan> {
-        let facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        let facts = self.facts_view();
         let prose = self.prose.lock().expect("fake mutex poisoned").clone();
         let badges = self.badges.lock().expect("fake mutex poisoned").clone();
         let declared = self.declarations();
@@ -598,7 +715,7 @@ impl InMemoryMemory {
                     entity: Some(entity),
                     // A stored row is the whole instance's, exactly as it was.
                     owner: None,
-                    unmapped: Vec::new(),
+                    unmapped: self.unmapped_among(&key, &facts),
                 }
             })
             .collect()
@@ -609,8 +726,18 @@ impl InMemoryMemory {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
         let snapshot = entities.clone();
+        let merges = self.merges.lock().expect("fake mutex poisoned");
         for entity in &mut entities {
             if let Some(parent) = &entity.parent {
+                // **A merge moves no row, so a parent left naming a folded thing
+                // reads as the survivor it was folded into** — through a survivor
+                // folded later.
+                let mut parent = parent.clone();
+                for merge in merges.iter() {
+                    if merge.folded == parent {
+                        parent = merge.survivor.clone();
+                    }
+                }
                 entity.parent = Some(
                     super::super::entity_wearing(parent.as_str(), &snapshot)
                         .map(|found| found.id.clone())
@@ -705,6 +832,209 @@ impl InMemoryMemory {
         Some(FactAddress::new(self.current_handle(&key), local))
     }
 
+    /// **The stored rows read as the world the merges made.** A merge writes only
+    /// its event, as the real store does, and a folded thing's claims stay under
+    /// the key and the ids they were made under. This applies every merge, oldest
+    /// first, to a copy of the rows: each claim the event maps is served under the
+    /// survivor and the id the event gave it, and every pointer at the folded
+    /// thing or at a mapped claim reads as the survivor's. A claim the event does
+    /// not map stays under the folded key, where it is named as one the survivor
+    /// cannot serve.
+    fn world(&self) -> std::sync::Arc<World> {
+        let key: WorldKey = (
+            self.facts.lock().expect("fake mutex poisoned").len(),
+            self.writes.lock().expect("fake mutex poisoned").len(),
+            self.claim_writes.lock().expect("fake mutex poisoned").len(),
+            self.merges.lock().expect("fake mutex poisoned").len(),
+            self.edits.load(std::sync::atomic::Ordering::SeqCst),
+        );
+        {
+            let cached = self.world_cache.lock().expect("fake mutex poisoned");
+            if let Some((held, world)) = cached.as_ref()
+                && *held == key
+            {
+                return world.clone();
+            }
+        }
+        let mut world = World {
+            facts: self.facts.lock().expect("fake mutex poisoned").clone(),
+            writes: self.writes.lock().expect("fake mutex poisoned").clone(),
+            claim_writes: self
+                .claim_writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .clone(),
+        };
+        let declared = self.types.lock().expect("fake mutex poisoned").clone();
+        for merge in self.merges.lock().expect("fake mutex poisoned").iter() {
+            world.apply(merge, &declared);
+        }
+        let world = std::sync::Arc::new(world);
+        *self.world_cache.lock().expect("fake mutex poisoned") = Some((key, world.clone()));
+        world
+    }
+
+    /// The claims as served: a copy of the rows when no merge has been made.
+    fn facts_view(&self) -> Vec<Fact> {
+        if self.merges.lock().expect("fake mutex poisoned").is_empty() {
+            return self.facts.lock().expect("fake mutex poisoned").clone();
+        }
+        self.world().facts.clone()
+    }
+
+    /// The claim writes as served.
+    fn claim_writes_view(&self) -> Vec<(EntityId, FactId, ClaimWrite)> {
+        if self.merges.lock().expect("fake mutex poisoned").is_empty() {
+            return self
+                .claim_writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .clone();
+        }
+        self.world().claim_writes.clone()
+    }
+
+    /// The field writes as served, copied.
+    fn writes_view(&self) -> Vec<StoredWrite> {
+        self.with_writes(|writes| writes.to_vec())
+    }
+
+    /// **The field writes as served**, without a copy while no merge has been made.
+    fn with_writes<R>(&self, read: impl FnOnce(&[StoredWrite]) -> R) -> R {
+        if self.merges.lock().expect("fake mutex poisoned").is_empty() {
+            return read(&self.writes.lock().expect("fake mutex poisoned"));
+        }
+        read(&self.world().writes)
+    }
+
+    /// **The claims of a thing that cannot be served**: stored under a key a merge
+    /// folded into it, through a survivor folded later, that the merge's event
+    /// does not map. [`World::apply`] leaves such a claim under the folded key.
+    fn unmapped_among(
+        &self,
+        key: &EntityId,
+        facts: &[Fact],
+    ) -> Vec<crate::memory::unmapped::UnmappedClaim> {
+        let merges = self.merges.lock().expect("fake mutex poisoned");
+        if merges.is_empty() {
+            return Vec::new();
+        }
+        let folded_into_key = |folded: &EntityId| {
+            let mut at = folded.clone();
+            for merge in merges.iter() {
+                if merge.folded == at {
+                    at = merge.survivor.clone();
+                }
+            }
+            at == *key && *folded != *key
+        };
+        let named: Vec<(EntityId, FactId, u64)> = facts
+            .iter()
+            .filter_map(|fact| {
+                let at = merges.iter().position(|m| m.folded == fact.home)?;
+                folded_into_key(&fact.home)
+                    .then(|| (fact.home.clone(), fact.id.clone(), at as u64 + 1))
+            })
+            .collect();
+        drop(merges);
+        named
+            .into_iter()
+            .map(
+                |(home, id, merge_no)| crate::memory::unmapped::UnmappedClaim {
+                    address: FactAddress::new(self.current_handle(&home), id),
+                    merge_no,
+                },
+            )
+            .collect()
+    }
+
+    /// **Stage a claim under a folded thing's key that the merge's event does not
+    /// map** — the state a store holds when a row lands there after the fold. It
+    /// is for standing up damage, never for convenience: no verb writes here.
+    pub fn stray_claim_under(&self, folded: &EntityId, content: &str) -> FactAddress {
+        let (key, handle) = self.resolve(folded).expect("the folded thing is there");
+        let id = FactId(format!(
+            "f{}",
+            self.facts
+                .lock()
+                .expect("fake mutex poisoned")
+                .iter()
+                .filter(|f| f.home == key)
+                .count()
+                + 100
+        ));
+        let stray = Fact {
+            sets: Default::default(),
+            id: id.clone(),
+            home: key.clone(),
+            subject: key.clone(),
+            content: content.to_string(),
+            details: None,
+            provenance: crate::memory::Provenance::Inference,
+            standing: crate::memory::Standing::Open,
+            status: FactStatus::Active,
+            recorded_at: jiff::civil::date(2026, 8, 1),
+            happened_at: None,
+            happened_through: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+            inserted_at: Some(self.clock().now()),
+            stale_after: None,
+        };
+        self.append_claim_write(&stray, None);
+        self.push_stored(stray);
+        FactAddress::new(handle, id)
+    }
+
+    /// **A claim rewritten at the address it is stored at.** The claim is served
+    /// under the survivor and an id of the merge's, and its row is under the key
+    /// it was made under; writing the served form back as a row of the survivor
+    /// would start a second claim at one served address.
+    fn rewrite_stored(&self, served: &FactAddress, row: Fact) {
+        let at = self.stored_address(served);
+        self.edits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        for held in facts.iter_mut() {
+            if held.home == at.home && held.id == at.local {
+                *held = Fact {
+                    subject: if row.subject == served.home {
+                        at.home.clone()
+                    } else {
+                        row.subject.clone()
+                    },
+                    home: at.home.clone(),
+                    id: at.local.clone(),
+                    ..row.clone()
+                };
+            }
+        }
+    }
+
+    /// A new claim, kept under the key it is made under.
+    fn push_stored(&self, row: Fact) {
+        self.facts.lock().expect("fake mutex poisoned").push(row);
+    }
+
+    /// **Where a claim served at an address is stored**: the key and id it was
+    /// made under, found by walking the merges back from the newest. An address
+    /// no merge gave to a claim is where the claim is stored.
+    fn stored_address(&self, served: &FactAddress) -> FactAddress {
+        let merges = self.merges.lock().expect("fake mutex poisoned");
+        let mut at = (served.home.clone(), served.local.clone());
+        for merge in merges.iter().rev() {
+            if at.0 != merge.survivor {
+                continue;
+            }
+            if let Some((was, _)) = merge.claims.iter().find(|(_, now)| *now == at.1) {
+                at = (merge.folded.clone(), was.clone());
+            }
+        }
+        FactAddress::new(at.0, at.1)
+    }
+
     fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
         let known = self.known();
         let former = self.former();
@@ -724,7 +1054,7 @@ impl InMemoryMemory {
         home: &EntityId,
         room: &[Fact],
     ) -> std::collections::HashMap<FactId, jiff::Timestamp> {
-        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        let writes = self.claim_writes_view();
         room.iter()
             .filter_map(|f| {
                 writes
@@ -959,15 +1289,16 @@ impl InMemoryMemory {
     /// same act the real store takes in `write_fact`, so every verb that
     /// produces a claim leaves a write behind here too.
     fn append_claim_write(&self, fact: &Fact, session: Option<String>) {
+        let at = self.stored_address(&FactAddress::new(fact.home.clone(), fact.id.clone()));
         let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
         let ordinal = writes
             .iter()
-            .filter(|(home, id, _)| home == &fact.home && id == &fact.id)
+            .filter(|(home, id, _)| home == &at.home && id == &at.local)
             .count()
             + 1;
         writes.push((
-            fact.home.clone(),
-            fact.id.clone(),
+            at.home.clone(),
+            at.local.clone(),
             // **The moment this write happened**, which the real store stamps
             // too. A fake that left it empty would let every case about a
             // chain of corrections pass on a build that records none.
@@ -1003,26 +1334,35 @@ impl InMemoryMemory {
     ) where
         I: IntoIterator<Item = (String, Option<String>)>,
     {
-        let mut writes = self.writes.lock().expect("fake mutex poisoned");
+        // **Counted over the writes as served, stored where the claim is.** The
+        // key's next place on the thing counts the writes of its folded things
+        // too, and the write is kept under the key and id the claim was made
+        // under.
+        let at = self.stored_address(&FactAddress::new(home.clone(), fact.clone()));
         for (key, value) in wrote {
-            let ordinal = writes
-                .iter()
-                .filter(|w| &w.entity == home && w.key == key)
-                .count() as u64
+            let ordinal = self.with_writes(|served| {
+                served
+                    .iter()
+                    .filter(|w| &w.entity == home && w.key == key)
+                    .count()
+            }) as u64
                 + 1;
             let class = classes
                 .get(key.trim())
                 .copied()
                 .unwrap_or(super::super::WriteClass::Own);
-            writes.push(StoredWrite {
-                entity: home.clone(),
-                key,
-                ordinal,
-                value,
-                fact: fact.clone(),
-                class,
-                written_at: Some(self.clock().now()),
-            });
+            self.writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .push(StoredWrite {
+                    entity: at.home.clone(),
+                    key,
+                    ordinal,
+                    value,
+                    fact: at.local.clone(),
+                    class,
+                    written_at: Some(self.clock().now()),
+                });
         }
     }
 
@@ -1034,20 +1374,21 @@ impl InMemoryMemory {
         home: &EntityId,
         fact: &FactId,
     ) -> std::collections::BTreeMap<String, super::super::WriteClass> {
-        let writes = self.writes.lock().expect("fake mutex poisoned");
-        let mut mine: Vec<&StoredWrite> = writes
-            .iter()
-            .filter(|w| &w.entity == home && &w.fact == fact)
-            .collect();
-        mine.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
-        let mut held = std::collections::BTreeMap::new();
-        for write in mine {
-            match &write.value {
-                Some(_) => held.insert(write.key.clone(), write.class),
-                None => held.remove(&write.key),
-            };
-        }
-        held
+        self.with_writes(|writes| {
+            let mut mine: Vec<&StoredWrite> = writes
+                .iter()
+                .filter(|w| &w.entity == home && &w.fact == fact)
+                .collect();
+            mine.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
+            let mut held = std::collections::BTreeMap::new();
+            for write in mine {
+                match &write.value {
+                    Some(_) => held.insert(write.key.clone(), write.class),
+                    None => held.remove(&write.key),
+                };
+            }
+            held
+        })
     }
 
     /// **The record as a reader sees it: its claim, with its fields projected.**
@@ -1057,12 +1398,13 @@ impl InMemoryMemory {
     fn projected(&self, fact: &Fact) -> Fact {
         self.write_scans
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let writes = self.writes.lock().expect("fake mutex poisoned");
-        let mine: Vec<&StoredWrite> = writes
-            .iter()
-            .filter(|w| w.entity == fact.home && w.fact == fact.id)
-            .collect();
-        Self::project(fact, mine)
+        self.with_writes(|writes| {
+            let mine: Vec<&StoredWrite> = writes
+                .iter()
+                .filter(|w| w.entity == fact.home && w.fact == fact.id)
+                .collect();
+            Self::project(fact, mine)
+        })
     }
 
     /// **Every write, grouped by the record that carried it, in one pass.** A
@@ -1073,12 +1415,14 @@ impl InMemoryMemory {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut grouped: std::collections::HashMap<(EntityId, FactId), Vec<StoredWrite>> =
             std::collections::HashMap::new();
-        for write in self.writes.lock().expect("fake mutex poisoned").iter() {
-            grouped
-                .entry((write.entity.clone(), write.fact.clone()))
-                .or_default()
-                .push(write.clone());
-        }
+        self.with_writes(|writes| {
+            for write in writes {
+                grouped
+                    .entry((write.entity.clone(), write.fact.clone()))
+                    .or_default()
+                    .push(write.clone());
+            }
+        });
         grouped
     }
 
@@ -1132,7 +1476,7 @@ impl InMemoryMemory {
     /// the same join the real store does, done here so the two cannot come to
     /// disagree about what a thing is.
     fn held(&self, entity: &EntityId) -> std::collections::BTreeMap<String, String> {
-        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         super::super::folded_fields(&self.writes_on(entity, &facts), &self.declarations())
     }
 
@@ -1338,6 +1682,7 @@ impl InMemoryMemory {
     /// then writes as it always did.
     fn overwrite_lease_moment(&self, home: &EntityId, moment: &str) -> bool {
         let now = self.clock().now();
+        self.edits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut writes = self.writes.lock().expect("fake mutex poisoned");
         let newest = writes
             .iter_mut()
@@ -1357,7 +1702,14 @@ impl InMemoryMemory {
     }
 
     fn writes_on(&self, entity: &EntityId, facts: &[Fact]) -> Vec<super::super::KeyWrite> {
-        let writes = self.writes.lock().expect("fake mutex poisoned");
+        self.with_writes(|writes| Self::key_writes_on(writes, entity, facts))
+    }
+
+    fn key_writes_on(
+        writes: &[StoredWrite],
+        entity: &EntityId,
+        facts: &[Fact],
+    ) -> Vec<super::super::KeyWrite> {
         writes
             .iter()
             .filter(|w| &w.entity == entity)
@@ -1656,7 +2008,7 @@ impl Memory for InMemoryMemory {
     /// a case sees it.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         super::super::validate_subject(thread)?;
-        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         Ok(self.writers_among(&facts, thread))
     }
 
@@ -2106,7 +2458,7 @@ impl Memory for InMemoryMemory {
         let mut fields = fact.fields.clone();
         self.lower_reference_fields(&mut fields);
 
-        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        let mut facts = self.facts_view();
         // **A claim this one is derived from is named, so it must already
         // exist** — the same rule the subject and the edge's object face, on
         // the one field that names a claim rather than an entity. A citation
@@ -2271,6 +2623,13 @@ impl Memory for InMemoryMemory {
                                 facts[victim_index].status = FactStatus::Archived;
                                 facts[victim_index].details = Some(reason.clone());
                                 let archived = facts[victim_index].clone();
+                                self.rewrite_stored(
+                                    &FactAddress::new(home.clone(), victim.local.clone()),
+                                    Fact {
+                                        fields: Default::default(),
+                                        ..archived.clone()
+                                    },
+                                );
                                 self.append_claim_write(&archived, None);
                             }
                             // **The emergency reserve, spent — never twice
@@ -2339,7 +2698,7 @@ impl Memory for InMemoryMemory {
         )?;
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
-        facts.push(Fact {
+        self.push_stored(Fact {
             fields: Default::default(),
             ..stored.clone()
         });
@@ -2390,7 +2749,7 @@ impl Memory for InMemoryMemory {
             Some(badge) => EntityId(badge.clone()),
             None => entity.id.clone(),
         };
-        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         let mine: Vec<Fact> = facts
             .iter()
             .filter(|f| f.subject == key || f.home == key)
@@ -2418,7 +2777,7 @@ impl Memory for InMemoryMemory {
         super::super::validate_subject(target)?;
         let declared = self.declared_types().await?;
         let entities = self.list_entities(None).await?;
-        let stored: Vec<Fact> = self.facts.lock().expect("fake mutex poisoned").clone();
+        let stored: Vec<Fact> = self.facts_view();
         // **Shared by every claim this call serves**, so what it costs does not
         // move with how many there are.
         let resolution = self.resolution();
@@ -2467,12 +2826,12 @@ impl Memory for InMemoryMemory {
                 nearest: guard::screen(entity, &[], &index),
             });
         };
-        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         let writes = self.writes_on(&key, &facts);
         let keys = super::super::folded_ages(&writes, &self.declarations());
         // The newest write of any kind: field writes of any status, and the
         // writes of the thing's records.
-        let claims = self.claim_writes.lock().expect("fake mutex poisoned");
+        let claims = self.claim_writes_view();
         let newest = writes
             .iter()
             .filter_map(|w| w.written_at)
@@ -2505,7 +2864,15 @@ impl Memory for InMemoryMemory {
             },
             None => None,
         };
-        Ok(self
+        // **The merges are copied out before any handle is looked up**: serving a
+        // handle reads the entity rows, and those read the merges.
+        let wanted_merges: Vec<(
+            EntityId,
+            EntityId,
+            jiff::Timestamp,
+            Option<String>,
+            Vec<(FactId, FactId)>,
+        )> = self
             .merges
             .lock()
             .expect("fake mutex poisoned")
@@ -2515,13 +2882,27 @@ impl Memory for InMemoryMemory {
                     .as_ref()
                     .is_none_or(|key| &m.folded == key || &m.survivor == key)
             })
-            .map(|m| crate::memory::MergeEvent {
-                folded: self.current_handle(&m.folded),
-                survivor: self.current_handle(&m.survivor),
-                merged_at: m.at,
-                session: m.session.clone(),
-                claims: m.claims.clone(),
+            .map(|m| {
+                (
+                    m.folded.clone(),
+                    m.survivor.clone(),
+                    m.at,
+                    m.session.clone(),
+                    m.claims.clone(),
+                )
             })
+            .collect();
+        Ok(wanted_merges
+            .into_iter()
+            .map(
+                |(folded, survivor, at, session, claims)| crate::memory::MergeEvent {
+                    folded: self.current_handle(&folded),
+                    survivor: self.current_handle(&survivor),
+                    merged_at: at,
+                    session,
+                    claims,
+                },
+            )
             .collect())
     }
 
@@ -2530,6 +2911,16 @@ impl Memory for InMemoryMemory {
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
         Ok(self.moved(address))
+    }
+
+    async fn unmapped_claims(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<crate::memory::unmapped::UnmappedClaim>, MemoryError> {
+        let Some((key, _)) = self.resolve(entity) else {
+            return Ok(Vec::new());
+        };
+        Ok(self.unmapped_among(&key, &self.facts_view()))
     }
 
     async fn entity_history(
@@ -2572,7 +2963,7 @@ impl Memory for InMemoryMemory {
             Some(badge) => EntityId(badge.clone()),
             None => entity.id.clone(),
         };
-        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         if !facts.iter().any(|f| f.home == key && f.id == address.local) {
             if let Some(err) = super::super::already_merged(&address.home, entity) {
                 return Err(err);
@@ -2587,7 +2978,7 @@ impl Memory for InMemoryMemory {
             });
         }
         drop(facts);
-        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        let writes = self.claim_writes_view();
         let mut mine: Vec<ClaimWrite> = writes
             .iter()
             .filter(|(home, id, _)| home == &key && id == &address.local)
@@ -2698,8 +3089,8 @@ impl Memory for InMemoryMemory {
         };
         // The record each write arrived in says when it happened and what
         // became of it, so the two are read together.
-        let facts = self.facts.lock().expect("fake mutex poisoned").clone();
-        let writes = self.writes.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
+        let writes = self.writes_view();
         let mut mine: Vec<&StoredWrite> = writes
             .iter()
             .filter(|w| w.entity == storage_key && w.key == key)
@@ -2783,7 +3174,7 @@ impl Memory for InMemoryMemory {
         let handle = entity.id.clone();
         let kind = entity.kind;
 
-        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         let nearest: Vec<String> = facts
             .iter()
             .filter(|f| f.home == key)
@@ -2819,9 +3210,7 @@ impl Memory for InMemoryMemory {
         // appends under.
         if patch.expected_revision.is_some() {
             let current = self
-                .claim_writes
-                .lock()
-                .expect("fake mutex poisoned")
+                .claim_writes_view()
                 .iter()
                 .filter(|(home, id, _)| home == &key && id == &address.local)
                 .count();
@@ -3138,14 +3527,13 @@ impl Memory for InMemoryMemory {
             }
         }
         let id = fact.id.clone();
-        for held in facts.iter_mut() {
-            if held.home == home && held.id == id {
-                *held = Fact {
-                    fields: Default::default(),
-                    ..edited.clone()
-                };
-            }
-        }
+        self.rewrite_stored(
+            &FactAddress::new(home.clone(), id.clone()),
+            Fact {
+                fields: Default::default(),
+                ..edited.clone()
+            },
+        );
         // **An edit rewrites the row and appends a write**, which is what makes
         // what the claim used to say readable after it stops being true.
         self.append_claim_write(&edited, patch.session.clone());
@@ -3157,7 +3545,7 @@ impl Memory for InMemoryMemory {
         // reference-typed item, same as a capture's does.
         let lowered_writes = self.lower_writes(super::super::writes_of(&patch, &carried));
         self.append_writes(&home, &id, lowered_writes, &classes);
-        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         let stored = facts
             .iter()
             .find(|f| f.home == home && f.id == id)
@@ -3253,7 +3641,7 @@ impl Memory for InMemoryMemory {
         //
         // **Asked of a copy, before the locks below are taken**: serving a
         // record reads the entity rows, and those locks do not nest.
-        let held_facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        let held_facts = self.world().facts.clone();
         let incoming: Vec<Fact> = held_facts
             .iter()
             .filter(|f| f.home == folded_key)
@@ -3312,9 +3700,7 @@ impl Memory for InMemoryMemory {
         }
 
         // **Read before the locks below are taken**, as the held facts are.
-        let declared = self.declarations();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
-        let mut facts = self.facts.lock().expect("fake mutex poisoned");
 
         // **The duplicate's names go to the survivor**, exactly as the real
         // store's fold does — see `names_to_carry`. The duplicate's aliases move
@@ -3345,151 +3731,22 @@ impl Memory for InMemoryMemory {
             }
         }
 
-        // **`parent` re-points too, for the same reason `edge.object` and
-        // `refs` do below**: it names a different row, and it is stored as
-        // the badge that row wears (rule 268) — a fold is the one place that
-        // still has to sweep it, because the folded row keeps forwarding
-        // rather than disappearing, and its badge is not the survivor's.
-        for entity in entities.iter_mut() {
-            if let Some(parent) = &entity.parent
-                && *parent == folded_key
-            {
-                entity.parent = Some(survivor_key.clone());
-            }
-        }
-
-        // **The claims move home, and each is RENUMBERED as it goes.** A fact
-        // id is local to the doc that holds it, so both sides own an `f1` and
-        // moving a row without a fresh number collides. **The real store finds
-        // this and rows in a `Vec` cannot**, so the renumbering is mirrored
-        // here rather than left as a difference between the two.
-        //
-        // ⚠️ Moving a row therefore CHANGES ITS ADDRESS, and what points at
-        // that address moves with it.
-        let mut next = facts.iter().filter(|f| f.home == survivor_key).count();
-        let mut moved: Vec<(FactId, FactId)> = Vec::new();
-        for fact in facts.iter_mut() {
-            if fact.home == folded_key {
+        // **A merge appends its event and moves no row.** A fact id is local to
+        // the doc that holds it, so both sides own an `f1`: the event gives each
+        // claim the folded thing serves an id that is free on the survivor, and
+        // [`World::apply`] serves the claim under it, exactly as the real store
+        // reads its events.
+        let mut next = held_facts.iter().filter(|f| f.home == survivor_key).count();
+        let mut folded_claims: Vec<&Fact> =
+            held_facts.iter().filter(|f| f.home == folded_key).collect();
+        folded_claims.sort_by_key(|f| f.id.ordinal());
+        let moved: Vec<(FactId, FactId)> = folded_claims
+            .iter()
+            .map(|fact| {
                 next += 1;
-                let now = FactId(format!("f{next}"));
-                moved.push((fact.id.clone(), now.clone()));
-                fact.home = survivor_key.clone();
-                fact.id = now;
-            }
-            if fact.subject == folded_key {
-                fact.subject = survivor_key.clone();
-            }
-            // An edge drawn AT the folded thing is re-pointed too, or the
-            // graph goes on naming a badge nobody answers to. An edge's
-            // object is stored as the badge the entity wears (rule 268), so
-            // this compares against the folded side's own badge alone —
-            // never a handle, and never a former handle, because nothing but
-            // the entity's own current badge was ever written into this
-            // column. Rewritten to the SURVIVOR'S BADGE, for the same reason.
-            if let Some(edge) = &mut fact.edge
-                && edge.object == folded_key
-            {
-                edge.object = survivor_key.clone();
-            }
-            for target in fact.refs.iter_mut() {
-                if *target == folded_key {
-                    *target = survivor_key.clone();
-                }
-            }
-            // And a field naming the folded side, in the copy of the record's
-            // fields the row carries beside the writes (rule 374).
-            for (key, value) in fact.fields.iter_mut() {
-                if let Some(repointed) = super::super::repoint_field_value(
-                    key,
-                    value,
-                    &declared,
-                    folded_key.as_str(),
-                    survivor_key.as_str(),
-                ) {
-                    *value = repointed;
-                }
-            }
-        }
-        // A lineage pointer at a moved row follows it to its new address.
-        for fact in facts.iter_mut() {
-            if let Some(source) = &mut fact.derived_from {
-                if source.home == folded_key {
-                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &source.local) {
-                        source.local = now.clone();
-                    }
-                    source.home = survivor_key.clone();
-                }
-            }
-            // A mark at a moved row follows it to its new address, for the
-            // same reason [`Fact::derived_from`] just above does.
-            for named in fact.stands_for.iter_mut() {
-                if named.home == folded_key {
-                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &named.local) {
-                        named.local = now.clone();
-                    }
-                    named.home = survivor_key.clone();
-                }
-            }
-        }
-        // The field substrate moves with the claims that wrote it: a folded
-        // thing's history is the survivor's history now.
-        {
-            let mut writes = self.writes.lock().expect("fake mutex poisoned");
-            for write in writes.iter_mut() {
-                if write.entity == folded_key {
-                    write.entity = survivor_key.clone();
-                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &write.fact) {
-                        write.fact = now.clone();
-                    }
-                }
-                // **A field that names the folded side names the survivor
-                // now** (rule 374): the value is stored as the id the folded
-                // side wears, and the folded side only forwards.
-                if let Some(value) = &write.value
-                    && let Some(repointed) = super::super::repoint_field_value(
-                        &write.key,
-                        value,
-                        &declared,
-                        folded_key.as_str(),
-                        survivor_key.as_str(),
-                    )
-                {
-                    write.value = Some(repointed);
-                }
-            }
-        }
-        // **And the claim substrate moves with the claim**, for the same
-        // reason: a claim whose row moved and whose writes did not is a claim
-        // the projection cannot find, which is the claim gone.
-        {
-            let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
-            for (home, id, write) in writes.iter_mut() {
-                if *home == folded_key {
-                    *home = survivor_key.clone();
-                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == id) {
-                        *id = now.clone();
-                    }
-                }
-                if let Some(edge) = &mut write.edge
-                    && edge.object == folded_key
-                {
-                    edge.object = survivor_key.clone();
-                }
-                // 🚨 **A lineage pointer at a moved claim follows it here too,
-                // wherever the write itself lives.** The real store serves a
-                // claim out of its newest write, so a fake that repointed the
-                // row and not the write would answer a question the real one
-                // gets wrong — and the chain is a reader of lineage either way.
-                if let Some(source) = &mut write.derived_from
-                    && source.home == folded_key
-                {
-                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &source.local) {
-                        source.local = now.clone();
-                    }
-                    source.home = survivor_key.clone();
-                }
-            }
-        }
+                (fact.id.clone(), FactId(format!("f{next}")))
+            })
+            .collect();
         let rehomed = moved.len();
         self.merges
             .lock()
@@ -3502,10 +3759,9 @@ impl Memory for InMemoryMemory {
                 claims: moved.clone(),
             });
 
-        let existing = facts.iter().filter(|f| f.home == survivor_key).count();
         let record = Fact {
             sets: Default::default(),
-            id: FactId(format!("f{}", existing + 1)),
+            id: FactId(format!("f{}", next + 1)),
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
             content: account.content,
@@ -3524,7 +3780,7 @@ impl Memory for InMemoryMemory {
             inserted_at: Some(self.clock().now()),
             stale_after: None,
         };
-        facts.push(Fact {
+        self.push_stored(Fact {
             fields: Default::default(),
             ..record.clone()
         });
@@ -3542,7 +3798,6 @@ impl Memory for InMemoryMemory {
             .find(|e| &e.id == survivor)
             .cloned()
             .expect("the survivor was checked present");
-        drop(facts);
         drop(entities);
         self.append_writes(
             &record.home,
@@ -3588,7 +3843,7 @@ impl Memory for InMemoryMemory {
 
         // Everything is decided before anything moves, so a refusal leaves the
         // row exactly as it was — the same shape `apply_fact_patch` has.
-        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        let facts = self.facts_view();
         let nearest: Vec<String> = facts
             .iter()
             .filter(|f| f.home == key)
@@ -3671,17 +3926,16 @@ impl Memory for InMemoryMemory {
         ) {
             return Err(err);
         }
-        for fact in facts.iter_mut() {
-            if fact.home == key && fact.id == address.local {
-                *fact = Fact {
-                    fields: Default::default(),
-                    ..retracted.clone()
-                };
-            }
-        }
+        self.rewrite_stored(
+            &FactAddress::new(key.clone(), address.local.clone()),
+            Fact {
+                fields: Default::default(),
+                ..retracted.clone()
+            },
+        );
         // The account is a new record like any other: its own keys — the one
         // naming what it takes back — are writes of its own.
-        facts.push(Fact {
+        self.push_stored(Fact {
             fields: Default::default(),
             ..record.clone()
         });
