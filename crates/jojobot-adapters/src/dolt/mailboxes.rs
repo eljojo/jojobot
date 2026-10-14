@@ -645,16 +645,29 @@ impl Outbox for DoltMailboxes {
         attempts: u32,
         next_attempt_at: Timestamp,
     ) -> Result<(), PushError> {
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(push_store)?;
+        let changed = sqlx::query(
             "UPDATE push_outbox SET attempts = ?, next_attempt_at = ?
              WHERE message_id = ? AND state = 'pending'",
         )
         .bind(i32::try_from(attempts).unwrap_or(i32::MAX))
         .bind(push_stamp(next_attempt_at))
         .bind(message.as_str())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .map_err(push_store)?;
+        .map_err(push_store)?
+        .rows_affected();
+        if changed > 0 {
+            append_push_attempt(
+                &mut tx,
+                message,
+                "failed",
+                Timestamp::now(),
+                Some(next_attempt_at),
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(push_store)?;
         Ok(())
     }
 
@@ -672,18 +685,56 @@ impl DoltMailboxes {
         state: &str,
         at: Timestamp,
     ) -> Result<(), PushError> {
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(push_store)?;
+        let changed = sqlx::query(
             "UPDATE push_outbox SET state = ?, finished_at = ?
              WHERE message_id = ? AND state = 'pending'",
         )
         .bind(state)
         .bind(push_stamp(at))
         .bind(message.as_str())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .map_err(push_store)?;
+        .map_err(push_store)?
+        .rows_affected();
+        if changed > 0 {
+            append_push_attempt(&mut tx, message, state, at, None).await?;
+        }
+        tx.commit().await.map_err(push_store)?;
         Ok(())
     }
+}
+
+/// **Keep one attempt at a push, in the transaction that changed the row it
+/// belongs to.** The outbox row and its account of how it got there land
+/// together or not at all, for the reason `message_event` is written that way.
+/// The attempt takes the next ordinal the message holds.
+async fn append_push_attempt(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    message: &MessageId,
+    outcome: &str,
+    attempted_at: Timestamp,
+    next_attempt_at: Option<Timestamp>,
+) -> Result<(), PushError> {
+    let held: Option<i32> =
+        sqlx::query_scalar("SELECT MAX(ordinal) FROM push_attempt WHERE message_id = ?")
+            .bind(message.as_str())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(push_store)?;
+    sqlx::query(
+        "INSERT INTO push_attempt (message_id, ordinal, attempted_at, outcome, next_attempt_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(message.as_str())
+    .bind(held.unwrap_or(0) + 1)
+    .bind(push_stamp(attempted_at))
+    .bind(outcome)
+    .bind(next_attempt_at.map(push_stamp))
+    .execute(&mut **tx)
+    .await
+    .map_err(push_store)?;
+    Ok(())
 }
 
 /// **Keep one change of state, in the transaction that made it.** The change and
@@ -2679,6 +2730,92 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(state, "sent");
+        store.stop().await;
+    }
+
+    /// **Every attempt at a push is kept**, in the order it happened: a push
+    /// that fails twice and then lands leaves three attempts, each with the
+    /// moment it was next due. The outbox row keeps answering with the newest
+    /// count and moment alone, as before.
+    #[tokio::test]
+    async fn a_push_that_fails_twice_and_then_lands_leaves_three_attempts_in_order() {
+        let (_scratch, mut store, mail, _) = board("push-attempts").await;
+        let mail = mail.pushing();
+        let person = EntityId("person:ned-flanders".into());
+        mail.create_mailbox(&MailboxName::named_for(&person), &person, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        let message = mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("person-ned-flanders".into()),
+                body: "a word for the person".into(),
+                subject: None,
+                sender: "gamma".into(),
+                sent_at: "2026-01-05T00:00:00Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+                supersedes: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked")
+            .id;
+        let attempts = |pool: sqlx::MySqlPool| {
+            let message = message.clone();
+            async move {
+                sqlx::query_as::<_, (i32, String, Option<String>)>(
+                    "SELECT ordinal, outcome, next_attempt_at FROM push_attempt
+                     WHERE message_id = ? ORDER BY ordinal",
+                )
+                .bind(message.as_str())
+                .fetch_all(&pool)
+                .await
+                .expect("the attempts read")
+            }
+        };
+        assert!(
+            attempts(store.pool().clone()).await.is_empty(),
+            "a push nobody has tried has no attempt"
+        );
+
+        let first = Timestamp::now()
+            .checked_add(std::time::Duration::from_secs(60))
+            .unwrap();
+        let second = first
+            .checked_add(std::time::Duration::from_secs(120))
+            .unwrap();
+        let landed = second
+            .checked_add(std::time::Duration::from_secs(5))
+            .unwrap();
+        mail.failed(&message, 1, first).await.unwrap();
+        mail.failed(&message, 2, second).await.unwrap();
+        mail.sent(&message, landed).await.unwrap();
+        // A push that already landed is not an attempt again.
+        mail.abandoned(&message, landed).await.unwrap();
+
+        assert_eq!(
+            attempts(store.pool().clone()).await,
+            vec![
+                (1, "failed".to_string(), Some(push_stamp(first))),
+                (2, "failed".to_string(), Some(push_stamp(second))),
+                (3, "sent".to_string(), None),
+            ]
+        );
+        let row: (String, i32) =
+            sqlx::query_as("SELECT state, attempts FROM push_outbox WHERE message_id = ?")
+                .bind(message.as_str())
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            ("sent".to_string(), 2),
+            "the current row reads as before"
+        );
         store.stop().await;
     }
 
