@@ -130,6 +130,14 @@ impl DoltMemory {
     /// **The thing a merge folded this one into**, by the key the merge events
     /// hold, or none when no merge folded it. One hop: the survivor of the
     /// latest fold, not the end of the chain.
+    ///
+    /// **A fold made before events were kept has no event, and the forwarding
+    /// row says where it went.** The row keeps the handle its survivor wore at
+    /// the fold in `merged_into`. When no event names the thing, that row is the
+    /// answer: the handle is read as the key of the thing wearing it now, or of
+    /// the thing that wore it last. A handle nothing wears or ever wore places
+    /// nothing, and the pointer stays where it is. Nothing is written, so a
+    /// store the older build filled is read the same way on every start.
     pub(super) async fn survivor_of(
         tx: &mut Transaction<'_, MySql>,
         folded: &EntityId,
@@ -142,7 +150,42 @@ impl DoltMemory {
         .fetch_optional(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(survivor.map(EntityId))
+        if let Some(survivor) = survivor {
+            return Ok(Some(EntityId(survivor)));
+        }
+        let forwards_to: Option<String> = sqlx::query_scalar(
+            "SELECT merged_into FROM entity
+             WHERE merged_into IS NOT NULL AND (badge = ? OR (badge IS NULL AND id = ?))
+             LIMIT 1",
+        )
+        .bind(folded.as_str())
+        .bind(folded.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?
+        .flatten();
+        let Some(handle) = forwards_to else {
+            return Ok(None);
+        };
+        let wearing: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, badge FROM entity WHERE id = ?")
+                .bind(&handle)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        let key = match wearing {
+            Some((id, badge)) => Some(badge.unwrap_or(id)),
+            None => sqlx::query_scalar(
+                "SELECT badge FROM entity_former_handle WHERE former_handle = ?
+                 ORDER BY ordinal DESC LIMIT 1",
+            )
+            .bind(&handle)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?,
+        };
+        // A row that names itself places nothing: the walk would stand still.
+        Ok(key.filter(|key| key != folded.as_str()).map(EntityId))
     }
 
     /// **A merge loop as damage a person can find.** The walk names the things in
