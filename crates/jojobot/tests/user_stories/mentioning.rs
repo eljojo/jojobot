@@ -729,3 +729,64 @@ async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle
     s.wrap("renamed a bot and asked after its outbox").await;
     story.finish().await;
 }
+
+/// **Search follows a rename into a claim whose only link to the renamed thing
+/// is a mention in its words.** The index holds a claim as a reader reads it, so
+/// after the rename the claim is found by the handle the thing wears now and no
+/// longer by the one it left.
+///
+/// **Paired**: before the rename the old slug finds the claim, so the
+/// negative afterwards is a claim that moved and not one the query never
+/// reached.
+#[tokio::test]
+async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_one() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("place:shelbyvile", "Shelbyville").await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:milhouse",
+            "content": "fished from the riverbank near @place:shelbyvile every spring",
+            "provenance": "testimony",
+        }),
+    )
+    .await;
+
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:milhouse",
+            "content": "keeps a tackle box",
+            "details": "left it on the docks of @place:shelbyvile last autumn",
+            "provenance": "testimony",
+        }),
+    )
+    .await;
+
+    s.call("search", json!({"query": "shelbyvile"}))
+        .await
+        .says("riverbank")
+        .says("tackle");
+
+    s.call(
+        "rename_entity",
+        json!({"handle": "place:shelbyvile", "to": "place:shelbyville"}),
+    )
+    .await;
+
+    s.call("search", json!({"query": "shelbyville"}))
+        .await
+        .says("riverbank")
+        .says("tackle");
+    s.call("search", json!({"query": "shelbyvile"}))
+        .await
+        .never_says("riverbank")
+        .never_says("tackle");
+
+    s.wrap("renamed a place and searched for a claim that mentions it")
+        .await;
+    story.finish().await;
+}
