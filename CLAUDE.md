@@ -81,7 +81,8 @@ in doubt, it doesn't cross.
   user as you go; if something needs a decision mid-slice, ask it as one
   crisp question.
 - Merging advances `main` only. **Deploy and push are the user's verbs** —
-  never deploy; never push unless asked.
+  never deploy; never push unless asked. The one exception: a dev line pushes
+  its own branches to Forgejo (see "A dev line manages its own git" below).
 
 ### Booting a session in this repo
 
@@ -866,6 +867,15 @@ roles and never an operator.
 - **A safe rebase needs no one's permission.** Rebasing unpushed commits onto
   the main line, and joining them by fast-forward, is routine work. Never make
   a merge commit. Push and deploy stay the operator's.
+- **A dev line manages its own git, and pushes its own branches to Forgejo.**
+  This is the operator's standing grant, so a line asks nobody first. In its
+  own checkout and on its own branches (`devN-work` and any `devN-*` branch it
+  made), a line uses any git verb: rebase onto main, create, switch, reset and
+  delete its own branches. It pushes those branches with
+  `git push forgejo <branch>`, and a `--force-with-lease` after its own rebase
+  is included. Not covered: `main`, another line's branch or checkout, any
+  remote other than `forgejo`, and a merge commit. `main` moves only by the
+  engineering manager's carry.
 - **A commit message uses Simplified Technical English**, like every other text
   this project writes. Short sentences. Active voice. One word has one meaning.
   No metaphor.
