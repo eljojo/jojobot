@@ -182,10 +182,24 @@ fn touches(sql: &str) -> Result<Vec<Touch>, String> {
     Ok(found)
 }
 
+/// **A backfill whose landed check asks about the table it fills.** The rows
+/// still owed are rows of the source table that have no row in the target, so
+/// the check is over the source and the condition names the target. That is an
+/// allowed shape; a check that names some other table without the target does
+/// not ask whether the backfill landed.
+fn backfill_asks_its_target(touched: &Touch, leaves: Leaves) -> bool {
+    let (Touch::Rows(target), Leaves::NoRows(_, condition)) = (touched, leaves) else {
+        return false;
+    };
+    condition
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| word == target)
+}
+
 /// **The files before 0080 that break the rule, by version name.** The list
 /// only shrinks: a file at or after 0080 is never on it, and an entry that no
 /// longer breaks the rule, or names no migration, is itself a finding.
-const KNOWN_BEFORE_0080: &[&str] = &["0035_fact_write_backfill", "0074_session_key_hash"];
+const KNOWN_BEFORE_0080: &[&str] = &["0074_session_key_hash"];
 
 /// The first version that may not be on the known list.
 const NO_NEW_KNOWN_FROM: &str = "0080";
@@ -216,6 +230,7 @@ fn migration_findings(migrations: &[(&str, &str, Leaves)], known: &[&str]) -> Ve
                     .join("; "),
                 asked.describe()
             )),
+            Ok(touched) if backfill_asks_its_target(&touched[0], *leaves) => None,
             Ok(touched) if touched[0] != asked => Some(format!(
                 "{version}: the file {} but its landed check asks about: {}. Make the check \
                  name the object the file changes.",
@@ -279,6 +294,94 @@ fn fnv1a(text: &str) -> u64 {
     })
 }
 
+/// **Code as the compiler reads it, for hashing**: comments gone, runs of
+/// whitespace one space, and everything inside a string or character literal as
+/// written. A space in a SQL string is part of the statement, and a `//` inside
+/// a string is not a comment.
+fn normalized(code: &str) -> String {
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::new();
+    let mut gap = false;
+    let mut at = 0;
+    while at < chars.len() {
+        let c = chars[at];
+        if c.is_whitespace() {
+            gap = true;
+            at += 1;
+            continue;
+        }
+        if c == '/' && chars.get(at + 1) == Some(&'/') {
+            while at < chars.len() && chars[at] != '\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if c == '/' && chars.get(at + 1) == Some(&'*') {
+            at += 2;
+            while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
+                at += 1;
+            }
+            at += 2;
+            gap = true;
+            continue;
+        }
+        if gap && !out.is_empty() {
+            out.push(' ');
+        }
+        gap = false;
+        let after_word = out
+            .chars()
+            .last()
+            .is_some_and(|p| p.is_alphanumeric() || p == '_');
+        // A raw string: `r`, any number of `#`, a quote, and the same `#`s after
+        // the closing quote.
+        if c == 'r' && !after_word {
+            let hashes = chars[at + 1..].iter().take_while(|&&h| h == '#').count();
+            if chars.get(at + 1 + hashes) == Some(&'"') {
+                let close: Vec<char> = std::iter::once('"')
+                    .chain(std::iter::repeat_n('#', hashes))
+                    .collect();
+                let from = at + 2 + hashes;
+                let end = (from..chars.len())
+                    .find(|&i| chars[i..].starts_with(&close))
+                    .map_or(chars.len(), |i| i + close.len());
+                out.extend(&chars[at..end]);
+                at = end;
+                continue;
+            }
+        }
+        if c == '"' {
+            let mut end = at + 1;
+            while end < chars.len() && chars[end] != '"' {
+                end += if chars[end] == '\\' { 2 } else { 1 };
+            }
+            let end = (end + 1).min(chars.len());
+            out.extend(&chars[at..end]);
+            at = end;
+            continue;
+        }
+        if c == '\'' {
+            let literal_end = if chars.get(at + 1) == Some(&'\\') {
+                (at + 2..chars.len())
+                    .find(|&i| chars[i] == '\'')
+                    .map(|i| i + 1)
+            } else if chars.get(at + 2) == Some(&'\'') {
+                Some(at + 3)
+            } else {
+                None
+            };
+            if let Some(end) = literal_end {
+                out.extend(&chars[at..end]);
+                at = end;
+                continue;
+            }
+        }
+        out.push(c);
+        at += 1;
+    }
+    out
+}
+
 fn is_comment(line: &str) -> bool {
     line.trim_start().starts_with("//")
 }
@@ -295,8 +398,8 @@ fn starts_a_function(line: &str) -> Option<usize> {
 
 /// **The function that first uses a pass's constant, as code.** The nearest
 /// `fn` above the first use, to the line that closes it at the same
-/// indentation, with comment lines left out and each line trimmed: a change to
-/// a comment or to spacing does not change what the pass does.
+/// indentation, read through [`normalized`]: a change to a comment or to spacing
+/// does not change what the pass does, and a change inside a literal does.
 fn driver_code(text: &str, constant: &str) -> Result<String, String> {
     let lines: Vec<&str> = text.lines().collect();
     let defined = lines
@@ -318,17 +421,38 @@ fn driver_code(text: &str, constant: &str) -> Result<String, String> {
     let end = (start..lines.len())
         .find(|&at| lines[at] == closing)
         .ok_or_else(|| format!("the function using {constant} never closes"))?;
-    Ok(lines[start..=end]
-        .iter()
-        .filter(|l| !is_comment(l))
-        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-        .collect::<Vec<_>>()
-        .join("\n"))
+    Ok(normalized(&lines[start..=end].join("\n")))
 }
 
-/// **Every pass a source declares**: a `const NAME_PASS: &str = "...";`.
+/// **Every pass a source declares**: a `const NAME_PASS: &str = "...";`, or the
+/// names in a `const NAMES_PASSES: [&str; N] = [...]` array, each of which is
+/// driven by the one function that first uses the array.
 fn passes_in(text: &str) -> Result<Vec<Pass>, String> {
     let mut passes = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+    for (at, line) in lines.iter().enumerate() {
+        let Some((head, _)) = line.split_once(": [&str;") else {
+            continue;
+        };
+        let constant = head.trim().rsplit(' ').next().unwrap_or_default();
+        if is_comment(line) || !head.contains("const ") || !constant.ends_with("PASSES") {
+            continue;
+        }
+        let code_hash = fnv1a(&driver_code(text, constant)?);
+        for entry in lines[at + 1..].iter().take_while(|l| !l.contains("];")) {
+            if let Some(name) = entry
+                .trim()
+                .strip_prefix('"')
+                .and_then(|e| e.split('"').next())
+            {
+                passes.push(Pass {
+                    constant: constant.to_string(),
+                    name: name.to_string(),
+                    code_hash,
+                });
+            }
+        }
+    }
     for line in text.lines().filter(|l| !is_comment(l)) {
         let Some((head, value)) = line.split_once(": &str = ") else {
             continue;
@@ -347,6 +471,62 @@ fn passes_in(text: &str) -> Result<Vec<Pass>, String> {
         });
     }
     Ok(passes)
+}
+
+/// **The names a source finishes a pass under without declaring them as one.**
+/// A call to `settled(pool, NAME, ..)` or `finish_pass(pool, NAME)` whose name
+/// is a literal or a constant in capitals is a pass; a lower-case name is the
+/// helper's own parameter. The result is each such name as written.
+fn finished_names(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for call in ["settled(", "finish_pass("] {
+        for (at, _) in text.match_indices(call) {
+            let before = &text[..at];
+            let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+            if before.ends_with("fn ")
+                || before.ends_with(|c: char| c.is_alphanumeric() || c == '_')
+                || is_comment(&text[line_start..])
+            {
+                continue;
+            }
+            let args = &text[at + call.len()..];
+            let mut depth = 0_i32;
+            let mut quoted = false;
+            let mut commas = Vec::new();
+            for (i, c) in args.char_indices() {
+                match c {
+                    '"' => quoted = !quoted,
+                    '(' | '[' | '{' if !quoted => depth += 1,
+                    ')' | ']' | '}' if !quoted => {
+                        depth -= 1;
+                        if depth < 0 {
+                            commas.push(i);
+                            break;
+                        }
+                    }
+                    ',' if !quoted && depth == 0 => commas.push(i),
+                    _ => {}
+                }
+                if commas.len() == 2 {
+                    break;
+                }
+            }
+            if commas.len() < 2 {
+                continue;
+            }
+            let name = args[commas[0] + 1..commas[1]].trim();
+            if let Some(literal) = name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+                found.push(format!("\"{literal}\""));
+            } else if let Some(last) = name.rsplit("::").next().filter(|n| {
+                !n.is_empty()
+                    && n.chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            }) {
+                found.push(last.to_string());
+            }
+        }
+    }
+    found
 }
 
 /// The lock as `(constant, name, hash)` lines; `#` lines are comments.
@@ -369,53 +549,73 @@ fn lock_lines(lock: &str) -> Vec<(String, String, String)> {
 fn pass_findings(sources: &[&str], lock: &str) -> Vec<String> {
     let locked = lock_lines(lock);
     let mut findings = Vec::new();
-    let mut seen = Vec::new();
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let mut declared: Vec<Pass> = Vec::new();
     for source in sources {
-        let passes = match passes_in(source) {
-            Ok(passes) => passes,
-            Err(reason) => {
+        match passes_in(source) {
+            Ok(passes) => declared.extend(passes),
+            Err(reason) => findings.push(format!(
+                "the pass lint cannot read a source: {reason}. Teach the lint the shape in \
+                 the same commit."
+            )),
+        }
+    }
+    for pass in &declared {
+        seen.push((pass.constant.clone(), pass.name.clone()));
+        let now = pass.lock_line();
+        let exact = locked
+            .iter()
+            .find(|(constant, name, _)| *constant == pass.constant && *name == pass.name);
+        let renamed = locked
+            .iter()
+            .find(|(constant, ..)| *constant == pass.constant && pass.constant.ends_with("_PASS"));
+        match (exact, renamed) {
+            (Some((.., hash)), _) if *hash != format!("{:016x}", pass.code_hash) => {
                 findings.push(format!(
-                    "the pass lint cannot read a source: {reason}. Teach the lint the shape in \
-                     the same commit."
+                    "{} ({:?}) changed: the code that drives it is not the code the lock \
+                     holds. A store where the old pass already finished never runs the new \
+                     one. Give it a new name so those stores run it once; or, if running it \
+                     again is unnecessary, update the lock line to `{now}` and say why in the \
+                     commit. The hash covers the function that drives the pass and not the \
+                     helpers it calls, so a change in a helper is not seen here.",
+                    pass.constant, pass.name
                 ));
-                continue;
             }
-        };
-        for pass in passes {
-            seen.push(pass.constant.clone());
-            let now = pass.lock_line();
-            match locked
-                .iter()
-                .find(|(constant, ..)| *constant == pass.constant)
-            {
-                None => findings.push(format!(
-                    "{} has no line in the lock. Add this line: {now}",
-                    pass.constant
-                )),
-                Some((_, name, _)) if *name != pass.name => findings.push(format!(
+            (Some(_), _) => {}
+            (None, Some((_, name, _))) => {
+                seen.push((pass.constant.clone(), name.clone()));
+                findings.push(format!(
                     "{} is now named {:?} and the lock says {name:?}. A new name makes stores \
                      that ran the old pass run this one, which is the point of renaming it. \
                      Update the lock line to: {now}",
                     pass.constant, pass.name
-                )),
-                Some((_, _, hash)) if *hash != format!("{:016x}", pass.code_hash) => {
-                    findings.push(format!(
-                        "{} ({:?}) changed: the code that drives it is not the code the lock \
-                         holds. A store where the old pass already finished never runs the new \
-                         one. Give it a new name so those stores run it once; or, if running \
-                         it again is unnecessary, update the lock line to `{now}` and say why \
-                         in the commit.",
-                        pass.constant, pass.name
-                    ));
-                }
-                Some(_) => {}
+                ));
+            }
+            (None, None) => findings.push(format!(
+                "{} ({:?}) has no line in the lock. Add this line: {now}",
+                pass.constant, pass.name
+            )),
+        }
+    }
+    for source in sources {
+        for name in finished_names(source) {
+            let known = declared
+                .iter()
+                .any(|p| format!("{:?}", p.name) == name || p.constant == name);
+            if !known {
+                findings.push(format!(
+                    "a pass is finished under {name} and the lint does not read it as a pass, \
+                     so it has no lock line. Declare it as `const NAME_PASS: &str` or name it \
+                     in a `PASSES` array, so the lint reads it and the lock holds it."
+                ));
             }
         }
     }
-    for (constant, ..) in &locked {
-        if !seen.contains(constant) {
+    for (constant, name, _) in &locked {
+        if !seen.iter().any(|(c, n)| c == constant && n == name) {
             findings.push(format!(
-                "the lock names {constant} and no source declares it. Remove the line."
+                "the lock names {constant} ({name:?}) and no source declares it. Remove the \
+                 line."
             ));
         }
     }
@@ -435,6 +635,42 @@ mod tests {
     /// the last of them**, as the repository held it before it was split: the
     /// file is the real one and the check is the one its entry gave.
     const OLD_0079: &str = include_str!("fixtures/0079_entity_write_snapshot.sql");
+
+    /// **Every adapters source file, as the deployed code**: the text before its
+    /// test module, with this file left out because its cases hold examples of
+    /// what the lint looks for.
+    fn adapter_sources() -> Vec<String> {
+        fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir)
+                .expect("a source directory")
+                .flatten()
+            {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        files.sort();
+        files
+            .iter()
+            .filter(|path| !path.ends_with("migrate/lints.rs"))
+            .map(|path| {
+                let text = std::fs::read_to_string(path).expect("a source file");
+                match text.find("\n#[cfg(test)]") {
+                    Some(at) => text[..at].to_string(),
+                    None => text,
+                }
+            })
+            .collect()
+    }
 
     fn real_migrations() -> Vec<(&'static str, &'static str, Leaves)> {
         MIGRATIONS
@@ -637,7 +873,7 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.starts_with("NEWEST_PASS has no line")),
+                .any(|f| f.contains("NEWEST_PASS") && f.contains("has no line")),
             "{findings:?}"
         );
         assert!(
@@ -664,5 +900,132 @@ mod tests {
             "{}",
             findings[0]
         );
+    }
+
+    /// **A pass declared in a const array is locked like one declared alone.**
+    /// The four permanent-id passes are named in `PASSES` and finished by name in
+    /// one driving function; a lint that reads only `const ..._PASS` never saw
+    /// them.
+    #[test]
+    fn a_pass_named_in_a_const_array_needs_a_lock_line() {
+        let source = "const PASSES: [&str; 2] = [\n    \"first of two\",\n    \"second of two\",\n];\n\
+                      fn drive(pool: P) {\n    for name in PASSES.iter() { run(name); }\n}\n";
+        let findings = pass_findings(&[source], "");
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        assert!(
+            findings.iter().any(|f| f.contains("first of two")),
+            "{findings:?}"
+        );
+        assert!(
+            findings.iter().any(|f| f.contains("second of two")),
+            "{findings:?}"
+        );
+        let lock: String = passes_in(source)
+            .expect("readable")
+            .iter()
+            .map(|p| format!("{}\n", p.lock_line()))
+            .collect();
+        assert!(pass_findings(&[source], &lock).is_empty());
+    }
+
+    /// **A pass finished under a name nothing declares is a finding**, whatever
+    /// form the name takes: a literal, or a constant the lint does not read as a
+    /// pass.
+    #[test]
+    fn a_pass_finished_under_a_name_nothing_declares_is_a_finding() {
+        let literal = "fn drive(pool: P) {\n    settled(pool, \"ghost pass\", work()).await\n}\n";
+        let findings = pass_findings(&[literal], "");
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("ghost pass"), "{}", findings[0]);
+        assert!(findings[0].contains("no lock line"), "{}", findings[0]);
+
+        let constant = "const STRANGER: &str = \"stranger\";\n\
+                        fn drive(pool: P) {\n    finish_pass(pool, STRANGER).await\n}\n";
+        let findings = pass_findings(&[constant], "");
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("STRANGER"), "{}", findings[0]);
+    }
+
+    /// **The pass lint covers the whole adapters source**, not a list of files:
+    /// the passes it finds there match the lock.
+    #[test]
+    fn every_pass_in_the_adapters_source_matches_the_lock() {
+        let sources = adapter_sources();
+        let texts: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let findings = pass_findings(&texts, PASS_LOCK);
+        assert!(findings.is_empty(), "{}", findings.join("\n"));
+        for name in [
+            "mail mentions",
+            "session mentions",
+            "session bot column",
+            "message sender column",
+        ] {
+            assert!(PASS_LOCK.contains(name), "the lock holds the pass {name:?}");
+        }
+    }
+
+    /// **Spaces inside a string literal are part of the program.** Two SQL
+    /// strings that differ by a space are different statements.
+    #[test]
+    fn spacing_inside_a_string_in_a_pass_is_a_change() {
+        let one = "const SPACED_PASS: &str = \"spaced\";\nfn run() {\n    if done(SPACED_PASS) { q(\"a b\"); }\n}\n";
+        let two = "const SPACED_PASS: &str = \"spaced\";\nfn run() {\n    if done(SPACED_PASS) { q(\"a  b\"); }\n}\n";
+        let lock = format!("{}\n", passes_in(one).expect("readable")[0].lock_line());
+        let findings = pass_findings(&[two], &lock);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("SPACED_PASS"), "{}", findings[0]);
+    }
+
+    /// **A comment after code is not code**, and a `//` inside a string is.
+    #[test]
+    fn an_inline_comment_is_not_a_change_and_slashes_in_a_string_are() {
+        let old = "const NOTED_PASS: &str = \"noted\";\nfn run() {\n    if done(NOTED_PASS) { go(); } // old\n}\n";
+        let new = "const NOTED_PASS: &str = \"noted\";\nfn run() {\n    if done(NOTED_PASS) { go(); } // new words\n}\n";
+        let lock = format!("{}\n", passes_in(old).expect("readable")[0].lock_line());
+        assert!(pass_findings(&[new], &lock).is_empty());
+
+        let url_a = "const URLY_PASS: &str = \"urly\";\nfn run() {\n    if done(URLY_PASS) { get(\"http://a // b\"); }\n}\n";
+        let url_b = "const URLY_PASS: &str = \"urly\";\nfn run() {\n    if done(URLY_PASS) { get(\"http://a // c\"); }\n}\n";
+        let lock = format!("{}\n", passes_in(url_a).expect("readable")[0].lock_line());
+        assert_eq!(pass_findings(&[url_b], &lock).len(), 1);
+    }
+
+    /// **The failure says what the hash covers**, so nobody reads a pass as
+    /// covered whole.
+    #[test]
+    fn the_changed_code_finding_says_the_hash_covers_only_the_driving_function() {
+        let before =
+            "const SOME_PASS: &str = \"some\";\nfn run() {\n    if done(SOME_PASS) {}\n}\n";
+        let after = "const SOME_PASS: &str = \"some\";\nfn run() {\n    if done(SOME_PASS) { more(); }\n}\n";
+        let lock = format!("{}\n", passes_in(before).expect("readable")[0].lock_line());
+        let findings = pass_findings(&[after], &lock);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("helpers"), "{}", findings[0]);
+    }
+
+    /// **A backfill whose check asks the target table inside its condition is an
+    /// allowed shape.** It asks which rows are still owed a row in the table it
+    /// fills; a check that names some other table, with no mention of the target,
+    /// is not.
+    #[test]
+    fn a_backfill_whose_condition_names_its_target_table_is_allowed() {
+        let fill = "INSERT INTO ledger_copy (id) SELECT l.id FROM ledger l;";
+        let asks_target = Leaves::NoRows(
+            "ledger",
+            "NOT EXISTS (SELECT 1 FROM ledger_copy c WHERE c.id = ledger.id)",
+        );
+        assert!(migration_findings(&[("0095_fill", fill, asks_target)], &[]).is_empty());
+
+        let asks_elsewhere = Leaves::NoRows("ledger", "id IS NULL");
+        let findings = migration_findings(&[("0096_fill", fill, asks_elsewhere)], &[]);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].starts_with("0096_fill:"), "{}", findings[0]);
+    }
+
+    /// **0035 is no longer on the known list**: it follows the rule as the
+    /// backfill shape allows, and the list is for files that break it.
+    #[test]
+    fn the_known_list_holds_only_the_file_that_breaks_the_rule() {
+        assert_eq!(KNOWN_BEFORE_0080, &["0074_session_key_hash"]);
     }
 }

@@ -1,17 +1,27 @@
 # The one-time store passes, each with a hash of the code that drives it.
 #
-# A pass is marked finished in `store_pass` under its name. A store where the
-# old code already finished holds that name, so changed code under the same name
+# A pass is marked finished in `store_pass` under its name. A store where the old
+# code already finished holds that name, so changed code under the same name
 # never runs there. The test in lints.rs recomputes each hash from the source and
 # compares it with this file.
 #
 # When a pass's code changes, give the pass a new name. If running it again is
 # unnecessary, update the line here and say why in the commit.
 #
+# The hash covers the function that drives the pass, read with comments and
+# spacing outside literals left out. It does not cover the helpers that function
+# calls. A pass is declared as `const NAME_PASS: &str` or named in a `PASSES`
+# array; the four permanent-id passes share the one function that runs them, so
+# they share a hash.
+#
 # Format: CONSTANT | the name stores record | hash of the driving function
-FORWARD_NAMES_PASS | forwarding rows name the current handle | c885732eb81b9a74
-FORWARDED_LINKS_PASS | forwarded field links repaired | 3cd70a0421f0afc3
-FIELD_LOWERING_PASS | field value lowering | a9df5739a4d7f0d0
-REFERENCE_LOWERING_PASS | reference field lowering | b6aa9da881d3044c
-UNREADABLE_DUE_PASS | unreadable due day | b384876c0e046352
-OLD_ROLE_CLAIMS_PASS | old role claims | 7e7ba879caa06b46
+FORWARD_NAMES_PASS | forwarding rows name the current handle | 3a6fb899915758d2
+FORWARDED_LINKS_PASS | forwarded field links repaired | 2903362564b71193
+FIELD_LOWERING_PASS | field value lowering | 0d45fc60c7ae6d8e
+REFERENCE_LOWERING_PASS | reference field lowering | 78638679aadbd6be
+UNREADABLE_DUE_PASS | unreadable due day | f0566a7bca5c150a
+OLD_ROLE_CLAIMS_PASS | old role claims | 57767b348d06e1cc
+PASSES | mail mentions | 2171b5815c1f23b6
+PASSES | session mentions | 2171b5815c1f23b6
+PASSES | session bot column | 2171b5815c1f23b6
+PASSES | message sender column | 2171b5815c1f23b6
