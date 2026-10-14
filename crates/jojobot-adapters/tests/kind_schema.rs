@@ -156,7 +156,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
     kinds::reload(&store).await.expect("the set is re-read");
     let kiosk = EntityKind::from_token("kiosk").expect("the kind was just declared");
 
-    let old = EntityId::new(kiosk, "the-one-that-predates-it");
+    let old = EntityId::new(kiosk, "sigma");
     added(&store, &old, "the kiosk by the door").await;
     let record = captured(&store, &old, "somewhere", None).await;
 
@@ -195,7 +195,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
     // same kind, on a thing that DOES hold every key it names, must still
     // refuse a write that takes one away — otherwise a build with the floor
     // switched off entirely passes this case unchanged.
-    let fitting = EntityId::new(kiosk, "holds-them-all");
+    let fitting = EntityId::new(kiosk, "tau");
     added(&store, &fitting, "the complete one").await;
     let whole = store
         .capture(jojobot_domain::memory::testing::contract::state(NewFact {
@@ -254,7 +254,7 @@ async fn the_floor_protects_a_thing_that_fits_and_leaves_one_that_does_not() {
     let stall = EntityKind::from_token("pitch-stall").expect("the kind was just declared");
 
     // One that holds the key its kind names…
-    let fitting = EntityId::new(stall, "holds-its-key");
+    let fitting = EntityId::new(stall, "omega");
     added(&store, &fitting, "the one that fits").await;
     let held = captured(&store, &fitting, "the corner", None).await;
 
@@ -319,7 +319,7 @@ async fn identity_does_not_lapse_when_a_thing_lacks_its_kinds_keys() {
     kinds::reload(&store).await.expect("the set is re-read");
     let barrow = EntityKind::from_token("barrow").expect("the kind was just declared");
 
-    let bare = EntityId::new(barrow, "carries-none-of-them");
+    let bare = EntityId::new(barrow, "delta");
     added(&store, &bare, "the empty one").await;
 
     let listed = store
@@ -827,7 +827,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
     kinds::reload(&store).await.expect("the set is re-read");
     let stall = EntityKind::from_token("market-stall").expect("the kind was just declared");
 
-    let corner = EntityId::new(stall, "corner-pitch");
+    let corner = EntityId::new(stall, "epsilon");
     added(&store, &corner, "the pitch on the corner").await;
     let record = store
         .capture(jojobot_domain::memory::testing::contract::state(NewFact {
@@ -949,7 +949,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
     ] {
         added(&store, &who, who.slug()).await;
     }
-    let day = EntityId::new(outing, "the-day-out");
+    let day = EntityId::new(outing, "gamma");
     added(&store, &day, "the day out").await;
 
     // **The span is one value.** Two dates, one key, and the pair cannot come
@@ -1501,7 +1501,7 @@ async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
         .expect("a caller declares a kind that names a key");
     kinds::reload(&store).await.expect("the set is re-read");
     let barrowful = EntityKind::from_token("barrowful").expect("the kind was just declared");
-    let one = EntityId::new(barrowful, "the-heavy-one");
+    let one = EntityId::new(barrowful, "psi");
     added(&store, &one, "The Heavy One").await;
     let refused = store
         .capture(jojobot_domain::memory::testing::contract::state(NewFact {

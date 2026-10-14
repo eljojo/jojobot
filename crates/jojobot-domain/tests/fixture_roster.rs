@@ -31,10 +31,12 @@
 //! to `EntityId::new` or `EntityId::person` in parts never appears as
 //! `kind:slug`, so nothing here would compare it against the roster. That check
 //! reads the constructor rather than the string — the signature declares the
-//! argument is a slug — so it stays as crisp as this one. ⚠️ **It covers a call
-//! whose KIND is written out.** A kind a caller declares at runtime carries a
-//! token the domain's set does not hold, so a handle under one is unreadable to
-//! this scan whichever way it is written.
+//! argument is a slug — so it stays as crisp as this one. ⚠️ **It
+//! demands a whole handle only where the call writes its KIND out.** A kind a
+//! caller declares at runtime carries a token the domain's set does not hold, so
+//! a handle under one is unreadable to this scan whichever way it is written. The
+//! slug under such a kind is held to the two lists by
+//! [`no_slug_under_a_declared_kind_is_off_the_lists`].
 //!
 //! **A life specific written in ordinary words passes this gate, because
 //! nothing here is looking for it.** A comment, a doc string or a fixture that
@@ -2401,6 +2403,57 @@ fn the_gate_reads_a_bare_slug_and_a_whole_handle_apart() {
     );
 }
 
+/// **A slug handed to a constructor under a kind a caller declared is held to the
+/// two lists, whatever the kind is.** One file builds a handle under a declared
+/// kind with a slug on [`ROSTER`], one with a slug on [`ORDINARY`], and one with a
+/// slug on neither. **The last is refused naming its file, its line and its slug**,
+/// and the first two pass, so the scan is reading the slug rather than refusing
+/// every call it can see.
+///
+/// Two things it must not read, each asserted: a call whose kind is written out
+/// (the guard above holds those, and one slug is reported once), and a slug that
+/// is not a literal.
+#[test]
+fn the_gate_reads_the_slug_under_a_declared_kind_against_the_lists() {
+    let scratch = Scratch::new("declared-kind-slugs");
+    scratch.write(
+        "crates/declared.rs",
+        concat!(
+            "fn a(stall: EntityKind) {\n",
+            "    let on_the_roster = EntityId::new(stall, \"marge\");\n",
+            "    let on_ordinary = EntityId::new(stall, \"gravel-bike\");\n",
+            "    let on_neither = EntityId::new(stall, \"zzz-unknown\");\n",
+            "}\n",
+        ),
+    );
+    scratch.write(
+        "crates/not_this.rs",
+        concat!(
+            "fn b(stall: EntityKind, slug: &str) {\n",
+            "    let written_out = EntityId::new(EntityKind::PERSON, \"zzz-written-out\");\n",
+            "    let a_variable = EntityId::new(stall, slug);\n",
+            "    let a_format = EntityId::new(stall, format!(\"zzz-{slug}\"));\n",
+            "}\n",
+        ),
+    );
+
+    let refused = unlisted_slugs_under_a_declared_kind_in(&scanned_files(&scratch.0));
+
+    assert_eq!(
+        refused.len(),
+        1,
+        "only the slug on neither list is refused: {refused:?}"
+    );
+    let said = &refused[0];
+    for named in ["declared.rs", ":4", "zzz-unknown"] {
+        assert!(said.contains(named), "{named} is missing from {said}");
+    }
+    assert!(
+        !said.contains("marge") && !said.contains("gravel-bike"),
+        "{said}"
+    );
+}
+
 /// Every bare slug handed to a handle constructor, as `call in path`.
 ///
 /// **A slug carries its kind or it does not.** The argument is read as written:
@@ -2417,8 +2470,14 @@ fn bare_slugs_in(files: &[PathBuf]) -> Vec<String> {
             continue;
         }
         let text = fs::read_to_string(file).expect("readable source file");
-        for (call, argument) in constructor_arguments(&text) {
-            if argument.contains(':') {
+        for Argument {
+            call,
+            literal: argument,
+            kind_written,
+            ..
+        } in constructor_arguments(&text)
+        {
+            if !kind_written || argument.contains(':') {
                 continue;
             }
             bare.push(format!("{call}(\"{argument}\") in {}", file.display()));
@@ -2429,6 +2488,67 @@ fn bare_slugs_in(files: &[PathBuf]) -> Vec<String> {
     bare
 }
 
+/// **Every slug handed to `EntityId::new` under a kind the call does not write
+/// out**, which is not on [`ROSTER`] or [`ORDINARY`], as `path:line: "slug"`.
+fn unlisted_slugs_under_a_declared_kind_in(files: &[PathBuf]) -> Vec<String> {
+    let mut refused = Vec::new();
+    for file in files {
+        if file.file_name().is_some_and(|n| n == "fixture_roster.rs") {
+            continue;
+        }
+        let text = fs::read_to_string(file).expect("readable source file");
+        for argument in constructor_arguments(&text) {
+            if argument.kind_written || argument.call != "EntityId::new" {
+                continue;
+            }
+            if !is_listed_slug(&argument.literal) {
+                refused.push(format!(
+                    "{}:{}: \"{}\"",
+                    file.display(),
+                    argument.line,
+                    argument.literal
+                ));
+            }
+        }
+    }
+    refused.sort();
+    refused.dedup();
+    refused
+}
+
+/// Whether the slug of some handle on [`ROSTER`] or [`ORDINARY`] is this. The kind
+/// is not read: a kind a caller declared is not one the domain's set holds, so a
+/// slug under one can be compared with the lists by its slug alone.
+fn is_listed_slug(slug: &str) -> bool {
+    listed().any(|entry| {
+        entry
+            .split_once(':')
+            .is_some_and(|(_, listed)| listed == slug)
+    })
+}
+
+/// **A slug handed to a constructor under a kind the call does not write out is on
+/// one of the two lists.** The scan above reads a call whose kind is written out,
+/// and a kind a caller declared at runtime is invisible to it however a handle
+/// under it is written. This reads the slug in the position the constructor's
+/// signature gives it, as that scan does, and holds no list of names of its own
+/// (rules 45, 106).
+///
+/// ⚠️ **A slug that is not a literal is out of reach of any text scan**, a variable
+/// or a `format!` among them.
+#[test]
+fn no_slug_under_a_declared_kind_is_off_the_lists() {
+    let refused = unlisted_slugs_under_a_declared_kind_in(&scanned_files(&workspace_root()));
+    assert!(
+        refused.is_empty(),
+        "these hand a slug that is on neither ROSTER nor ORDINARY to a handle constructor \
+         under a kind the call does not write out. If the name is openly fictional, add a \
+         handle with it to ROSTER (a name from the shows) or ORDINARY (a handle that names \
+         nobody) in a conscious diff; otherwise use a slug that is already there:\n{}",
+        refused.join("\n")
+    );
+}
+
 /// **The two constructors that take a handle apart**, with the literal each
 /// one is handed.
 ///
@@ -2436,27 +2556,24 @@ fn bare_slugs_in(files: &[PathBuf]) -> Vec<String> {
 /// opens the call. `EntityId::new` takes the kind first and the slug second, so
 /// the scan walks past the kind and reads the literal after the comma.
 ///
-/// ⚠️ **A call whose KIND is a variable is skipped, and that is a stated limit
-/// rather than an oversight.** A kind can be declared by a caller at runtime,
-/// and a handle under one carries a token that is not in the domain's set — so
-/// the scan above would not read it as a handle even written whole, and
-/// demanding the whole handle there would buy nothing. What this covers is a
-/// handle whose kind the scan can name.
-fn constructor_arguments(text: &str) -> Vec<(&'static str, String)> {
+/// ⚠️ **A call whose KIND is a variable is returned with `kind_written` false.** A
+/// kind can be declared by a caller at runtime, and a handle under one carries a
+/// token that is not in the domain's set — so the scan for bare slugs does not
+/// demand the whole handle there, which would buy nothing. Its slug is checked
+/// against the two lists instead, by [`unlisted_slugs_under_a_declared_kind_in`].
+fn constructor_arguments(text: &str) -> Vec<Argument> {
     let mut found = Vec::new();
     for (call, takes_a_kind) in [("EntityId::person", false), ("EntityId::new", true)] {
         let needle = format!("{call}(");
         for (idx, _) in text.match_indices(&needle) {
             let mut rest = &text[idx + needle.len()..];
+            let mut kind_written = true;
             if takes_a_kind {
                 let kind = rest.trim_start();
                 // The kind written out, rather than one a caller declared and
                 // this call resolved: only the first is a token the scan knows.
-                if !kind.starts_with("EntityKind::")
-                    && !kind.starts_with("jojobot_domain::memory::EntityKind::")
-                {
-                    continue;
-                }
+                kind_written = kind.starts_with("EntityKind::")
+                    || kind.starts_with("jojobot_domain::memory::EntityKind::");
                 let Some(comma) = rest.find(',') else {
                     continue;
                 };
@@ -2469,10 +2586,26 @@ fn constructor_arguments(text: &str) -> Vec<(&'static str, String)> {
             let Some(end) = literal.find('"') else {
                 continue;
             };
-            found.push((call, literal[..end].to_string()));
+            found.push(Argument {
+                call,
+                literal: literal[..end].to_string(),
+                kind_written,
+                line: text[..idx].matches('\n').count() + 1,
+            });
         }
     }
     found
+}
+
+/// One literal handed to a handle constructor.
+struct Argument {
+    call: &'static str,
+    literal: String,
+    /// Whether the call writes its kind out (`EntityKind::`), so the handle is one
+    /// the roster scan can read, or hands a kind a caller declared.
+    kind_written: bool,
+    /// The line the call opens on, counted from 1.
+    line: usize,
 }
 
 /// **A commit message names the role, never the person behind it.**
