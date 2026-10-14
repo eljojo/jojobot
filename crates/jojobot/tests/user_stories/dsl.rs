@@ -1478,6 +1478,22 @@ impl Session {
         );
     }
 
+    /// **What a served argument tells its reader**, read out of the verb's own
+    /// schema: the description of one argument, whole.
+    pub async fn argument_description(&self, verb: &str, argument: &str) -> String {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let tool = listed
+            .tools
+            .iter()
+            .find(|t| t.name == verb)
+            .unwrap_or_else(|| panic!("the verb list must carry {verb:?}"));
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        schema["properties"][argument]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{verb} publishes no description for {argument:?}"))
+            .to_string()
+    }
+
     /// **The tripwire for a write jojobot refuses today.**
     ///
     /// Returns the refusal so a story can say what it named. Unlike every

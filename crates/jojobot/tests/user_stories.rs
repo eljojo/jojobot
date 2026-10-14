@@ -56,6 +56,8 @@ mod citing;
 /// A claim must fit one ordinary answer, or it is refused when written.
 #[path = "user_stories/claim_room.rs"]
 mod claim_room;
+#[path = "user_stories/clearing_a_key.rs"]
+mod clearing_a_key;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
 /// A run that reports its context was compacted is taught and shown afresh and
