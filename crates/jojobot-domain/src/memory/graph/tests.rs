@@ -217,6 +217,7 @@ fn fact(home: &str, id: &str, content: &str) -> Fact {
         stands_for: Vec::new(),
         inserted_at: None,
         stale_after: None,
+        receipt: None,
     }
 }
 

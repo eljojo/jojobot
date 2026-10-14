@@ -975,6 +975,7 @@ mod tests {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         };
 
         let doc = DocScan {
@@ -1064,6 +1065,7 @@ mod tests {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         };
         let doc = DocScan {
             doc_id: "doc-1".into(),

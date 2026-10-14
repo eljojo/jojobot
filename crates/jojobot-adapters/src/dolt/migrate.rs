@@ -742,6 +742,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0090_session_key_hash_index.sql"),
         leaves: Leaves::IndexIfMissing("session", "by_key_hash"),
     },
+    Migration {
+        version: "0091_fact_receipt",
+        sql: include_str!("../../migrations/0091_fact_receipt.sql"),
+        leaves: Leaves::Column("fact", "receipt"),
+    },
+    Migration {
+        version: "0092_fact_write_receipt",
+        sql: include_str!("../../migrations/0092_fact_write_receipt.sql"),
+        leaves: Leaves::Column("fact_write", "receipt"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

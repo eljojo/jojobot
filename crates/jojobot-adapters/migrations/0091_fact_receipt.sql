@@ -1,0 +1,22 @@
+-- The receipt a claim was settled on.
+--
+-- Settling an open claim carries a receipt: a check that ran, or the
+-- operator's confirmation with its day and place. The receipt is stored with
+-- the claim and never touches `provenance`, so a settled inference still reads
+-- back as an inference. This column holds it for every current read; the
+-- migration after this one keeps it on each write of the claim.
+--
+-- `receipt` is one text, a JSON object with exactly one key. `check` holds the
+-- text of what was checked. `confirmed` holds an object with the day, `on`, and
+-- the place, `at`. LONGTEXT because a check is a caller's own sentence, and a
+-- cell that stopped taking it would fail the claim's next write.
+--
+-- **Nullable and nothing backfilled.** NULL is a claim nobody settled with a
+-- receipt: every claim written before this column, and every claim that is
+-- open. A reader treats NULL as "no receipt", never as a receipt that said
+-- nothing.
+--
+-- One statement with one clause, because this store commits DDL as it goes and
+-- the runner asks whether a migration landed by asking about the column it adds.
+-- A second clause could be left unapplied behind a ledger saying it was in.
+ALTER TABLE fact ADD COLUMN receipt LONGTEXT NULL;

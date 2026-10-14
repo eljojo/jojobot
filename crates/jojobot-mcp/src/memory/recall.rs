@@ -1222,6 +1222,11 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
                 if let Some(day) = &write.stale_after {
                     fields.insert("stale_after".into(), day.to_string().into());
                 }
+                // **The receipt this write carried**, so the write that settled
+                // a claim says on what, after a reopening took it off the claim.
+                if let Some(receipt) = &write.receipt {
+                    fields.insert("receipt".into(), super::wire::settling_receipt_json(receipt));
+                }
                 // **What this write pointed at and stood for.** An empty list is
                 // a write that recorded none, and an absent key is a write kept
                 // before the store recorded them: the two read apart.

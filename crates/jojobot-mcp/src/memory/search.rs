@@ -3002,6 +3002,7 @@ mod tests {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         };
         let alpha = Entity {
             folded_names: Vec::new(),
@@ -3192,6 +3193,7 @@ mod tests {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         };
         let undated_too = Fact {
             id: FactId("f2".into()),

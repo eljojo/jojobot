@@ -1,0 +1,14 @@
+-- The receipt a claim carried at each write of it.
+--
+-- `fact.receipt` (0091) answers what a claim carries NOW: reopening a claim
+-- takes it off, so a receipt that settled a claim would leave no trace there.
+-- `fact_write` (0034) keeps the whole claim on every write, and this column
+-- keeps the receipt, so the write that settled a claim can be read back with
+-- the receipt it carried. The text is the one `fact.receipt` holds.
+--
+-- **Nullable and nothing backfilled.** A write an older build appended carries
+-- no receipt, and a write of an open claim carries none. Both read as "no
+-- receipt".
+--
+-- One statement with one clause, for the reason 0091 is.
+ALTER TABLE fact_write ADD COLUMN receipt LONGTEXT NULL;

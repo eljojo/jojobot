@@ -487,6 +487,45 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
 ```json
 {
   "inputSchema": {
+    "$defs": {
+      "ConfirmedArg": {
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "on": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "on",
+          "at"
+        ],
+        "type": "object"
+      },
+      "ReceiptArg": {
+        "properties": {
+          "check": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confirmed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConfirmedArg"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
       "borrow": {
@@ -572,6 +611,16 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
           "null"
         ]
       },
+      "receipt": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReceiptArg"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "recorded_at": {
         "default": null,
         "type": [
@@ -646,6 +695,44 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
   },
   "name": "capture"
 }
+```
+
+#### `capture` — argument `/inputSchema/$defs/ConfirmedArg`
+
+```text
+Where and when the operator confirmed a claim.
+```
+
+#### `capture` — argument `/inputSchema/$defs/ConfirmedArg.at`
+
+```text
+Where: a message id or the session.
+```
+
+#### `capture` — argument `/inputSchema/$defs/ConfirmedArg.on`
+
+```text
+The day the operator confirmed it, `YYYY-MM-DD`.
+```
+
+#### `capture` — argument `/inputSchema/$defs/ReceiptArg`
+
+```text
+What a claim was settled on.
+```
+
+#### `capture` — argument `/inputSchema/$defs/ReceiptArg.check`
+
+```text
+**A check that ran**: what was checked, written so another agent can run
+it again. It records that a check ran and never runs it.
+```
+
+#### `capture` — argument `/inputSchema/$defs/ReceiptArg.confirmed`
+
+```text
+**The operator confirmed it**: the day, and where (a message id or the
+session).
 ```
 
 #### `capture` — argument `/inputSchema.borrow`
@@ -857,6 +944,16 @@ world fact a bot only reported is not covered** and stays `inference`
 until you read it at its own source.
 ```
 
+#### `capture` — argument `/inputSchema.receipt`
+
+```text
+**Why this claim is settled**, when you declare `settled` on an
+inference. Exactly one of two shapes: `check`, what was checked, written
+so another agent can run it again; or `confirmed`, the operator said so,
+as `{on: YYYY-MM-DD, at: a message id or the session}`. Never required
+here: a capture is not a promotion. Provenance stays what you declared.
+```
+
 #### `capture` — argument `/inputSchema.recorded_at`
 
 ```text
@@ -984,7 +1081,7 @@ something first-hand and hedging it**: that is
 **Declared on honour, exactly as `provenance` is.** Nothing here asks
 you to confirm a standing. `update_fact` is where the gate sits, on two
 moves of an EXISTING claim: anything to `testimony`, and an open
-standing to `settled`.
+standing to `settled`, which takes a `receipt`.
 ```
 
 #### `capture` — argument `/inputSchema.subject`
@@ -5097,9 +5194,9 @@ A claim about a past EVENT that turned out never to have happened: retract it, w
 A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
-confirmed_by_user is required for exactly two moves of an existing claim: anything to testimony, and open to settled.
-Reopening is free; a fresh capture is taken at its word.
-It answers with a receipt, not the record (read back from the store first); recall the subject reads the record.
+Two moves are gated: anything to testimony needs confirmed_by_user; open to settled needs a `receipt` (`check` or `confirmed`), which leaves provenance alone.
+Reopening is free; a fresh capture is at its word.
+It answers with a receipt read back, not the record; recall reads the record.
 A call naming no change is refused; keep: true alone touches a claim unchanged.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
@@ -5113,6 +5210,45 @@ The receipt's `changed` lists what moved.
 ```json
 {
   "inputSchema": {
+    "$defs": {
+      "ConfirmedArg": {
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "on": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "on",
+          "at"
+        ],
+        "type": "object"
+      },
+      "ReceiptArg": {
+        "properties": {
+          "check": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confirmed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConfirmedArg"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
       "address": {
@@ -5273,6 +5409,16 @@ The receipt's `changed` lists what moved.
           "null"
         ]
       },
+      "receipt": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReceiptArg"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "recorded_at": {
         "default": null,
         "type": [
@@ -5357,6 +5503,44 @@ The receipt's `changed` lists what moved.
   },
   "name": "update_fact"
 }
+```
+
+#### `update_fact` — argument `/inputSchema/$defs/ConfirmedArg`
+
+```text
+Where and when the operator confirmed a claim.
+```
+
+#### `update_fact` — argument `/inputSchema/$defs/ConfirmedArg.at`
+
+```text
+Where: a message id or the session.
+```
+
+#### `update_fact` — argument `/inputSchema/$defs/ConfirmedArg.on`
+
+```text
+The day the operator confirmed it, `YYYY-MM-DD`.
+```
+
+#### `update_fact` — argument `/inputSchema/$defs/ReceiptArg`
+
+```text
+What a claim was settled on.
+```
+
+#### `update_fact` — argument `/inputSchema/$defs/ReceiptArg.check`
+
+```text
+**A check that ran**: what was checked, written so another agent can run
+it again. It records that a check ran and never runs it.
+```
+
+#### `update_fact` — argument `/inputSchema/$defs/ReceiptArg.confirmed`
+
+```text
+**The operator confirmed it**: the day, and where (a message id or the
+session).
 ```
 
 #### `update_fact` — argument `/inputSchema.address`
@@ -5473,10 +5657,11 @@ two different edits.
 #### `update_fact` — argument `/inputSchema.confirmed_by_user`
 
 ```text
-Required for two promotions of an EXISTING claim: anything → testimony
-(inference or observation alike), and an open standing → settled. Set it only when the operator has actually
+Required to promote an EXISTING claim to testimony (inference or
+observation alike). Set it only when the operator has actually
 confirmed the claim. Nothing else is gated on it — a fresh `capture`
-declares its provenance and its standing on honour.
+declares its provenance and its standing on honour. Settling an open
+claim takes a `receipt` instead, and this flag does not settle it.
 
 The flag is trusted, not checked: nothing verifies that the operator said
 yes.
@@ -5622,6 +5807,17 @@ A claim that already carries one does not have to name it again.
 A session that wrote a claim keeps its provenance when it sends none.
 ```
 
+#### `update_fact` — argument `/inputSchema.receipt`
+
+```text
+**Why this claim is settled**, required to move an open claim to
+`settled`. Exactly one of two shapes: `check`, what was checked, written
+so another agent can run it again; or `confirmed`, the operator said so,
+as `{on: YYYY-MM-DD, at: a message id or the session}`. It records that a
+check ran or that the operator confirmed; it never runs the check, and it
+never changes who backs the claim.
+```
+
 #### `update_fact` — argument `/inputSchema.recorded_at`
 
 ```text
@@ -5710,16 +5906,17 @@ no sweep, no reminder, nobody is coming to check it.
 
 ```text
 `settled` or `open`. **Moving a claim that is ALREADY open to settled
-requires `confirmed_by_user`** — the operator hedged that claim, and
-only the operator can withdraw the hedge. Reopening is free.
+requires a `receipt`**, and is refused without one. Reopening is free,
+and takes the receipt off the claim; the claim's history keeps it.
 
 That is the whole of the gate: it is on this promotion, not on
 declaring a standing. A fresh `capture` may state `settled` and is
 taken at its word, the way it is taken at its word about provenance.
 
-This is how a hedge is confirmed: the operator hedged the claim and no
-longer does, so set standing settled (with `confirmed_by_user`) and leave
-provenance alone; the claim was theirs from the start.
+Settling never changes provenance: a settled inference reads back as an
+inference, with its receipt. When the operator hedged a claim and no
+longer does, settle it with the `confirmed` receipt and leave provenance
+alone; the claim was theirs from the start.
 ```
 
 #### `update_fact` — argument `/inputSchema.stands_for`

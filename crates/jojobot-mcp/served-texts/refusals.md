@@ -669,6 +669,22 @@ answer: {
 }
 ```
 
+### Memory refusal `UnreceiptedSettling`
+
+```text
+reads: settling an open claim requires a receipt, one of two shapes: `check` (what was checked, written so another agent can run it again) or `confirmed` (the operator confirmed it: the day, and where, a message id or the session).
+A receipt records that a check ran or that the operator said so; it does not run the check, and settling never changes who backs the claim.
+confirmed_by_user no longer settles a claim: it only moves one to testimony
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: settling an open claim requires a receipt, one of two shapes: `check` (what was checked, written so another agent can run it again) or `confirmed` (the operator confirmed it: the day, and where, a message id or the session). A receipt records that a check ran or that the operator said so; it does not run the check, and settling never changes who backs the claim. confirmed_by_user no longer settles a claim: it only moves one to testimony. The claim is unchanged. Send capture again with `receipt` set to `{check: ...}` or `{confirmed: {on: YYYY-MM-DD, at: ...}}`.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `KindsNeverLoaded`
 
 ```text
@@ -703,20 +719,6 @@ answer: {
   "candidates": [],
   "fix_by": "person",
   "how_to_proceed": "Nothing was written: promoting inference → testimony requires the user's explicit confirmation (confirmed_by_user); jojobot infers freely but never blesses on its own. This is not a malformed call and re-sending it will not change the answer — what is missing is the operator's word. Ask, and re-call capture with confirmed_by_user only once they have actually said so.",
-  "status": "blocked",
-  "wrote": false
-}
-```
-
-### Memory refusal `UnconfirmedSettling`
-
-```text
-reads: settling an open claim requires the user's explicit confirmation (confirmed_by_user); the operator hedged this claim, and only the operator can withdraw the hedge
-answer: {
-  "attempted": "",
-  "candidates": [],
-  "fix_by": "person",
-  "how_to_proceed": "Nothing was written: settling an open claim requires the user's explicit confirmation (confirmed_by_user); the operator hedged this claim, and only the operator can withdraw the hedge. This is not a malformed call and re-sending it will not change the answer — what is missing is the operator's word. Ask, and re-call capture with confirmed_by_user only once they have actually said so.",
   "status": "blocked",
   "wrote": false
 }

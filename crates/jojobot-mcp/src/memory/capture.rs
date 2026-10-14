@@ -74,7 +74,7 @@ pub struct CaptureArgs {
     /// **Declared on honour, exactly as `provenance` is.** Nothing here asks
     /// you to confirm a standing. `update_fact` is where the gate sits, on two
     /// moves of an EXISTING claim: anything to `testimony`, and an open
-    /// standing to `settled`.
+    /// standing to `settled`, which takes a `receipt`.
     #[serde(default)]
     pub(crate) standing: Option<String>,
     /// **The day the claim was MADE**, `YYYY-MM-DD` — the day it was said,
@@ -260,6 +260,13 @@ pub struct CaptureArgs {
     ))]
     #[serde(default)]
     pub(crate) stale_after: Option<String>,
+    /// **Why this claim is settled**, when you declare `settled` on an
+    /// inference. Exactly one of two shapes: `check`, what was checked, written
+    /// so another agent can run it again; or `confirmed`, the operator said so,
+    /// as `{on: YYYY-MM-DD, at: a message id or the session}`. Never required
+    /// here: a capture is not a promotion. Provenance stays what you declared.
+    #[serde(default)]
+    pub(crate) receipt: Option<super::receipt::ReceiptArg>,
     /// **The address of a thought to drop, when this capture is what fills
     /// the last free slot in a thing's own room** — the capped set of live
     /// thoughts `thought_capacity` bounds; see `shape`, above, for what
@@ -1004,6 +1011,11 @@ impl Jojobot {
                 .collect(),
             derived_from,
             stale_after: parse_date(args.stale_after.as_deref())?,
+            receipt: args
+                .receipt
+                .as_ref()
+                .map(super::receipt::parse_receipt)
+                .transpose()?,
             drop,
             drop_because: args.drop_because,
             borrow: args.borrow.unwrap_or(false),

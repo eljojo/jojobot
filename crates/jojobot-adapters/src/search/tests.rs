@@ -899,6 +899,7 @@ fn fact(home: &str, id: &str, content: &str, on: jiff::civil::Date) -> Fact {
         stands_for: Vec::new(),
         inserted_at: None,
         stale_after: None,
+        receipt: None,
     }
 }
 
@@ -4778,6 +4779,7 @@ impl Memory for Scanned {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         };
         // A store that took a write says what the thing holds afterwards.
         doc.fields.extend(
@@ -5206,6 +5208,7 @@ impl Delegated {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         }
     }
 }
@@ -5443,6 +5446,7 @@ fn ferret() -> NewFact {
         refs: Vec::new(),
         derived_from: None,
         stale_after: None,
+        receipt: None,
         drop: None,
         drop_because: None,
         borrow: false,

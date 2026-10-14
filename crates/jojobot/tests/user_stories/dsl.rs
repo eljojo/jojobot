@@ -1803,8 +1803,8 @@ impl Session {
     }
 
     /// The operator confirms a claim that was standing as a hypothesis, and it
-    /// becomes settled. Promotion is gated on exactly this — `confirmed_by_user`
-    /// is refused unless it is true, so nothing can promote itself.
+    /// becomes settled. Promotion is gated on exactly this — a receipt naming the
+    /// day and the place of the confirmation, so nothing can promote itself.
     pub async fn confirm(&self, address: &str) {
         self.write(
             &format!("confirming {address}"),
@@ -1815,7 +1815,22 @@ impl Session {
             json!({
                 "address": address,
                 "standing": "settled",
-                "confirmed_by_user": true,
+                "receipt": {"confirmed": {"on": "2026-03-14", "at": "message m4k9xz"}},
+            }),
+        )
+        .await;
+    }
+
+    /// A session settles a claim on a check it ran. The check is written so
+    /// another agent can run it again, and provenance is left alone.
+    pub async fn settle_on_a_check(&self, address: &str, check: &str) {
+        self.write(
+            &format!("settling {address} on a check"),
+            "update_fact",
+            json!({
+                "address": address,
+                "standing": "settled",
+                "receipt": {"check": check},
             }),
         )
         .await;

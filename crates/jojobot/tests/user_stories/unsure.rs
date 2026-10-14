@@ -140,7 +140,8 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .claim(&hedged)
         .says("closes early on Sundays")
         .says("\"provenance\":\"testimony\"")
-        .says("\"standing\":\"settled\"");
+        .says("\"standing\":\"settled\"")
+        .says("\"receipt\":{\"confirmed\":{\"at\":\"message m4k9xz\",\"on\":\"2026-03-14\"}}");
     after
         .claim(&derived)
         .says("\"provenance\":\"inference\"")
@@ -231,6 +232,62 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .says("\"standing\":\"open\"");
 
     s.wrap("the hedge was confirmed, then reversed, and reads as neither")
+        .await;
+
+    story.finish().await;
+}
+
+/// "I worked out that Moe's has two back doors. Check it, and settle it if it
+/// holds." An inference is settled only with its receipt, and it stays an
+/// inference afterwards: the label is what makes the next reader careful.
+#[tokio::test]
+async fn an_inference_settles_only_with_a_receipt_and_stays_an_inference() {
+    let story = Story::begin("bot:otto").await;
+
+    // ── session 1 · a guess about a place ───────────────────────────────────
+    let s = story.session().await;
+    s.add("place:moes", "Moe's").await;
+    let guess = s.guess("place:moes", "has two back doors").await;
+    s.wrap("recorded the guess as a guess").await;
+
+    // ── session 2 · the check ran ───────────────────────────────────────────
+    let s = story.session().await;
+
+    // The operator's flag was the old key to this door. It is not a receipt, and
+    // the refusal names both shapes that are.
+    s.refused(
+        "update_fact",
+        json!({"address": guess, "standing": "settled", "confirmed_by_user": true}),
+    )
+    .await
+    .says("check")
+    .says("confirmed");
+    s.recall("place:moes")
+        .await
+        .claim(&guess)
+        .says("\"standing\":\"open\"")
+        .never_says("\"receipt\"");
+
+    // The same promotion with the check that ran lands, beside its refusal.
+    s.settle_on_a_check(&guess, "counted the doors on the floor plan")
+        .await;
+    s.recall("place:moes")
+        .await
+        .claim(&guess)
+        .says("\"provenance\":\"inference\"")
+        .says("\"standing\":\"settled\"")
+        .says("\"receipt\":{\"check\":\"counted the doors on the floor plan\"}");
+
+    // The write that settled it keeps the receipt in the claim's own history.
+    s.shape(
+        "every time the guess was written",
+        json!({"subject": "place:moes", "history_record": guess}),
+    )
+    .await
+    .number("/objects/0/record_history/count", 2)
+    .says("counted the doors");
+
+    s.wrap("settled the guess on a check and it still reads as a guess")
         .await;
 
     story.finish().await;

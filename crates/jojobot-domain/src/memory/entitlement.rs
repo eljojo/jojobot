@@ -239,6 +239,7 @@ mod tests {
             refs: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         }
     }
 

@@ -1231,6 +1231,7 @@ mod tests {
             stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
         };
         let hit = Hit::Fact {
             fact: Box::new(fact),

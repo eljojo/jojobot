@@ -58,6 +58,7 @@ pub(crate) fn prospective_fact(
         stands_for: Vec::new(),
         inserted_at,
         stale_after: new.stale_after,
+        receipt: None,
     }
 }
 

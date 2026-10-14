@@ -118,6 +118,12 @@ pub(crate) fn fact_json(
     if let Some(stale_after) = fact.stale_after {
         rendered["stale_after"] = serde_json::json!(stale_after.to_string());
     }
+    // **Only a claim that was settled on one carries it**, beside the
+    // provenance it never changes: a settled inference reads back as an
+    // inference with its receipt.
+    if let Some(receipt) = &fact.receipt {
+        rendered["receipt"] = settling_receipt_json(receipt);
+    }
     // **Only when the day has passed, and only when somebody set one.** A key
     // that said `false` on every ordinary claim would spend a reader's
     // attention saying nothing, and absence must not read as staleness.
@@ -496,6 +502,20 @@ fn title_cased(token: &str) -> &'static str {
     jojobot_domain::memory::kinds::intern(&titled)
 }
 
+/// **A receipt as the wire spells it**: one key naming the shape. Written out
+/// here rather than serialized from the domain type, so what a caller reads does
+/// not move with how a store keeps it.
+pub(crate) fn settling_receipt_json(
+    receipt: &jojobot_domain::memory::Receipt,
+) -> serde_json::Value {
+    match receipt {
+        jojobot_domain::memory::Receipt::Check(check) => serde_json::json!({ "check": check }),
+        jojobot_domain::memory::Receipt::Confirmed { on, at } => {
+            serde_json::json!({ "confirmed": { "on": on.to_string(), "at": at } })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,6 +822,7 @@ mod tests {
             happened_through: Some(jiff::civil::date(2026, 4, 20)),
             inserted_at: None,
             stale_after: None,
+            receipt: None,
             edge: None,
             fields: Default::default(),
             refs: Vec::new(),

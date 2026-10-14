@@ -2001,9 +2001,65 @@ async fn the_confirmation_gate_is_on_promotion_and_not_on_assertion() {
                 ..update_args(&address_of(&hedged))
             }))
             .await
-            .expect("an unconfirmed settling is an answer, not a protocol failure"),
+            .expect("an unreceipted settling is an answer, not a protocol failure"),
     );
     assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+    let advice = refused["how_to_proceed"].as_str().expect("advice");
+    assert!(
+        advice.contains("receipt"),
+        "the way forward names the argument that settles it: {advice}"
+    );
+
+    // And the flag that unlocks a promotion to testimony is not a receipt.
+    let flagged = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                standing: Some("settled".into()),
+                confirmed_by_user: Some(true),
+                ..update_args(&address_of(&hedged))
+            }))
+            .await
+            .expect("a flag without a receipt is an answer, not a protocol failure"),
+    );
+    assert_eq!(flagged["wrote"], false, "{flagged}");
+
+    // The same promotion with its receipt lands, and reads back with it.
+    let settled = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                standing: Some("settled".into()),
+                receipt: Some(crate::memory::receipt::ReceiptArg {
+                    check: None,
+                    confirmed: Some(crate::memory::receipt::ConfirmedArg {
+                        on: "2026-03-14".into(),
+                        at: "message m4k9xz".into(),
+                    }),
+                }),
+                ..update_args(&address_of(&hedged))
+            }))
+            .await
+            .expect("a settling with its receipt is allowed"),
+    );
+    assert_eq!(settled["standing"], "settled", "{settled}");
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("alpha")))
+            .await
+            .expect("recall ok"),
+    );
+    let claim = read["objects"][0]["facts"]
+        .as_array()
+        .expect("facts")
+        .iter()
+        .find(|f| f["address"] == address_of(&hedged))
+        .unwrap_or_else(|| panic!("the settled claim reads back: {read}"));
+    assert_eq!(
+        claim["receipt"],
+        serde_json::json!({"confirmed": {"on": "2026-03-14", "at": "message m4k9xz"}}),
+        "{claim}"
+    );
+    assert_eq!(claim["provenance"], "testimony", "{claim}");
 }
 
 /// **A malformed address and a missed one are different answers**, and

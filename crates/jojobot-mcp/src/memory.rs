@@ -30,6 +30,7 @@ pub mod put_document;
 pub mod read_document;
 pub mod ready;
 pub mod recall;
+pub mod receipt;
 pub mod rename_entity;
 pub mod retract;
 pub(crate) mod room;

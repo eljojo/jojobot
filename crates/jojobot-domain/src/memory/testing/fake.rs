@@ -749,6 +749,7 @@ impl InMemoryMemory {
             stands_for: Vec::new(),
             inserted_at: Some(self.clock().now()),
             stale_after: None,
+            receipt: None,
         };
         self.append_claim_write(&stored, None);
         self.append_writes(
@@ -1077,6 +1078,7 @@ impl InMemoryMemory {
             stands_for: Vec::new(),
             inserted_at: Some(self.clock().now()),
             stale_after: None,
+            receipt: None,
         };
         self.append_claim_write(&stray, None);
         self.push_stored(stray);
@@ -2581,6 +2583,11 @@ impl Memory for InMemoryMemory {
             validate_edge(edge)?;
         }
         validate_happened_span(fact.happened_at, fact.happened_through)?;
+        let receipt = fact
+            .receipt
+            .clone()
+            .map(crate::memory::Receipt::validated)
+            .transpose()?;
         validate_fields(&fact.fields)?;
         validate_provenance_source(fact.provenance, &fact.fields)?;
         let standing = standing_of(&fact);
@@ -2895,6 +2902,7 @@ impl Memory for InMemoryMemory {
             // real store's stamp never happens.
             inserted_at: Some(self.clock().now()),
             stale_after: fact.stale_after,
+            receipt,
         };
         // **A new record's keys land on the thing too** — the same guard the
         // edit path runs, because a thing's fields are every write on it
@@ -4030,6 +4038,7 @@ impl Memory for InMemoryMemory {
             stands_for: Vec::new(),
             inserted_at: Some(self.clock().now()),
             stale_after: None,
+            receipt: None,
         };
         self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
         self.push_stored(Fact {
@@ -4168,6 +4177,7 @@ impl Memory for InMemoryMemory {
             stands_for: Vec::new(),
             inserted_at: Some(self.clock().now()),
             stale_after: None,
+            receipt: None,
         };
         let retracted = Fact {
             status: FactStatus::Archived,

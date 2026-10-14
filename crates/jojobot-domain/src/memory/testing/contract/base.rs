@@ -1,8 +1,8 @@
 use super::support::{add, capture, edit, ensure, other_caller, state, state_patch};
 use super::*;
 use crate::memory::{
-    CLAIMS_ROLE, DEFAULT_THOUGHT_BODY_CAP, READ_FROM, READ_REF, RULE_SEATS, THOUGHT_BODY_CAP,
-    THOUGHT_CAPACITY, thought_room,
+    CLAIMS_ROLE, DEFAULT_THOUGHT_BODY_CAP, READ_FROM, READ_REF, RULE_SEATS, Receipt,
+    THOUGHT_BODY_CAP, THOUGHT_CAPACITY, thought_room,
 };
 
 /// Add an entity the guard is expected to **refuse first** — the way a
@@ -619,6 +619,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         refs: vec![subject.clone()],
         derived_from: Some(source.clone()),
         stale_after: None,
+        receipt: None,
         drop: None,
         drop_because: None,
         borrow: false,
@@ -4889,8 +4890,8 @@ pub async fn settling_a_hedge_needs_confirmation_and_keeps_its_provenance<M: Mem
         .await
         .expect_err("an unconfirmed settling must be refused");
     assert!(
-        matches!(err, MemoryError::UnconfirmedSettling),
-        "expected UnconfirmedSettling, got {err:?}"
+        matches!(err, MemoryError::UnreceiptedSettling),
+        "expected UnreceiptedSettling, got {err:?}"
     );
     assert_eq!(
         read_back(store, &subject, &hedged.id).await.standing,
@@ -4903,7 +4904,10 @@ pub async fn settling_a_hedge_needs_confirmation_and_keeps_its_provenance<M: Mem
         &hedged.address(),
         FactPatch {
             standing: Some(Standing::Settled),
-            confirmed_by_user: true,
+            receipt: Some(Receipt::Confirmed {
+                on: date(2026, 7, 2),
+                at: "message m4k9xz".into(),
+            }),
             ..Default::default()
         },
     )
@@ -4993,7 +4997,7 @@ pub async fn a_patch_moves_only_the_axis_it_names<M: Memory>(store: &M) {
         &guess.address(),
         FactPatch {
             standing: Some(Standing::Settled),
-            confirmed_by_user: true,
+            receipt: Some(Receipt::Check("read the closing time off the door".into())),
             ..Default::default()
         },
     )

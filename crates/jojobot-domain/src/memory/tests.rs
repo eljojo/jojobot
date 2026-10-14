@@ -756,6 +756,7 @@ fn thought(id: &str, pointer: &str) -> Fact {
         stands_for: Vec::new(),
         inserted_at: None,
         stale_after: None,
+        receipt: None,
     }
 }
 
@@ -1642,6 +1643,13 @@ async fn fake_satisfies_the_stands_for_contract() {
     contract::run_all_stands_for(&InMemoryMemory::booted()).await;
 }
 
+/// The receipt's own contract against the fake — the same suite the gated
+/// integration test runs against real Dolt.
+#[tokio::test]
+async fn fake_satisfies_the_receipt_contract() {
+    contract::run_all_receipt(&InMemoryMemory::booted()).await;
+}
+
 /// **The mention contract against the fake**, over the layer that resolves
 /// and renders and over the same store read bare.
 ///
@@ -2496,6 +2504,7 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
                 stands_for: Vec::new(),
                 inserted_at: None,
                 stale_after: None,
+                receipt: None,
             })
             .collect()
     };

@@ -598,8 +598,9 @@ the operator's word: the next session reads it with the authority of a statement
 the operator made.
 
 Marking who backs a claim is not the same as marking how settled it is. A claim
-you worked out starts `open`. An `observation` is `settled` as read. A claim the
-operator states and hedges is also `open`, and it is still theirs.
+you worked out starts `open`, and only a receipt settles it. An `observation`
+is `settled` as read. A claim the operator states and hedges is also `open`, and
+it is still theirs.
 
 ## What another bot told you
 
@@ -611,10 +612,14 @@ read it at its own source.
 
 ## Four rules
 
-1. Only the operator settles a claim you worked out. Write what you worked
-   out as `inference`. Do not change one to `testimony`. Only the operator
-   confirms. An `observation` needs no confirmation, because it is settled as
-   read and it names where it was read.
+1. A claim you worked out is settled only with a receipt. Write what you
+   worked out as `inference`. Do not change one to `testimony`. Only the
+   operator confirms. To settle an `inference`, send `receipt` with
+   `update_fact`: `check` is what you checked, written so another agent can run
+   it again, and `confirmed` is the operator's confirmation with the day and
+   where. A settled `inference` is still an `inference`. An `observation` needs
+   no confirmation, because it is settled as read and it names where it was
+   read.
 
 2. Do not put both kinds in one list. A confirmed item makes an unconfirmed
    item beside it look confirmed. Keep them in separate groups. Do not put

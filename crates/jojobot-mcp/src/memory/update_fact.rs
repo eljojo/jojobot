@@ -116,27 +116,37 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub(crate) provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled
-    /// requires `confirmed_by_user`** — the operator hedged that claim, and
-    /// only the operator can withdraw the hedge. Reopening is free.
+    /// requires a `receipt`**, and is refused without one. Reopening is free,
+    /// and takes the receipt off the claim; the claim's history keeps it.
     ///
     /// That is the whole of the gate: it is on this promotion, not on
     /// declaring a standing. A fresh `capture` may state `settled` and is
     /// taken at its word, the way it is taken at its word about provenance.
     ///
-    /// This is how a hedge is confirmed: the operator hedged the claim and no
-    /// longer does, so set standing settled (with `confirmed_by_user`) and leave
-    /// provenance alone; the claim was theirs from the start.
+    /// Settling never changes provenance: a settled inference reads back as an
+    /// inference, with its receipt. When the operator hedged a claim and no
+    /// longer does, settle it with the `confirmed` receipt and leave provenance
+    /// alone; the claim was theirs from the start.
     #[serde(default)]
     pub(crate) standing: Option<String>,
-    /// Required for two promotions of an EXISTING claim: anything → testimony
-    /// (inference or observation alike), and an open standing → settled. Set it only when the operator has actually
+    /// Required to promote an EXISTING claim to testimony (inference or
+    /// observation alike). Set it only when the operator has actually
     /// confirmed the claim. Nothing else is gated on it — a fresh `capture`
-    /// declares its provenance and its standing on honour.
+    /// declares its provenance and its standing on honour. Settling an open
+    /// claim takes a `receipt` instead, and this flag does not settle it.
     ///
     /// The flag is trusted, not checked: nothing verifies that the operator said
     /// yes.
     #[serde(default)]
     pub(crate) confirmed_by_user: Option<bool>,
+    /// **Why this claim is settled**, required to move an open claim to
+    /// `settled`. Exactly one of two shapes: `check`, what was checked, written
+    /// so another agent can run it again; or `confirmed`, the operator said so,
+    /// as `{on: YYYY-MM-DD, at: a message id or the session}`. It records that a
+    /// check ran or that the operator confirmed; it never runs the check, and it
+    /// never changes who backs the claim.
+    #[serde(default)]
+    pub(crate) receipt: Option<super::receipt::ReceiptArg>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
     /// `about` · `connection` (a link is there and how it relates was not
     /// recorded). Requires `object`; neither works alone. A read serves the
@@ -342,10 +352,11 @@ impl Jojobot {
                        so a claim you disagree with is safe to correct, except testimony \
                        from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY \
                        THE SESSION THAT WROTE IT, and any other is archived and replaced, \
-                       with derived_from naming the archived claim. confirmed_by_user is \
-                       required for exactly two moves of an existing claim: anything to \
-                       testimony, and open to settled. Reopening is free; a fresh capture \
-                       is taken at its word. It answers with a receipt, not the record (read back from the store first); recall the subject \
+                       with derived_from naming the archived claim. Two moves are \
+                       gated: anything to testimony needs confirmed_by_user; open \
+                       to settled needs a `receipt` (`check` or `confirmed`), which \
+                       leaves provenance alone. Reopening is free; a fresh capture is at \
+                       its word. It answers with a receipt read back, not the record; recall \
                        reads the record. A call naming no change is refused; keep: true alone touches a claim unchanged. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
                        details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with the addresses that exist. The receipt's \
@@ -542,6 +553,11 @@ impl Jojobot {
                     .transpose()?
             },
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
+            receipt: args
+                .receipt
+                .as_ref()
+                .map(super::receipt::parse_receipt)
+                .transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             fields,
             clear_fields: cleared.clone(),

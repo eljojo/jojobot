@@ -37,7 +37,7 @@ use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
 use jojobot_domain::memory::{
     Edge, EdgeShape, EntityPatch, FactAddress, FactPatch, MemoryError, NewEntity, NewFact,
-    Provenance,
+    Provenance, Receipt, Standing,
 };
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
@@ -2650,6 +2650,160 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_stands_for(&folded).await;
+
+    store.stop().await;
+}
+
+/// **The receipt's own contract, against the real store.**
+#[tokio::test]
+async fn dolt_satisfies_the_receipt_contract() {
+    let scratch = Scratch::new("receipt");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "receipt")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::run_all_receipt(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
+/// **The receipt's own contract, through the fold.** The fold image answers a
+/// claim's writes from what the store gave it, so a receipt the store kept and
+/// the image dropped would pass the case above and fail here.
+#[tokio::test]
+async fn dolt_satisfies_the_receipt_contract_when_folded() {
+    let scratch = Scratch::new("receipt-folded");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "receiptfolded")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    folded.rebuild().await.expect("the image fills");
+
+    memory::run_all_receipt(&folded).await;
+
+    store.stop().await;
+}
+
+/// **The receipt is kept in the spelling a reader of an older row would find,
+/// and a cell that is not that spelling is damage.** Nothing outside this process
+/// declares the two tags or the two keys of the confirmed shape, so the literal
+/// is pinned here. A NULL cell is a claim with no receipt, and the claim reads
+/// back without one; the same claim with a damaged cell names the receipt.
+#[tokio::test]
+async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
+    let scratch = Scratch::new("receipt-cell");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "receiptcell")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let subject = EntityId("thing:contract-receipt-kept".into());
+    memory
+        .add_entity(NewEntity::new(subject.clone(), "The Bike", "the roster"))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+    let claim = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "the bike has two locks",
+            date(2026, 10, 1),
+        ))
+        .await
+        .expect("the claim is written")
+        .written()
+        .expect("nothing blocks it");
+    let cell = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(&format!(
+                "SELECT receipt FROM {table} ORDER BY 1 DESC LIMIT 1"
+            ))
+            .fetch_one(&pool)
+            .await
+            .expect("the cell reads")
+        }
+    };
+    assert_eq!(cell("fact").await, None, "an open claim keeps no receipt");
+
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                standing: Some(Standing::Settled),
+                receipt: Some(Receipt::Check("counted the locks".into())),
+                ..FactPatch::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the claim settles");
+    assert_eq!(
+        cell("fact").await.as_deref(),
+        Some(r#"{"check":"counted the locks"}"#)
+    );
+    assert_eq!(
+        cell("fact_write").await.as_deref(),
+        Some(r#"{"check":"counted the locks"}"#),
+        "the write that settled the claim keeps the same text"
+    );
+
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                receipt: Some(Receipt::Confirmed {
+                    on: date(2026, 10, 12),
+                    at: "message q7w2ke".into(),
+                }),
+                ..FactPatch::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the receipt is replaced");
+    assert_eq!(
+        cell("fact").await.as_deref(),
+        Some(r#"{"confirmed":{"on":"2026-10-12","at":"message q7w2ke"}}"#)
+    );
+
+    // **Both tables hold the cell**: a current read projects the newest write,
+    // so the damage has to reach the write table to be read.
+    for table in ["fact", "fact_write"] {
+        sqlx::query(&format!("UPDATE {table} SET receipt = NULL"))
+            .execute(&pool)
+            .await
+            .expect("the cell is cleared");
+    }
+    let older = memory.recall(&subject).await.expect("the claim reads");
+    assert_eq!(older[0].receipt, None, "NULL is no receipt");
+
+    for table in ["fact", "fact_write"] {
+        sqlx::query(&format!("UPDATE {table} SET receipt = 'not a receipt'"))
+            .execute(&pool)
+            .await
+            .expect("the cell is damaged");
+    }
+    let damaged = memory.recall(&subject).await;
+    assert!(
+        matches!(&damaged, Err(MemoryError::Store(said)) if said.contains("receipt")),
+        "a cell the store did not write is named, not read as none: {damaged:?}"
+    );
 
     store.stop().await;
 }

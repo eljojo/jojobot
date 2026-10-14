@@ -35,6 +35,7 @@ pub mod mention;
 pub mod order;
 pub mod owned;
 pub mod readiness;
+pub mod receipt;
 pub mod search;
 pub mod stored;
 pub mod text_edit;
@@ -42,6 +43,8 @@ pub mod types;
 pub mod unmapped;
 pub mod view_inputs;
 pub mod words;
+
+pub use receipt::Receipt;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -809,10 +812,13 @@ pub struct FactPatch {
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
-    /// New standing. Settling an open claim additionally requires
-    /// [`FactPatch::confirmed_by_user`], and a claim nobody backs cannot be
-    /// settled at all — see [`check_standing`]. Reopening is free.
+    /// New standing. Settling an open claim requires a
+    /// [`FactPatch::receipt`] — see [`check_standing`]. Reopening is free.
     pub standing: Option<Standing>,
+    /// **The receipt a promotion to settled carries** — see [`Receipt`]. Settling
+    /// an open claim needs one ([`check_standing`]); a patch that names none
+    /// leaves the claim's receipt alone, and reopening the claim takes it off.
+    pub receipt: Option<Receipt>,
     /// A typed edge to attach. `None` leaves any existing edge alone; this
     /// milestone writes one edge per fact, so setting it replaces. To take one
     /// off, see [`FactPatch::clear_edge`].
@@ -887,8 +893,8 @@ pub struct FactPatch {
     /// list: leaving it alone and taking it off are two different edits.
     pub clear_stale_after: bool,
     /// The user's explicit confirmation, required to promote a claim to
-    /// testimony AND to settle one that is open. jojobot infers freely; it
-    /// never blesses on its own, on either axis.
+    /// testimony. Settling one that is open takes a [`FactPatch::receipt`]
+    /// instead. jojobot infers freely; it never blesses on its own.
     pub confirmed_by_user: bool,
     /// **The moment before which a thought already in the room this edit
     /// joins counts as aged out** — [`NewFact::aged_before`], for an edit.
@@ -1116,9 +1122,9 @@ impl Provenance {
 /// a score, or a degree. Whether a claim is still open to being wrong is a fact
 /// about it rather than a measurement of it.
 ///
-/// All four pairings are legal. Settling is gated on the operator's
-/// confirmation ([`check_standing`]) and nothing else, so a derived claim
-/// somebody has since confirmed says exactly that.
+/// All four pairings are legal. Settling is gated on a receipt
+/// ([`check_standing`]) and nothing else, so a derived claim somebody has since
+/// checked or confirmed says exactly that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Standing {
@@ -1171,24 +1177,26 @@ impl Standing {
 
 /// The standing gate, and the twin of [`check_promotion`].
 ///
-/// **Settling a claim is the user's move**: closing an open claim needs the
-/// same explicit confirmation promoting one does, because withdrawing a hedge
-/// is a statement only the operator can make.
+/// **Settling an open claim carries a receipt** ([`Receipt`]): a check that
+/// ran, or the operator's confirmation with its day and place. The operator's
+/// flag alone is no longer the key, because it recorded nothing about why.
+/// Settling is the only move gated; a declared standing at capture is not a
+/// promotion.
 ///
 /// It says nothing about provenance. The two fields answer different questions
-/// — who backs a claim, and how sure anyone is — so a derived claim somebody
-/// has since confirmed is an ordinary row rather than a refused one.
+/// — who backs a claim, and how sure anyone is — so a settled inference is an
+/// inference with its receipt, and it reads back as one.
 ///
 /// Reopening is free, exactly as demotion to inference is free. Nothing is
 /// risked by a claim admitting it might be wrong.
 pub fn check_standing(
     current: Standing,
     requested: Standing,
-    confirmed_by_user: bool,
+    receipt: Option<&Receipt>,
 ) -> Result<(), MemoryError> {
     let settling = current == Standing::Open && requested == Standing::Settled;
-    if settling && !confirmed_by_user {
-        return Err(MemoryError::UnconfirmedSettling);
+    if settling && receipt.is_none() {
+        return Err(MemoryError::UnreceiptedSettling);
     }
     Ok(())
 }
@@ -2008,7 +2016,7 @@ pub fn validate_happened_span(
 /// that sets or clears nothing but describing keys is not a rewrite, and neither
 /// is one that moves the due moment jojobot works out, or one that changes only
 /// the order key of a document's section, which is layout, or a move of the status, which is the route itself, or of the standing, whose
-/// settling asks for the operator's confirmation on its own.
+/// settling asks for a receipt on its own.
 ///
 /// A rewrite of the words by the session that wrote the claim, which sends no
 /// provenance, keeps the provenance the claim has. Anyone else still has to say
@@ -2112,8 +2120,11 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(requested) = patch.provenance {
         check_promotion(fact.provenance, requested, patch.confirmed_by_user)?;
     }
+    // **A receipt is trimmed and held to having something in it before the
+    // gate reads it**, so a blank one cannot settle a claim.
+    let receipt = patch.receipt.clone().map(Receipt::validated).transpose()?;
     if let Some(requested) = patch.standing {
-        check_standing(fact.standing, requested, patch.confirmed_by_user)?;
+        check_standing(fact.standing, requested, receipt.as_ref())?;
     }
     // **A replaced claim restates how it is known, every time.** Checked
     // before the content itself: a patch that fails both this and shape
@@ -2185,7 +2196,16 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // the coupling `standing` exists to remove — and it would move it without
     // passing the gate that guards it. A caller meaning both says both.
     if let Some(standing) = patch.standing {
+        // **A claim that is open again is not promoted**, so it carries no
+        // receipt; the writes keep the one that settled it. Cleared before
+        // set, so a patch naming both meant the receipt it named.
+        if standing == Standing::Open {
+            fact.receipt = None;
+        }
         fact.standing = standing;
+    }
+    if let Some(receipt) = receipt {
+        fact.receipt = Some(receipt);
     }
     // **Cleared before set**, the order every pair here uses: a caller naming
     // both meant the edge it named.
@@ -4415,6 +4435,10 @@ pub struct NewFact {
     /// **When somebody should look at this again** — see [`Fact::stale_after`].
     /// Optional, and most claims never carry one.
     pub stale_after: Option<Date>,
+    /// **The receipt this claim carries**, when it was written with one — see
+    /// [`Receipt`]. A capture is never refused for lacking one: the gate is on
+    /// promotion, never on declaring a standing.
+    pub receipt: Option<Receipt>,
     /// **The thought to drop, when this write is what fills the last free
     /// slot in a full room.** Named and archived in the same act as this
     /// fact is written — never as a separate call, because a drop with
@@ -4479,6 +4503,7 @@ impl NewFact {
             refs: Vec::new(),
             derived_from: None,
             stale_after: None,
+            receipt: None,
             drop: None,
             drop_because: None,
             borrow: false,
@@ -4578,6 +4603,12 @@ pub struct Fact {
     /// **Nothing fires on it.** No sweep, no job, no reminder: a claim past its
     /// day says so when somebody reads it, and that is the whole behaviour.
     pub stale_after: Option<Date>,
+    /// **The receipt a promotion to settled carried**, if this claim has one.
+    /// It never changes [`Fact::provenance`]: a settled inference reads back as
+    /// an inference with its receipt. Reopening the claim takes it off; the
+    /// writes keep it.
+    #[serde(default)]
+    pub receipt: Option<Receipt>,
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,
@@ -5349,6 +5380,8 @@ pub struct ClaimWrite {
     pub derived_from: Option<FactAddress>,
     /// When somebody was to look at it again, as this write had it.
     pub stale_after: Option<Date>,
+    /// **The receipt the claim carried at this write**, if it carried one.
+    pub receipt: Option<Receipt>,
     /// **The entities the record pointed at, as this write had them** — see
     /// [`Fact::refs`]. `None` for a write kept before the store kept them,
     /// which says nothing was recorded, where `Some` of an empty list says the
@@ -5383,6 +5416,7 @@ impl ClaimWrite {
             edge: fact.edge.clone(),
             derived_from: fact.derived_from.clone(),
             stale_after: fact.stale_after,
+            receipt: fact.receipt.clone(),
             refs: Some(fact.refs.clone()),
             stands_for: Some(fact.stands_for.clone()),
         }
@@ -6259,13 +6293,19 @@ pub enum MemoryError {
         /// How this call names it.
         named: &'static str,
     },
-    /// An open claim was asked to be settled without the user saying so.
+    /// **An open claim was asked to be settled with no receipt.** Settling
+    /// moves standing and never provenance, and what makes the move honest is
+    /// the record of why: a check that ran, or the operator's confirmation.
+    /// `confirmed_by_user` alone is no longer that record.
     #[error(
-        "settling an open claim requires the user's explicit confirmation \
-         (confirmed_by_user); the operator hedged this claim, and only the operator can \
-         withdraw the hedge"
+        "settling an open claim requires a receipt, one of two shapes: `check` (what was \
+         checked, written so another agent can run it again) or `confirmed` (the operator \
+         confirmed it: the day, and where, a message id or the session). A receipt records \
+         that a check ran or that the operator said so; it does not run the check, and \
+         settling never changes who backs the claim. confirmed_by_user no longer settles a \
+         claim: it only moves one to testimony"
     )]
-    UnconfirmedSettling,
+    UnreceiptedSettling,
     /// The underlying store failed — it, or the layer that carries and parses
     /// its answers. **A clean failure**: a write either commits or does not,
     /// so the record is as it was and retrying is a reasonable next move.

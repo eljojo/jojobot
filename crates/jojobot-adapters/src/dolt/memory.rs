@@ -38,9 +38,9 @@ use jojobot_domain::memory::unmapped::UnmappedClaim;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
     FactAddress, FactId, FactPatch, FactStatus, FieldAges, FieldWrite, FormerHandle, Guarded,
-    KeyWrite, Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing,
-    WriteSummary, apply_entity_patch, apply_fact_patch, folded_ages, folded_fields, guard,
-    guard_fit,
+    KeyWrite, Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Receipt, Retraction,
+    Standing, WriteSummary, apply_entity_patch, apply_fact_patch, folded_ages, folded_fields,
+    guard, guard_fit,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
@@ -2408,6 +2408,7 @@ impl DoltMemory {
         fact: NewFact,
     ) -> Result<Guarded<Fact>, MemoryError> {
         let standing = standing_of(&fact);
+        let receipt = fact.receipt.clone().map(Receipt::validated).transpose()?;
 
         // **What EXISTS**, which is the rows plus what the build supplies —
         // the same set the creation screen reads (rule 234).
@@ -2684,6 +2685,7 @@ impl DoltMemory {
             // could claim jojobot knew something before it did.
             inserted_at: Some(self.clock.now()),
             stale_after: fact.stale_after,
+            receipt,
         };
         // **A new record's keys land on the thing too**, so the same guard the
         // edit path runs applies here: a write may not drop a thing below a
@@ -3571,8 +3573,8 @@ impl DoltMemory {
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
                                 recorded_at, happened_at, happened_through, edge_shape,
                                 edge_object, derived_from, derived_from_id, inserted_at,
-                                stale_after)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                stale_after, receipt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -3594,6 +3596,7 @@ impl DoltMemory {
         // jojobot learned the claim when somebody corrected its wording.
         .bind(fact.inserted_at.map(|at| at.to_string()))
         .bind(fact.stale_after.map(|day| day.to_string()))
+        .bind(fact.receipt.as_ref().map(kept_receipt))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -3686,8 +3689,8 @@ impl DoltMemory {
                                      happened_through, edge_shape,
                                      edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
-                                     written_at, session, refs, stands_for)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     written_at, session, refs, stands_for, receipt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -3716,6 +3719,7 @@ impl DoltMemory {
         // because the tables behind a current read keep the newest set only.
         .bind(kept_refs(&fact.refs))
         .bind(kept_stands_for(&fact.stands_for))
+        .bind(fact.receipt.as_ref().map(kept_receipt))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -3985,7 +3989,7 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, \
                             recorded_at, happened_at, happened_through, edge_shape, edge_object, \
                             derived_from, derived_from_id, \
-                            inserted_at, stale_after";
+                            inserted_at, stale_after, receipt";
 
 /// The same columns off the write table, with its key aliased to what
 /// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
@@ -3995,7 +3999,7 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
                                   w.happened_through, \
                                   w.edge_shape, \
                                   w.edge_object, w.derived_from, w.derived_from_id, \
-                                  w.inserted_at, w.stale_after";
+                                  w.inserted_at, w.stale_after, w.receipt";
 
 /// **A key a merge folded into a survivor**, and the id each of its stored
 /// claims is served under on the survivor.
@@ -4345,6 +4349,12 @@ fn kept_stands_for(marked: &[FactAddress]) -> String {
     .expect("a list of string pairs is JSON")
 }
 
+/// **The receipt of a claim, as one write keeps it**: the JSON the domain type
+/// serializes to, one key naming the shape.
+fn kept_receipt(receipt: &Receipt) -> String {
+    serde_json::to_string(receipt).expect("a receipt is strings and a day")
+}
+
 fn fact_from(
     row: &sqlx::mysql::MySqlRow,
     entity: EntityId,
@@ -4441,6 +4451,17 @@ fn fact_from(
             .try_get::<Option<String>, _>("stale_after")
             .map_err(store)?
             .and_then(|day| day.parse().ok()),
+        // **NULL is a claim nobody settled with a receipt**, and a cell that is
+        // not what `kept_receipt` wrote is damage, named rather than read as
+        // none: a settled claim whose receipt vanished would read as one
+        // settled on nothing.
+        receipt: match row.try_get::<Option<String>, _>("receipt").map_err(store)? {
+            None => None,
+            Some(cell) => Some(
+                serde_json::from_str(&cell)
+                    .map_err(|_| unreadable("its receipt cannot be read"))?,
+            ),
+        },
     })
 }
 
@@ -6395,6 +6416,7 @@ impl Memory for DoltMemory {
             stands_for: Vec::new(),
             inserted_at: Some(self.clock.now()),
             stale_after: None,
+            receipt: None,
         };
         Self::write_fact(&mut tx, &record, &self.clock, session).await?;
         Self::append_writes(
@@ -6551,6 +6573,7 @@ impl Memory for DoltMemory {
             // A retraction is a record in its own right, taken in now.
             inserted_at: Some(self.clock.now()),
             stale_after: None,
+            receipt: None,
         };
         let retracted = Fact {
             status: FactStatus::Archived,

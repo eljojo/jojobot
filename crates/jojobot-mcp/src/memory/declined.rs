@@ -414,6 +414,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnsourcedObservation
         | MemoryError::UnstatedProvenance
         | MemoryError::KeyInOtherBag { .. }
+        | MemoryError::UnreceiptedSettling
         | MemoryError::TestimonyRewritten { .. } => Some(FixBy::Change),
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
@@ -422,8 +423,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         // and a claim only the operator can bless.
         MemoryError::KindsNeverLoaded { .. }
         | MemoryError::SuppliedRecordCollidesWithStoredRow { .. }
-        | MemoryError::UnconfirmedPromotion
-        | MemoryError::UnconfirmedSettling => Some(FixBy::Person),
+        | MemoryError::UnconfirmedPromotion => Some(FixBy::Person),
         // Stored damage, which sending the call again or changing it cannot help:
         // only a person repairs it.
         MemoryError::StoredDamage { .. } => Some(FixBy::Person),
@@ -916,12 +916,23 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 jojobot_domain::memory::kinds::WORK_STATUSES.join(", "),
             ),
         )),
-        // **A different refusal, so a different way forward.** These two are
-        // not malformed calls: the arguments are well-formed and jojobot is
-        // declining to bless a claim the operator has not blessed. Telling a
-        // caller to fix the call would invite them to set the confirmation
-        // flag themselves, which is the one thing the gate exists to stop.
-        MemoryError::UnconfirmedPromotion | MemoryError::UnconfirmedSettling => Ok(blocked_body(
+        // **Settling is a call that must change, not a decision for a person**:
+        // a check that ran is the caller's to record, and the operator's word is
+        // recorded the same way, as the `confirmed` shape.
+        MemoryError::UnreceiptedSettling => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. The claim is unchanged. Send {verb} again with \
+                 `receipt` set to `{{check: ...}}` or `{{confirmed: {{on: YYYY-MM-DD, at: ...}}}}`."
+            ),
+        )),
+        // **A different refusal, so a different way forward.** This is not a
+        // malformed call: the arguments are well-formed and jojobot is declining
+        // to bless a claim the operator has not blessed. Telling a caller to fix
+        // the call would invite them to set the confirmation flag themselves,
+        // which is the one thing the gate exists to stop.
+        MemoryError::UnconfirmedPromotion => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
             format!(
@@ -1629,7 +1640,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::HandleMoved { .. }
         | MemoryError::SuppliedHandle { .. }
         | MemoryError::UnconfirmedPromotion
-        | MemoryError::UnconfirmedSettling
+        | MemoryError::UnreceiptedSettling
         | MemoryError::RoomFull { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
@@ -2405,6 +2416,11 @@ pub(crate) mod tests {
                 },
                 Some("change"),
             ),
+            (
+                "UnreceiptedSettling",
+                MemoryError::UnreceiptedSettling,
+                Some("change"),
+            ),
             // Damage no caller can repair, a kind set nothing re-reads, a build
             // that collided with a stored row, and claims only the operator can
             // bless.
@@ -2423,11 +2439,6 @@ pub(crate) mod tests {
             (
                 "UnconfirmedPromotion",
                 MemoryError::UnconfirmedPromotion,
-                Some("person"),
-            ),
-            (
-                "UnconfirmedSettling",
-                MemoryError::UnconfirmedSettling,
                 Some("person"),
             ),
             // A held role frees when its lease ends; a collision clears on the
