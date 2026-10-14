@@ -18,6 +18,7 @@ The kinds are the `kind` argument's, which is the one place they are listed; cre
 Send `sets` to set keys on the new thing in the same call: they are written as its first claim, under every guard a capture faces, and a key that is refused refuses the whole call and creates nothing.
 The claim is inference: a field that needs the operator's own word (testimony), or one you read in a system of record (observation), is written with capture.
 Answers with the entity as stored and says what it changed on the way in; with sets it also returns first_claim, the claim written with it.
+The receipt's `changed` lists what this call changed, or says nothing.
 If its handle or any of its names resembles something jojobot already knows, NOTHING is written: the result says status: blocked with candidates and how_to_proceed.
 Use the candidate you meant, or re-call with the override_token that refusal carries if this genuinely is a different thing sharing a name — a token lifts the one refusal that minted it and no other.
 An exact handle collision can never be forced — a handle has exactly one owner.
@@ -305,6 +306,7 @@ Pass your `sid` on every call — it is the address, and it survives the fresh c
 This verb never STARTS a session: there is nothing to amend in one that does not exist yet.
 IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and the opening line.
 You wrote the text; start_here returns the chronology when you resume.
+The receipt's `changed` lists what this call changed, or says nothing.
 ```
 
 #### `amend_journal` — structure
@@ -367,6 +369,7 @@ AN ARCHIVED LOOP DROPS OUT OF overdue READS, and the read counts it in archived_
 Archiving something already archived comes back blocked, saying the entity is already in the state you asked for — that answer means jojobot holds what you wanted, not that nothing happened.
 Restoring something that is not archived says the same.
 A handle that names nothing comes back blocked with the nearest handles.
+The receipt's `changed` lists what this call changed, or says nothing.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -474,6 +477,7 @@ A claim drawn as a connection edge with your OWN bot handle as subject is a `tho
 It answers with a receipt, not the record: the address you edit it through, what was recorded, and how many keys landed; the write is read back from the store before it is called a success.
 recall the subject to read it back.
 A claim too big to be read back whole is refused with nothing written.
+The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -1009,6 +1013,7 @@ KEYS ARE SCOPED BY THE TYPE that names them and are registered nowhere: two type
 SOME TYPES SHIP WITH THE SOFTWARE and those are CLOSED: declaring over one comes back blocked, because a caller cannot extend, shrink or replace a type the software owns — declare a name of your own instead.
 Every type you declare is yours.
 The answer names every type that exists, by name only, so you can see what is there without asking a second time.
+The receipt's `changed` lists what this call changed in the type, or says nothing.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -1269,6 +1274,7 @@ The two ends part company on what comes NEXT — a run that stopped without bein
 IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and the opening line.
 You wrote the entry; start_here returns the whole chronology when you resume.
 IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, exactly as any other write does — the lease is not journal's alone to keep fresh.
+The receipt's `changed` lists what this call changed, or says nothing.
 ```
 
 #### `journal` — structure
@@ -1653,6 +1659,7 @@ A message can be processed straight from `new`.
 The answer confirms the move (state, notes, id) without echoing the body, which read_message returns unchanged for a processed message.
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
+The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -1773,6 +1780,7 @@ It does not ask whether they really are: that is your judgement, so putting two 
 If you are unsure, read both with recall first.
 THE CLAIMS THAT MOVE GET NEW ADDRESSES, because an address is local to the thing that holds it: any address you were holding for the duplicate's claims is stale afterwards, and the answer says how many moved.
 A refusal is status: blocked with nothing moved: one handle named as both sides; a handle already merged away (the answer names the handle to use instead); a role object (kind role), on either side, merged by anyone but the bot it belongs to or a bot heading the chart (the answer tells you who may); a merge into your own bot of a duplicate carrying thought_capacity or thought_body_cap; a thought room that would go over capacity, or a thought over its body cap; or a result that could not be read back whole in one answer.
+The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -1945,6 +1953,7 @@ Your body is not echoed back; list_sent with include_bodies returns it and takes
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
 Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id (read_mailbox with new_only: false returns them all).
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
+The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -2124,6 +2133,7 @@ The document must already exist (add_entity, kind document).
 Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
 Every section is checked before any is written; a write that stops midway answers with the addresses that landed and where the rest begins.
 Answers with a receipt, not the text.
+The receipt's `changed` lists what this call changed, or says nothing.
 A refusal before any section lands is an answer with status: blocked and nothing written; one after some landed also carries what landed and where the rest begins.
 ```
 
@@ -3818,6 +3828,7 @@ The display name stays as it was: update_entity's name changes it.
 `to` is always `kind:slug`, fully qualified: a bare slug is refused rather than guessed at.
 The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
+The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 ```
 
@@ -3959,6 +3970,7 @@ A refusal is an answer with status: blocked and nothing written.
 Retracting a retraction is refused: it is the last word on what it takes back.
 Retracting a record that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
 An address that names no record is refused with the addresses that do exist.
+The receipt's `changed` lists what this call changed, or says nothing.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -4446,6 +4458,7 @@ IT REPLACES RATHER THAN ADDS, so send the whole charter rather than an addition.
 SEND WHAT YOU ARE WRITING, never a charter you just read back: some of what a read hands you may be text the software already supplies, and a charter repeating it comes back status: blocked with nothing written and says so.
 IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and the opening line, so you can tell which charter this was.
 You wrote the prose; start_here with this bot returns it in full.
+The receipt's `changed` lists what this call changed, or says nothing.
 A bot that does not exist comes back status: blocked with the nearest handles — add_entity first; nothing is created here.
 Rules are not written here either: a rule is a fact about the bot, so capture it.
 Neither is a short self-description for the colleagues view: capture sets.one_liner on this bot instead — that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
@@ -4903,6 +4916,7 @@ Passing `aliases` REPLACES the whole set ([] clears it); source and crm edits ar
 A rule's `starred` mark stays on its claim, so it is not set here: update_fact on the rule's address with fields {starred: "true"} or {starred: "false"} stars or unstars it.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
+The receipt's `changed` lists what this call changed, or says nothing.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -5085,7 +5099,7 @@ expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
 Naming an own key in `sets` moves it.
 An unknown address is blocked with the addresses that exist.
-Each argument's own description holds its rules.
+The receipt's `changed` lists what moved.
 ```
 
 #### `update_fact` — structure
@@ -5745,8 +5759,7 @@ claim. The receipt of an archive names the keys the thing lost, under
 End your session and tell its story.
 Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it, nothing reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked.
 A retried wrap finishes what the first attempt started instead of repeating it.
-Write the story for somebody with none of your context: what this run was for, what actually happened, what is left.
-The next boot of this identity is handed it as the handover, so it is not private.
+The next boot of this identity is handed the story as the handover, so it is not private.
 A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
 Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
 A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
@@ -5755,6 +5768,7 @@ THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume a
 A second wrap's answer carries no `wrap_code`.
 THE ANSWER IS A RECEIPT: the story is not read back, and the chronology it hands back is the newest of the record (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
 The closing entry carries the focus as it stood as `closing_focus`.
+The receipt's `changed` lists what this call changed, or says nothing.
 Pass your `sid` on every call.
 ```
 
