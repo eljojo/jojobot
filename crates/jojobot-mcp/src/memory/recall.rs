@@ -1753,6 +1753,28 @@ fn object_json(
                 .map(|fact| fact_json(fact, as_of, object.fact_revisions.get(&fact.id).copied()))
                 .collect(),
         );
+        // **A claim the thing cannot serve is named, never dropped without a
+        // word**: a merge left it under the folded thing's key and its event does
+        // not list it. Each comes with the reason and the address that reads it.
+        if !object.unmapped.is_empty() {
+            fields.insert(
+                "claims_left_out".into(),
+                serde_json::json!({
+                    "count": object.unmapped.len(),
+                    "claims": object
+                        .unmapped
+                        .iter()
+                        .map(|claim| {
+                            serde_json::json!({
+                                "address": claim.address.to_string(),
+                                "reason": claim.reason(),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    "how_to_proceed": "recall with history_record set to an address here reads that claim where it is stored",
+                }),
+            );
+        }
         // **Eliding is never silent, here either.** A shape's sources stay out
         // of the listing that also carries the shape — the shape already
         // speaks for them — and the note says how many and how to reach them,

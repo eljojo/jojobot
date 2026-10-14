@@ -75,6 +75,10 @@ pub struct DocScan {
     /// This is set by whatever projects the document and a caller never
     /// constructs one.
     pub owner: Option<crate::memory::EntityId>,
+    /// **Claims stored under a key that was folded into this thing and listed in
+    /// no merge event**, so the thing cannot serve them. They are named, never
+    /// dropped without a word. Empty on every thing nobody merged into.
+    pub unmapped: Vec<crate::memory::unmapped::UnmappedClaim>,
 }
 
 /// The subjects in `doc`'s table that name **no known entity** — the split-brain
@@ -985,6 +989,7 @@ mod tests {
             ],
             fields: Default::default(),
             owner: None,
+            unmapped: Vec::new(),
         };
         let known: HashSet<EntityId> = [
             EntityId::person("person:alpha"),
@@ -1071,6 +1076,7 @@ mod tests {
             ],
             fields: Default::default(),
             owner: None,
+            unmapped: Vec::new(),
         };
         let known: HashSet<EntityId> = [
             EntityId::person("person:alpha"),

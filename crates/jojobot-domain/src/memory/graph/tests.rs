@@ -252,6 +252,7 @@ fn doc_holding(
         facts,
         fields,
         owner: None,
+        unmapped: Vec::new(),
     }
 }
 
@@ -319,6 +320,64 @@ fn an_owned_object_answers_its_owner_and_nobody_else() {
         handles(&anonymous),
         vec!["bot:otto"],
         "a caller with no identity reaches everything unowned and nothing owned",
+    );
+}
+
+/// **A claim the thing cannot serve is named on the object that asked for its
+/// claims**, with the reason and the address that reads it, and an object with
+/// none names none. **Paired with the same object asked without its claims**,
+/// where nothing is said about claims at all: a note about a listing that was
+/// not asked for would be about nothing.
+#[test]
+fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
+    use crate::memory::unmapped::UnmappedClaim;
+    let stray = UnmappedClaim {
+        address: FactAddress::new(EntityId("person:bart".into()), FactId("f9".into())),
+        merge_no: 3,
+    };
+    let mut milhouse = doc(
+        entity("person:milhouse", "Milhouse"),
+        "",
+        vec![fact("person:milhouse", "f1", "plays the cornet")],
+    );
+    milhouse.unmapped = vec![stray.clone()];
+    let scanned = vec![
+        milhouse,
+        doc(
+            entity("person:nelson", "Nelson"),
+            "",
+            vec![fact("person:nelson", "f1", "laughs")],
+        ),
+    ];
+    let asking = |facts: bool| GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PERSON),
+            ..Selection::default()
+        },
+        include: Include {
+            facts,
+            prose: false,
+            stood_for: false,
+        },
+        follow: None,
+        history: None,
+    };
+
+    let with_facts = resolved(&scanned, &[], &asking(true)).expect("a kind selects");
+    let of = |objects: &[Object], handle: &str| -> Vec<UnmappedClaim> {
+        objects
+            .iter()
+            .find(|o| o.entity.id.as_str() == handle)
+            .unwrap_or_else(|| panic!("{handle} is in the answer"))
+            .unmapped
+            .clone()
+    };
+    assert_eq!(of(&with_facts, "person:milhouse"), vec![stray]);
+    assert!(of(&with_facts, "person:nelson").is_empty());
+    let without = resolved(&scanned, &[], &asking(false)).expect("a kind selects");
+    assert!(
+        of(&without, "person:milhouse").is_empty(),
+        "claims were not asked for, so none are named left out"
     );
 }
 

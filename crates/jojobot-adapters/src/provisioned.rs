@@ -118,6 +118,7 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
             facts: self.inner.recall(entity).await?,
             fields: self.fields(entity).await?,
             owner: None,
+            unmapped: Vec::new(),
         }))
     }
 }

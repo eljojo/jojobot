@@ -1152,6 +1152,12 @@ pub struct Object {
     /// too. Computed from the marks on every read, never stored, so it cannot
     /// drift from what the marks actually name.
     pub facts_folded: usize,
+    /// **Claims of this thing that cannot be served**: stored under a key a
+    /// merge folded into it and listed in no merge event. Named when facts were
+    /// asked for, with the reason and the address that reads each, so the
+    /// answer says what it left out. Empty otherwise, and on every thing
+    /// nobody merged into.
+    pub unmapped: Vec<super::unmapped::UnmappedClaim>,
     /// **How many times each of [`Object::facts`] has been written**, keyed by
     /// the fact's local id. Present, one entry per fact, whenever facts were
     /// asked for — empty otherwise, exactly as `facts` is.
@@ -1814,6 +1820,8 @@ struct Ctx<'a> {
     /// [`recall`](super::Memory::recall) answers by, so one record does not
     /// belong to an entity through one verb and not another.
     facts: BTreeMap<&'a EntityId, Vec<&'a Fact>>,
+    /// The claims each thing cannot serve, as the store named them.
+    unmapped: BTreeMap<&'a EntityId, &'a [super::unmapped::UnmappedClaim]>,
     /// For each entity, the edges drawn AT it: the shape, and the entity whose
     /// record draws it. The reverse of the edge cell, built once.
     inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>>,
@@ -1854,6 +1862,7 @@ impl<'a> Ctx<'a> {
         let mut prose = BTreeMap::new();
         let mut fields = BTreeMap::new();
         let mut facts: BTreeMap<&EntityId, Vec<&Fact>> = BTreeMap::new();
+        let mut unmapped: BTreeMap<&EntityId, &[super::unmapped::UnmappedClaim]> = BTreeMap::new();
         let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>> = BTreeMap::new();
         let mut mentioned_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
         let mut ref_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
@@ -1867,6 +1876,9 @@ impl<'a> Ctx<'a> {
                 entities.insert(&entity.id, entity);
                 prose.insert(&entity.id, doc.prose.as_str());
                 fields.insert(&entity.id, &doc.fields);
+                if !doc.unmapped.is_empty() {
+                    unmapped.insert(&entity.id, &doc.unmapped);
+                }
             }
             for fact in &doc.facts {
                 facts.entry(&fact.subject).or_default().push(fact);
@@ -1947,6 +1959,7 @@ impl<'a> Ctx<'a> {
             prose,
             fields,
             facts,
+            unmapped,
             inbound,
             mentioned_by,
             ref_by,
@@ -2424,6 +2437,14 @@ impl<'a> Ctx<'a> {
                 Vec::new()
             },
             facts_folded,
+            unmapped: if query.include.facts {
+                self.unmapped
+                    .get(id)
+                    .map(|held| held.to_vec())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
             prose: query
                 .include
                 .prose
@@ -3003,6 +3024,7 @@ where
                 fields: BTreeMap::new(),
                 entity: Some(entity.clone()),
                 owner: None,
+                unmapped: Vec::new(),
             })
             .collect();
         let declarations = if query.needs_declarations() {
@@ -3102,6 +3124,7 @@ where
                 fields: BTreeMap::new(),
                 entity: Some(entity.clone()),
                 owner: None,
+                unmapped: Vec::new(),
             });
         }
     }
@@ -3167,6 +3190,7 @@ where
         fields,
         entity: Some(entity.clone()),
         owner: None,
+        unmapped: Vec::new(),
     })
 }
 

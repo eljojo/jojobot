@@ -598,6 +598,7 @@ impl InMemoryMemory {
                     entity: Some(entity),
                     // A stored row is the whole instance's, exactly as it was.
                     owner: None,
+                    unmapped: Vec::new(),
                 }
             })
             .collect()

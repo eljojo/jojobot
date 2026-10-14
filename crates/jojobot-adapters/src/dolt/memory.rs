@@ -32,6 +32,7 @@ use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk};
 use jojobot_domain::memory::owned::Provisions;
+use jojobot_domain::memory::unmapped::UnmappedClaim;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
     FactAddress, FactId, FactPatch, FactStatus, FieldAges, FieldWrite, FormerHandle, Guarded,
@@ -1451,6 +1452,7 @@ impl DoltMemory {
                 );
             }
             out.push(MergeStep {
+                merge_no,
                 folded,
                 survivor,
                 claims,
@@ -1641,10 +1643,56 @@ impl DoltMemory {
             }
             out.push(FoldedKey {
                 key: EntityId(step.folded.clone()),
+                merge_no: step.merge_no,
                 served,
             });
         }
         Ok(out)
+    }
+
+    /// **The claims stored under keys folded into a thing that no merge event
+    /// lists**, so the thing cannot serve them. Each is logged as an integrity
+    /// warning and handed back to be named in the answer, under the handle its
+    /// folded thing answers to now.
+    async fn unmapped_under(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        key: &EntityId,
+    ) -> Result<Vec<UnmappedClaim>, MemoryError> {
+        if Self::is_folded_key(tx, key).await? {
+            return Ok(Vec::new());
+        }
+        let mut found = Vec::new();
+        for folded in Self::keys_folded_into(tx, key).await? {
+            let stored: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT fact_id FROM fact_write WHERE entity = ? ORDER BY fact_id",
+            )
+            .bind(folded.key.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            let unmapped: Vec<String> = stored
+                .into_iter()
+                .filter(|id| !folded.served.contains_key(id))
+                .collect();
+            if unmapped.is_empty() {
+                continue;
+            }
+            let handle = self.current_handle(tx, &folded.key).await?;
+            for id in unmapped {
+                let claim = UnmappedClaim {
+                    address: FactAddress::new(handle.clone(), FactId(id)),
+                    merge_no: folded.merge_no as u64,
+                };
+                tracing::warn!(
+                    address = %claim.address,
+                    merge_no = claim.merge_no,
+                    "integrity: a claim is stored under a merged-away thing and its merge event does not list it; it is left out of the survivor's claims"
+                );
+                found.push(claim);
+            }
+        }
+        Ok(found)
     }
 
     async fn current_handle(
@@ -2155,7 +2203,7 @@ impl DoltMemory {
         let Some(mut fact) = self.claim_stored_at(tx, &at).await? else {
             return Ok(None);
         };
-        if &at != address {
+        if &at != address || Self::is_folded_key(tx, &address.home).await? {
             let handle = self.current_handle(tx, &address.home).await?;
             fact.id = address.local.clone();
             fact.home = handle.clone();
@@ -2175,7 +2223,30 @@ impl DoltMemory {
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
         if Self::is_folded_key(tx, &address.home).await? {
-            return Ok(None);
+            // **A claim the merge event lists is served at the survivor and is
+            // nothing here. One it does not list is read where it is stored**, so
+            // the address that names it as left out reads it.
+            let mapped: Option<i64> = sqlx::query_scalar(
+                "SELECT merge_no FROM merge_event
+                 WHERE folded = ? AND folded_id = ? AND ordinal > 0 LIMIT 1",
+            )
+            .bind(address.home.as_str())
+            .bind(address.local.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            if mapped.is_some() {
+                return Ok(None);
+            }
+            let held: Option<i64> = sqlx::query_scalar(
+                "SELECT ordinal FROM fact_write WHERE entity = ? AND fact_id = ? LIMIT 1",
+            )
+            .bind(address.home.as_str())
+            .bind(address.local.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            return Ok(held.map(|_| address.clone()));
         }
         let mut at = address.clone();
         for _ in 0..64 {
@@ -3970,12 +4041,15 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
 /// claims is served under on the survivor.
 struct FoldedKey {
     key: EntityId,
+    /// The merge that folded it.
+    merge_no: i64,
     /// The id a claim is stored under here, to the id the survivor serves it as.
     served: std::collections::HashMap<String, String>,
 }
 
 /// **One merge, as the merge events keep it.**
 struct MergeStep {
+    merge_no: i64,
     folded: String,
     survivor: String,
     /// For each claim the merge gave a new id: the id it had, to the id it was given.
@@ -6805,6 +6879,7 @@ impl Memory for DoltMemory {
                 fields,
                 entity: Some(entity),
                 owner: None,
+                unmapped: self.unmapped_under(&mut tx, &key).await?,
             });
         }
         tx.commit().await.map_err(store)?;
@@ -6957,6 +7032,7 @@ impl Memory for DoltMemory {
             fields,
             entity: Some(resolved),
             owner: None,
+            unmapped: self.unmapped_under(&mut tx, &key).await?,
         };
         tx.commit().await.map_err(store)?;
         Ok(Some(doc))

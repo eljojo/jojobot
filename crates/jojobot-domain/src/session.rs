@@ -1841,6 +1841,7 @@ fn projected_shell(
         .chain(sid.map(|sid| ("sid".to_string(), sid.as_str().to_string())))
         .collect(),
         owner: Some(bot.clone()),
+        unmapped: Vec::new(),
     }
 }
 

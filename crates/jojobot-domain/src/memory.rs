@@ -38,6 +38,7 @@ pub mod search;
 pub mod stored;
 pub mod text_edit;
 pub mod types;
+pub mod unmapped;
 pub mod words;
 
 #[cfg(any(test, feature = "testing"))]

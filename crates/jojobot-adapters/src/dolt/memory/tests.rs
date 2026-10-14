@@ -1576,6 +1576,87 @@ async fn a_merge_leaves_the_stored_rows_of_the_folded_thing_as_they_were() {
     store.stop().await;
 }
 
+/// **A claim stored under the folded thing that no merge event lists is named,
+/// not dropped.** The survivor serves every claim the event maps, names the one
+/// it cannot serve as left out with the reason and the address that reads it,
+/// and the address reads it. **Paired**: the mapped claims are all still served,
+/// and a thing nobody merged into names nothing.
+#[tokio::test]
+async fn a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readable() {
+    let scratch = Scratch::new("merge-unmapped");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_unmapped")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+
+    // A claim that landed under the folded key after the merge: the event holds
+    // no id for it.
+    for statement in [
+        "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+         VALUES (?, 'f9', 'a stray claim', 'inference', 'active', '2026-09-03')",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
+         VALUES (?, 'f9', 1, 'a stray claim', 'inference', 'active', '2026-09-03')",
+    ] {
+        sqlx::query(statement)
+            .bind(merged.folded_key.as_str())
+            .execute(&pool)
+            .await
+            .expect("the stray claim lands");
+    }
+    let merge_no: i64 = sqlx::query_scalar("SELECT merge_no FROM merge_event WHERE ordinal = 0")
+        .fetch_one(&pool)
+        .await
+        .expect("the event is there");
+
+    let doc = merged
+        .memory
+        .scan_entity(&merged.survivor)
+        .await
+        .expect("the scan reads")
+        .expect("the survivor is there");
+    let address = FactAddress::new(merged.folded.clone(), FactId("f9".into()));
+    assert_eq!(
+        doc.unmapped,
+        vec![jojobot_domain::memory::unmapped::UnmappedClaim {
+            address: address.clone(),
+            merge_no: merge_no as u64,
+        }],
+        "the claim is named"
+    );
+    assert_eq!(
+        doc.unmapped[0].reason(),
+        format!("unmapped by merge event {merge_no}")
+    );
+    // The positive half: everything the event maps is still served, and the
+    // stray claim is not served under any id.
+    assert_eq!(doc.facts.len(), 5, "{:?}", doc.facts);
+    assert!(
+        doc.facts.iter().all(|fact| fact.content != "a stray claim"),
+        "the stray claim is left out of the survivor's claims"
+    );
+    // The address named reads the claim.
+    let history = merged
+        .memory
+        .claim_history(&address)
+        .await
+        .expect("the address reads");
+    assert_eq!(history.len(), 1, "{history:?}");
+    // A thing nobody merged into names nothing.
+    let other = merged
+        .memory
+        .scan_entity(&merged.pointing)
+        .await
+        .expect("the scan reads")
+        .expect("the thing is there");
+    assert!(other.unmapped.is_empty(), "{:?}", other.unmapped);
+    store.stop().await;
+}
+
 /// **A merge whose claims were left in place reads, as to its claims, exactly
 /// like a merge whose claims were moved** — the survivor lists them under its
 /// own handle and the ids the event gave them, and the folded thing lists

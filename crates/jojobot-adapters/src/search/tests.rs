@@ -831,6 +831,7 @@ fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> 
         facts,
         fields,
         owner: None,
+        unmapped: Vec::new(),
     }
 }
 
@@ -2767,6 +2768,7 @@ fn a_retraction_with_no_retracts_partner_reads_as_archived_not_retracted() {
                 facts: vec![standing, old_shape, partnered, partner],
                 fields: Default::default(),
                 owner: None,
+                unmapped: Vec::new(),
             }],
             index.reading_begins(),
             &Default::default(),
@@ -2827,6 +2829,7 @@ fn a_store_of_two() -> Arc<Scanned> {
             )],
             fields: Default::default(),
             owner: None,
+            unmapped: Vec::new(),
         },
         DocScan {
             doc_id: "outline-uuid-9b2c".into(),
@@ -2836,6 +2839,7 @@ fn a_store_of_two() -> Arc<Scanned> {
             facts: vec![fact("person:beta", "f1", "keeps a gecko", date(2026, 1, 1))],
             fields: Default::default(),
             owner: None,
+            unmapped: Vec::new(),
         },
     ])
 }
@@ -4116,6 +4120,7 @@ fn a_session_is_reachable_and_ranks_below_what_it_shares_an_answer_with() {
                 facts: Vec::new(),
                 fields: Default::default(),
                 owner: None,
+                unmapped: Vec::new(),
             }],
             index.reading_begins(),
             &Default::default(),
@@ -4201,6 +4206,7 @@ fn a_singular_query_finds_a_stored_plural_and_a_handle_still_resolves() {
                 )],
                 fields: Default::default(),
                 owner: None,
+                unmapped: Vec::new(),
             }],
             index.reading_begins(),
             &Default::default(),
@@ -4279,6 +4285,7 @@ fn a_question_spread_across_two_records_finds_them_both() {
                 ],
                 fields: Default::default(),
                 owner: None,
+                unmapped: Vec::new(),
             }],
             index.reading_begins(),
             &Default::default(),
@@ -4355,6 +4362,7 @@ fn a_derivation_ranks_below_the_testimony_about_the_same_subject() {
                 facts: vec![spoken, gloss],
                 fields: Default::default(),
                 owner: None,
+                unmapped: Vec::new(),
             }],
             index.reading_begins(),
             &Default::default(),
@@ -4497,6 +4505,7 @@ fn a_derivation_says_whether_the_claim_under_it_still_stands() {
                 ],
                 fields: Default::default(),
                 owner: None,
+                unmapped: Vec::new(),
             }],
             index.reading_begins(),
             &Default::default(),
@@ -5365,6 +5374,7 @@ fn one_page() -> Arc<Scanned> {
         facts: Vec::new(),
         fields: Default::default(),
         owner: None,
+        unmapped: Vec::new(),
     }])
 }
 
@@ -5814,6 +5824,7 @@ async fn a_boot_scan_that_never_ran_is_partial_for_the_other_reason() {
             facts: Vec::new(),
             fields: Default::default(),
             owner: None,
+            unmapped: Vec::new(),
         },
         DocScan {
             doc_id: "outline-uuid-b2c9".into(),
@@ -5828,6 +5839,7 @@ async fn a_boot_scan_that_never_ran_is_partial_for_the_other_reason() {
             )],
             fields: Default::default(),
             owner: None,
+            unmapped: Vec::new(),
         },
     ]);
     inner.blinded();
@@ -5973,6 +5985,7 @@ async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
         )],
         fields: Default::default(),
         owner: None,
+        unmapped: Vec::new(),
     }]);
     let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
     store.rebuild().await.expect("rebuild");
