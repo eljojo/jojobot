@@ -13,7 +13,7 @@
 //! decision here is a pure function of (handle, name, index), which is why it can
 //! live on the write path of *both* adapters and cannot be skipped.
 
-use super::{Entity, EntityId, EntityKind};
+use super::{Entity, EntityId, EntityKind, likeness};
 use crate::override_token::Collision;
 
 /// Why an existing entity is a candidate for the incoming write, strongest
@@ -60,6 +60,10 @@ pub enum MatchReason {
     /// number asked for is held by nobody: `<collection>/<N>` for each N that
     /// is.
     HeldNumber,
+    /// Same kind, and one name is a known short form of the other's: `Bart`
+    /// beside `Bartholomew`, word for word ([`likeness::same_through_nicknames`]).
+    /// It rests on the name alone, so lifting it takes a reason beside the token.
+    Nickname,
 }
 
 impl MatchReason {
@@ -70,7 +74,7 @@ impl MatchReason {
     /// spelling is a typo's distance and keeps the token alone.
     pub fn needs_a_reason(self) -> bool {
         match self {
-            MatchReason::SameNameOtherKind | MatchReason::Contains => true,
+            MatchReason::SameNameOtherKind | MatchReason::Contains | MatchReason::Nickname => true,
             MatchReason::ExactHandle
             | MatchReason::SelfParent
             | MatchReason::SameName
@@ -496,7 +500,20 @@ fn name_reason(
                 && !(siblings && dated_apart(&slugify(a), &slugify(b)))
         })
     });
-    near.then_some(MatchReason::NearName)
+    if near {
+        return Some(MatchReason::NearName);
+    }
+    // **A known short form of the same name**, the weakest evidence here: the
+    // table lists `bart` under `bartholomew`, so the two are probably one person
+    // written two ways. Reached only after the typo budget has said nothing.
+    incoming
+        .iter()
+        .any(|a| {
+            existing_names
+                .iter()
+                .any(|b| likeness::same_through_nicknames(a, b))
+        })
+        .then_some(MatchReason::Nickname)
 }
 
 /// The refusal this write would get, as the token mechanism addresses it.
@@ -822,6 +839,64 @@ mod tests {
             };
             assert_eq!(candidates[0].handle.as_str(), expected);
             assert_eq!(candidates[0].reason, MatchReason::Contains);
+        }
+    }
+
+    /// **A known short form beside its full name is refused, and lifted by the
+    /// token with a reason.** The same short form under another kind, and a short
+    /// form beside a different surname, are left alone: each negative sits with
+    /// the positive it is the negative of.
+    #[test]
+    fn a_short_form_beside_its_full_name_is_refused_and_lifted_with_a_reason() {
+        let idx = vec![entity(
+            "person:bartholomew-simpson",
+            "Bartholomew Simpson",
+            "user-named",
+        )];
+        let bart = EntityId("person:bart-simpson".into());
+        let Decision::Block(candidates) = decide(&bart, &["Bart Simpson"], &idx, None, None) else {
+            panic!("a short form beside its full name must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:bartholomew-simpson");
+        assert_eq!(candidates[0].reason, MatchReason::Nickname);
+
+        let minted = override_token(&bart, &candidates);
+        assert!(
+            matches!(
+                decide(&bart, &["Bart Simpson"], &idx, Some(&minted), None),
+                Decision::Block(_)
+            ),
+            "the token alone does not lift a refusal on the name alone"
+        );
+        assert_eq!(
+            decide(
+                &bart,
+                &["Bart Simpson"],
+                &idx,
+                Some(&minted),
+                Some("a cousin of the same first name")
+            ),
+            Decision::Proceed
+        );
+
+        for (handle, name, why) in [
+            (
+                "place:contract-bart-simpson",
+                "Bart Simpson",
+                "another kind",
+            ),
+            (
+                "person:contract-bart-smithers",
+                "Bart Smithers",
+                "another surname",
+            ),
+            ("person:bart", "Bart", "a different number of words"),
+        ] {
+            assert_eq!(
+                decide(&EntityId(handle.into()), &[name], &idx, None, None),
+                Decision::Proceed,
+                "{name}: {why}"
+            );
         }
     }
 

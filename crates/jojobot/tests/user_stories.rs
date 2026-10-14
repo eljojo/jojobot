@@ -15,6 +15,8 @@ mod support;
 
 // A test target's root file does not get the `foo.rs` + `foo/` convention, so
 // the folder is named explicitly.
+#[path = "user_stories/a_nickname_beside_its_full_name.rs"]
+mod a_nickname_beside_its_full_name;
 /// "Is this value still good?" — the day the store learned a thing, and the day
 /// of a value older than the thing.
 /// The claim a retraction, a fold, a restore, a role move or a due clear leaves

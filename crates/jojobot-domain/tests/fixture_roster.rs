@@ -134,6 +134,9 @@ const ROSTER: &[&str] = &[
     "person:apu",
     "person:barney-gumble",
     "person:bart",
+    "person:bart-simpson",
+    "person:bartholomew",
+    "person:bartholomew-simpson",
     "person:beta",
     "person:burns",
     "person:gamma",
@@ -546,6 +549,9 @@ const ORDINARY: &[&str] = &[
     "person:contract-zzz",
     "person:contract-zzz-nobody",
     "place:contract-a",
+    "place:contract-bart-simpson", // made up: the short form of a person's name, under another kind
+    "person:contract-bart-smithers", // made up: a short form beside a different surname
+    "person:contract-bart-flanders", // made up: a short form beside a different surname
     "place:contract-zzz",
     "place:contract-moes-tavern-annex", // made up: contains two names at once, for a refusal that lists both
     "place:contract-atlas",
