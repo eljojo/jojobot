@@ -1,12 +1,14 @@
-# The check bar, run when an implementer line pushes its working branch.
+# The report bar, run when an implementer line pushes its working branch.
 #
-# A line pushes and keeps working while the runners take the bar, so the full
-# bar never runs on the line's own host. The branches are the lines' working
+# A line pushes and keeps working while the runners take the bar, so the bar
+# never runs on the line's own host. The branches are the lines' working
 # branches, `dev-work`, `dev2-work` and so on.
 #
-# One job, named `check` like the pull-request job, running the same `make`
-# target. The rooms and the year room run on a pull request and before a push
-# to main, not on every push to a working branch.
+# A push to a working branch is a progress signal, so it runs `make report`,
+# which lets go the slow jobs the history allows. The full `make check` runs on
+# the pull request and at the carry, and the rooms and the year room run there
+# too. The job is named `report`, not `check`, so it is never mistaken for the
+# required `check` status.
 name: branch
 
 on:
@@ -22,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
+  report:
     # A host executor: see pull-request.yml for what the runner sees.
     runs-on: nix
     steps:
@@ -31,4 +33,4 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: nix develop -c make check
+      - run: nix develop -c make report
