@@ -121,9 +121,20 @@ async fn an_archived_claim_is_found_below_the_active_ones_and_a_retracted_one_is
             json!({"query": "kite string", "status": "active"}),
         )
         .await;
-    current
-        .says("replacing")
-        .never_says("\"content\":\"kite string\"");
+    // Read as the list of fact hits, not as a substring of the payload: the
+    // archived claim whose whole content is "kite string" is not among them,
+    // and the active one is.
+    let active = contents(&current);
+    assert!(
+        active.iter().any(|content| content.contains("replacing")),
+        "the active claim is found: {}",
+        current.raw()
+    );
+    assert!(
+        !active.iter().any(|content| content == "kite string"),
+        "an archived claim is not current truth: {}",
+        current.raw()
+    );
 
     s.wrap("looked for what the record says about the kite and the car")
         .await;
