@@ -42,6 +42,15 @@ jobs:
         with:
           fetch-depth: 0
       - run: nix develop -c make check
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere.
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bar-logs-check
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Every room suite except the year room. `make rooms` builds the workspace
   # in the same command, because a room spawns the built server.
@@ -54,6 +63,15 @@ jobs:
         with:
           fetch-depth: 0
       - run: nix develop -c make rooms
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere.
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bar-logs-rooms
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   # The year room is the slowest suite and no other target runs it.
   year:
@@ -64,3 +82,12 @@ jobs:
         with:
           fetch-depth: 0
       - run: nix develop -c make year
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere.
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bar-logs-year
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore

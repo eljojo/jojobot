@@ -34,3 +34,12 @@ jobs:
         with:
           fetch-depth: 0
       - run: nix develop -c make report
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere.
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bar-logs-report
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
