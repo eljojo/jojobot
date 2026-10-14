@@ -2309,7 +2309,8 @@ mod tests {
 
     /// **Each refusal names its reason, writes nothing, and the allowed call
     /// beside them lands.** Another sender's message, another box, an id that
-    /// names nothing, the operator's box, and a message already replaced.
+    /// names nothing, another box through the operator's, and a message already
+    /// replaced.
     #[tokio::test]
     async fn a_replacement_is_refused_with_its_reason_and_writes_nothing() {
         let jojobot = mailbox_handler();
@@ -2357,14 +2358,15 @@ mod tests {
         assert_eq!(nothing["status"], "blocked", "{nothing}");
         assert_eq!(nothing["attempted"], "zzzzzz", "{nothing}");
 
-        // The operator's box.
+        // The operator's box takes a replacement like any box, so a message from
+        // another box is refused there for the same reason.
         name_the_operator(&jojobot, "milhouse").await;
         let operator = replacing(&jojobot, "person:milhouse", "gamma", "no", &a).await;
         assert_eq!(operator["status"], "blocked", "{operator}");
         assert!(
             operator["how_to_proceed"]
                 .as_str()
-                .is_some_and(|how| how.contains("operator")),
+                .is_some_and(|how| how.contains("delta")),
             "{operator}"
         );
 
