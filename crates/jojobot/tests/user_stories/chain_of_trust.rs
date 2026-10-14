@@ -11,7 +11,7 @@
 //! carrying them would not pass. Nothing is gated and nothing a bot does
 //! changes: this slice ships the kind and the guard only.
 
-use jojobot_domain::memory::{EntityId, Guarded, NewEntity, NewFact};
+use jojobot_domain::memory::{EntityId, Guarded, NewEntity, NewFact, guard};
 use serde_json::json;
 
 use super::dsl::Story;
@@ -20,30 +20,47 @@ use super::dsl::Story;
 /// through a verb. Returns the address of its claim.
 async fn issue_through_the_store(story: &Story, voucher: &EntityId) -> String {
     let today: jiff::civil::Date = "2026-10-09".parse().expect("a day");
-    let issued = story
-        .memory_store()
-        .add_entity_with_first_claim(
-            NewEntity::new(
-                voucher.clone(),
-                format!("Grant {}", voucher.slug()),
-                "jojobot",
-            ),
-            jojobot_domain::memory::testing::contract::state(NewFact {
-                fields: [
-                    ("right", "boot-as"),
-                    ("target", "bot:patty"),
-                    ("holder", "abcd"),
-                    ("issuer", "wxyz"),
-                    ("state", "issued"),
-                ]
-                .into_iter()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect(),
-                ..NewFact::about(voucher.clone(), "a voucher for boot-as on patty", today)
-            }),
-        )
+    let new = NewEntity::new(
+        voucher.clone(),
+        format!("Grant {}", voucher.slug()),
+        "jojobot",
+    );
+    let first = jojobot_domain::memory::testing::contract::state(NewFact {
+        fields: [
+            ("right", "boot-as"),
+            ("target", "bot:patty"),
+            ("holder", "abcd"),
+            ("issuer", "wxyz"),
+            ("state", "issued"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect(),
+        ..NewFact::about(voucher.clone(), "a voucher for boot-as on patty", today)
+    });
+    let memory = story.memory_store();
+    let mut issued = memory
+        .add_entity_with_first_claim(new.clone(), first.clone())
         .await
         .expect("the engine path writes it");
+    // **A near miss on the name alone is lifted as the engine lifts it**
+    // (session/voucher_write.rs): with the guard's own token and a reason. Two
+    // vouchers of one right share the name's words, so the second one meets it.
+    if let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = &issued
+    {
+        let lifted = NewEntity {
+            override_token: Some(guard::override_token(attempted, candidates)),
+            override_reason: Some("an engine-written record is named for its holder".into()),
+            ..new
+        };
+        issued = memory
+            .add_entity_with_first_claim(lifted, first)
+            .await
+            .expect("the engine path writes it");
+    }
     let Guarded::Written((_, claim)) = issued else {
         panic!("the engine path was blocked");
     };
