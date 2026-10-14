@@ -78,7 +78,8 @@ impl Question {
     /// **A stored view read as a question, with nothing beside it.** The kind
     /// is the one `selects` resolved to, and `answers_type` is the declaration
     /// its name resolved to; both are the caller's to look up, because the
-    /// verb refuses a call where the page says the view cannot be run.
+    /// verb refuses a call where the page says the view cannot be run. `parent`
+    /// is the thing the view lists the children of, once its inputs are filled.
     ///
     /// **What is asked of each object is the objects and nothing of each**: a
     /// view's `shows` says what of each one comes back on a read, and a
@@ -88,6 +89,7 @@ impl Question {
         asked: &graph::Asked,
         kind: EntityKind,
         answers_type: Option<DeclaredType>,
+        parent: Option<EntityId>,
         today: jiff::civil::Date,
     ) -> Result<Question, MemoryError> {
         let (fields, order) = (asked.filters(today)?, asked.ordering()?);
@@ -95,6 +97,7 @@ impl Question {
             graph::Selection {
                 kind: Some(kind),
                 answers_type,
+                parent,
                 fields,
                 order,
                 ..graph::Selection::default()

@@ -11,6 +11,7 @@ use axum::{
 
 use jojobot_domain::attention;
 use jojobot_domain::memory::types::DeclaredType;
+use jojobot_domain::memory::view_inputs;
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention,
 };
@@ -133,6 +134,11 @@ pub struct NodeQuery {
     /// A key to open: the page renders every write behind it, oldest first.
     #[serde(default)]
     pub(crate) history: Option<String>,
+    /// **The values of a view's inputs**, each under the input's own name: the
+    /// form a view's page renders is a GET of these. `history` is this page's
+    /// own, so an input named that cannot be filled from the URL.
+    #[serde(flatten)]
+    pub(crate) inputs: BTreeMap<String, String>,
 }
 
 /// **How much of what grows a page holds before it says what it left out.** A
@@ -238,7 +244,9 @@ pub async fn node(
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
     if entity.kind == EntityKind::VIEW {
-        body.push_str(&view_section(&state, &held, &facts, &by_id).await);
+        body.push_str(
+            &view_section(&state, &entity.id, &held, &facts, &by_id, &asked.inputs).await,
+        );
     }
     body.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
     body.push_str(&conforms_section(&state, &held).await);
@@ -722,9 +730,11 @@ fn fields_section(
 /// the absence of an argument rather than a check on one.
 async fn view_section(
     state: &AppState,
+    view: &EntityId,
     held: &BTreeMap<String, String>,
     facts: &[Fact],
     by_id: &HashMap<&EntityId, &Entity>,
+    sent: &BTreeMap<String, String>,
 ) -> String {
     let asked = graph::asked_by_view(held, facts);
     // **A view short of what it selects is a question nobody can ask**, and it
@@ -787,12 +797,54 @@ async fn view_section(
             }
         },
     };
+    // **The inputs the view declares are a form**, one field to an input, typed
+    // as the input is, and prefilled from the URL. **The view is filled where the
+    // verb fills it** ([`graph::Asked::filled`]), so a value means the same thing
+    // here and there, and a refusal is the verb's own words with the form still
+    // on the page. A field submitted empty is an input left out.
+    let declared = match view_inputs::parse(asked.inputs.as_deref().unwrap_or("")) {
+        Ok(declared) => declared,
+        Err(refused) => return cannot_run(&escape(&refused.words)),
+    };
+    let known = match state.memory.list_entities(None).await {
+        Ok(known) => known,
+        Err(err) => {
+            return blind(
+                "What this view answers",
+                "the things it names",
+                &err.to_string(),
+            );
+        }
+    };
+    let form = inputs_form(&declared, sent, &known);
+    let given: BTreeMap<String, String> = sent
+        .iter()
+        .filter(|(_, value)| !value.trim().is_empty())
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    // A first visit to a view that needs a value asks for it and runs nothing.
+    if given.is_empty() && declared.iter().any(|input| !input.optional) {
+        return format!(
+            "<h2>What this view answers</h2>\n{form}<p>Fill in the inputs above to ask this \
+             view.</p>\n"
+        );
+    }
+    let former = state.memory.former_handles().await.unwrap_or_default();
+    let (asked, parent) = match asked.filled(view.as_str(), &given, &known, &former, today) {
+        Ok(filled) => filled,
+        Err(refused) => {
+            return format!(
+                "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
+                escape(&refused.words)
+            );
+        }
+    };
     // **The question is built and answered where the verb builds and answers
     // it** (rules 444 and 473), so a key the view holds means the same thing on
     // both. The objects are listed and nothing of each is asked for: a view's
     // `shows` says what of each one comes back on a READ, and a directory
     // listing lists.
-    let question = match view_run::Question::of_view(&asked, kind, answers_type, today) {
+    let question = match view_run::Question::of_view(&asked, kind, answers_type, parent, today) {
         Ok(question) => question,
         Err(why) => return cannot_run(&escape(&why.to_string())),
     };
@@ -830,17 +882,18 @@ async fn view_section(
         }
     };
     if found.is_empty() {
-        return "<h2>What this view answers</h2>\n\
-                <p>This view matches nothing today. The question is a good one; \
-                nothing here answers it.</p>\n"
-            .to_string();
+        return format!(
+            "<h2>What this view answers</h2>\n{form}\
+             <p>This view matches nothing today. The question is a good one; \
+             nothing here answers it.</p>\n"
+        );
     }
     // **The keys the view says it shows**, a column each, as `recall` narrows an
     // object's fields to them. A key an object does not hold is an empty cell.
     let shown: &[String] = asked.keys.as_deref().unwrap_or(&[]);
-    let mut out = String::from(
-        "<h2>What this view answers</h2>\n<table id=\"answer\">\n\
-         <tr><th>Name</th><th>Called</th>",
+    let mut out = format!(
+        "<h2>What this view answers</h2>\n{form}<table id=\"answer\">\n\
+         <tr><th>Name</th><th>Called</th>"
     );
     for key in shown {
         out.push_str(&format!("<th>{}</th>", escape(key)));
@@ -854,6 +907,78 @@ async fn view_section(
         out.push_str(&row_with(&object.entity, by_id, &cells));
     }
     out.push_str("</table>\n");
+    out
+}
+
+/// **The form a view's inputs make**: one labelled field to an input, named as the
+/// input is named, and typed as it is: a handle is text offering the things of that
+/// kind, a day is a date (kept as text when the URL holds a relative day, which a
+/// date field cannot show), a number is a number, and words are text. A field is
+/// required when its input is, and holds what the URL sent. Nothing for a view that
+/// takes no inputs.
+fn inputs_form(
+    declared: &[view_inputs::InputDecl],
+    sent: &BTreeMap<String, String>,
+    known: &[Entity],
+) -> String {
+    if declared.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("<form id=\"inputs\" method=\"get\" action=\"\">\n");
+    for input in declared {
+        let value = sent.get(&input.name).map_or("", String::as_str);
+        let (kind, spelled, list) = match &input.ty {
+            view_inputs::InputType::Kind(kind) => {
+                let id = format!("inputs-{}", input.name);
+                let mut options: Vec<&str> = known
+                    .iter()
+                    .filter(|entity| entity.id.kind().is_some_and(|k| k.as_token() == kind))
+                    .map(|entity| entity.id.as_str())
+                    .collect();
+                options.sort_unstable();
+                let options: String = options
+                    .iter()
+                    .map(|handle| format!("<option value=\"{}\">", escape(handle)))
+                    .collect();
+                (
+                    "text",
+                    format!("a {} (kind:slug)", escape(kind)),
+                    Some((id, options)),
+                )
+            }
+            view_inputs::InputType::Date => (
+                if value.is_empty() || value.parse::<jiff::civil::Date>().is_ok() {
+                    "date"
+                } else {
+                    "text"
+                },
+                "a day".to_string(),
+                None,
+            ),
+            view_inputs::InputType::Number => ("number", "a number".to_string(), None),
+            view_inputs::InputType::Text => ("text", "words".to_string(), None),
+        };
+        out.push_str(&format!(
+            "<p><label>{name} <small>({spelled}{optional})</small> <input type=\"{kind}\" \
+             name=\"{name}\"{required}{step}{list_attr} value=\"{value}\"></label>{datalist}</p>\n",
+            name = escape(&input.name),
+            optional = if input.optional { ", optional" } else { "" },
+            required = if input.optional { "" } else { " required" },
+            step = if kind == "number" {
+                " step=\"any\""
+            } else {
+                ""
+            },
+            list_attr = list
+                .as_ref()
+                .map_or(String::new(), |(id, _)| format!(" list=\"{id}\"")),
+            value = escape(value),
+            datalist = list.as_ref().map_or(String::new(), |(id, options)| format!(
+                "<datalist id=\"{id}\">{options}</datalist>"
+            )),
+        ));
+    }
+    out.push_str("<p><button type=\"submit\">Ask</button></p>\n</form>\n");
     out
 }
 

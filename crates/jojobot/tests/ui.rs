@@ -4154,6 +4154,11 @@ async fn recall_of_view(addr: SocketAddr, view: &str) -> Vec<String> {
 /// **The whole body the served `recall` of a view answers with**, a refusal
 /// included.
 async fn recall_body_of_view(addr: SocketAddr, view: &str) -> serde_json::Value {
+    recall_body(addr, serde_json::json!({ "view": view })).await
+}
+
+/// **The whole body the served `recall` answers with** for these arguments.
+async fn recall_body(addr: SocketAddr, arguments: serde_json::Value) -> serde_json::Value {
     let http = reqwest::Client::new();
     let url = format!("http://{addr}/mcp");
     let (session, _) = support::open_with(&http, &url, "2025-06-18").await;
@@ -4166,7 +4171,7 @@ async fn recall_body_of_view(addr: SocketAddr, view: &str) -> serde_json::Value 
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": { "name": "recall", "arguments": { "view": view } },
+                "params": { "name": "recall", "arguments": arguments },
             })
             .to_string(),
         );
@@ -4299,6 +4304,183 @@ async fn a_views_page_and_a_recall_of_it_select_the_same_things() {
         ["rhythm:worming", "rhythm:abseiling"],
         "the type drops the loop that is not marked, the expression the loop counted \
          from before the cut, and the order puts the later date first"
+    );
+    ct.cancel();
+}
+
+/// **A view that takes inputs renders them as a typed form on its page, prefilled
+/// from the URL, and answers with what the form holds** as the served `recall`
+/// does: the page and the verb fill a view through one function. **Paired**: the
+/// same page with nothing asked lists every piece of ready work, an input of the
+/// wrong kind or one nobody declared is refused on the page with the same words,
+/// and a left-out optional input is the same as none.
+#[tokio::test]
+async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
+    let memory = memory_with_views().await;
+    for (handle, name) in [("project:atlas", "Atlas"), ("project:the-move", "The Move")] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the project is written")
+            .written()
+            .expect("nothing on this board collides with it");
+    }
+    for (handle, parent) in [
+        ("work:omega", "project:atlas"),
+        ("work:kappa", "project:atlas"),
+        ("work:lambda", "project:the-move"),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+        new.parent = Some(EntityId(parent.into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the work is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(set_on(NewFact {
+                fields: [("status".to_string(), "next".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(EntityId(handle.into()), "to do", Date::constant(2026, 3, 5))
+            }))
+            .await
+            .expect("the status is written");
+    }
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:my-projects".into()),
+            "My projects",
+            "the operator",
+        ))
+        .await
+        .expect("the view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "work".to_string()),
+                (
+                    "inputs".to_string(),
+                    "project: kind project, before: date?, size: number?, note: text?".to_string(),
+                ),
+                ("parent".to_string(), "$project".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:my-projects".into()),
+                "the work under one project",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: String| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, &path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // ── the ready view: a form with its one input, and the whole answer ─────
+    let everything = page("/view:ready/".into()).await;
+    assert!(
+        everything.contains("<form id=\"inputs\"")
+            && everything.contains("name=\"project\" list=\"inputs-project\" value=\"\"")
+            && everything.contains("<option value=\"project:atlas\">"),
+        "the page offers the ready view's input as a form: {everything}"
+    );
+    let all_ready = listed_handles(&everything);
+    assert_eq!(
+        all_ready,
+        [
+            "work:delta",
+            "work:kappa",
+            "work:lambda",
+            "work:omega",
+            "work:phi"
+        ],
+        "{everything}"
+    );
+
+    // ── filled from the URL, it answers what the verb answers ───────────────
+    let narrowed = page("/view:ready/?project=project:atlas".into()).await;
+    let from_the_page = listed_handles(&narrowed);
+    let from_recall = recall_body(
+        addr,
+        serde_json::json!({"view": "ready", "inputs": {"project": "project:atlas"}}),
+    )
+    .await["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(from_the_page, ["work:kappa", "work:omega"], "{narrowed}");
+    assert_eq!(from_the_page, from_recall, "the page and the verb agree");
+    assert!(
+        narrowed.contains("name=\"project\" list=\"inputs-project\" value=\"project:atlas\""),
+        "the form comes back prefilled from the URL: {narrowed}"
+    );
+
+    // …and a left-out optional input is the same as none.
+    let blank = page("/view:ready/?project=".into()).await;
+    assert_eq!(listed_handles(&blank), all_ready, "{blank}");
+
+    // ── refused on the page in the verb's words, with the form still there ──
+    for (path, named) in [
+        ("/view:ready/?project=person:alpha", "person:alpha"),
+        ("/view:ready/?projekt=project:atlas", "projekt"),
+    ] {
+        let refused = page(path.into()).await;
+        assert!(
+            refused.contains("This view cannot be run")
+                && refused.contains(named)
+                && refused.contains("project: kind project?")
+                && refused.contains("<form id=\"inputs\""),
+            "{path} is refused on the page naming what the view takes: {refused}"
+        );
+        assert!(
+            !refused.contains("<table id=\"answer\""),
+            "a refused page lists nothing: {refused}"
+        );
+    }
+
+    // ── each declared type is its own kind of field ─────────────────────────
+    let typed = page("/view:my-projects/".into()).await;
+    for expected in [
+        "name=\"project\" required",
+        "name=\"before\"",
+        "type=\"date\"",
+        "name=\"size\"",
+        "type=\"number\"",
+        "name=\"note\"",
+        "type=\"text\"",
+    ] {
+        assert!(typed.contains(expected), "{expected} is missing: {typed}");
+    }
+    assert!(
+        typed.contains("Fill in the inputs") && !typed.contains("<table id=\"answer\""),
+        "a view with a required input asks for it before it answers: {typed}"
     );
     ct.cancel();
 }
