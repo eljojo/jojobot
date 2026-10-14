@@ -176,8 +176,9 @@ pub struct UpdateFactArgs {
     /// the active record that carries the key: `recall` the thing with
     /// `backing` true and the key names that record. A counter key names none,
     /// because its total has no single record behind it: `recall` with
-    /// `history` set to the key lists every record that wrote it, and clearing
-    /// the key on one of them takes the whole total off the thing.
+    /// `history` set to the key lists the records that wrote it, oldest first,
+    /// and `history_most` widens the list when its count says more exist.
+    /// Clearing the key on one of them takes the whole total off the thing.
     ///
     /// To move a value to another key, send the new key in `sets` (or in `fields`
     /// for a key of the claim itself) and `clear_fields` with the old one in the

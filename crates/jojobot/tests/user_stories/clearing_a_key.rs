@@ -104,11 +104,19 @@ async fn a_counter_key_is_cleared_by_following_the_sentence() {
         .await;
     }
 
+    // **The sentence that names `history` sends the caller there for a key**:
+    // that same sentence names `recall`, and how to widen the list.
     let sentence = s.argument_description("update_fact", "clear_fields").await;
-    assert!(
-        names(&sentence, "history"),
-        "the sentence names the history of a key for a counter: {sentence}"
-    );
+    let route = sentence
+        .split(". ")
+        .find(|part| names(part, "history"))
+        .unwrap_or_else(|| panic!("no sentence names history: {sentence}"));
+    for word in ["recall", "history_most"] {
+        assert!(
+            names(route, word),
+            "the sentence that names history also names {word}: {sentence}"
+        );
+    }
 
     // ── the dead end the old sentence led to ────────────────────────────────
     let backed = s
@@ -128,11 +136,15 @@ async fn a_counter_key_is_cleared_by_following_the_sentence() {
         )
         .await;
     occasions.number("/objects/0/history/count", 3);
-    occasions.says("person:homer#f2");
+    // The record to clear is read out of the answer the sentence led to.
+    let record = occasions.json()["objects"][0]["history"]["writes"][2]["record"]
+        .as_str()
+        .expect("the history names the record that wrote the key")
+        .to_string();
 
     s.call(
         "update_fact",
-        json!({ "address": "person:homer#f2", "clear_fields": ["donuts"] }),
+        json!({ "address": record, "clear_fields": ["donuts"] }),
     )
     .await;
 

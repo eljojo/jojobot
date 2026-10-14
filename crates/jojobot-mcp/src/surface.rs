@@ -1145,11 +1145,19 @@ fn the_update_fact_description_names_the_moves_it_cannot_make_in_place() {
 /// **`update_fact`'s `clear_fields` says it takes a key off the thing, and how to
 /// find the record that carries it.** The route to take a key off a thing exists
 /// and a session that wants one has to find it the first time it looks: the
-/// record is the one `recall` shows with `backing`.
+/// record is the one `recall` shows with `backing`, and for a counter key, which
+/// `backing` names no record for, one of the records `recall` lists with
+/// `history` set to the key.
 #[test]
 fn the_clear_fields_argument_names_how_to_find_the_record_that_carries_a_key() {
     let described = argument_description("update_fact", "clear_fields");
-    for name in ["`recall`", "`backing`", "`sets`"] {
+    for name in [
+        "`recall`",
+        "`backing`",
+        "`history`",
+        "`history_most`",
+        "`sets`",
+    ] {
         assert!(
             described.contains(name),
             "clear_fields does not name {name}: {described}"
