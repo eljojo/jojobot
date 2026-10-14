@@ -338,13 +338,16 @@ say     December: the bike ridden more is not gravel by 405 km, so either the su
 # 9. Nine people against eight chairs. The words for one short are several;
 # the slot holds the verdict and the count is in the sentence.
 recall {"fields": [{"key": "answer_9"}], "keys": ["answer_9"]}
-carries-either one short | 1 short | short by one | short by 1 | one chair short | 1 chair short | one too few | one more chair | 1 more chair
+carries-either one short | 1 short | short by one | short by 1 | one chair short | 1 chair short | one too few
 say     December: the answer about the chairs does not say they were one short, so either the guests or the chairs were counted wrong
 
-# 10. The partner is Louise. The slot holds the name the cold sitting gave.
+# 10. The partner is Louise. The slot holds the name the cold sitting gave. The
+# needle is the slot and the opening of its value together: the read returns the
+# key it was asked for even when nothing is held, and returns the handle and name
+# of the thing the answer sits on, so the name alone is met whenever the answer
+# sits on her record.
 recall {"fields": [{"key": "answer_10"}], "keys": ["answer_10"]}
-carries "answer_10"
-carries-any-case louise
+carries-any-case "answer_10":"louise
 say     December: the plus-one is not named Louise, so the April placeholder and the June name were not put together
 
 # 10, the carrier. The placeholder from April and the name from June were
@@ -451,6 +454,12 @@ three is in the transcript: a visit filed twice reads the same.
 
 **Whether the monthly totals pair each month with its number.** Question 11's
 lock holds the six numbers and cannot hold which is January's.
+
+**Whether the plus-one was answered in a sentence that opens with the name.**
+Question 10's first lock holds that the slot's value begins with the name, so a
+correct answer that opens with other words ("Butters's plus-one was Louise")
+fails it. A needle that reached into the value could not be told from the
+thing's own handle and name, which the read returns beside it.
 
 **Whether Louise was ever a placeholder.** Question 10's carrier accepts two
 years: one where the person named Louise holds a record older than June (the

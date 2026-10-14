@@ -1101,6 +1101,152 @@ async fn the_lock_saying(room: &Surface, piece: &str) -> Outcome {
     found.check(&seen).await
 }
 
+/// **Case 1. The bots here are the assistant and Lisa, and each says what it is
+/// for.** The room makes one bot and ships the other; a read of the kind returns
+/// exactly those two, each with a charter, and Lisa's is the room's one line.
+#[tokio::test]
+async fn solvable_the_bots_here_are_the_assistant_and_lisa_and_each_says_what_it_is_for() {
+    let (_room, surface) = year_worked().await;
+    let sid = cold(&surface).await;
+    let read = surface
+        .call(
+            "recall",
+            json!({"kind": "bot", "charter": true, "sid": sid}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).expect("json");
+    let bots = parsed["objects"].as_array().expect("objects");
+    let mut ids: Vec<&str> = bots.iter().filter_map(|bot| bot["id"].as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["bot:assistant", "bot:lisa"], "{read}");
+    for bot in bots {
+        assert!(
+            bot["charter"].as_str().is_some_and(|said| !said.is_empty()),
+            "each bot says what it is for: {bot}",
+        );
+    }
+    let lisa = bots
+        .iter()
+        .find(|bot| bot["id"] == "bot:lisa")
+        .expect("lisa is here");
+    assert!(
+        lisa["charter"]
+            .as_str()
+            .is_some_and(|said| said.contains("paperwork")),
+        "Lisa's charter is the room's line about the household's paperwork: {lisa}",
+    );
+}
+
+/// The oldest day among the records on `subject` that `query` finds, as search
+/// serves them: the day a thing was first said is the day it was decided.
+async fn first_day_found(surface: &Surface, sid: &str, query: &str, subject: &str) -> String {
+    let read = surface
+        .call("search", json!({"query": query, "sid": sid}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).expect("json");
+    let mut days: Vec<&str> = parsed["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter(|hit| hit["hit"] == "fact" && hit["home"]["id"] == subject)
+        .filter_map(|hit| hit["recorded_at"].as_str())
+        .collect();
+    days.sort_unstable();
+    days.first()
+        .unwrap_or_else(|| panic!("no record on {subject} answers {query:?}: {read}"))
+        .to_string()
+}
+
+/// **Case 5. What the year decided is on record with its day, and the days put
+/// it oldest first.** The party in January, the move in March and the sale of the
+/// road bike in August; each is a record on the thing it is about, found by the
+/// words the operator used, and the oldest record of each carries its day.
+#[tokio::test]
+async fn solvable_what_the_year_decided_is_on_record_with_its_day_oldest_first() {
+    let (_room, surface) = year_worked().await;
+    let sid = cold(&surface).await;
+    let party = first_day_found(&surface, &sid, "goodbye party", "event:goodbye-party").await;
+    let the_move = first_day_found(&surface, &sid, "decided move Quahog", "project:the-move").await;
+    let sale = first_day_found(&surface, &sid, "sold", "thing:road-bike").await;
+    assert_eq!(
+        [party.as_str(), the_move.as_str(), sale.as_str()],
+        ["2026-01-10", "2026-03-30", "2026-08-09"],
+        "the three decisions carry the days of the sittings that made them",
+    );
+    let mut oldest_first = [party.clone(), the_move.clone(), sale.clone()];
+    oldest_first.sort_unstable();
+    assert_eq!(
+        oldest_first,
+        [party, the_move, sale],
+        "read oldest first, they are already in the order the year made them",
+    );
+}
+
+/// **Case 6. Lisa's charter reads, and her mailbox does not.** A message left in
+/// her box is not the assistant's to open: the read is refused and says who
+/// can, and the assistant's own box and its own counts are read as ever.
+#[tokio::test]
+async fn solvable_lisas_charter_reads_and_her_mailbox_does_not() {
+    let (_room, surface) = year_worked().await;
+    let sid = cold(&surface).await;
+    let charter = surface
+        .call(
+            "recall",
+            json!({"subject": "bot:lisa", "charter": true, "sid": sid}),
+        )
+        .await;
+    assert!(charter.contains("paperwork"), "{charter}");
+
+    let posted: Value = serde_json::from_str(
+        &surface
+            .call(
+                "post_message",
+                json!({"to": "lisa", "subject": "a question", "body": "a note for Lisa", "sid": sid}),
+            )
+            .await,
+    )
+    .expect("json");
+    let id = posted["id"].as_str().expect("the post answers with an id");
+    assert_eq!(posted["mailbox"], "lisa", "{posted}");
+
+    let refused: Value = serde_json::from_str(
+        &surface
+            .call("read_message", json!({"message_id": id, "sid": sid}))
+            .await,
+    )
+    .expect("json");
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+
+    let booted = surface
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "today": "2026-12-01", "sid": sid}),
+        )
+        .await
+        .expect("the boot answers");
+    let bots = booted["snapshot"]["entities"]["bots"]
+        .as_array()
+        .expect("the snapshot names the bots");
+    let lisa = bots
+        .iter()
+        .find(|bot| bot["handle"] == "bot:lisa")
+        .expect("the snapshot names Lisa");
+    assert_eq!(lisa["yours"], false, "{lisa}");
+    assert!(
+        lisa["mail"]["counts"].is_null(),
+        "another bot's counts are never shown: {lisa}"
+    );
+    let mine = bots
+        .iter()
+        .find(|bot| bot["handle"] == "bot:assistant")
+        .expect("the snapshot names the assistant");
+    assert!(
+        mine["mail"]["counts"]["total"].is_number(),
+        "the pair: the assistant's own counts are shown: {mine}"
+    );
+}
+
 /// **Case 2. Which routines are behind as of 1 December, and when each was last
 /// done.** The chain was last oiled on 31 May and Randy last called on 27
 /// September, so both are behind. The laptop was last backed up on 31 October
@@ -1689,6 +1835,58 @@ async fn a_year_that_answered_with_the_count_of_rides_fails_only_the_margin_lock
     )
     .await;
     only_one_fails(&judge_all(&surface, &[]).await, "the bike ridden more");
+}
+
+/// **The chairs were answered with the opposite verdict.** The wrong act: the
+/// answer says no chair was missing, in words that hold "one more chair". A lock
+/// that reads those words as the verdict passes it.
+#[tokio::test]
+async fn a_year_that_said_no_chair_was_missing_fails_only_the_chairs_lock() {
+    let (_room, surface, december_sid) = worked_in_full().await;
+    answered(
+        &surface,
+        &december_sid,
+        "event:goodbye-party",
+        "9",
+        "Yes, enough: nine people and eight chairs, so no need for one more chair.",
+    )
+    .await;
+    only_one_fails(
+        &judge_all(&surface, &[]).await,
+        "the answer about the chairs",
+    );
+}
+
+/// **The plus-one was answered with a wrong name, on Louise's own record.** The
+/// wrong act: the answer sits on the person the year named, so her handle and
+/// name are in what the slot's read returns whatever the answer says. The
+/// answer's own words must carry the name.
+#[tokio::test]
+async fn a_year_that_named_someone_else_on_louises_record_fails_only_the_plus_one_answer_lock() {
+    let (_room, surface, december_sid) = worked_in_full().await;
+    answered(&surface, &december_sid, "person:louise", "10", "Mabel").await;
+    only_one_fails(&judge_all(&surface, &[]).await, "the plus-one is not named");
+}
+
+/// The pair of the case above: an answer that opens with the name and goes on
+/// holds the lock.
+#[tokio::test]
+async fn a_plus_one_answer_that_opens_with_her_name_and_goes_on_holds_every_lock() {
+    let (_room, surface, december_sid) = worked_in_full().await;
+    answered(
+        &surface,
+        &december_sid,
+        "person:louise",
+        "10",
+        "Louise, who came with Butters.",
+    )
+    .await;
+    let outcomes = judge_all(&surface, &[]).await;
+    assert!(
+        outcomes.iter().all(|o| o.held),
+        "every lock holds: {}",
+        saying(&outcomes)
+    );
 }
 
 /// **Lisa's physio session came back as the operator's knee.** The wrong act:
