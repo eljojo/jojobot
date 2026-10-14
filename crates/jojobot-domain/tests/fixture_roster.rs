@@ -672,6 +672,7 @@ const ORDINARY: &[&str] = &[
     "thread:contract-ceiling-unwritten",
     "thread:milhouse-moves",
     "thread:simpson-kitchen",
+    "thread:krusty-telethon",
     "thread:upgrade-fixture-line",
     "decision:upgrade-fixture-choice",
     "decision:cabinets-oak",

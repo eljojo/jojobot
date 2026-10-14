@@ -475,3 +475,215 @@ async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
 
     story.finish().await;
 }
+
+/// **A thread a thought points at: what it says, written by somebody who knew.**
+const THREADS: [(&str, &str, &str); 3] = [
+    (
+        "thread:milhouse-moves",
+        "Milhouse moves in the spring; the van is booked for the second weekend.",
+        "Milhouse is moving in the spring",
+    ),
+    (
+        "thread:krusty-telethon",
+        "Krusty plans a telethon; the studio is booked for the last Saturday.",
+        "the telethon needs a studio",
+    ),
+    (
+        "thread:simpson-kitchen",
+        "The Simpsons ask for a second quote on the same kitchen.",
+        "a second quote is wanted",
+    ),
+];
+
+/// "Pick up where the last session left off, and tell me what has gone quiet."
+///
+/// **A coordinator carries a few thoughts from one run to the next, each a short
+/// pointer at a thread that holds the detail.** Its session wraps. A fresh
+/// session of the same bot boots, reads its room, follows each pointer and
+/// finds the detail on the thread. The session keeps the thoughts that are
+/// still live and leaves one alone. A later session reads the room and finds
+/// that one has gone quiet: it is marked, it is counted apart from the live
+/// ones, and the thread it pointed at is still there, so nothing was lost.
+/// Keeping it brings it back.
+///
+/// ⛔️ **Every negative here sits beside the positive it depends on, in the
+/// same read.** A room that showed nothing would pass "the quiet thought is not
+/// live" on a build where nothing is carried across a boot at all.
+#[tokio::test]
+async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_quiet() {
+    let story = Story::begin("bot:otto").await;
+
+    // ── the people who set the room up ──────────────────────────────────────
+    //
+    // **Otto cannot set its own ceilings**, so the assistant does: room for
+    // three thoughts, and a thought untouched through two runs goes quiet. The
+    // threads carry the detail, written as the operator's own words.
+    let owner = story.as_bot("bot:assistant").await;
+    owner
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:otto", "content": "how big otto's room is and how long a thought lasts",
+                "sets": {"thought_capacity": "3", "thought_ages_after_runs": "2"},
+            }),
+        )
+        .await;
+    for (thread, detail, _) in THREADS {
+        owner.add(thread, thread).await;
+        owner
+            .call(
+                "capture",
+                json!({"subject": thread, "content": detail, "provenance": "testimony"}),
+            )
+            .await;
+    }
+
+    // ── the first session: three pointers, and the session wraps ────────────
+    let first = story.session().await;
+    // **The session says what it set out to do before it writes anything**, as a
+    // session is taught to. The first write of a run is also the write that makes
+    // the run exist.
+    first
+        .call(
+            "journal",
+            json!({"entry": "taking over the move, the telethon and the kitchen quote"}),
+        )
+        .await;
+    let mut thoughts = Vec::new();
+    for (thread, _, pointer) in THREADS {
+        thoughts.push(
+            first
+                .call(
+                    "capture",
+                    json!({
+                        "subject": "bot:otto", "content": pointer,
+                        "shape": "connection", "object": thread,
+                    }),
+                )
+                .await
+                .field("address"),
+        );
+    }
+    let [moving, telethon, quote] = [&thoughts[0], &thoughts[1], &thoughts[2]];
+    first
+        .wrap("wrote down the three lines I am coordinating")
+        .await;
+
+    // ── the second session: boot, read the room, follow each pointer ────────
+    let (boot, second) = story.full_boot().await;
+    assert_eq!(
+        boot["identity"]["bot"]["id"], "bot:otto",
+        "the fresh session is the same bot: {boot}"
+    );
+    // **The same session starts by saying what it picked up.** It is a beat
+    // like any other, and it is also what makes this run exist before it
+    // touches a thought.
+    second
+        .call(
+            "journal",
+            json!({"entry": "picked up the room from last time"}),
+        )
+        .await;
+    let room = second
+        .call(
+            "recall",
+            json!({"subject": "bot:otto", "facts": true, "status": "active"}),
+        )
+        .await;
+    for (thread, _, pointer) in THREADS {
+        room.says(pointer).says(thread);
+    }
+    // Nothing has gone quiet yet: the room block is only sent when something has.
+    room.never_says("aged_out");
+    // Each pointer leads to its thread, and the detail is there.
+    for (thread, detail, _) in THREADS {
+        second
+            .call("recall", json!({"subject": thread, "facts": true}))
+            .await
+            .says(detail);
+    }
+    // The room is full: a fourth thought is refused, and the refusal names the
+    // two ways past a full room.
+    second.add("thing:jukebox", "The Jukebox").await;
+    second
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:otto", "content": "the jukebox needs a needle",
+                "shape": "connection", "object": "thing:jukebox",
+            }),
+        )
+        .await
+        .says("borrow")
+        .says("drop");
+    // The session keeps the two lines that are still live, and leaves the third.
+    for kept in [moving, telethon] {
+        second
+            .call("update_fact", json!({"address": kept, "keep": true}))
+            .await;
+    }
+    second
+        .wrap("kept the move and the telethon, left the quote")
+        .await;
+
+    // ── the third session: the quote has gone quiet ─────────────────────────
+    let (_, third) = story.full_boot().await;
+    third
+        .call("journal", json!({"entry": "picked up the room again"}))
+        .await;
+    let room = third
+        .call(
+            "recall",
+            json!({"subject": "bot:otto", "facts": true, "status": "active"}),
+        )
+        .await;
+    let body = room.json();
+    let object = &body["objects"][0];
+    let thought = |address: &str| {
+        object["facts"]
+            .as_array()
+            .and_then(|all| all.iter().find(|fact| fact["address"] == address))
+            .unwrap_or_else(|| panic!("{address} is in the room read: {body}"))
+    };
+    // **The positive**: the two that were kept read as live thoughts.
+    for kept in [moving, telethon] {
+        assert!(
+            thought(kept).get("aged_out").is_none(),
+            "{kept} was kept and is live: {body}"
+        );
+    }
+    // **The negative it rests on**: the one nobody touched is marked, and the
+    // room block counts the live and the quiet apart.
+    assert_eq!(thought(quote)["aged_out"], true, "{body}");
+    assert_eq!(object["room"]["live"], 2, "{body}");
+    assert_eq!(object["room"]["aged_out"], 1, "{body}");
+    assert_eq!(object["room"]["capacity"], 3, "{body}");
+    assert_eq!(object["room"]["ages_after_runs"], 2, "{body}");
+    // It is still there, whole, in the same answer: gone quiet, not gone.
+    room.says("a second quote is wanted");
+
+    // **The thread it pointed at is still reachable**, and says what it said.
+    third
+        .call(
+            "recall",
+            json!({"subject": "thread:simpson-kitchen", "facts": true}),
+        )
+        .await
+        .says("a second quote on the same kitchen");
+
+    // **Keeping it brings it back**: the marker and the block go, and the room is
+    // full of live thoughts again.
+    third
+        .call("update_fact", json!({"address": quote, "keep": true}))
+        .await;
+    let back = third
+        .call(
+            "recall",
+            json!({"subject": "bot:otto", "facts": true, "status": "active"}),
+        )
+        .await;
+    back.says("a second quote is wanted").never_says("aged_out");
+
+    third.wrap("the quote line is live again").await;
+    story.finish().await;
+}
