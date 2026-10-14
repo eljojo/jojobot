@@ -78,7 +78,9 @@ impl Jojobot {
                        address. An address you were holding for one of them still names it: \
                        update_fact, retract and recall with history_record act on the claim \
                        where it is now. The answer's claims_moved counts the claims the \
-                       survivor serves under its own handle now. A refusal is status: \
+                       survivor serves under its own handle now. TWO DOCUMENTS MERGE INTO \
+                       ONE: the duplicate's sections follow the survivor's last. A document \
+                       and a thing do not merge. A refusal is status: \
                        blocked with nothing moved, and the answer says why and who may: one \
                        handle named as both sides; a handle already merged away; a role \
                        object merged by anyone but its owner or a bot heading the chart; a \

@@ -6492,6 +6492,15 @@ impl Memory for DoltMemory {
                 });
             }
         }
+        // **A document merges only into another document**, decided before
+        // anything is written.
+        if let Some(refused) =
+            jojobot_domain::memory::document::refuses_a_merge_of_a_document_and_a_thing(
+                folded, survivor,
+            )
+        {
+            return Err(refused);
+        }
         let account = merge_account(folded, survivor, reason, date)?;
         let standing = standing_of(&account);
 
@@ -6614,6 +6623,63 @@ impl Memory for DoltMemory {
             &Default::default(),
         )
         .await?;
+
+        // **Two documents become one: the folded sections follow the survivor's
+        // last section, and each chunk names its heading's new id.** Written in
+        // this transaction, before the event is appended, while the folded records
+        // are still served at the addresses they were made under. The placement is
+        // the domain's; this writes what it says.
+        if folded.kind() == Some(EntityKind::DOCUMENT) {
+            let claims: Vec<(FactId, FactId)> =
+                moving.iter().cloned().zip(minted.iter().cloned()).collect();
+            let survivor_records = self.facts_projected(&mut tx, &survivor_key).await?;
+            let folded_records = self.facts_projected(&mut tx, &folded_key).await?;
+            let placed = jojobot_domain::memory::document::append_after(
+                &survivor_records,
+                &folded_records,
+                &claims,
+            )
+            .map_err(|e| {
+                MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
+            })?;
+            for place in placed {
+                let Some(mut record) = folded_records
+                    .iter()
+                    .find(|fact| fact.id == place.fact)
+                    .cloned()
+                else {
+                    continue;
+                };
+                // The record as it is served has its pointers in handle form; it
+                // is written back in the form it is stored in.
+                record.home = folded_key.clone();
+                record.subject = folded_key.clone();
+                self.lower_pointers(&mut tx, &mut record, &folded_key)
+                    .await?;
+                let on_disk = Self::as_stored(&mut tx, &record).await?;
+                let classes = Self::held_classes(&mut tx, &folded_key, &place.fact).await?;
+                let mut wrote = vec![(
+                    jojobot_domain::memory::document::ORDER.to_string(),
+                    Some(place.order),
+                )];
+                if let Some(head) = place.continues {
+                    wrote.push((
+                        jojobot_domain::memory::document::CONTINUES.to_string(),
+                        Some(head),
+                    ));
+                }
+                Self::write_fact(&mut tx, &on_disk, &self.clock, session).await?;
+                Self::append_writes(
+                    &mut tx,
+                    &on_disk.home,
+                    &on_disk.id,
+                    wrote,
+                    &self.clock,
+                    &classes,
+                )
+                .await?;
+            }
+        }
 
         // **The merge as an appended event**, in the transaction that makes it:
         // who was folded into whom, when, in which run, and where each claim

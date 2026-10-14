@@ -28,6 +28,8 @@
 //! a claim's words are one line and `\r` ends a line for the readers that
 //! matter. `\r\n` is an ordinary line ending and survives inside a section.
 
+use super::{EntityId, EntityKind, Fact, FactId, FactStatus, MemoryError};
+
 /// The whitespace trimmed off a section's parts, kept so the join restores it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Edges {
@@ -553,6 +555,90 @@ fn largest_cut(text: &str, passes: &mut dyn FnMut(&str) -> bool) -> Option<usize
         }
     }
     None
+}
+
+/// **A merge of a document and something that is not one is refused.** Two
+/// documents merge into one that holds both; a document and a thing do not
+/// merge, in either direction. `None` when the two sides are alike.
+pub fn refuses_a_merge_of_a_document_and_a_thing(
+    folded: &EntityId,
+    survivor: &EntityId,
+) -> Option<MemoryError> {
+    let is_document = |side: &EntityId| side.kind() == Some(EntityKind::DOCUMENT);
+    match (is_document(folded), is_document(survivor)) {
+        (true, false) => Some(MemoryError::DocumentMergedWithAThing {
+            document: folded.to_string(),
+            other: survivor.to_string(),
+        }),
+        (false, true) => Some(MemoryError::DocumentMergedWithAThing {
+            document: survivor.to_string(),
+            other: folded.to_string(),
+        }),
+        _ => None,
+    }
+}
+
+/// **What a merge of one document into another writes onto a folded section's
+/// record**: where the section goes, and which heading a chunk now continues.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relocated {
+    /// The record, by the id it was stored under on the folded document.
+    pub fact: FactId,
+    /// The order key it takes: after every section the survivor has.
+    pub order: String,
+    /// For a chunk that carries a section on: the id its heading has under the
+    /// survivor. `None` for a heading, and for a chunk whose heading the merge
+    /// gave no new id.
+    pub continues: Option<String>,
+}
+
+/// **Place the folded document's sections after the survivor's last section.**
+///
+/// `survivor` and `folded` are the two documents' records, `claims` the merge's
+/// map from each folded record's old id to the id it has under the survivor.
+/// The folded sections that stand keep their own order among themselves and take
+/// keys minted after the greatest order key the survivor holds, archived
+/// sections included, so a section restored later cannot land among them. Each
+/// chunk's `continues` is rewritten to its heading's new id, so a reader that
+/// finds a section by that link finds it on the survivor.
+///
+/// The order keys are the server's to mint (rule 449); this is the one place a
+/// merge mints them, called by every store.
+pub fn append_after(
+    survivor: &[Fact],
+    folded: &[Fact],
+    claims: &[(FactId, FactId)],
+) -> Result<Vec<Relocated>, super::order::OrderError> {
+    let last = survivor
+        .iter()
+        .filter_map(|fact| fact.fields.get(ORDER))
+        .max()
+        .map(String::as_str);
+    let mut standing: Vec<(&str, &Fact)> = folded
+        .iter()
+        .filter(|fact| fact.status == FactStatus::Active)
+        .filter_map(|fact| Some((fact.fields.get(ORDER)?.as_str(), fact)))
+        .collect();
+    standing.sort_by(|a, b| (a.0, &a.1.id.0).cmp(&(b.0, &b.1.id.0)));
+    let orders = super::order::spread(last, None, standing.len())?;
+    Ok(standing
+        .into_iter()
+        .zip(orders)
+        .map(|((_, fact), order)| Relocated {
+            fact: fact.id.clone(),
+            order,
+            continues: fact
+                .fields
+                .get(CONTINUES)
+                .filter(|head| !head.is_empty() && head.as_str() != "false")
+                .and_then(|head| {
+                    claims
+                        .iter()
+                        .find(|(was, _)| was.0 == *head)
+                        .map(|(_, now)| now.0.clone())
+                }),
+        })
+        .collect())
 }
 
 #[cfg(test)]

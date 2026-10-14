@@ -250,6 +250,11 @@ const ORDINARY: &[&str] = &[
     "bot:assistant",
     "document:contract-move",
     "document:contract-notes",
+    "document:contract-docmerge",
+    "document:contract-merged-into",
+    "document:contract-merged-away",
+    "topic:contract-xylophone",
+    "topic:contract-zeppelin",
     // The views: the ones the software ships, and the ones a story or a page
     // case declares to stand beside them. **A shipped record names itself by
     // its handle**, so this scan reads it on the same terms as every other

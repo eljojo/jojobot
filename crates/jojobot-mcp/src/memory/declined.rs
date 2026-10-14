@@ -405,6 +405,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::RoleNotHeld { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NothingToMerge { .. }
+        | MemoryError::DocumentMergedWithAThing { .. }
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }
         | MemoryError::HandleMoved { .. }
@@ -1039,6 +1040,23 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  '{attempted}'."
             ),
         )),
+        // **A document merges only into another document.** Both handles are
+        // real; the call has to change, and the route is named: keep the two as
+        // they are, or carry the words over by hand and put one away.
+        MemoryError::DocumentMergedWithAThing {
+            ref document,
+            ref other,
+        } => Ok(blocked_body(
+            &EntityId(document.clone()),
+            &[],
+            format!(
+                "Nothing was merged: {e}. Merge two documents to get one that holds both. To \
+                 bring '{other}' and '{document}' together anyway, read the document with \
+                 read_document, capture what is wanted as claims on the thing (or put it into \
+                 the other document with put_document), then put the one you no longer need \
+                 away with archive_entity."
+            ),
+        )),
         // **Stale, not absent** (rule 261): the row named is real — it is a
         // forwarding row rather than a side to fold or a survivor to fold
         // into — so the way forward is the handle it forwards to, on
@@ -1667,6 +1685,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::AlreadyArchived { .. }
         | MemoryError::NotArchived { .. }
         | MemoryError::NothingToMerge { .. }
+        | MemoryError::DocumentMergedWithAThing { .. }
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }
         | MemoryError::HandleMoved { .. }
@@ -2408,6 +2427,14 @@ pub(crate) mod tests {
                 "NothingToMerge",
                 MemoryError::NothingToMerge {
                     attempted: s("person:alpha"),
+                },
+                Some("change"),
+            ),
+            (
+                "DocumentMergedWithAThing",
+                MemoryError::DocumentMergedWithAThing {
+                    document: s("document:alpha"),
+                    other: s("thing:handcart"),
                 },
                 Some("change"),
             ),

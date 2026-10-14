@@ -613,6 +613,20 @@ answer: {
 }
 ```
 
+### Memory refusal `DocumentMergedWithAThing`
+
+```text
+reads: 'document:alpha' is a document and 'thing:handcart' is not: a document merges only into another document
+answer: {
+  "attempted": "document:alpha",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was merged: 'document:alpha' is a document and 'thing:handcart' is not: a document merges only into another document. Merge two documents to get one that holds both. To bring 'thing:handcart' and 'document:alpha' together anyway, read the document with read_document, capture what is wanted as claims on the thing (or put it into the other document with put_document), then put the one you no longer need away with archive_entity.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `NothingToRename`
 
 ```text

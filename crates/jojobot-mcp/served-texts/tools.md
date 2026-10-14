@@ -1897,6 +1897,8 @@ If you are unsure, read both with recall first.
 THE SURVIVOR SERVES THE DUPLICATE'S CLAIMS UNDER ITS OWN HANDLE, each under a new address.
 An address you were holding for one of them still names it: update_fact, retract and recall with history_record act on the claim where it is now.
 The answer's claims_moved counts the claims the survivor serves under its own handle now.
+TWO DOCUMENTS MERGE INTO ONE: the duplicate's sections follow the survivor's last.
+A document and a thing do not merge.
 A refusal is status: blocked with nothing moved, and the answer says why and who may: one handle named as both sides; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; or a result that could not be read back whole in one answer.
 The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.

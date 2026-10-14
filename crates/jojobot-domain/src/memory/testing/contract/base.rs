@@ -17956,6 +17956,8 @@ macro_rules! all_cases {
         $m!(a_fold_repoints_a_list_of_references_and_names_the_survivor_once($store));
         $m!(a_walk_from_a_folded_handle_says_where_it_went($store));
         $m!(a_merge_reads_back_as_an_event_with_its_session_and_the_claim_map($store));
+        $m!(two_documents_merged_leave_one_document_holding_both_in_order($store));
+        $m!(a_merge_of_a_document_and_a_thing_is_refused_with_the_route($store));
         $m!(an_address_from_before_a_merge_still_names_its_claim($store));
         $m!(an_address_from_before_a_chain_of_merges_names_its_claim_at_the_end($store));
         $m!(what_was_built_on_a_folded_claim_is_found_from_every_address_it_has_had($store));

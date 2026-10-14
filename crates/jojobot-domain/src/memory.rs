@@ -6196,6 +6196,22 @@ pub enum MemoryError {
         /// The handle that was given as both sides.
         attempted: String,
     },
+    /// **A document was merged with something that is not a document.**
+    ///
+    /// Folding a document into a thing would leave sections that belong to no
+    /// document, and folding a thing into a document would leave claims no
+    /// reader of the document takes for sections. Two documents merge into one
+    /// that holds both.
+    #[error(
+        "'{document}' is a document and '{other}' is not: a document merges only into \
+         another document"
+    )]
+    DocumentMergedWithAThing {
+        /// The handle that is a document.
+        document: String,
+        /// The handle that is not.
+        other: String,
+    },
     /// **The row named was already folded into something else.**
     ///
     /// It is a forwarding row rather than a thing, so it is neither a side to

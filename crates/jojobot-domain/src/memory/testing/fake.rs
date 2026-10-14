@@ -3430,19 +3430,19 @@ impl Memory for InMemoryMemory {
         // **The writes that stay on their record**, as the real store keeps them:
         // each with the moment the store stamped, oldest first within a key.
         {
-            let folded = self.keys_folded_into(&storage_key)?;
             let is_folded = self
                 .merges
                 .lock()
                 .expect("fake mutex poisoned")
                 .iter()
                 .any(|merge| merge.folded == storage_key);
+            // **Read as served**: a folded record's writes wear the id its claim has
+            // on the survivor, as the real store's, so they never meet another
+            // record's writes under an id both documents once held.
             let mut kept: Vec<crate::memory::RecordFieldWrite> = self
-                .writes
-                .lock()
-                .expect("fake mutex poisoned")
+                .writes_view()
                 .iter()
-                .filter(|w| !is_folded && (w.entity == storage_key || folded.contains(&w.entity)))
+                .filter(|w| !is_folded && w.entity == storage_key)
                 .filter(|w| !super::super::reaches_the_thing(w.class))
                 .map(|w| crate::memory::RecordFieldWrite {
                     fact: w.fact.clone(),
@@ -4021,6 +4021,14 @@ impl Memory for InMemoryMemory {
             }
         }
 
+        // **A document merges only into another document**, decided before
+        // anything moves.
+        if let Some(refused) =
+            super::super::document::refuses_a_merge_of_a_document_and_a_thing(folded, survivor)
+        {
+            return Err(refused);
+        }
+
         let account = merge_account(folded, survivor, reason, date)?;
         let standing = standing_of(&account);
 
@@ -4118,6 +4126,45 @@ impl Memory for InMemoryMemory {
             })
             .collect();
         let rehomed = moved.len();
+        // **When both sides are documents, the folded sections follow the
+        // survivor's last one**, and each chunk names its heading's new id. Written
+        // here, before the event is appended, while the folded records are still
+        // served at the addresses they were made under; the same planning the real
+        // store runs, from the domain.
+        if folded.kind() == Some(EntityKind::DOCUMENT) {
+            let survivor_records: Vec<Fact> = held_facts
+                .iter()
+                .filter(|f| f.home == survivor_key)
+                .map(|f| self.projected(f))
+                .collect();
+            let folded_records: Vec<Fact> = held_facts
+                .iter()
+                .filter(|f| f.home == folded_key)
+                .map(|f| self.projected(f))
+                .collect();
+            let relocated =
+                super::super::document::append_after(&survivor_records, &folded_records, &moved)
+                    .map_err(|e| {
+                        MemoryError::InvalidFact(format!(
+                            "the folded sections cannot be placed: {e}"
+                        ))
+                    })?;
+            for place in relocated {
+                let Some(record) = folded_records.iter().find(|f| f.id == place.fact) else {
+                    continue;
+                };
+                let mut wrote =
+                    vec![(super::super::document::ORDER.to_string(), Some(place.order))];
+                if let Some(head) = place.continues {
+                    wrote.push((super::super::document::CONTINUES.to_string(), Some(head)));
+                }
+                // Each key keeps the class it was first written under, so the new
+                // order stays on the record as the old one did.
+                let classes = self.held_classes(&folded_key, &place.fact);
+                self.append_claim_write(record, session.map(str::to_string));
+                self.append_writes(&folded_key, &place.fact, wrote, &classes);
+            }
+        }
         self.merges
             .lock()
             .expect("fake mutex poisoned")
