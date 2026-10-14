@@ -78,16 +78,23 @@ async fn a_sentence_naming_something_that_is_not_there_is_refused() {
 
     s.add("person:milhouse", "Milhouse").await;
 
-    s.refused(
-        "capture",
-        json!({
-            "subject": "person:milhouse",
-            "content": "went out with @person:nelson",
-            "provenance": "testimony",
-        }),
-    )
-    .await
-    .says("person:nelson");
+    //
+    // **The sentence names one thing that is there and one that is not**, so the
+    // refusal's `attempted` has to pick out the missing one: the sentence itself
+    // names both, and only a check of each mention can tell them apart.
+    let sentence = "went out with @person:milhouse and @person:nelson";
+    let refusal = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "person:milhouse",
+                "content": sentence,
+                "provenance": "testimony",
+            }),
+        )
+        .await;
+    assert_eq!(refusal.json()["attempted"], "person:nelson");
+    assert_eq!(refusal.json()["wrote"], false);
 
     // …and the same sentence lands once the thing it names is there.
     s.add("person:nelson", "Nelson").await;
@@ -95,7 +102,7 @@ async fn a_sentence_naming_something_that_is_not_there_is_refused() {
         "capture",
         json!({
             "subject": "person:milhouse",
-            "content": "went out with @person:nelson",
+            "content": sentence,
             "provenance": "testimony",
         }),
     )
@@ -159,19 +166,70 @@ async fn sample_code_naming_nothing_is_kept_as_written_and_the_same_handle_outsi
         .says("@person:nelson")
         .never_says("no such handle");
 
-    // The same handle outside code is refused, naming it.
-    s.refused(
+    // The same handle outside code is refused, naming it in the refusal's own
+    // field. The sentence with only the code span landed above, so the mention
+    // outside it is what the refusal reads.
+    let outside = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "person:milhouse",
+                "content": "the sample wrote `@person:nelson`, then @person:nelson again",
+                "provenance": "testimony",
+            }),
+        )
+        .await;
+    assert_eq!(outside.json()["attempted"], "person:nelson");
+
+    s.wrap("stored a code sample whose handle names nothing, and was still refused outside code")
+        .await;
+}
+
+/// **A handle that names something real is still literal inside code.** The
+/// sample code above names nothing, so it shows only that code is not refused;
+/// here the handle inside the code span is a real place, and the claim is read
+/// back after the place is renamed. The mention outside the span follows the
+/// rename, and the one inside it stays exactly as it was written, because it
+/// was never a link.
+///
+/// **Both halves are one claim**, so a build that linked every `@` passes
+/// neither: the code span would read the new name, and a build that linked
+/// none would leave the prose reading the old one.
+#[tokio::test]
+async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_same_handle_outside_follows()
+ {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("place:shelbyvile", "Shelbyville").await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.call(
         "capture",
         json!({
             "subject": "person:milhouse",
-            "content": "the sample wrote `@person:nelson`, then @person:nelson again",
+            "content": "code `@place:shelbyvile` and prose @place:shelbyvile",
             "provenance": "testimony",
         }),
     )
-    .await
-    .says("person:nelson");
+    .await;
+    s.call(
+        "rename_entity",
+        json!({"handle": "place:shelbyvile", "to": "place:shelbyville"}),
+    )
+    .await;
 
-    s.wrap("stored a code sample whose handle names nothing, and was still refused outside code")
+    let read = s
+        .call(
+            "recall",
+            json!({"subject": "person:milhouse", "facts": true}),
+        )
+        .await;
+    assert_eq!(
+        read.text_at("/objects/0/facts/0/content"),
+        "code `@place:shelbyvile` and prose @place:shelbyville"
+    );
+
+    s.wrap("wrote a real handle in code and in prose, then renamed the place")
         .await;
 }
 
