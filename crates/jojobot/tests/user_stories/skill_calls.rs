@@ -78,47 +78,65 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
     everyone.says("person:homer").says("person:bart");
 
     // ── a key compared on the record, and what comes back of each ───────────
-    s.call(
-        "declare_type",
-        json!({ "name": "visit", "fields": [{ "key": "cost", "holds": "number" }] }),
-    )
-    .await;
+    // **The costs are picked so that text and number disagree**: as text "100"
+    // sorts before "50" and "9" after it, so a comparison that read the values
+    // as text keeps the cheap visit and drops the dear one.
     s.add("thing:the-couch", "The Couch").await;
     s.add("thing:floor-pump", "The Floor Pump").await;
     s.event_with(
         "thing:the-couch",
         "a dear visit",
-        json!({ "cost": "80", "colour": "green" }),
+        json!({ "cost": "100", "colour": "green" }),
         &[],
     )
     .await;
     s.event_with(
         "thing:floor-pump",
         "a cheap visit",
-        json!({ "cost": "20" }),
+        json!({ "cost": "9" }),
         &[],
     )
     .await;
-    let dear = s
-        .call(
-            "recall",
-            json!({
-                "fields": [{
-                    "key": "cost", "compare": "greater", "value": "50", "scope": "record",
-                }],
-            }),
-        )
-        .await;
-    dear.says("thing:the-couch").never_says("thing:floor-pump");
+    let ask = json!({
+        "fields": [{
+            "key": "cost", "compare": "greater", "value": "50", "scope": "record",
+        }],
+    });
+    // **The paired negative**: nothing declared the key a number yet, so the
+    // comparison is refused and names what licenses it.
+    s.refused("recall", ask.clone()).await.says("declare_type");
+    s.call(
+        "declare_type",
+        json!({ "name": "visit", "fields": [{ "key": "cost", "holds": "number" }] }),
+    )
+    .await;
+    let dear = s.call("recall", ask).await;
+    let found: Vec<String> = dear.json()["objects"]
+        .as_array()
+        .expect("the answer lists objects")
+        .iter()
+        .map(|object| object["id"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        found,
+        ["thing:the-couch"],
+        "100 is more than 50 and 9 is not, as numbers: {}",
+        dear.raw()
+    );
     let narrowed = s
         .call(
             "recall",
             json!({ "subject": "thing:the-couch", "keys": ["cost"] }),
         )
         .await;
-    narrowed
-        .says("\"cost\":\"80\"")
-        .never_says("\"colour\":\"green\"");
+    narrowed.holds_at("/objects/0/fields/cost", "100");
+    assert!(
+        narrowed.json()["objects"][0]["fields"]
+            .get("colour")
+            .is_none(),
+        "`keys` narrows what each object brings back: {}",
+        narrowed.raw()
+    );
 
     story.finish().await;
 }
