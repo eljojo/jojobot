@@ -264,6 +264,14 @@ pub async fn a_number_is_held_by_one_member_and_a_bad_value_is_refused<M: Memory
     )
     .await;
     assert_eq!(edited.fields.get("number").map(String::as_str), Some("7"));
+    // A member that writes the number it already holds is not refused: the
+    // holder it would collide with is itself.
+    store
+        .capture(write("7"))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a member's own number is not taken from it");
 }
 
 /// **The whole subtree is the scope, and nothing outside it is.** A grandchild
