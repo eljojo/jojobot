@@ -6451,30 +6451,6 @@ pub enum MemoryError {
          transient conflict rather than a mistake in what was sent"
     )]
     Conflict,
-    /// **A whole-record provision names an address the store already holds a
-    /// row at.**
-    ///
-    /// [`owned::Supplies::Record`](crate::memory::owned::Supplies::Record)'s
-    /// own contract is a record the store holds NOTHING of — that is what
-    /// lets a reader be unable to tell which half answered. An address the
-    /// store already has a row at breaks that contract before a caller ever
-    /// asks anything: every existence check that reads what the build
-    /// supplies (rule 234) sees the address as already provisioned and skips
-    /// creating, or re-creating, the real row — silent, and for a kind whose
-    /// row is also its mailbox, unrecoverable from inside the running
-    /// instance.
-    ///
-    /// **Never reaches a caller.** This is a build-time misconfiguration
-    /// caught before the instance starts serving, not a write any verb can
-    /// provoke — there is no `memory_declined` arm for it.
-    #[error(
-        "'{attempted}' is supplied as a whole record, and the store already holds a record there — \
-         the record supply shape is only for an address the store holds nothing of"
-    )]
-    SuppliedRecordCollidesWithStoredRow {
-        /// The address both the provision and a stored row name.
-        attempted: String,
-    },
     /// **The write landed. Only the in-process fold that mirrors it could not
     /// be refreshed afterward.**
     ///

@@ -9394,36 +9394,31 @@ pub async fn add_entity_screens_every_name_an_entity_answers_to<M: Memory>(store
 /// own example named.
 pub const SUPPLIED_VIEW_FOR_THE_GUARD_SPECS: &str = "view:loops";
 
-/// 🚨 **A whole-record provision at an address the store already holds is
-/// refused, not silently honoured.**
+/// 🚨 **A stored row at a handle the build supplies as a whole record is named,
+/// and left exactly as it is.** The boot logs each one and serves on, so an
+/// upgrade never stops the server over a view the operator declared before the
+/// build shipped one of that name (rule 508).
 ///
-/// `Supplies::Record`'s own contract is a record the store holds NOTHING of.
-/// An address a real row already occupies breaks that contract before a
-/// caller ever asks anything: every existence check that reads what the
-/// build supplies (`list_entities` among them, rule 234) would see the
-/// address as already provisioned and never learn the real row needs
-/// creating or re-creating — silent, and for a kind whose row is also its
-/// mailbox, unrecoverable from inside the running instance.
-///
-/// **Paired in the same read**: the refusal alone proves nothing if it also
-/// destroys the very row it is protecting — so after the refusal, the real
-/// entity must still be exactly what `add` wrote, untouched by the check
-/// that caught the collision.
-pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>(store: &M) {
+/// **Paired in the same read**: a supplied handle with no row under it is not
+/// named, or a function that named every supplied record would pass. And after
+/// the check the stored row is what `add` wrote: finding the collision must not
+/// touch the row.
+pub async fn a_stored_row_at_a_supplied_handle_is_named_and_left_alone<M: Memory>(store: &M) {
     let real = EntityId("thing:contract-provision-collision".into());
+    let alone = EntityId("thing:contract-provision-alone".into());
     add(
         store,
         NewEntity::new(real.clone(), "Really Stored", "contract-fixture"),
     )
     .await;
 
-    let colliding =
-        crate::memory::owned::Provisions::new(vec![crate::memory::owned::Provision::record(
+    let shipped = |id: &EntityId, name: &str| {
+        crate::memory::owned::Provision::record(
             Entity {
                 folded_names: Vec::new(),
-                id: real.clone(),
+                id: id.clone(),
                 kind: EntityKind::THING,
-                name: "Shipped By Mistake".into(),
+                name: name.into(),
                 aliases: Vec::new(),
                 source: "jojobot".into(),
                 crm: None,
@@ -9434,18 +9429,20 @@ pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>
                 archived: None,
             },
             std::collections::BTreeMap::new(),
-        )]);
+        )
+    };
+    let supplied = crate::memory::owned::Provisions::new(vec![
+        shipped(&real, "Shipped Over A Row"),
+        shipped(&alone, "Shipped Alone"),
+    ]);
 
-    let refused = crate::memory::owned::guard_supplied_records(store, &colliding)
+    let named = crate::memory::owned::stored_rows_under_supplied_handles(store, &supplied)
         .await
-        .expect_err("a whole record at an address the store already holds must be refused");
-    assert!(
-        matches!(
-            &refused,
-            MemoryError::SuppliedRecordCollidesWithStoredRow { attempted }
-                if attempted == &real.to_string()
-        ),
-        "the refusal must name the colliding address: {refused:?}",
+        .expect("finding the stored rows under a supplied handle is not a refusal");
+    assert_eq!(
+        named,
+        vec![real.clone()],
+        "the stored row at a supplied handle is named, and the supplied handle with no row is not"
     );
 
     let still_there = store
@@ -9454,10 +9451,10 @@ pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>
         .expect("list_entities should succeed")
         .into_iter()
         .find(|e| e.id == real)
-        .expect("the real row must survive the check that caught the collision");
+        .expect("the real row must survive the check that found the collision");
     assert_eq!(
         still_there.name, "Really Stored",
-        "the refusal must not have touched the real row: {still_there:?}",
+        "the check must not have touched the real row: {still_there:?}",
     );
 }
 

@@ -5409,3 +5409,150 @@ async fn a_reused_handle_in_the_deploy_4_store_counts_each_things_own_writes() {
     )
     .await;
 }
+
+// ── An upgrade never refuses the boot, and never strands what the operator wrote
+// on a handle the build supplies (rule 508).
+
+/// **One claim, and the one field it set, filed under `key`.** For a stored thing
+/// the key is its badge; for a handle no row holds it is the handle's own text,
+/// which is how a write on a record the build supplies is filed. The column lists
+/// are the ones `plant_a_view_with_a_filter_record` copies from the recordings.
+async fn plant_a_claim_filed_under(
+    pool: &sqlx::MySqlPool,
+    key: &str,
+    content: &str,
+    field: (&str, &str),
+) {
+    sqlx::query(
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                           recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                           derived_from_id, inserted_at, stale_after, happened_at,
+                           happened_through)
+         VALUES (?, 'f1', ?, NULL, 'testimony', 'settled', 'active',
+                 '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                 NULL, NULL)",
+    )
+    .bind(key)
+    .bind(content)
+    .execute(pool)
+    .await
+    .expect("the record lands");
+    sqlx::query(
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                standing, status, recorded_at, edge_shape, edge_object,
+                                derived_from, derived_from_id, inserted_at, stale_after,
+                                written_at, happened_at, happened_through, session)
+         VALUES (?, 'f1', 1, ?, NULL, 'testimony', 'settled', 'active',
+                 '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+    )
+    .bind(key)
+    .bind(content)
+    .execute(pool)
+    .await
+    .expect("the record's first write lands");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+         VALUES (?, ?, 1, ?, 'f1')",
+    )
+    .bind(key)
+    .bind(field.0)
+    .bind(field.1)
+    .execute(pool)
+    .await
+    .expect("the field lands");
+}
+
+/// **What `recall` answers for one handle, with its claims**, or the answer's own
+/// words when it is not an object.
+async fn recalled_with_claims(booted: &Booted, handle: &str) -> serde_json::Value {
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let answer = surface
+        .call("recall", json!({"subject": handle, "facts": true}))
+        .await;
+    serde_json::from_str(&answer).unwrap_or_else(|_| panic!("recall of {handle} said: {answer}"))
+}
+
+/// The lines of a boot's log that name `handle`.
+fn log_lines_naming<'a>(booted: &'a Booted, handle: &str) -> Vec<&'a String> {
+    booted
+        .log
+        .iter()
+        .filter(|line| line.contains(handle))
+        .collect()
+}
+
+/// **A shipped handle the operator already held a row at.** The build supplies
+/// `view:loops`; the store already holds a stored row there, as it would for a
+/// view the operator declared before the build shipped one of that name.
+const SHIPPED_HANDLE_WITH_A_ROW: &str = "view:loops";
+/// A handle the build supplies and the store holds no row at.
+const SHIPPED_HANDLE_WITHOUT_ONE: &str = "view:ready";
+
+/// **A boot on a store that holds a row at a handle the build now supplies does
+/// not refuse.** The stored row answers, its claims read back through `recall`,
+/// and the boot names the handle in one line that is not a warning. Paired with a
+/// handle the build supplies and the store holds no row at, which the boot does
+/// not name.
+#[tokio::test]
+async fn a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_answers() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "row-at-supplied").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
+                             merged_into, archived_reason, archived_at)
+         VALUES (?, 'view', 'Stored Loops', 'test', NULL, NULL, 'on-demand', '', 'lpsrow',
+                 NULL, NULL, NULL)",
+    )
+    .bind(SHIPPED_HANDLE_WITH_A_ROW)
+    .execute(store.pool())
+    .await
+    .expect("the stored row lands");
+    plant_a_claim_filed_under(
+        store.pool(),
+        "lpsrow",
+        "a claim the operator wrote on their own view",
+        ("answer", "kept"),
+    )
+    .await;
+    store.stop().await;
+
+    for boot in 0..2 {
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let answer = recalled_with_claims(&booted, SHIPPED_HANDLE_WITH_A_ROW).await;
+        let object = &answer["objects"][0];
+        assert_eq!(
+            object["name"], "Stored Loops",
+            "recorded at {git_ref}: boot {boot}: the stored row answers at a shipped handle: \
+             {answer}"
+        );
+        assert_eq!(
+            object["fields"]["answer"], "kept",
+            "recorded at {git_ref}: boot {boot}: its field reads back: {answer}"
+        );
+        assert!(
+            object["facts"].to_string().contains("on their own view"),
+            "recorded at {git_ref}: boot {boot}: its claim reads back: {answer}"
+        );
+        assert_eq!(
+            log_lines_naming(&booted, SHIPPED_HANDLE_WITH_A_ROW).len(),
+            1,
+            "recorded at {git_ref}: boot {boot}: the boot names the handle once: {:?}",
+            booted.log
+        );
+        assert!(
+            log_lines_naming(&booted, SHIPPED_HANDLE_WITHOUT_ONE).is_empty(),
+            "recorded at {git_ref}: boot {boot}: a supplied handle with no row is not named"
+        );
+        booted.stop().await;
+    }
+    drop(scratch);
+}

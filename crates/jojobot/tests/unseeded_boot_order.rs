@@ -1,12 +1,12 @@
 //! **The exact ordering `wiring::open_provisioned` exists to enforce.**
 //!
-//! `guard_supplied_records` reads every stored entity, and reading one means
-//! parsing its handle's kind. A process that has not yet seeded the kind set
-//! cannot do that read — `kinds::resolve` answers `SetNeverLoaded`. So the
-//! kinds have to be seeded before the guard ever runs.
+//! `stored_rows_under_supplied_handles` reads every stored entity, and reading
+//! one means parsing its handle's kind. A process that has not yet seeded the
+//! kind set cannot do that read — `kinds::resolve` answers `SetNeverLoaded`. So
+//! the kinds have to be seeded before the check ever runs.
 //!
 //! Getting this backwards once took the whole server down at boot: the boot
-//! called the guard first, and the guard's own `list_entities` hit the first
+//! called the check first, and its own `list_entities` hit the first
 //! stored row before any kind was loaded, refusing every restart with "the
 //! kind set was never loaded" — on a store that was perfectly fine.
 //!
@@ -33,7 +33,7 @@ impl Drop for Scratch {
 }
 
 #[tokio::test]
-async fn open_provisioned_seeds_kinds_before_the_guard_reads_a_stored_row() {
+async fn open_provisioned_seeds_kinds_before_the_check_reads_a_stored_row() {
     let path = std::env::temp_dir().join(format!("jojobot-boot-order-{}", std::process::id()));
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
@@ -62,11 +62,11 @@ async fn open_provisioned_seeds_kinds_before_the_guard_reads_a_stored_row() {
     let resolved = jojobot::wiring::open_provisioned(bare, Provisions::new(vec![]))
         .await
         .expect(
-            "a boot that seeds the kinds before the guard reads a row must be able to serve the \
+            "a boot that seeds the kinds before the check reads a row must be able to serve the \
              store it was handed, not refuse it as though it were damaged",
         );
 
-    // The read the guard itself took has to have actually succeeded, not only
+    // The read the check itself took has to have actually succeeded, not only
     // `open_provisioned`'s own `?`.
     let rows = resolved
         .list_entities(None)

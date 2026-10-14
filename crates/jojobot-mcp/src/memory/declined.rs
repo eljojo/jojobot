@@ -421,10 +421,8 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
         MemoryError::Refused(_) => Some(FixBy::Change),
-        // A kind set nothing re-reads, a build that collided with a stored row,
-        // and a claim only the operator can bless.
+        // A kind set nothing re-reads, and a claim only the operator can bless.
         MemoryError::KindsNeverLoaded { .. }
-        | MemoryError::SuppliedRecordCollidesWithStoredRow { .. }
         | MemoryError::UnconfirmedPromotion => Some(FixBy::Person),
         // Stored damage, which sending the call again or changing it cannot help:
         // only a person repairs it.
@@ -1717,13 +1715,6 @@ fn memory_error_arms(e: MemoryError) -> McpError {
             crate::boundary::conflict("this call", &MemoryError::Conflict.to_string()),
             None,
         ),
-        // **A build-time misconfiguration, not a caller mistake.** No verb
-        // produces this — it is caught at boot, before an instance ever
-        // serves — so there is no way forward to hand a caller and no
-        // `memory_declined` arm for it either.
-        MemoryError::SuppliedRecordCollidesWithStoredRow { .. } => {
-            McpError::internal_error(e.to_string(), None)
-        }
         // **Reaching this arm is itself the bug.** `FoldBehind` says the write
         // landed — every verb that can raise it (`capture`, `update_fact`,
         // `retract`, `merge`) catches it before its error ever reaches this
@@ -2454,19 +2445,11 @@ pub(crate) mod tests {
                 MemoryError::UnreceiptedSettling,
                 Some("change"),
             ),
-            // Damage no caller can repair, a kind set nothing re-reads, a build
-            // that collided with a stored row, and claims only the operator can
-            // bless.
+            // Damage no caller can repair, a kind set nothing re-reads, and
+            // claims only the operator can bless.
             (
                 "KindsNeverLoaded",
                 MemoryError::KindsNeverLoaded { attempted: None },
-                Some("person"),
-            ),
-            (
-                "SuppliedRecordCollidesWithStoredRow",
-                MemoryError::SuppliedRecordCollidesWithStoredRow {
-                    attempted: s("view:colleagues"),
-                },
                 Some("person"),
             ),
             (

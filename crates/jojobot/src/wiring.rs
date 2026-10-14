@@ -74,16 +74,16 @@ use jojobot_domain::teaching::Teachings;
 /// call to THIS function in one process.
 static PROVISIONED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
-/// **Stage zero: seed the kinds this build ships, then guard, then wrap in
-/// `Provisioned`.**
+/// **Stage zero: seed the kinds this build ships, then name the stored rows
+/// under a supplied handle, then wrap in `Provisioned`.**
 ///
 /// **The order is enforced here rather than left to the caller.**
-/// `guard_supplied_records` reads every stored entity, and reading one means
-/// parsing its handle's kind — which a process that has not yet loaded the
-/// kind set cannot do (`kinds::resolve` answers `SetNeverLoaded`). So the
-/// kinds are seeded first, against the bare store, before anything reads a
-/// row. Getting this backwards once took the whole server down at boot: the
-/// guard's `list_entities` hit the first stored row before any kind was
+/// `stored_rows_under_supplied_handles` reads every stored entity, and reading
+/// one means parsing its handle's kind — which a process that has not yet
+/// loaded the kind set cannot do (`kinds::resolve` answers `SetNeverLoaded`).
+/// So the kinds are seeded first, against the bare store, before anything reads
+/// a row. Getting this backwards once took the whole server down at boot: the
+/// check's `list_entities` hit the first stored row before any kind was
 /// loaded, and every read since the process began refused with "the kind set
 /// was never loaded".
 ///
@@ -114,16 +114,33 @@ pub async fn open_provisioned<M: Memory + Clone + 'static>(
              reachable puts it right."
         ),
     }
-    // **Read against the bare store, before it is wrapped in `Provisioned`.**
-    // A whole-record provision at an address a real row already occupies
-    // breaks `Supplies::Record`'s own contract — a record the store holds
-    // NOTHING of — and every existence check that reads what the build
-    // supplies would see the address as already provisioned, never learning
-    // the real row needs creating or re-creating. Refuse to start rather
-    // than serve on a misconfiguration that silent.
-    jojobot_domain::memory::owned::guard_supplied_records(&bare, &supplied)
-        .await
-        .context("a shipped provision collides with a stored row")?;
+    // **A stored row at a handle the build now supplies does not stop the boot**
+    // (rule 508). The stored row answers there, as `Provisioned` already
+    // answers it in every read, and what the build ships stays under the keys
+    // the row holds. Each such handle is named once, so the operator can see
+    // which of their things a later build has come to share a name with.
+    //
+    // **Read against the bare store, before it is wrapped in `Provisioned`**:
+    // the wrapped store would resolve the handle to the supplied record and
+    // report nothing.
+    match jojobot_domain::memory::owned::stored_rows_under_supplied_handles(&bare, &supplied).await
+    {
+        Ok(handles) => {
+            for handle in handles {
+                tracing::info!(
+                    %handle,
+                    "store: a stored row is already at a handle this build supplies; the stored \
+                     row answers there"
+                );
+            }
+        }
+        Err(e) => tracing::warn!(
+            error = %e,
+            "STORED ROWS UNDER SUPPLIED HANDLES NOT CHECKED — the store could not be read. Every \
+             read still answers a stored row before a supplied record, so nothing is served \
+             wrongly; a restart once the store is reachable names them."
+        ),
+    }
     Ok(Arc::new(Provisioned::new(bare, supplied)))
 }
 

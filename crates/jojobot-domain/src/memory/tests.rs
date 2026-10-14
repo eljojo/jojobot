@@ -1953,8 +1953,8 @@ async fn a_merge_naming_a_supplied_handle_is_refused_against_the_fake() {
 }
 
 #[tokio::test]
-async fn a_supplied_record_colliding_with_a_stored_row_is_refused_against_the_fake() {
-    contract::a_supplied_record_colliding_with_a_stored_row_is_refused(&InMemoryMemory::booted())
+async fn a_stored_row_at_a_supplied_handle_is_named_and_left_alone_against_the_fake() {
+    contract::a_stored_row_at_a_supplied_handle_is_named_and_left_alone(&InMemoryMemory::booted())
         .await;
 }
 
@@ -2772,28 +2772,22 @@ fn a_caller_cannot_write_the_stored_mark_into_a_field_value() {
     }
 }
 
-/// **The two refusals about a record the build supplies speak of records.** A
+/// **The refusal about a record the build supplies speaks of records.** A
 /// session knows records, and the store's rows are not a word it was taught.
 #[test]
-fn the_supplied_record_refusals_do_not_speak_of_rows() {
+fn the_supplied_record_refusal_does_not_speak_of_rows() {
     let moved = MemoryError::SuppliedHandle {
         attempted: "view:loops".into(),
     }
     .to_string();
-    let collided = MemoryError::SuppliedRecordCollidesWithStoredRow {
-        attempted: "view:loops".into(),
-    }
-    .to_string();
-    for (what, said) in [("the rename refusal", &moved), ("the collision", &collided)] {
-        assert!(
-            said.contains("view:loops") && said.contains("record"),
-            "{what} does not name the record: {said}"
-        );
-        assert!(
-            !said
-                .split(|c: char| !c.is_alphanumeric())
-                .any(|word| word == "row"),
-            "{what} speaks of a row: {said}"
-        );
-    }
+    assert!(
+        moved.contains("view:loops") && moved.contains("record"),
+        "the rename refusal does not name the record: {moved}"
+    );
+    assert!(
+        !moved
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| word == "row"),
+        "the rename refusal speaks of a row: {moved}"
+    );
 }

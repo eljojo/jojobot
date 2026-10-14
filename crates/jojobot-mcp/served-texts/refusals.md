@@ -700,16 +700,6 @@ answer: {
 }
 ```
 
-### Memory refusal `SuppliedRecordCollidesWithStoredRow`
-
-```text
-reads: 'view:colleagues' is supplied as a whole record, and the store already holds a record there — the record supply shape is only for an address the store holds nothing of
-answer: protocol error: 'view:colleagues' is supplied as a whole record, and the store already holds a record there — the record supply shape is only for an address the store holds nothing of
-{
-  "fix_by": "person"
-}
-```
-
 ### Memory refusal `UnconfirmedPromotion`
 
 ```text

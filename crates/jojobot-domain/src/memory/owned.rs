@@ -106,8 +106,8 @@ pub enum Supplies {
     /// an address the store holds nothing of, and a key on a row that
     /// already exists is not that. Shipping a default for a kind whose
     /// address is always a real stored row — an identity, among others —
-    /// needs this rather than a whole record at its address (see
-    /// [`super::MemoryError::SuppliedRecordCollidesWithStoredRow`]).
+    /// needs this rather than a whole record at its address: a stored row at
+    /// a supplied handle wins every read, so the record would never answer.
     Field { key: String, value: String },
 }
 
@@ -229,37 +229,25 @@ impl Provisions {
     }
 }
 
-/// **Refuse a whole-record provision at an address the store already holds a
-/// row at.**
-///
-/// [`Supplies::Record`]'s own contract is a record the store holds NOTHING
-/// of. An address the store already has a row at breaks that contract before
-/// a caller ever asks anything: every existence check that reads what the
-/// build supplies (rule 234) — `list_entities` among them — sees the address
-/// as already provisioned and never learns the real row is missing, which is
-/// silent and, for a kind whose row is also its mailbox, unrecoverable from
-/// inside the running instance.
+/// **The stored rows that sit at a handle the build supplies as a whole
+/// record.** A boot names each one and serves on: the stored row answers
+/// there, as it does in every read, and what the build ships stays under the
+/// keys the row holds. An upgrade never stops the server over one (rule 508).
 ///
 /// **Read against the BARE store**, before it is wrapped in `Provisioned`: a
-/// store already carrying the decorator would resolve the very collision this
-/// checks for, and never report one.
-///
-/// Called once, at boot, before an instance starts serving — never on a
-/// caller's path, so there is nothing here for a verb to catch.
-pub async fn guard_supplied_records<M: super::Memory + ?Sized>(
+/// store already carrying the decorator would resolve the handle to the
+/// supplied record and report nothing.
+pub async fn stored_rows_under_supplied_handles<M: super::Memory + ?Sized>(
     store: &M,
     provisions: &Provisions,
-) -> Result<(), MemoryError> {
+) -> Result<Vec<EntityId>, MemoryError> {
     let held = store.list_entities(None).await?;
-    if let Some((collided, _)) = provisions
+    Ok(provisions
         .records()
-        .find(|(entity, _)| held.iter().any(|row| row.id == entity.id))
-    {
-        return Err(MemoryError::SuppliedRecordCollidesWithStoredRow {
-            attempted: collided.id.to_string(),
-        });
-    }
-    Ok(())
+        .map(|(entity, _)| &entity.id)
+        .filter(|id| held.iter().any(|row| &row.id == *id))
+        .cloned()
+        .collect())
 }
 
 /// **What the build supplies, then what the operator wrote.**
