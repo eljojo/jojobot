@@ -465,17 +465,21 @@ impl SessionRegistry {
             .clone()
     }
 
-    /// **Wait for the right to place sections on `thing`**, and hold it until the
+    /// **Wait for the right to place sections under `key`**, and hold it until the
     /// guard drops: from the read of the neighbours, through the mint, to the
-    /// last write built on it. Different things never wait on each other.
+    /// last write built on it. Different keys never wait on each other.
     ///
-    /// An entry nobody holds or waits on is dropped on the next call, so a
-    /// handle that names nothing leaves no slot behind once its caller is gone.
-    pub(crate) async fn hold_placing(&self, thing: &EntityId) -> tokio::sync::OwnedMutexGuard<()> {
+    /// **Not called with a name.** What the key is — the thing's permanent id —
+    /// is decided by `Jojobot::hold_placing`, which resolves the name a caller
+    /// has; this only holds what it is given.
+    ///
+    /// An entry nobody holds or waits on is dropped on the next call, so a key
+    /// that names nothing leaves no slot behind once its caller is gone.
+    pub(crate) async fn hold_placing(&self, key: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let gate = {
             let mut held = self.placing.lock().expect("the placing map is poisoned");
             held.retain(|_, gate| Arc::strong_count(gate) > 1);
-            held.entry(thing.as_str().to_string()).or_default().clone()
+            held.entry(key.to_string()).or_default().clone()
         };
         gate.lock_owned().await
     }

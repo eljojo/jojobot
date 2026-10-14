@@ -1321,9 +1321,16 @@ async fn an_order_field_on_a_claim_that_is_no_document_makes_no_section() {
 /// does.** The transport builds a handler per connection and the process shares
 /// one registry, so two handlers over one registry are the shape production has.
 fn two_connections() -> (Jojobot, Jojobot, Arc<InMemoryMemory>) {
+    connections_over(None)
+}
+
+/// [`two_connections`], over a store whose next listing of the entities can be
+/// held after it has read.
+fn connections_over(pause: Option<Arc<ListingPause>>) -> (Jojobot, Jojobot, Arc<InMemoryMemory>) {
     let memory = Arc::new(InMemoryMemory::seeded());
     let store: Arc<dyn Memory> = Arc::new(YieldsLikeAStore {
         inner: memory.clone(),
+        pause,
     });
     let registry = seeded_registry();
     let on = || {
@@ -1429,9 +1436,9 @@ async fn placing_waits_per_document_and_never_across_documents() {
     ensure(&a, "document:homer").await;
     ensure(&a, "document:marge").await;
     let held = a
-        .registry
         .hold_placing(&EntityId::person("document:homer"))
-        .await;
+        .await
+        .expect("the lock is taken");
 
     let other = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -1451,6 +1458,130 @@ async fn placing_waits_per_document_and_never_across_documents() {
         .await
         .expect("it goes on once the holder lets go");
     assert_ne!(json_of(&done)["status"], "blocked", "{done:?}");
+}
+
+/// Rename a document through the verb a caller uses.
+async fn rename_document(jojobot: &Jojobot, from: &str, to: &str) {
+    jojobot
+        .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+            handle: from.into(),
+            to: to.into(),
+            parent: None,
+            recorded_at: None,
+            override_token: None,
+            sid: Some(TEST_SID.into()),
+        }))
+        .await
+        .expect("rename_entity answers");
+}
+
+/// **Every name a document has answers to one placing lock.** The lock is held
+/// under the name the document wears now; a move addressed by the name it used
+/// to wear waits for it (positive), and a put on another document does not
+/// (negative). Keyed on the handle as sent, the move takes another lock and goes
+/// straight in.
+#[tokio::test]
+async fn a_move_under_a_former_name_waits_for_the_lock_held_under_the_current_one() {
+    let (a, b, _memory) = two_connections();
+    let (former, current) = ("document:homer", "document:krusty");
+    put_ok(&a, former, "# One\n\n1\n\n# Two\n\n2\n").await;
+    ensure(&a, "document:marge").await;
+    rename_document(&a, former, current).await;
+    let one = address_of(&a, current, "# One").await;
+    let two = address_of(&a, current, "# Two").await;
+    let two_by_former = two.replacen(current, former, 1);
+    let held = a
+        .hold_placing(&EntityId::person(current))
+        .await
+        .expect("the lock is taken");
+
+    let mut moving = std::pin::pin!(move_section(&b, &two_by_former, &one));
+    let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut moving).await;
+    assert!(
+        early.is_err(),
+        "a move under a former name went in while the document was held"
+    );
+    let other = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        put(&b, put_args("document:marge", "# Elsewhere\n\ne\n").await),
+    )
+    .await
+    .expect("a different document does not wait");
+    assert_ne!(json_of(&other)["status"], "blocked", "{other:?}");
+    drop(held);
+    // What the move answers is the move's own business: it went on once the
+    // holder let go, which is all this case is about.
+    tokio::time::timeout(std::time::Duration::from_secs(5), moving)
+        .await
+        .expect("the move goes on once the holder lets go");
+}
+
+/// **The same, the other way round**: the lock is held under a name the document
+/// used to wear, and a put under the name it wears now waits for it.
+#[tokio::test]
+async fn a_put_under_the_current_name_waits_for_the_lock_held_under_a_former_one() {
+    let (a, b, _memory) = two_connections();
+    let (former, current) = ("document:homer", "document:krusty");
+    put_ok(&a, former, "# One\n\n1\n").await;
+    rename_document(&a, former, current).await;
+    let one = address_of(&a, current, "# One").await;
+    let held = a
+        .hold_placing(&EntityId::person(former))
+        .await
+        .expect("the lock is taken");
+
+    let args = PutDocumentArgs {
+        after: Some(one),
+        ..put_args(current, "# Late\n\nl\n").await
+    };
+    let mut putting = std::pin::pin!(put(&b, args));
+    let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut putting).await;
+    assert!(early.is_err(), "a put went in while the document was held");
+    drop(held);
+    let done = tokio::time::timeout(std::time::Duration::from_secs(5), putting)
+        .await
+        .expect("the put goes on once the holder lets go");
+    assert_ne!(json_of(&done)["status"], "blocked", "{done:?}");
+}
+
+/// **A rename that lands after a caller has read the document's name and before
+/// it holds the lock still leaves one lock.** The first caller names the document
+/// by its old handle and is held between its read and its lock; the rename lands
+/// there; a second caller then names it by the new handle and has to wait for the
+/// first. A key made from the handle the first caller resolved to is the old
+/// handle, so the second caller takes another lock.
+#[tokio::test]
+async fn a_rename_landing_while_the_lock_is_being_taken_leaves_one_lock() {
+    let pause = Arc::new(ListingPause::default());
+    let (a, b, _memory) = connections_over(Some(pause.clone()));
+    let (former, current) = ("document:homer", "document:krusty");
+    put_ok(&a, former, "# One\n\n1\n").await;
+    pause.arm();
+
+    let old_name = EntityId::person(former);
+    let new_name = EntityId::person(current);
+    let taking = a.hold_placing(&old_name);
+    let renaming = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), pause.reached())
+            .await
+            .expect("the first caller never listed the entities before taking its lock");
+        rename_document(&b, former, current).await;
+        pause.release();
+    };
+    let (held, ()) = tokio::join!(taking, renaming);
+    let held = held.expect("the lock is taken");
+
+    let mut second = std::pin::pin!(b.hold_placing(&new_name));
+    let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut second).await;
+    assert!(
+        early.is_err(),
+        "a second caller took a lock of its own after the rename"
+    );
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(5), second)
+        .await
+        .expect("the second caller goes on once the first lets go")
+        .expect("the lock is taken");
 }
 
 /// **Two puts after the same section, one under the document's current handle and

@@ -114,6 +114,32 @@ impl Jojobot {
             .map_or_else(|| id.clone(), |entity| entity.id.clone()))
     }
 
+    /// **Wait for the right to place sections on `thing`**, and hold it until the
+    /// guard drops. **The lock is on the thing and not on any name for it**: the
+    /// key is the permanent id the handle resolves to, so a handle the thing used
+    /// to wear, the one it wears now and the one it will wear after a rename that
+    /// lands while a caller is on its way to the lock all take one lock. A thing
+    /// that wears no permanent id is keyed by its current handle, as the store
+    /// keys its rows, and a name that answers to nothing by the name as sent.
+    ///
+    /// This is the one place that decides the key; every caller that places
+    /// sections passes the name it has and takes what this returns.
+    pub(crate) async fn hold_placing(
+        &self,
+        thing: &EntityId,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, MemoryError> {
+        let known = self.memory.list_entities(None).await?;
+        let former = self.memory.former_handles().await?;
+        let key = match jojobot_domain::memory::resolve_handle(thing, &known, &former) {
+            Some(entity) => match &entity.badge {
+                Some(badge) => format!("badge:{badge}"),
+                None => format!("handle:{}", entity.id.as_str()),
+            },
+            None => format!("handle:{}", thing.as_str()),
+        };
+        Ok(self.registry.hold_placing(&key).await)
+    }
+
     /// **A type name, resolved to the declaration it stands for — once, here.**
     ///
     /// Everything below this point takes the KEYS rather than the name, so

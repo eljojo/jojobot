@@ -1226,6 +1226,36 @@ impl Memory for MovesAfterTheRead {
 /// reads before the first has written.
 pub(crate) struct YieldsLikeAStore {
     pub(crate) inner: Arc<InMemoryMemory>,
+    /// A listing of the entities that stops once, after it has answered, until
+    /// a case lets it go. `None` for a store that never stops.
+    pub(crate) pause: Option<Arc<ListingPause>>,
+}
+
+/// **One listing of the entities that is held after it has read**, so a case can
+/// land a write between that read and whatever the caller does with its answer.
+/// Armed, it stops the next listing exactly once.
+#[derive(Default)]
+pub(crate) struct ListingPause {
+    armed: std::sync::atomic::AtomicBool,
+    reached: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl ListingPause {
+    /// Stop the next listing, once.
+    pub(crate) fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Wait until a listing has read and is held.
+    pub(crate) async fn reached(&self) {
+        self.reached.notified().await;
+    }
+
+    /// Let the held listing answer.
+    pub(crate) fn release(&self) {
+        self.release.notify_one();
+    }
 }
 
 /// Hand the thread to every other task that is ready, a few times over.
@@ -1240,10 +1270,20 @@ impl Memory for YieldsLikeAStore {
     async fn former_handles(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
-        self.inner.former_handles().await
+        let read = self.inner.former_handles().await;
+        yield_like_a_store().await;
+        read
     }
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        self.inner.list_entities(kind).await
+        let read = self.inner.list_entities(kind).await;
+        if let Some(pause) = &self.pause
+            && pause.armed.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            pause.reached.notify_one();
+            pause.release.notified().await;
+        }
+        yield_like_a_store().await;
+        read
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
