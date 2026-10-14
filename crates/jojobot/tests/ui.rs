@@ -2238,6 +2238,73 @@ async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
     ct.cancel();
 }
 
+/// **A message the sender replaced shows as replaced on the operator's page, and
+/// names its replacement.** The mistake keeps its row, its state and its two
+/// buttons; the correction beside it carries no such mark. The box counts one new
+/// message, not two.
+#[tokio::test]
+async fn a_replaced_message_shows_as_replaced_on_the_operators_page_and_names_its_replacement() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let replacement = board
+        .mailboxes
+        .post_message(NewMessage {
+            mailbox: MailboxName::named_for(&EntityId("person:lisa".into())),
+            body: "the corrected figure".to_string(),
+            subject: Some("A correction for the operator".to_string()),
+            sender: "bot:otto".to_string(),
+            sent_at: FIXED_INSTANT,
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: Some(mail.to_the_operator.clone()),
+        })
+        .await
+        .expect("posted")
+        .written()
+        .expect("the replacement landed")
+        .id;
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let row_for = |id: &str| -> String {
+        let anchor = format!("<tr><td>{id}</td>");
+        let start = page
+            .find(&anchor)
+            .unwrap_or_else(|| panic!("no row for {id}: {page}"));
+        let rest = &page[start..];
+        rest[..rest.find("</tr>").expect("the row ends")].to_string()
+    };
+    let mistake = row_for(mail.to_the_operator.as_str());
+    let correction = row_for(replacement.as_str());
+    assert!(
+        mistake.contains(&format!("data-replaced-by=\"{replacement}\"")),
+        "the replaced row names its replacement: {mistake}"
+    );
+    assert!(
+        !correction.contains("data-replaced-by"),
+        "the replacement is not marked as replaced: {correction}"
+    );
+    assert!(
+        mark_form_for(&page, mail.to_the_operator.as_str()),
+        "the replaced message keeps its Mark processed button: {page}"
+    );
+    assert!(
+        page.contains("<p>1 new,"),
+        "the box counts one new message, not two: {page}"
+    );
+    ct.cancel();
+}
+
 /// **A GET of the operator's page moves no mail**, so a prefetch of it cannot
 /// mark anything seen. The message stays `new` after the operator's page, and
 /// after another person's, is opened; the page shows its row and an Open

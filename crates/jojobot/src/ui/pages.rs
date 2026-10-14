@@ -472,10 +472,22 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
             "read" => mark_form,
             _ => String::new(),
         };
+        // **A message its sender replaced says so and names the replacement**, so
+        // the operator reads the correction and knows the mistake for what it is.
+        // It keeps its state and its buttons: marking it processed stays theirs.
+        let state_cell = match &message.superseded_by {
+            Some(by) => format!(
+                "<td data-replaced-by=\"{}\">{}, replaced by {}</td>",
+                escape(by.as_str()),
+                escape(state_token),
+                escape(by.as_str()),
+            ),
+            None => format!("<td>{}</td>", escape(state_token)),
+        };
         out.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td>{}</td>{}<td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             escape(message.id.as_str()),
-            escape(state_token),
+            state_cell,
             escape(&message.sender),
             escape(message.subject.as_deref().unwrap_or("")),
             escape(&message.sent_at.to_string()),
