@@ -22,6 +22,7 @@ If its handle or any of its names resembles something jojobot already knows, NOT
 Use the candidate you meant, or re-call with the override_token that refusal carries if this genuinely is a different thing sharing a name — a token lifts the one refusal that minted it and no other.
 An exact handle collision can never be forced — a handle has exactly one owner.
 A creation whose aliases, or whose `sets` as a first claim, could not be read back whole in one answer is refused and nothing is made: send fewer or shorter aliases, or move the long text onto a claim.
+A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `add_entity` — structure
@@ -72,6 +73,13 @@ A creation whose aliases, or whose `sets` as a first claim, could not be read ba
         ]
       },
       "parent": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -237,6 +245,16 @@ A `rhythm` or a `promise` requires one — a rhythm is ON something and a promis
 what says on what.
 ```
 
+#### `add_entity` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the entity is made once. It needs a `sid`, and a call that
+wrote nothing spends no id.
+```
+
 #### `add_entity` — argument `/inputSchema.sets`
 
 ```text
@@ -349,6 +367,7 @@ AN ARCHIVED LOOP DROPS OUT OF overdue READS, and the read counts it in archived_
 Archiving something already archived comes back blocked, saying the entity is already in the state you asked for — that answer means jojobot holds what you wanted, not that nothing happened.
 Restoring something that is not archived says the same.
 A handle that names nothing comes back blocked with the nearest handles.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `archive_entity` — structure
@@ -363,6 +382,13 @@ A handle that names nothing comes back blocked with the nearest handles.
       },
       "reason": {
         "type": "string"
+      },
+      "request_id": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "restore": {
         "default": null,
@@ -405,6 +431,16 @@ not have happened, somebody not relevant at all — examples, never a
 set to choose from.
 ```
 
+#### `archive_entity` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the entity is archived or restored once. It needs a `sid`, and a call that
+wrote nothing spends no id.
+```
+
 #### `archive_entity` — argument `/inputSchema.restore`
 
 ```text
@@ -439,6 +475,7 @@ It answers with a receipt, not the record: the address you edit it through, what
 recall the subject to read it back.
 A claim too big to be read back whole is refused with nothing written.
 Each argument's own description holds the rest.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `capture` — structure
@@ -545,6 +582,13 @@ Each argument's own description holds the rest.
         },
         "type": [
           "array",
+          "null"
+        ]
+      },
+      "request_id": {
+        "default": null,
+        "type": [
+          "string",
           "null"
         ]
       },
@@ -838,6 +882,16 @@ asserts the record is about that entity, and this only admits that it
 touches it.
 ```
 
+#### `capture` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time. It needs a `sid`, and a call that wrote nothing
+spends no id.
+```
+
 #### `capture` — argument `/inputSchema.sets`
 
 ```text
@@ -955,6 +1009,7 @@ KEYS ARE SCOPED BY THE TYPE that names them and are registered nowhere: two type
 SOME TYPES SHIP WITH THE SOFTWARE and those are CLOSED: declaring over one comes back blocked, because a caller cannot extend, shrink or replace a type the software owns — declare a name of your own instead.
 Every type you declare is yours.
 The answer names every type that exists, by name only, so you can see what is there without asking a second time.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `declare_type` — structure
@@ -1013,6 +1068,13 @@ The answer names every type that exists, by name only, so you can see what is th
       },
       "name": {
         "type": "string"
+      },
+      "request_id": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "sid": {
         "default": null,
@@ -1171,6 +1233,16 @@ What the type is called. Declaring a name that already exists
 
 **Unless the software ships that type**, which is refused: a shipped
 type is closed and the answer says so. Pick a name of your own.
+```
+
+#### `declare_type` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the type is declared once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `declare_type` — argument `/inputSchema.sid`
@@ -1582,6 +1654,7 @@ The answer confirms the move (state, notes, id) without echoing the body, which 
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
 Each argument's own description holds the rest.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `mark_processed` — structure
@@ -1602,6 +1675,13 @@ Each argument's own description holds the rest.
         ]
       },
       "quarantine": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -1660,6 +1740,16 @@ is written. Mutually exclusive with `notes` — a quarantine records no
 processing outcome, because none happened.
 ```
 
+#### `mark_processed` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the message is retired once. It needs a `sid`, and a call that
+wrote nothing spends no id.
+```
+
 #### `mark_processed` — argument `/inputSchema.sid`
 
 ```text
@@ -1684,6 +1774,7 @@ If you are unsure, read both with recall first.
 THE CLAIMS THAT MOVE GET NEW ADDRESSES, because an address is local to the thing that holds it: any address you were holding for the duplicate's claims is stale afterwards, and the answer says how many moved.
 A refusal is status: blocked with nothing moved: one handle named as both sides; a handle already merged away (the answer names the handle to use instead); a role object (kind role), on either side, merged by anyone but the bot it belongs to or a bot heading the chart (the answer tells you who may); a merge into your own bot of a duplicate carrying thought_capacity or thought_body_cap; a thought room that would go over capacity, or a thought over its body cap; or a result that could not be read back whole in one answer.
 Each argument's own description holds the rest.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `merge_entities` — structure
@@ -1704,6 +1795,13 @@ Each argument's own description holds the rest.
         ]
       },
       "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -1762,6 +1860,16 @@ no reason was given rather than inventing one.
 ```text
 **The day this merge was made**, `YYYY-MM-DD`. Defaults to today in
 your session's zone.
+```
+
+#### `merge_entities` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the two are merged once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `merge_entities` — argument `/inputSchema.sid`
@@ -1838,6 +1946,7 @@ POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet ride
 Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id (read_mailbox with new_only: false returns them all).
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
 Each argument's own description holds the rest.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `post_message` — structure
@@ -1851,6 +1960,13 @@ Each argument's own description holds the rest.
         "type": "string"
       },
       "in_reply_to": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -1917,6 +2033,16 @@ It says only that the two are one exchange: it does not deliver the
 original, handle it, or oblige anybody. Messages riding back under your_mail
 carry `written_by_other_run` when a different run posted them, exactly as
 read_mailbox's own description says.
+```
+
+#### `post_message` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the message is posted once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `post_message` — argument `/inputSchema.sid`
@@ -2402,6 +2528,8 @@ WHICH OBJECTS: subject (one handle; a named subject always comes back, and a han
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields or where, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and each object's fields_left_out does when a view's shows_keys supplied the keys; the keys you send win over a view's shows_keys).
+A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
+Read one with history_record set to that address, and give no subject.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.
@@ -2656,6 +2784,14 @@ Each argument's own description holds the rest.
         "default": null,
         "type": [
           "string",
+          "null"
+        ]
+      },
+      "inputs": {
+        "additionalProperties": true,
+        "default": null,
+        "type": [
+          "object",
           "null"
         ]
       },
@@ -3341,6 +3477,26 @@ answer says the earlier values were not kept.
 Omit it and no chain comes back, which is the normal read.
 ```
 
+#### `recall` — argument `/inputSchema.inputs`
+
+```text
+**The values a view takes**, as `{name: value}`, beside `view`.
+
+A view is a saved question with typed inputs, and this is how you fill
+them: ask `view: "ready"` with `inputs: {project: "project:atlas"}` and it
+lists only the work under that project. **What a view takes is on the
+view**: recall it (`subject: "view:ready"`, or `kind: "view"` for all of
+them) and its `inputs` field reads `name: type`, where a type is `kind
+<kind>` (a handle of that kind), `date`, `number` or `text`, and a `?`
+after it means the input may be left out. A value is checked as a write
+is: a handle must exist and be of that kind, a date takes the relative
+days `where` takes, a number must parse. An input left out drops the part
+of the question that uses it. **A call with a required input missing, an
+input the view does not declare, or a value of the wrong type is refused,
+and the refusal names every input the view takes**, so you can ask a view
+you have never seen and read its shape from the answer.
+```
+
 #### `recall` — argument `/inputSchema.keys`
 
 ```text
@@ -3588,6 +3744,11 @@ on where the view came from.
 What the view says is what this call asks; anything you send beside it
 is yours and wins, so a view is a starting point rather than a cage.
 
+**A view may take inputs, and you fill them with `inputs`** rather than
+with a `where` of your own: `view: "ready", inputs: {project:
+"project:atlas"}` lists the ready work under that project. Recall a view's
+handle, or `kind: "view"` for all of them, to read what each takes.
+
 A name that is no view comes back blocked, with the views that exist.
 
 `view: "colleagues"` lists the identities here and what each is for; `view:
@@ -3599,8 +3760,11 @@ and the answer names the call that says why: send the view with `subject`
 set to one piece of work and it comes back with `ready: false` and
 `blocked_by`. A view's answer can be narrowed with `where`: `view: "ready"`
 with `where` set to your board's not-started status, for example
-`where: "status = next"`, lists the ready work not yet started. A view carries its own `shows_keys`, and a `keys` you send wins
-over it.
+`where: "status = next"`, lists the ready work not yet started. `view:
+"plan"` lists all the work that is not finished, ready or not, each piece
+with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
+set to a project to read that project's whole plan in one call. A view
+carries its own `shows_keys`, and a `keys` you send wins over it.
 ```
 
 #### `recall` — argument `/inputSchema.where`
@@ -3792,6 +3956,7 @@ A refusal is an answer with status: blocked and nothing written.
 Retracting a retraction is refused: it is the last word on what it takes back.
 Retracting a record that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
 An address that names no record is refused with the addresses that do exist.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `retract` — structure
@@ -3812,6 +3977,13 @@ An address that names no record is refused with the addresses that do exist.
         ]
       },
       "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -3861,6 +4033,16 @@ A retraction leaves a record of its own, and this is the day THAT
 record was made. **The day an operator changed their mind is the fact a
 later reader most wants about a retraction**, and it is not always the
 day the call is made — a session catching up on last week says so here.
+```
+
+#### `retract` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the claim is taken back once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `retract` — argument `/inputSchema.sid`
@@ -4268,6 +4450,7 @@ Who the bot reports to goes the same way: capture sets.reports_to on this bot, h
 The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does, and a bot with no manager is adopted by the manager named or by a bot above that manager.
 The refusal names who may.
 Who reports to a bot is the other direction, a second call: recall that bot with follow, relation reports_to, direction in.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `set_charter` — structure
@@ -4282,6 +4465,13 @@ Who reports to a bot is the other direction, a second call: recall that bot with
       },
       "prose": {
         "type": "string"
+      },
+      "request_id": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "sid": {
         "default": null,
@@ -4324,6 +4514,16 @@ Write `@kind:slug` to link to something that already exists, e.g.
 handle that thing wears today, even after a rename.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
+```
+
+#### `set_charter` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the charter is written once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `set_charter` — argument `/inputSchema.sid`
@@ -4700,6 +4900,7 @@ Passing `aliases` REPLACES the whole set ([] clears it); source and crm edits ar
 A rule's `starred` mark stays on its claim, so it is not set here: update_fact on the rule's address with fields {starred: "true"} or {starred: "false"} stars or unstars it.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `update_entity` — structure
@@ -4737,6 +4938,13 @@ Aliases or `sets` that would leave the thing, or its claim, too big to be read b
         ]
       },
       "override_token": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -4812,6 +5020,16 @@ its candidates for the name or alias you are claiming here and judged
 them a different entity. It lifts only the refusal that minted it. Any
 change to what this entity is CALLED is screened exactly as a creation
 is.
+```
+
+#### `update_entity` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the edit is made once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `update_entity` — argument `/inputSchema.sets`
@@ -5040,6 +5258,13 @@ Each argument's own description holds its rules.
         ]
       },
       "replace": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -5400,6 +5625,16 @@ silently record under the wrong one by mistake.
 ```text
 **The words that take the place of `find`.** An empty string deletes
 them. Sent with `find`, never alone.
+```
+
+#### `update_fact` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes. Send the
+same call again with the same `request_id` after an answer was lost: if
+the first call wrote, you get its receipt back marked `repeat` and nothing
+is written a second time, so the edit is made once. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `update_fact` — argument `/inputSchema.sets`

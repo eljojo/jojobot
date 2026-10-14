@@ -9258,29 +9258,6 @@ async fn a_large_journal_history_reads_back_in_parts_and_a_small_one_whole() {
 // A read that names keys ships those keys, and says once what it left out
 // ---------------------------------------------------------------------------
 
-/// Make a piece of work under a parent, with its first fields.
-async fn work_under(jojobot: &Jojobot, parent: &str, slug: &str, sets: &[(&str, &str)]) {
-    let result = jojobot
-        .add_entity(Parameters(AddEntityArgs {
-            parent: Some(parent.into()),
-            sets: Some(
-                sets.iter()
-                    .map(|(key, value)| (key.to_string(), value.to_string()))
-                    .collect(),
-            ),
-            sid: Some(writing_as(jojobot)),
-            ..add_args("work", slug, slug)
-        }))
-        .await
-        .expect("add_entity call ok");
-    assert_ne!(
-        json_of(&result)["status"],
-        "blocked",
-        "work:{slug} was blocked: {}",
-        json_of(&result)
-    );
-}
-
 /// A project that exists, to be a parent.
 async fn project_named(jojobot: &Jojobot, slug: &str) {
     let result = jojobot
@@ -9333,8 +9310,8 @@ async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out(
     for slug in ["sigma", "tau", "phi"] {
         work_under(
             &jojobot,
-            "project:atlas",
             slug,
+            "project:atlas",
             &[
                 ("status", "next"),
                 ("area", "kitchen"),
@@ -9425,8 +9402,8 @@ async fn hostile_children(jojobot: &Jojobot, parent: &str, count: u64) {
             .collect();
         work_under(
             jojobot,
-            parent,
             &slug,
+            parent,
             &[("status", "next"), ("note", "keep this")],
         )
         .await;
