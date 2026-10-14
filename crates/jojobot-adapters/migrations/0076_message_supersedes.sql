@@ -3,9 +3,9 @@
 -- nothing. What the old message reads as `superseded_by` is worked out from
 -- this column when it is read, so there is no second copy to keep in step.
 --
--- The index answers "which message replaced this one" without reading every
--- row. It is added in the same statement, because this store commits DDL as it
--- goes and a second statement could be left unapplied.
-ALTER TABLE message
-    ADD COLUMN supersedes VARCHAR(64) NULL,
-    ADD INDEX by_supersedes (supersedes);
+-- The column on its own. Its index is the next migration,
+-- 0076_message_supersedes_index. They were one ALTER (rule 106): this store
+-- applies DDL clause by clause and does not roll it back, so a death between
+-- the two left a column behind a ledger that also claimed the index. Each now
+-- has its own migration and its own landed check.
+ALTER TABLE message ADD COLUMN supersedes VARCHAR(64) NULL;

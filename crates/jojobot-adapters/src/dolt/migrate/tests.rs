@@ -103,6 +103,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0074_session_key_hash",
     "0075_session_teaching_run_name",
     "0076_message_supersedes",
+    "0076_message_supersedes_index",
     "0079_entity_write_snapshot_kind",
     "0079_entity_write_snapshot_name",
     "0079_entity_write_snapshot_source",
@@ -3205,6 +3206,96 @@ async fn an_interrupted_pair_of_kept_columns_finishes_with_the_one_that_is_missi
     .execute(&pool)
     .await
     .expect("both columns take a value");
+
+    store.stop().await;
+}
+
+/// **A boot killed between the supersedes column and its index completes both on
+/// the next boot.**
+///
+/// The column and the index were one `ALTER` whose landed check named the column
+/// only. A death after the column landed and before the index did left a ledger
+/// that said both were in and an index that never came. The column and the index
+/// are now separate files, each with a check naming its own object. The schema is
+/// put back to each state a death or an upgrade leaves, and the start must end
+/// with the index there and the ledger holding both versions.
+///
+/// **Three states**: the index is missing and nothing marks it as started (a
+/// store whose old single ledger row stands), the index is missing and its
+/// statement was begun, and the index stands with its statement begun and no
+/// ledger row (recorded, not issued again).
+#[tokio::test]
+async fn a_boot_killed_between_the_supersedes_column_and_its_index_completes_on_the_next_boot() {
+    let scratch = Scratch::new("migrate-interrupted-supersedes-index");
+    let path = scratch.0.clone();
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+
+    for (index_stands, begun, name) in [
+        (false, false, "supersedesnomarker"),
+        (false, true, "supersedesbegun"),
+        (true, true, "supersedesindexstands"),
+    ] {
+        let pool = store.database(name).await.expect("a database of its own");
+        run(&pool).await.expect("the schema");
+
+        if !index_stands {
+            sqlx::raw_sql("ALTER TABLE message DROP INDEX by_supersedes")
+                .execute(&pool)
+                .await
+                .expect("the index goes");
+        }
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0076_message_supersedes_index")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        if begun {
+            mark_begun(&pool, "0076_message_supersedes_index")
+                .await
+                .expect("the marker lands");
+        }
+
+        let applied = run(&pool)
+            .await
+            .expect("the next boot completes the migration");
+        let expected: Vec<String> = if index_stands {
+            Vec::new()
+        } else {
+            vec!["0076_message_supersedes_index".to_string()]
+        };
+        assert_eq!(
+            applied, expected,
+            "the boot applies the index file only when the index is missing (index stands: {index_stands}, begun: {begun})",
+        );
+        assert!(
+            index_exists(&pool, "message", "by_supersedes")
+                .await
+                .expect("the schema is readable"),
+            "the index is there afterwards (index stands: {index_stands}, begun: {begun})",
+        );
+        assert!(
+            column_exists(&pool, "message", "supersedes")
+                .await
+                .expect("the schema is readable"),
+            "the column is still there (index stands: {index_stands}, begun: {begun})",
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        for version in ["0076_message_supersedes", "0076_message_supersedes_index"] {
+            assert!(
+                recorded.iter().any(|seen| seen == version),
+                "the ledger holds {version} (index stands: {index_stands}, begun: {begun}): {recorded:?}",
+            );
+        }
+        assert!(
+            run(&pool).await.expect("a second boot").is_empty(),
+            "the boot after the completing one changes nothing (index stands: {index_stands}, begun: {begun})",
+        );
+    }
 
     store.stop().await;
 }
