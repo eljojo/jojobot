@@ -5,12 +5,14 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     # **The store's engine comes from its own pin, the rest of the toolchain
     # does not.** dolt moves faster than a release channel does, so it is taken
-    # from a nixpkgs revision of its own. **It is pinned at 2.3.5, the newest
-    # 2.3 release, on purpose**: dolt 2.4.1 and 2.4.2 answer NO row, not one row
-    # holding NULL, to `SELECT MAX(ordinal) FROM t WHERE <key prefix> = ?` when
-    # the prefix matches nothing, and a write that picks its next ordinal that
-    # way fails for every new thing. `dolt_ungrouped_max` holds the store to the
-    # standard answer. Move this pin forward only to a dolt that passes it.
+    # from a nixpkgs revision of its own, and its source is overridden below.
+    # Stock dolt 2.4.1 and 2.4.2 answer NO row, not one row holding NULL, to
+    # `SELECT MAX(ordinal) FROM t WHERE <key prefix> = ?` when the prefix
+    # matches nothing (dolthub/dolt#12093), and a write that picks its next
+    # ordinal that way fails for every new thing. The build below is 2.4.2 from
+    # a fork that fixes it, the same Dolt production runs. `dolt_ungrouped_max`
+    # holds the store to the standard answer. Move the source only to a dolt
+    # that passes it.
     nixpkgs-dolt.url = "github:NixOS/nixpkgs/63ff57e2c7fbcf7cd33585d1150161e96b251606";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -39,7 +41,21 @@
         pkgs = import nixpkgs { inherit system overlays; };
 
         # The one package taken from its own pin — see the input's note.
-        dolt = (import nixpkgs-dolt { inherit system; }).dolt;
+        # 2.4.2 with the ungrouped MAX/MIN fix (eljojo/go-mysql-server
+        # bf3f0c8fa, through the fork's go.mod), the build production runs.
+        # `vendorHash` reaches the module derivation only because this nixpkgs
+        # builds dolt with `buildGoModule (finalAttrs: ...)` and `proxyVendor`.
+        doltPkgs = import nixpkgs-dolt { inherit system; };
+        dolt = doltPkgs.dolt.overrideAttrs {
+          version = "2.4.2-unstable-2026-10-14";
+          src = doltPkgs.fetchFromGitHub {
+            owner = "eljojo";
+            repo = "dolt";
+            rev = "8dfc0f56dfb630469470614ae69d5cc0f01cc203";
+            hash = "sha256-QLXtwSt2OAoZtVShrH9bhUbBHmMLA68qthvfz2BBt1o=";
+          };
+          vendorHash = "sha256-57KPMiqgY8HB+T1qTIW0rMdzDUQuecacVlSK67Z1qhI=";
+        };
 
         # Toolchain comes from rust-toolchain.toml so dev and CI agree.
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
