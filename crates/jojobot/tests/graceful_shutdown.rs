@@ -64,6 +64,9 @@ struct Running {
     http_port: u16,
     lines: mpsc::Receiver<String>,
     seen: Vec<String>,
+    /// Where the server's standard error went. A server that exits while it
+    /// starts says why there and not in its log.
+    stderr_path: std::path::PathBuf,
     _scratch: Scratch,
 }
 
@@ -74,7 +77,8 @@ fn start(name: &str) -> Running {
     let scratch = Scratch(state_dir.clone());
     let http_port = free_port();
     let store_port = free_port();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
+    let stderr_path = state_dir.join("server.stderr");
+    let child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
         .env_clear()
         // The store's own binary is found on the path.
         .env(
@@ -87,31 +91,49 @@ fn start(name: &str) -> Running {
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(std::fs::File::create(&stderr_path).expect("a file for the server's stderr"))
         .spawn()
         .expect("the binary runs");
+    let mut running = watch(child, http_port, stderr_path, scratch);
+    running.wait_for_line("serving http://", PATIENCE);
+    running
+}
+
+/// Watch a spawned server's log from a thread of its own.
+///
+/// **The log is read as bytes and a line that is not UTF-8 is read lossily.**
+/// `lines()` ends the loop at the first line it cannot decode, and a loop that
+/// ends closes the channel, which a case reads as a server that stopped
+/// talking.
+fn watch(
+    mut child: Child,
+    http_port: u16,
+    stderr_path: std::path::PathBuf,
+    scratch: Scratch,
+) -> Running {
     let pid = child.id();
-    let log = child.stdout.take().expect("stdout was piped");
+    let mut log = std::io::BufReader::new(child.stdout.take().expect("stdout was piped"));
     let server = Server(Some(child));
-    // The server's log, line by line, from a thread of its own.
     let (said, lines) = mpsc::channel();
     std::thread::spawn(move || {
-        for line in std::io::BufReader::new(log).lines().map_while(Result::ok) {
-            if said.send(line).is_err() {
+        let mut line = Vec::new();
+        while matches!(log.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            let text = String::from_utf8_lossy(&line).trim_end().to_string();
+            line.clear();
+            if said.send(text).is_err() {
                 return;
             }
         }
     });
-    let mut running = Running {
+    Running {
         server,
         pid,
         http_port,
         lines,
         seen: Vec::new(),
+        stderr_path,
         _scratch: scratch,
-    };
-    running.wait_for_line("serving http://", PATIENCE);
-    running
+    }
 }
 
 impl Running {
@@ -126,12 +148,32 @@ impl Running {
                         return;
                     }
                 }
-                Err(_) => panic!(
-                    "the server never said {needle:?}. What it said:\n{}",
+                Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+                    "the server said nothing for {patience:?} and never said {needle:?}. What it \
+                     said:\n{}",
+                    self.seen.join("\n")
+                ),
+                Err(mpsc::RecvTimeoutError::Disconnected) => panic!(
+                    "the server closed its log before it said {needle:?}. {}\nWhat it said:\n{}",
+                    self.how_it_ended(),
                     self.seen.join("\n")
                 ),
             }
         }
+    }
+
+    /// What is known of a server whose log has closed: how it exited, if it
+    /// has, and what it wrote to its standard error.
+    fn how_it_ended(&mut self) -> String {
+        let status = match self.server.0.as_mut().map(Child::try_wait) {
+            Some(Ok(Some(status))) => format!("it exited: {status}"),
+            Some(Ok(None)) => "it is still running".to_string(),
+            Some(Err(e)) => format!("its exit could not be read: {e}"),
+            None => "it was already collected".to_string(),
+        };
+        let stderr = std::fs::read_to_string(&self.stderr_path)
+            .unwrap_or_else(|e| format!("(its stderr could not be read: {e})"));
+        format!("{status}. Its stderr:\n{stderr}")
     }
 
     /// Send `signal` to the server.
@@ -335,4 +377,46 @@ fn a_stream_held_open_is_cut_when_the_drain_window_ends() {
         "the server never said it shut down. What it said:\n{}",
         running.seen.join("\n")
     );
+}
+
+/// **A server that exits while it starts is reported with how it exited and
+/// what it wrote to its standard error.** The log closes, the wait ends at once
+/// rather than at its limit, and the failure names the exit status and the
+/// stderr: that is the only place a server that cannot start says why.
+#[test]
+fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
+    let state_dir =
+        std::env::temp_dir().join(format!("jojobot-exits-early-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let stderr_path = state_dir.join("server.stderr");
+    let child = Command::new("sh")
+        .args([
+            "-c",
+            "echo 'starting up'; echo 'the store would not open' >&2; exit 3",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
+        .spawn()
+        .expect("sh runs");
+    let mut running = watch(child, 0, stderr_path, scratch);
+
+    let started = Instant::now();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        running.wait_for_line("serving http://", PATIENCE);
+    }))
+    .expect_err("a server that never serves is a failure");
+    let said = panic
+        .downcast_ref::<String>()
+        .cloned()
+        .expect("the failure is a message");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "the wait ended at its limit and not when the log closed: {:?}",
+        started.elapsed()
+    );
+    assert!(said.contains("exit status: 3"), "{said}");
+    assert!(said.contains("the store would not open"), "{said}");
+    assert!(said.contains("starting up"), "{said}");
 }
