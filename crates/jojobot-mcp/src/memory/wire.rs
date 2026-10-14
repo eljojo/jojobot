@@ -377,8 +377,13 @@ pub(crate) fn elide_aliases_past_the_ceiling(body: &mut serde_json::Value) {
         .get("alternateName")
         .and_then(serde_json::Value::as_array)
         .map_or(0, Vec::len);
+    let what = if fields.contains_key("foldedNames") {
+        "the aliases and the names folded into this thing"
+    } else {
+        "the aliases"
+    };
     let how = format!(
-        "the aliases do not fit this answer. recall {} to read them.",
+        "{what} do not fit this answer. recall {} to read them.",
         fields
             .get("id")
             .and_then(serde_json::Value::as_str)
@@ -387,6 +392,18 @@ pub(crate) fn elide_aliases_past_the_ceiling(body: &mut serde_json::Value) {
     fields.insert("alternateName".into(), serde_json::Value::Null);
     fields.insert("alternateName_elided".into(), true.into());
     fields.insert("alternateName_count".into(), count.into());
+    // The names of what was folded in are a list of names like the aliases, and
+    // go with them, so the receipt is never kept over one answer by a list the
+    // elision left whole.
+    if let Some(folded) = fields
+        .get("foldedNames")
+        .and_then(serde_json::Value::as_array)
+    {
+        let folded = folded.len();
+        fields.insert("foldedNames".into(), serde_json::Value::Null);
+        fields.insert("foldedNames_elided".into(), true.into());
+        fields.insert("foldedNames_count".into(), folded.into());
+    }
     fields.insert("how_to_read".into(), how.into());
 }
 
@@ -646,6 +663,51 @@ mod tests {
             "{large}"
         );
         assert_eq!(large["id"], "person:alpha", "the rest stays: {large}");
+        assert!(
+            large.to_string().chars().count() <= jojobot_domain::text::ANSWER_CEILING,
+            "the elided receipt fits one answer"
+        );
+    }
+
+    /// **The names of what was folded in are elided with the aliases when they
+    /// are what takes a receipt past the ceiling.** A survivor can hold a long
+    /// list of them, and a receipt that left them whole would be over one answer.
+    /// The same marker, count and route as the aliases carry. **Paired**: a
+    /// receipt whose folded names fit is left whole.
+    #[test]
+    fn a_receipt_elides_the_folded_names_with_the_aliases_past_the_ceiling() {
+        let entity = |folded: usize| Entity {
+            folded_names: (0..folded)
+                .map(|i| format!("{i} {}", "y".repeat(150)))
+                .collect(),
+            id: EntityId::person("person:alpha"),
+            kind: EntityKind::PERSON,
+            name: "Alpha".into(),
+            aliases: vec!["Al".into()],
+            source: "the roster".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+
+        let mut small = entity_json(&entity(3));
+        let before = small.clone();
+        elide_aliases_past_the_ceiling(&mut small);
+        assert_eq!(small, before, "a receipt that fits is left whole");
+
+        let mut large = entity_json(&entity(300));
+        elide_aliases_past_the_ceiling(&mut large);
+        assert_eq!(large["foldedNames"], serde_json::Value::Null, "{large}");
+        assert_eq!(large["foldedNames_elided"], true, "{large}");
+        assert_eq!(large["foldedNames_count"], 300, "{large}");
+        let how = large["how_to_read"].as_str().unwrap_or_default();
+        assert!(
+            how.contains("recall") && how.contains("person:alpha"),
+            "{large}"
+        );
         assert!(
             large.to_string().chars().count() <= jojobot_domain::text::ANSWER_CEILING,
             "the elided receipt fits one answer"
