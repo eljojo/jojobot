@@ -9264,3 +9264,161 @@ async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
 
     store.stop().await;
 }
+
+/// **An upgrade keeps an edge at a handle the build stopped supplying
+/// reachable.** The build supplied `view:contract-outlived`; the operator wrote
+/// on it and another thing drew an edge at it. The edge was filed with the
+/// handle's own text, because a supplied record has no badge. The build stops
+/// supplying the handle, and the boot passes run in `wiring.rs`'s order:
+/// the adoption, then the pointer rewrite because something was adopted.
+///
+/// **One read afterwards asks both questions**: the adopted thing carries the
+/// operator's write, and a walk out of the other thing reaches it. The
+/// adoption case above never walks, so a build that skipped the rewrite stayed
+/// green there.
+#[tokio::test]
+async fn dolt_walk_reaches_a_handle_adopted_after_the_build_stopped_supplying_it() {
+    let scratch = Scratch::new("adopt-then-walk");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "adoptthenwalk")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let outlived = EntityId("view:contract-outlived".into());
+    let drawing = EntityId("thing:contract-drawn-edge".into());
+
+    // The deployed build: it supplies the view, and the operator's writes land
+    // through the real writer.
+    let writer = DoltMemory::open(pool.clone())
+        .knowing(Provisions::new(vec![supplied_view(&outlived, "Outlived")]));
+    writer
+        .add_entity(NewEntity::new(
+            drawing.clone(),
+            "Drawing",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let mut on_the_view =
+        NewFact::about(outlived.clone(), "written while shipped", date(2026, 10, 8));
+    on_the_view
+        .fields
+        .insert("answer".to_string(), "kept".to_string());
+    on_the_view.sets.insert("answer".to_string());
+    writer
+        .capture(memory::state(on_the_view))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a write on a supplied record lands");
+    writer
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::About, outlived.clone())),
+            ..NewFact::about(drawing.clone(), "points at the view", date(2026, 10, 8))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("an edge at a supplied record lands");
+
+    // What the deployed build left below the surface: the edge holds the
+    // handle's own text, since the view had no badge to point at.
+    let filed: Vec<String> =
+        sqlx::query_scalar("SELECT edge_object FROM fact WHERE edge_object IS NOT NULL")
+            .fetch_all(&pool)
+            .await
+            .expect("the edge row reads");
+    assert_eq!(
+        filed,
+        vec![outlived.as_str().to_string()],
+        "the fixture does not hold the shape the deployed build filed"
+    );
+
+    // The new build supplies nothing at that handle. The passes run in the
+    // order wiring.rs runs them.
+    let upgraded = DoltMemory::open(pool.clone());
+    let report = upgraded
+        .adopt_handles_without_a_row()
+        .await
+        .expect("the adoption runs");
+    assert_eq!(report.adopted, vec![outlived.clone()]);
+    upgraded
+        .resolve_stale_pointer_columns()
+        .await
+        .expect("the pointer rewrite runs");
+
+    let reached = walked_to(&upgraded, &drawing, &outlived).await;
+    assert!(
+        reached
+            .facts
+            .iter()
+            .any(|fact| fact.content.contains("written while shipped")),
+        "the adopted thing does not carry the operator's write: {reached:?}"
+    );
+    assert_eq!(
+        reached.fields.get("answer").map(String::as_str),
+        Some("kept")
+    );
+
+    // **The pointer holds the badge, so a rename does not strand it.** The
+    // handle's text can resolve only while nothing else answers to it; the
+    // badge does not move.
+    let succeeded = EntityId("view:contract-succeeded".into());
+    upgraded
+        .rename_entity(
+            &outlived,
+            &succeeded,
+            None,
+            date(2026, 10, 9),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("rename_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    walked_to(&upgraded, &drawing, &succeeded).await;
+
+    store.stop().await;
+}
+
+/// The object one hop out of `from` whose handle is `expected`, or a panic that
+/// prints the walk.
+async fn walked_to(
+    store: &DoltMemory,
+    from: &EntityId,
+    expected: &EntityId,
+) -> jojobot_domain::memory::graph::Object {
+    use jojobot_domain::memory::graph;
+    let walked = graph::walk(
+        store,
+        &[],
+        &graph::GraphQuery {
+            select: graph::Selection {
+                subject: Some(from.clone()),
+                ..Default::default()
+            },
+            include: graph::Include {
+                facts: true,
+                prose: false,
+                stood_for: false,
+            },
+            follow: Some(graph::Follow::hop()),
+            history: None,
+        },
+    )
+    .await
+    .expect("the walk runs")
+    .objects;
+    walked
+        .first()
+        .and_then(|root| root.connected.iter().find(|c| c.entity.id == *expected))
+        .cloned()
+        .unwrap_or_else(|| panic!("the walk from {from} does not reach {expected}: {walked:?}"))
+}

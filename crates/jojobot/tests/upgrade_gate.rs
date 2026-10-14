@@ -5866,3 +5866,99 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
     second.stop().await;
     drop(scratch);
 }
+
+/// A stored thing that draws an edge at the retired handle.
+const DRAWING_HANDLE: &str = "thing:upgrade-fixture-drawing";
+
+/// **An edge at a handle the build stopped supplying follows the handle's new
+/// row.** While the build supplied the handle, a claim on another thing drew an
+/// edge at it and filed the handle's own text, because a supplied record has no
+/// badge. The first boot gives the handle a row and then rewrites that edge onto
+/// the row's badge, so the edge no longer rests on a name that a rename frees.
+/// A walk out of the drawing thing reaches the adopted thing, and the stored
+/// edge holds the badge.
+#[tokio::test]
+async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "retired-edge").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_claim_filed_under(
+        store.pool(),
+        RETIRED_HANDLE,
+        "a claim written while the build supplied this view",
+        ("answer", "kept"),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
+                             merged_into, archived_reason, archived_at)
+         VALUES (?, 'thing', 'Drawing', 'test', NULL, NULL, 'on-demand', '', 'drwrow',
+                 NULL, NULL, NULL)",
+    )
+    .bind(DRAWING_HANDLE)
+    .execute(store.pool())
+    .await
+    .expect("the drawing thing lands");
+    plant_a_claim_filed_under(
+        store.pool(),
+        "drwrow",
+        "a claim that draws an edge at the retired view",
+        ("drawn", "yes"),
+    )
+    .await;
+    // The edge, as the deployed build filed it: the handle's own text.
+    for table in ["fact", "fact_write"] {
+        sqlx::query(&format!(
+            "UPDATE {table} SET edge_shape = 'about', edge_object = ? WHERE entity = 'drwrow'"
+        ))
+        .bind(RETIRED_HANDLE)
+        .execute(store.pool())
+        .await
+        .expect("the edge lands");
+    }
+    store.stop().await;
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let answer = surface
+        .call(
+            "recall",
+            json!({"subject": DRAWING_HANDLE, "facts": true, "follow": {"depth": 1}}),
+        )
+        .await;
+    let walked: serde_json::Value =
+        serde_json::from_str(&answer).unwrap_or_else(|_| panic!("recall said: {answer}"));
+    let reached = walked["objects"][0]["connected"]
+        .as_array()
+        .and_then(|connected| connected.iter().find(|o| o["id"] == RETIRED_HANDLE))
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: the walk does not reach it: {walked}"));
+    assert_eq!(
+        reached["fields"]["answer"], "kept",
+        "recorded at {git_ref}: the adopted thing carries the write: {reached}"
+    );
+    first.stop().await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(RETIRED_HANDLE)
+        .fetch_one(store.pool())
+        .await
+        .expect("the handle has a row now");
+    let edge: String = sqlx::query_scalar("SELECT edge_object FROM fact WHERE entity = 'drwrow'")
+        .fetch_one(store.pool())
+        .await
+        .expect("the edge reads");
+    assert_eq!(
+        edge, badge,
+        "recorded at {git_ref}: the edge still holds the handle's text, not the badge"
+    );
+    store.stop().await;
+    drop(scratch);
+}
