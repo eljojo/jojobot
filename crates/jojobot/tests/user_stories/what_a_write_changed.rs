@@ -67,3 +67,77 @@ async fn a_receipt_says_what_the_write_changed_with_no_second_read() {
 
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_receipt_names_what_the_write_changed_beside_its_own_thing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    // A new colleague: the bot, and the box that opens with it.
+    let added = s
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "nelson", "name": "Nelson", "source": "user-named"}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        added["changed"],
+        json!([
+            {"on": "bot:nelson", "what": "created"},
+            {"on": "nelson", "what": "created", "key": "mailbox"},
+        ]),
+        "the box is named beside the bot: {added}"
+    );
+    // The pair: a thing that is not a bot opens no box.
+    s.add("pet:santas-little-helper", "Santa's Little Helper")
+        .await;
+
+    // A message, then its replacement: the old one is named with the new id.
+    let first = s
+        .call(
+            "post_message",
+            json!({"to": "nelson", "body": "Standup is at nine"}),
+        )
+        .await
+        .json();
+    let replacement = s
+        .call(
+            "post_message",
+            json!({
+                "to": "nelson",
+                "body": "Standup is at ten",
+                "supersedes": first["id"],
+            }),
+        )
+        .await
+        .json();
+    assert_eq!(
+        replacement["changed"],
+        json!([
+            {"on": replacement["id"], "what": "created"},
+            {"on": first["id"], "what": "superseded_by", "to": replacement["id"]},
+        ]),
+        "the replaced message is named: {replacement}"
+    );
+    assert_eq!(
+        first["changed"],
+        json!([{"on": first["id"], "what": "created"}]),
+        "a post that replaces nothing names only itself: {first}"
+    );
+
+    // The new colleague's first beat sends no focus; the run still takes one.
+    let n = story.as_bot("bot:nelson").await;
+    let beat = n
+        .call("journal", json!({"entry": "read the standup notice"}))
+        .await
+        .json();
+    let focus = beat["changed"]
+        .as_array()
+        .and_then(|changed| changed.iter().find(|c| c["what"] == "focus"))
+        .unwrap_or_else(|| panic!("the derived focus is named: {beat}"));
+    assert_eq!(focus["to"], "read the standup notice", "{beat}");
+    assert!(focus.get("from").is_none(), "nothing was held: {beat}");
+
+    story.finish().await;
+}

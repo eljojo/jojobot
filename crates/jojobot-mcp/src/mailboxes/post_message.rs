@@ -510,10 +510,18 @@ impl Jojobot {
                          include_bodies: true returns it, and takes no delivery",
                     ),
                 );
-                crate::changed::note_changed(
-                    &mut body,
-                    crate::changed::Changed::created(message.id.as_str()),
-                );
+                // **A replacement changes two messages**: the one it posts and
+                // the one it replaces, which its reader is no longer handed.
+                let mut changed = crate::changed::Changed::created(message.id.as_str());
+                if let Some(replaced) = &message.supersedes {
+                    changed = changed.and(crate::changed::Changed::value(
+                        replaced.as_str(),
+                        crate::changed::SUPERSEDED_BY,
+                        None,
+                        Some(message.id.as_str()),
+                    ));
+                }
+                crate::changed::note_changed(&mut body, changed);
                 // **Posting takes delivery of your own box, in the same call.**
                 // The moment an agent posts is the moment a reply is most
                 // likely waiting, because posting is what it does at the end of
@@ -737,6 +745,54 @@ mod tests {
             );
         }
         assert_ne!(first["changed"][0]["on"], second["changed"][0]["on"]);
+    }
+
+    /// **A post that replaces a message names the replaced one too** (card
+    /// 2347). The old message changes beside the new one: it is withheld from
+    /// its reader and reads as replaced by the new id. `superseded_by` is a key
+    /// the wire serves and nothing outside this process declares, so the literal
+    /// is pinned here.
+    ///
+    /// The control is the same verb with no `supersedes`: one entry, the new
+    /// message, so the case does not hold on a build that always names a second
+    /// message.
+    #[tokio::test]
+    async fn a_post_that_replaces_names_the_replaced_message() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+
+        let old = send(&jojobot, "otto", "epsilon", "the urn is descaled").await;
+        let old_id = old["id"].as_str().expect("an id").to_string();
+        let plain = send(&jojobot, "otto", "epsilon", "the urn is empty").await;
+        assert_eq!(
+            plain["changed"].as_array().map(Vec::len),
+            Some(1),
+            "a post that replaces nothing names only its message: {plain}"
+        );
+
+        let replaced = replacing(
+            &jojobot,
+            "otto",
+            "epsilon",
+            "the urn is descaled and full",
+            &old_id,
+        )
+        .await;
+        assert_ne!(replaced["status"], "blocked", "{replaced}");
+        let changed = replaced["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {replaced}"));
+        assert_eq!(changed.len(), 2, "{replaced}");
+        assert_eq!(changed[0]["on"], replaced["id"], "{replaced}");
+        assert_eq!(changed[0]["what"], "created", "{replaced}");
+        assert_eq!(changed[1]["on"], old_id, "{replaced}");
+        assert_eq!(changed[1]["what"], "superseded_by", "{replaced}");
+        assert_eq!(changed[1]["to"], replaced["id"], "{replaced}");
+        assert!(
+            changed[1].get("from").is_none(),
+            "nothing replaced it before: {replaced}"
+        );
     }
 
     /// **Posting says where the message got to, and what the same call did to

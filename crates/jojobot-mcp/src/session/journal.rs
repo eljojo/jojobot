@@ -226,6 +226,28 @@ impl Jojobot {
             None,
             Some(entry.id.as_str()),
         ));
+        // **A first beat that sends no focus still gives the record one**,
+        // derived from the entry, so the focus moved from nothing to that line.
+        let derived_focus = match (focus_now.as_deref(), record_is_new) {
+            (None, true) => Some(
+                self.sessions
+                    .read_session(&session)
+                    .await
+                    .map(|read| read.focus),
+            ),
+            _ => None,
+        };
+        if let Some(derived) = derived_focus {
+            changed = changed.and(match derived {
+                Ok(now) => crate::changed::Changed::value(
+                    session.as_str(),
+                    crate::changed::FOCUS,
+                    None,
+                    Some(now.as_str()),
+                ),
+                Err(_) => crate::changed::Changed::not_read(),
+            });
+        }
         if let Some(now) = focus_now.as_deref() {
             changed = changed.and(match &focus_was {
                 Ok(was) => crate::changed::Changed::value(
@@ -483,6 +505,39 @@ mod tests {
         assert_eq!(focus["from"], "reading the plan", "{third}");
         assert_eq!(focus["to"], "reading the budget", "{third}");
         assert!(named(&third, "created").is_none(), "{third}");
+    }
+
+    /// **A first beat that sends no focus still names the focus the record
+    /// took** (card 2347). The record is made with a focus derived from the
+    /// entry, so the focus moved from nothing to that line. A later beat with no
+    /// focus moves nothing, which is the control: it names the entry alone.
+    #[tokio::test]
+    async fn a_first_beat_with_no_focus_names_the_focus_it_derived() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let first = journal_entry(&jojobot, &sid, "set out to read the plan").await;
+        let changed = first["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {first}"));
+        let focus = changed
+            .iter()
+            .find(|c| c["what"] == "focus")
+            .unwrap_or_else(|| panic!("the derived focus is named: {first}"));
+        assert_eq!(focus["on"], first["session"], "{first}");
+        assert_eq!(focus["to"], "set out to read the plan", "{first}");
+        assert!(focus.get("from").is_none(), "nothing was held: {first}");
+
+        let second = journal_entry(&jojobot, &sid, "read the first page").await;
+        assert!(
+            second["changed"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a list of changes: {second}"))
+                .iter()
+                .all(|c| c["what"] != "focus"),
+            "a later beat with no focus moves none: {second}"
+        );
     }
 
     /// **A beat says what now stands and what it left alone.**

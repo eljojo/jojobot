@@ -39,6 +39,12 @@ pub(crate) const ENTRY: &str = "entry";
 /// What changed on a run: its focus.
 pub(crate) const FOCUS: &str = "focus";
 
+/// What changed on a message: the message that replaced it.
+pub(crate) const SUPERSEDED_BY: &str = "superseded_by";
+
+/// The part of a bot a box is, when a creation names the box it opened.
+pub(crate) const MAILBOX: &str = "mailbox";
+
 /// What changed on a claim or an entry: its words.
 pub(crate) const WORDS: &str = "words";
 
@@ -143,6 +149,16 @@ impl Changed {
     pub(crate) fn created(on: impl Into<String>) -> Self {
         Self {
             changes: vec![Change::on(on, "created")],
+            unread: false,
+        }
+    }
+
+    /// **One thing created beside the thing the call is about**, named by what
+    /// it is for: the box a new bot owns. `key` says which part of the call's
+    /// subject it is.
+    pub(crate) fn created_for(on: impl Into<String>, key: &str) -> Self {
+        Self {
+            changes: vec![Change::on(on, "created").keyed(key)],
             unread: false,
         }
     }

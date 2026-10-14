@@ -559,12 +559,22 @@ impl Jojobot {
                     Some(_) => crate::changed::Changed::not_read(),
                     None => self.changed_on(&before, &entity.id).await,
                 };
+                // **A bot's box opens in the same call**, so the receipt names it
+                // beside the bot. A box that could not be opened is said by its
+                // own note and is not listed as made.
+                let opened = self.open_box_with(&entity).await;
+                let changed = match opened.iter().find(|(key, _)| *key == "mailbox") {
+                    Some((_, serde_json::Value::String(name))) => changed.and(
+                        crate::changed::Changed::created_for(name, crate::changed::MAILBOX),
+                    ),
+                    _ => changed,
+                };
                 crate::changed::note_changed(&mut body, changed);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }
                 if let Some(obj) = body.as_object_mut() {
-                    for (key, value) in self.open_box_with(&entity).await {
+                    for (key, value) in opened {
                         obj.insert(key.into(), value);
                     }
                 }
@@ -2093,5 +2103,45 @@ mod tests {
         assert_eq!(key["key"], "mood", "{with_sets}");
         assert_eq!(key["to"], "cheerful", "{with_sets}");
         assert!(key.get("from").is_none(), "nothing was there: {with_sets}");
+    }
+
+    /// **Creating a bot names the box it opens** (card 2347). The box is made
+    /// beside the bot in the same call, so the receipt lists it after the bot.
+    /// The control is a creation of a kind that opens no box: its list holds the
+    /// thing alone.
+    #[tokio::test]
+    async fn creating_a_bot_names_the_box_it_opens() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+
+        let bot = json_of(
+            &jojobot
+                .add_entity(Parameters(add_args("bot", "sigma", "Sigma")))
+                .await
+                .expect("add ok"),
+        );
+        assert_ne!(bot["status"], "blocked", "{bot}");
+        let changed = bot["changed"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of changes: {bot}"));
+        assert_eq!(changed.len(), 2, "{bot}");
+        assert_eq!(changed[0]["on"], "bot:sigma", "{bot}");
+        assert_eq!(changed[0]["what"], "created", "{bot}");
+        assert_eq!(changed[1]["on"], bot["mailbox"], "{bot}");
+        assert_eq!(changed[1]["on"], "sigma", "{bot}");
+        assert_eq!(changed[1]["what"], "created", "{bot}");
+        assert_eq!(changed[1]["key"], "mailbox", "{bot}");
+
+        let person = json_of(
+            &jojobot
+                .add_entity(Parameters(add_args("person", "lisa", "Lisa")))
+                .await
+                .expect("add ok"),
+        );
+        assert_eq!(
+            person["changed"].as_array().map(Vec::len),
+            Some(1),
+            "a thing that is not a bot opens no box: {person}"
+        );
     }
 }
