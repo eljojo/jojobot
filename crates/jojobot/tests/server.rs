@@ -1748,3 +1748,95 @@ async fn a_closed_connection_leaves_only_the_request_logs_error_in_the_process_l
     );
     ct.cancel();
 }
+
+/// A request body that records that it was polled, and errors when it is.
+struct Poisoned(Arc<std::sync::atomic::AtomicBool>);
+
+impl http_body::Body for Poisoned {
+    type Data = axum::body::Bytes;
+    type Error = std::io::Error;
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::task::Poll::Ready(Some(Err(std::io::Error::other("the body was read"))))
+    }
+}
+
+/// **A POST the bearer check refuses costs the server no read of its body, and
+/// still gets its line.** The served app, with its real layers and a real
+/// validator, is sent a POST with no bearer whose body errors if it is polled.
+/// The answer is 401, the body was never polled, and the process log holds one
+/// line for the request with its status and that it was refused.
+///
+/// **Paired**: with a bearer the same app reads the body and the line names the
+/// verb, so the refusal is what kept the read from happening.
+#[tokio::test]
+async fn a_post_with_no_bearer_is_refused_logged_and_never_read_and_an_admitted_one_is_named() {
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    let (log, _guard) = capture_process_log();
+    let idp = support::TestIdp::new();
+    let token = idp.token("sub-allowed");
+    let state = allowlist_state(idp.validator(&["sub-allowed"]))("127.0.0.1:0".parse().unwrap());
+    let app = build_app(state, CancellationToken::new());
+
+    // ── no bearer ───────────────────────────────────────────────────────────
+    let polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let refused = app
+        .clone()
+        .oneshot(
+            axum::http::Request::post("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::new(Poisoned(polled.clone())))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 401);
+    let _ = axum::body::to_bytes(refused.into_body(), 1 << 20).await;
+    assert!(
+        !polled.load(std::sync::atomic::Ordering::SeqCst),
+        "the body of a request the bearer check refused was read"
+    );
+    wait_for_the_log(&log, "mcp request ended").await;
+    let text = log.warnings();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("jojobot::request_log"))
+        .collect();
+    assert_eq!(lines.len(), 1, "one line for the refused request: {text}");
+    for named in ["http_method=POST", "status=401", "outcome=\"refused\""] {
+        assert!(lines[0].contains(named), "{named:?} missing: {}", lines[0]);
+    }
+    assert!(
+        !lines[0].contains("tool="),
+        "a refused request names no verb: {}",
+        lines[0]
+    );
+
+    // ── a bearer: the body is read and the verb is named ────────────────────
+    let admitted = app
+        .oneshot(
+            axum::http::Request::post("/mcp")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(admitted.status(), 401, "the token was admitted");
+    let _ = axum::body::to_bytes(admitted.into_body(), 1 << 20).await;
+    let text = log.warnings();
+    assert!(
+        text.lines()
+            .any(|l| l.contains("jojobot::request_log") && l.contains("tool=\"ping\"")),
+        "the admitted call is named: {text}"
+    );
+}

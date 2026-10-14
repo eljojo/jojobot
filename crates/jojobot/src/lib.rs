@@ -161,17 +161,27 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     // path jojobot does not implement is told its credentials are wrong.
     // `route_layer` guards the routes and leaves the fallback alone, so an
     // unmounted path reports itself missing (rule 68).
-    let mut mcp_router = Router::new().nest_service("/mcp", mcp);
+    //
+    // **The order of the three layers is the point, innermost first.** The body is
+    // read to name the verb inside the bearer check, so a caller who is refused
+    // costs us no read of what it sent. The line is written outside it, so a
+    // refused request is logged too, and a request's line covers its whole life.
+    let log = request_log::RequestLog::new(state.registry.clone());
+    let mut mcp_router =
+        Router::new()
+            .nest_service("/mcp", mcp)
+            .route_layer(axum::middleware::from_fn_with_state(
+                log.clone(),
+                request_log::name_the_request,
+            ));
     if state.validator.is_some() {
         mcp_router = mcp_router.route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             routes::require_bearer,
         ));
     }
-    // **Outermost on `/mcp`**, so a request the bearer check refuses is logged
-    // too, and a request's line covers its whole life.
     mcp_router = mcp_router.route_layer(axum::middleware::from_fn_with_state(
-        request_log::RequestLog::new(state.registry.clone()),
+        log,
         request_log::log_request,
     ));
 

@@ -8,9 +8,16 @@
 //! **Names, ids and timings only.** No body, claim text, field key or key ever
 //! reaches a line: the run is named by its public name, never by the key the
 //! caller sent.
+//!
+//! **Two layers, because the line and the naming cost different things.** The
+//! outer one, [`log_request`], opens the line and writes it, so a request the
+//! bearer check refuses is logged too. It reads no body. The inner one,
+//! [`name_the_request`], sits inside the bearer check: reading a request's body
+//! to name its verb is work done for the caller, so it is done only for a caller
+//! who was let in, and it tells the outer layer what it found.
 
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -61,6 +68,18 @@ struct Named {
     run: Option<String>,
 }
 
+/// **The names of one request, shared by the two layers.** The outer layer puts
+/// it in the request's extensions and reads it when the line is written; the
+/// inner layer fills in what the body says once the caller is let in.
+#[derive(Clone)]
+struct Shared(Arc<Mutex<Named>>);
+
+impl Shared {
+    fn read(&self) -> Named {
+        self.0.lock().expect("the names of a request").clone()
+    }
+}
+
 /// **A name from the wire, made safe to print**: only the characters a method or
 /// tool name is made of, and no more than 64 of them.
 fn printable(word: &str) -> String {
@@ -98,7 +117,7 @@ fn name_the_call(bytes: &[u8], registry: &SessionRegistry, named: &mut Named) {
 /// ends: the body was read to its end, the client or the proxy closed it, or the
 /// request was refused.
 struct Ticket {
-    named: Named,
+    named: Shared,
     started: Instant,
     status: Option<StatusCode>,
     finished: bool,
@@ -106,12 +125,17 @@ struct Ticket {
 }
 
 impl Ticket {
-    fn open(named: Named, slow_after: Duration) -> Self {
+    fn open(named: Shared, slow_after: Duration) -> Self {
         let for_warning = named.clone();
         let started = Instant::now();
-        let slow = tokio::spawn(async move {
-            tokio::time::sleep(slow_after).await;
-            tracing::warn!(
+        // **A standing GET stream is open by design** and is not a call that
+        // has hung, so it never warns. Its line is still written when it ends.
+        let standing = named.read().http_method == Method::GET.as_str();
+        let slow = (!standing).then(|| {
+            tokio::spawn(async move {
+                tokio::time::sleep(slow_after).await;
+                let for_warning = for_warning.read();
+                tracing::warn!(
                 http_method = %for_warning.http_method,
                 mcp_method = for_warning.mcp_method.as_deref(),
                 tool = for_warning.tool.as_deref(),
@@ -119,14 +143,15 @@ impl Ticket {
                 run = for_warning.run.as_deref(),
                 open_ms = started.elapsed().as_millis() as u64,
                 "mcp request still open"
-            );
+                );
+            })
         });
         Self {
             named,
             started,
             status: None,
             finished: false,
-            slow: Some(slow),
+            slow,
         }
     }
 }
@@ -136,7 +161,7 @@ impl Drop for Ticket {
         if let Some(slow) = self.slow.take() {
             slow.abort();
         }
-        let named = &self.named;
+        let named = &self.named.read();
         let duration_ms = self.started.elapsed().as_millis() as u64;
         let refused = self.status.is_some_and(|s| s.as_u16() >= 400);
         let stream = named.http_method == Method::GET.as_str();
@@ -205,21 +230,15 @@ impl http_body::Body for Watched {
     }
 }
 
-pub async fn log_request(State(log): State<RequestLog>, req: Request, next: Next) -> Response {
-    let mut named = Named {
+/// **The outer layer: opens the line and writes it when the request ends.** It
+/// reads no body. A request the bearer check refuses gets its line, with the
+/// status it was refused with.
+pub async fn log_request(State(log): State<RequestLog>, mut req: Request, next: Next) -> Response {
+    let named = Shared(Arc::new(Mutex::new(Named {
         http_method: req.method().as_str().to_string(),
         ..Named::default()
-    };
-    let req = if req.method() == Method::POST {
-        let (parts, body) = req.into_parts();
-        let Ok(bytes) = axum::body::to_bytes(body, READ_AT_MOST).await else {
-            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-        };
-        name_the_call(&bytes, &log.registry, &mut named);
-        Request::from_parts(parts, Body::from(bytes))
-    } else {
-        req
-    };
+    })));
+    req.extensions_mut().insert(named.clone());
 
     let mut ticket = Ticket::open(named, log.slow_after);
     let response = next.run(req).await;
@@ -227,6 +246,28 @@ pub async fn log_request(State(log): State<RequestLog>, req: Request, next: Next
     let (parts, inner) = response.into_parts();
     ticket.finished = http_body::Body::is_end_stream(&inner);
     Response::from_parts(parts, Body::new(Watched { inner, ticket }))
+}
+
+/// **The inner layer: reads a POST body to name the verb, after the bearer check
+/// has passed.** The body is the caller's to send and ours to read only once the
+/// caller is allowed in; a request over [`READ_AT_MOST`] is refused rather than
+/// passed on half read. What it finds goes to the outer layer's line.
+pub async fn name_the_request(State(log): State<RequestLog>, req: Request, next: Next) -> Response {
+    let Some(shared) = req.extensions().get::<Shared>().cloned() else {
+        return next.run(req).await;
+    };
+    if req.method() != Method::POST {
+        return next.run(req).await;
+    }
+    let (parts, body) = req.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, READ_AT_MOST).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let mut found = shared.read();
+    name_the_call(&bytes, &log.registry, &mut found);
+    *shared.0.lock().expect("the names of a request") = found;
+    next.run(Request::from_parts(parts, Body::from(bytes)))
+        .await
 }
 
 #[cfg(test)]
@@ -279,10 +320,51 @@ mod tests {
         (kept, tracing::subscriber::set_default(subscriber))
     }
 
+    /// The two layers in the order the served app mounts them: the naming layer
+    /// innermost, the line outermost.
     fn app(log: RequestLog, answer: axum::routing::MethodRouter) -> Router {
         Router::new()
             .route("/mcp", answer)
+            .layer(middleware::from_fn_with_state(
+                log.clone(),
+                name_the_request,
+            ))
             .layer(middleware::from_fn_with_state(log, log_request))
+    }
+
+    /// **A stand-in for the bearer check**, between the two layers: a request
+    /// with no `authorization` header is refused with 401.
+    async fn refuse_without_a_bearer(req: Request, next: Next) -> Response {
+        if req.headers().get("authorization").is_none() {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        next.run(req).await
+    }
+
+    fn app_behind_a_bearer(log: RequestLog, answer: axum::routing::MethodRouter) -> Router {
+        Router::new()
+            .route("/mcp", answer)
+            .layer(middleware::from_fn_with_state(
+                log.clone(),
+                name_the_request,
+            ))
+            .layer(middleware::from_fn(refuse_without_a_bearer))
+            .layer(middleware::from_fn_with_state(log, log_request))
+    }
+
+    /// A request body that records that it was polled, and errors when it is.
+    struct Poisoned(Arc<std::sync::atomic::AtomicBool>);
+
+    impl http_body::Body for Poisoned {
+        type Data = axum::body::Bytes;
+        type Error = std::io::Error;
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::task::Poll::Ready(Some(Err(std::io::Error::other("the body was read"))))
+        }
     }
 
     fn tool_call(tool: &str, key: &str) -> Request {
@@ -413,6 +495,113 @@ mod tests {
         assert!(lines[0].contains("ERROR"), "{}", lines[0]);
         assert!(lines[0].contains("tool=\"search\""), "{}", lines[0]);
         assert!(lines[0].contains("outcome=\"cancelled\""), "{}", lines[0]);
+    }
+
+    /// **A request the bearer check refuses is logged and its body is never
+    /// read.** The caller is not allowed in, so reading what it sent is a cost
+    /// it was not owed. **Paired**: with a bearer the same call is read and its
+    /// verb is named, so the refusal is what kept the read from happening.
+    #[tokio::test]
+    async fn a_refused_post_is_logged_without_its_body_being_read_and_an_admitted_one_is_named() {
+        let (kept, _guard) = capture();
+        let (registry, key, _run) = registry_with_a_run();
+        let router = app_behind_a_bearer(RequestLog::new(registry), post(|| async { "answer" }));
+
+        // ── no bearer: refused, one line, the body untouched ────────────────
+        let polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let refused = router
+            .clone()
+            .oneshot(
+                Request::post("/mcp")
+                    .body(Body::new(Poisoned(polled.clone())))
+                    .expect("a request"),
+            )
+            .await
+            .expect("served");
+        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+        let _ = axum::body::to_bytes(refused.into_body(), 1 << 20).await;
+        assert!(
+            !polled.load(std::sync::atomic::Ordering::SeqCst),
+            "the body of a refused request was read"
+        );
+        let lines = kept.lines();
+        assert_eq!(
+            lines.len(),
+            1,
+            "a refused request still gets its line: {lines:?}"
+        );
+        for named in ["http_method=POST", "status=401", "outcome=\"refused\""] {
+            assert!(
+                lines[0].contains(named),
+                "{named:?} is missing from {}",
+                lines[0]
+            );
+        }
+        assert!(
+            !lines[0].contains("tool="),
+            "a refused call names no verb: {}",
+            lines[0]
+        );
+
+        // ── with a bearer: read, and the verb is named ──────────────────────
+        let mut admitted = tool_call("recall", &key);
+        admitted
+            .headers_mut()
+            .insert("authorization", "Bearer a-token".parse().expect("a header"));
+        let answered = router.oneshot(admitted).await.expect("served");
+        let _ = axum::body::to_bytes(answered.into_body(), 1 << 20).await;
+        let lines = kept.lines();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].contains("tool=\"recall\""), "{}", lines[1]);
+    }
+
+    /// **A standing GET stream that is simply open warns nothing**, however long
+    /// it stays. **Paired in the same router**: a POST held as long warns once, so
+    /// the silence is the stream's and not a layer that never warns.
+    #[tokio::test(start_paused = true)]
+    async fn a_standing_get_stream_open_past_the_threshold_warns_nothing_and_a_held_post_does() {
+        let (kept, _guard) = capture();
+        let (registry, key, _run) = registry_with_a_run();
+        let log = RequestLog::new(registry).slow_after(Duration::from_secs(60));
+        let router = app(
+            log,
+            get(|| async { pending_body() }).post(|| async {
+                tokio::time::sleep(Duration::from_secs(90)).await;
+                "late"
+            }),
+        );
+
+        let stream = router
+            .clone()
+            .oneshot(Request::get("/mcp").body(Body::empty()).expect("a request"))
+            .await
+            .expect("served");
+        tokio::time::sleep(Duration::from_secs(90)).await;
+        assert!(
+            kept.lines().iter().all(|l| !l.contains("WARN")),
+            "an open stream warned: {:?}",
+            kept.lines()
+        );
+
+        let held = router
+            .oneshot(tool_call("recall", &key))
+            .await
+            .expect("served");
+        let _ = axum::body::to_bytes(held.into_body(), 1 << 20).await;
+        drop(stream);
+
+        let warnings: Vec<String> = kept
+            .lines()
+            .into_iter()
+            .filter(|l| l.contains("WARN"))
+            .collect();
+        assert_eq!(
+            warnings.len(),
+            1,
+            "one warning, the POST's: {:?}",
+            kept.lines()
+        );
+        assert!(warnings[0].contains("http_method=POST"), "{}", warnings[0]);
     }
 
     /// A body that never yields and never ends: a call whose answer is still
