@@ -300,10 +300,13 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
     let write = status("project:visa", "considering");
     // ① The word lands. The answer names the project whose columns govern,
     // which is this one, and the shipped words it always keeps.
+    // **Read in the note itself.** The receipt repeats the subject the call
+    // named, so a needle matched anywhere in the answer would be satisfied by
+    // the call's own input; only a note that names the board does it here.
     let refused = s.call("capture", write.clone()).await;
-    refused.says("project:visa");
+    refused.holds_at("/status_word_note", "project:visa");
     for word in ["someday", "next", "now", "waiting", "done"] {
-        refused.says(word);
+        refused.holds_at("/status_word_note", word);
     }
     // ② The columns are written where the note says.
     s.event_with(
@@ -322,8 +325,8 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
         .says("\"status\":\"considering\"");
     // The list that governs is the one the note now names, in full.
     let again = s.call("capture", status("project:visa", "pondering")).await;
-    again.says("considering");
-    again.says("project:visa");
+    again.holds_at("/status_word_note", "considering");
+    again.holds_at("/status_word_note", "project:visa");
 
     // The list and the word it adds may arrive in one write.
     s.event_with(
@@ -360,8 +363,9 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
     let child = s
         .call("capture", status("project:jojobot-server", "backlog"))
         .await;
-    child.says("project:kitchen-floor");
-    child.says("inbox");
+    child.holds_at("/status_word_note", "project:kitchen-floor");
+    child.holds_at("/status_word_note", "inbox");
+    child.never_holds_at("/status_word_note", "project:jojobot-server");
     s.event_with(
         "project:jojobot-server",
         "where it stands",
@@ -411,8 +415,8 @@ async fn a_cold_session_taught_by_the_essay_follows_a_status_note_to_a_write_tha
     });
     let landed = s.call("capture", write.clone()).await;
     // The answer names the project that holds the list, as the essay said it would.
-    landed.says("project:atlas");
-    landed.says("columns");
+    landed.holds_at("/status_word_note", "project:atlas");
+    landed.holds_at("/status_word_note", "columns");
     s.recall("project:atlas")
         .await
         .says("\"status\":\"considering\"");

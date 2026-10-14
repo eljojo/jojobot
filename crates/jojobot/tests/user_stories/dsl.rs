@@ -2448,6 +2448,50 @@ impl Answer {
         );
         self
     }
+
+    /// **The text at one place in the answer**, read there rather than matched
+    /// anywhere in it. A needle matched against the whole payload is satisfied
+    /// by every part of the answer that repeats the call's own input; a read at
+    /// a pointer is about the one field a rule produces. Panics when nothing
+    /// text lives there, so an assertion built on it cannot go on asserting
+    /// against nothing.
+    pub fn text_at(&self, pointer: &str) -> String {
+        let found = self.json();
+        found
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the {} carries no text at {pointer}: {}",
+                    self.what, self.body
+                )
+            })
+            .to_string()
+    }
+
+    /// The text at `pointer` holds `needle`.
+    pub fn holds_at(&self, pointer: &str, needle: &str) -> &Self {
+        let text = self.text_at(pointer);
+        assert!(
+            text.contains(needle),
+            "the {} holds {text:?} at {pointer}, which lacks {needle:?}: {}",
+            self.what,
+            self.body
+        );
+        self
+    }
+
+    /// The text at `pointer` does not hold `needle`.
+    pub fn never_holds_at(&self, pointer: &str, needle: &str) -> &Self {
+        let text = self.text_at(pointer);
+        assert!(
+            !text.contains(needle),
+            "the {} holds {text:?} at {pointer}, which carries {needle:?}: {}",
+            self.what,
+            self.body
+        );
+        self
+    }
 }
 
 /// 🚨 **What a text assertion about a number cannot do, shown once.**
