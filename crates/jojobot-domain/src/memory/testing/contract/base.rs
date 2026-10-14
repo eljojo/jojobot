@@ -17333,6 +17333,8 @@ macro_rules! all_cases {
         $m!(a_merge_reads_back_as_an_event_with_its_session_and_the_claim_map($store));
         $m!(an_address_from_before_a_merge_still_names_its_claim($store));
         $m!(an_address_from_before_a_chain_of_merges_names_its_claim_at_the_end($store));
+        $m!(merged_testimony_is_rewritten_only_by_the_session_that_made_it($store));
+        $m!(a_key_only_the_folded_thing_wrote_has_a_trail_on_the_survivor($store));
         $m!(a_claims_lineage_is_walkable_from_its_source($store));
         $m!(a_folded_value_says_who_backs_it($store));
         $m!(a_summed_key_has_no_backing_to_report($store));

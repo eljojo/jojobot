@@ -1949,6 +1949,25 @@ async fn a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readabl
         .await
         .expect("the address reads");
     assert_eq!(history.len(), 1, "{history:?}");
+    // **The folded key lists no claim of its own, and the survivor serves
+    // the mapped ones**, the same contract the fake is held to.
+    let mapped = merged
+        .memory
+        .recall(&merged.survivor)
+        .await
+        .expect("recall reads")
+        .into_iter()
+        .find(|fact| fact.content != "a stray claim")
+        .expect("the survivor serves a claim the event maps")
+        .content;
+    jojobot_domain::memory::testing::contract::a_claim_under_a_folded_key_that_no_event_lists_is_served_to_nobody(
+        &merged.memory,
+        &merged.survivor,
+        &merged.folded,
+        "a stray claim",
+        &mapped,
+    )
+    .await;
     // A thing nobody merged into names nothing.
     let other = merged
         .memory

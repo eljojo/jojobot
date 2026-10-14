@@ -734,7 +734,7 @@ impl InMemoryMemory {
                     prose: prose.get(&entity.id).cloned().unwrap_or_default(),
                     facts: facts
                         .iter()
-                        .filter(|f| f.home == key)
+                        .filter(|f| f.home == key && !self.is_folded_key(&key))
                         .map(|f| self.served(self.projected(f), &entity.id))
                         .collect(),
                     fields,
@@ -1048,6 +1048,35 @@ impl InMemoryMemory {
         FactAddress::new(at.0, at.1)
     }
 
+    /// **Whether a merge folded this key into another thing.** What such a key
+    /// still stores is its survivor's now, so a listing of the thing's claims
+    /// serves none of it: a claim no event maps is named by the survivor as left
+    /// out, and read at its own address.
+    fn is_folded_key(&self, key: &EntityId) -> bool {
+        self.merges
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .any(|merge| merge.folded == *key)
+    }
+
+    /// **Every key a merge folded into this one**, and every key folded into
+    /// those earlier. A key never counts twice, so a loop in the merges ends.
+    fn keys_folded_into(&self, key: &EntityId) -> std::collections::HashSet<EntityId> {
+        let merges = self.merges.lock().expect("fake mutex poisoned");
+        let mut reached = std::collections::HashSet::from([key.clone()]);
+        let mut frontier = vec![key.clone()];
+        while let Some(at) = frontier.pop() {
+            for merge in merges.iter().filter(|merge| merge.survivor == at) {
+                if reached.insert(merge.folded.clone()) {
+                    frontier.push(merge.folded.clone());
+                }
+            }
+        }
+        reached.remove(key);
+        reached
+    }
+
     fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
         let known = self.known();
         let former = self.former();
@@ -1324,12 +1353,18 @@ impl InMemoryMemory {
 
     /// **The session of the claim's FIRST write**, which is the session that
     /// brought the claim in — `None` when that write had none.
+    ///
+    /// **Read where the claim is stored**, which is not where it is served once a
+    /// merge moved it: the writes keep the key and id the claim was made under.
     fn first_write_session(&self, home: &EntityId, id: &FactId) -> Option<String> {
+        let stored = self.stored_address(&FactAddress::new(home.clone(), id.clone()));
         self.claim_writes
             .lock()
             .expect("fake mutex poisoned")
             .iter()
-            .find(|(held, held_id, write)| held == home && held_id == id && write.ordinal == 1)
+            .find(|(held, held_id, write)| {
+                *held == stored.home && *held_id == stored.local && write.ordinal == 1
+            })
             .and_then(|(_, _, write)| write.session.clone())
     }
 
@@ -2763,9 +2798,10 @@ impl Memory for InMemoryMemory {
             None => entity.id.clone(),
         };
         let facts = self.facts_view();
+        let folded = self.is_folded_key(&key);
         let mine: Vec<Fact> = facts
             .iter()
-            .filter(|f| f.subject == key || f.home == key)
+            .filter(|f| !folded && (f.subject == key || f.home == key))
             .cloned()
             .collect();
         drop(facts);
@@ -3066,14 +3102,22 @@ impl Memory for InMemoryMemory {
         // **The keys written on the thing or on any thing folded into it**, as the
         // real store reads them, and none for a key that was folded away: what it
         // still stores is its survivor's now.
-        let keys: std::collections::BTreeSet<String> = self
-            .writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .iter()
-            .filter(|w| w.entity == storage_key)
-            .map(|w| w.key.clone())
-            .collect();
+        let keys: std::collections::BTreeSet<String> = {
+            let folded = self.keys_folded_into(&storage_key);
+            let is_folded = self
+                .merges
+                .lock()
+                .expect("fake mutex poisoned")
+                .iter()
+                .any(|merge| merge.folded == storage_key);
+            self.writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .iter()
+                .filter(|w| !is_folded && (w.entity == storage_key || folded.contains(&w.entity)))
+                .map(|w| w.key.clone())
+                .collect()
+        };
         let mut trails = crate::memory::KeyTrails::default();
         for key in keys {
             let writes = self.history(entity, &key).await?;
@@ -4231,6 +4275,37 @@ mod tests {
             .written()
             .expect("not blocked")
             .address()
+    }
+
+    /// **A claim stood up under the folded key after the merge is served to
+    /// nobody**, as the real store serves it. Paired inside the contract case
+    /// with the claim the event did map.
+    #[tokio::test]
+    async fn a_stray_claim_under_a_folded_key_is_served_to_nobody() {
+        let store = InMemoryMemory::booted();
+        let survivor = thing(&store, "person:lisa", "Lisa").await;
+        let folded = thing(&store, "person:nelson", "Nelson").await;
+        say(&store, &folded, "owes a dollar").await;
+        store
+            .merge(
+                &folded,
+                &survivor,
+                Some("one boy, filed twice"),
+                date(2026, 6, 3),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("the fold lands");
+        store.stray_claim_under(&folded, "a stray claim");
+        contract::a_claim_under_a_folded_key_that_no_event_lists_is_served_to_nobody(
+            &store,
+            &survivor,
+            &folded,
+            "a stray claim",
+            "owes a dollar",
+        )
+        .await;
     }
 
     /// **Two events for one address: the newest decides, in the rows served as

@@ -492,3 +492,179 @@ pub async fn a_chain_of_sixty_five_merges_loses_no_claim<M: Memory>(store: &M) {
         assert!(!writes.is_empty(), "the claim has writes at {address}");
     }
 }
+
+/// **Testimony a merge moved is rewritten by the session that made it, and by
+/// no other.** The claim is served under the survivor at an address the merge
+/// gave it, and the writes that record who made it stay where it was made. The
+/// refusal of another session is the pair: a rewrite that ignored the session
+/// would pass the first half alone.
+pub async fn merged_testimony_is_rewritten_only_by_the_session_that_made_it<M: Memory>(store: &M) {
+    let survivor = EntityId::person(format!("person:{}", "contract-merged-testimony-keeper"));
+    let folded = EntityId::person(format!("person:{}", "contract-merged-testimony-mover"));
+    for id in [&survivor, &folded] {
+        add(
+            store,
+            NewEntity::new(
+                id.clone(),
+                id.as_str().replace([':', '-'], " "),
+                "contract-fixture",
+            ),
+        )
+        .await;
+    }
+    let said = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            session: Some("session-a".to_string()),
+            ..NewFact::about(folded.clone(), "prefers tea", date(2026, 6, 2))
+        },
+    )
+    .await;
+    store
+        .merge(
+            &folded,
+            &survivor,
+            Some("one boy, filed twice"),
+            date(2026, 6, 3),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    let served = store
+        .moved_address(&said.address())
+        .await
+        .expect("reads")
+        .expect("the claim moved with the merge");
+    let rewrite = |session: &str, words: &str| FactPatch {
+        content: Some(words.to_string()),
+        provenance: Some(Provenance::Testimony),
+        session: Some(session.to_string()),
+        ..Default::default()
+    };
+
+    let refused = store
+        .update_fact(
+            &served,
+            rewrite("session-b", "prefers coffee"),
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::TestimonyRewritten { .. })),
+        "another session's rewrite is refused: {:?}",
+        refused.map(|_| ()),
+    );
+    let kept = store
+        .update_fact(
+            &served,
+            rewrite("session-a", "prefers green tea"),
+            &other_caller(),
+        )
+        .await
+        .expect("the session that made the claim may rewrite it where it is served")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(kept.content, "prefers green tea");
+}
+
+/// **A key only a folded thing wrote keeps its history on the survivor.** The
+/// folded thing set `colour` and the survivor never did; after the merge the
+/// survivor holds it, and the trail of every key the thing ever had names it. The
+/// survivor's own key is the pair, so the trail is not simply everything.
+pub async fn a_key_only_the_folded_thing_wrote_has_a_trail_on_the_survivor<M: Memory>(store: &M) {
+    let survivor = EntityId::person(format!("person:{}", "contract-folded-key-trail-keeper"));
+    let folded = EntityId::person(format!("person:{}", "contract-folded-key-trail-mover"));
+    for id in [&survivor, &folded] {
+        add(
+            store,
+            NewEntity::new(
+                id.clone(),
+                id.as_str().replace([':', '-'], " "),
+                "contract-fixture",
+            ),
+        )
+        .await;
+    }
+    for (about, key, value) in [(&survivor, "size", "big"), (&folded, "colour", "red")] {
+        capture(
+            store,
+            NewFact {
+                fields: [(key.to_string(), value.to_string())].into_iter().collect(),
+                sets: [key.to_string()].into_iter().collect(),
+                ..NewFact::about(about.clone(), format!("is {value}"), date(2026, 6, 2))
+            },
+        )
+        .await;
+    }
+    store
+        .merge(
+            &folded,
+            &survivor,
+            Some("one boy, filed twice"),
+            date(2026, 6, 3),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+
+    assert_eq!(
+        store
+            .history(&survivor, "colour")
+            .await
+            .expect("the history reads")
+            .len(),
+        1,
+        "the folded thing's key reads on the survivor"
+    );
+    let trails = store.key_trails(&survivor).await.expect("the trails read");
+    for key in ["colour", "size"] {
+        assert!(
+            trails.history.contains_key(key),
+            "the trail names {key}, the folded thing's and the survivor's own: {:?}",
+            trails.history.keys().collect::<Vec<_>>()
+        );
+    }
+}
+
+/// **A claim stored under a folded key that no merge event lists is served to
+/// nobody.** The survivor does not serve it (it names it as left out) and the
+/// folded key, which holds nothing of its own, lists none of it. The caller has
+/// staged the claim by the means its store has for standing up damage, and
+/// `mapped` is a claim the event did list. The address still reads the stray
+/// claim, and the survivor still serves the mapped one, which is the pair.
+pub async fn a_claim_under_a_folded_key_that_no_event_lists_is_served_to_nobody<M: Memory>(
+    store: &M,
+    survivor: &EntityId,
+    folded: &EntityId,
+    stray: &str,
+    mapped: &str,
+) {
+    let served_by = |facts: &[Fact], words: &str| facts.iter().any(|fact| fact.content == words);
+    let survivor_serves = store.recall(survivor).await.expect("the survivor reads");
+    assert!(
+        served_by(&survivor_serves, mapped),
+        "the survivor serves the claim the event maps: {survivor_serves:?}"
+    );
+    assert!(
+        !served_by(&survivor_serves, stray),
+        "the survivor does not serve the stray claim: {survivor_serves:?}"
+    );
+    let folded_serves = store.recall(folded).await.expect("the folded thing reads");
+    assert!(
+        !served_by(&folded_serves, stray),
+        "the folded key lists no claim of its own: {folded_serves:?}"
+    );
+    let scan = store
+        .scan_entity(folded)
+        .await
+        .expect("the scan reads")
+        .expect("the folded thing is there");
+    assert!(
+        !served_by(&scan.facts, stray),
+        "nor does a scan of it: {:?}",
+        scan.facts
+    );
+}
