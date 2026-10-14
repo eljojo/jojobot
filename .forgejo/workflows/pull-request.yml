@@ -18,6 +18,13 @@ on:
     branches:
       - main
 
+# A new push to a pull request replaces that pull request's run in flight. The
+# group is keyed on the pull request number: on this event the ref does not
+# name the pull request, so two pull requests would cancel each other.
+concurrency:
+  group: pull-request-${{ forgejo.event.pull_request.number }}
+  cancel-in-progress: true
+
 # The runner labelled `nix` is a host executor: the job runs on the machine
 # itself, sees only the runner's own directory, and reaches the internet and
 # the Forgejo host. The flake is the toolchain, so each job enters it with
