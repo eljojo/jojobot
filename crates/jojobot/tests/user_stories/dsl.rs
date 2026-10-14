@@ -182,23 +182,14 @@ impl jojobot_domain::memory::Memory for Blindable {
         to: &jojobot_domain::memory::EntityId,
         parent: Option<jojobot_domain::memory::EntityId>,
         date: jiff::civil::Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<
         jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
         jojobot_domain::memory::MemoryError,
     > {
         self.inner
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await
     }
     async fn archive_entity(

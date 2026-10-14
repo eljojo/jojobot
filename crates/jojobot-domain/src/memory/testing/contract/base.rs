@@ -2077,7 +2077,14 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     .await;
 
     store
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 8, 2),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands")
         .written()
@@ -3897,7 +3904,14 @@ pub async fn a_rename_and_a_relabel_refused_on_the_name_alone_need_a_reason_besi
         attempted,
         candidates,
     } = store
-        .rename_entity(&moving, &to, None, date(2026, 9, 1), None, None, None)
+        .rename_entity(
+            &moving,
+            &to,
+            None,
+            date(2026, 9, 1),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the call itself succeeds; the guard answers in the result")
     else {
@@ -3918,8 +3932,7 @@ pub async fn a_rename_and_a_relabel_refused_on_the_name_alone_need_a_reason_besi
                     &to,
                     None,
                     date(2026, 9, 1),
-                    Some(&token),
-                    Some(" "),
+                    crate::memory::Override::new(Some(&token), Some(" ")),
                     None
                 )
                 .await
@@ -3934,8 +3947,7 @@ pub async fn a_rename_and_a_relabel_refused_on_the_name_alone_need_a_reason_besi
             &to,
             None,
             date(2026, 9, 1),
-            Some(&token),
-            Some("a place, not a person"),
+            crate::memory::Override::new(Some(&token), Some("a place, not a person")),
             None,
         )
         .await
@@ -3952,8 +3964,7 @@ pub async fn a_rename_and_a_relabel_refused_on_the_name_alone_need_a_reason_besi
             &to,
             Some(held.clone()),
             date(2026, 9, 2),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -6895,8 +6906,7 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
             &pointer_v2,
             None,
             date(2026, 9, 3),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -6924,8 +6934,7 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
             &pointer_v3,
             None,
             date(2026, 9, 5),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -8976,8 +8985,7 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_an_edge<M: Memory>(
             &renamed_to,
             None,
             date(2026, 4, 21),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -9041,8 +9049,7 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_ref<M: Memory>(st
             &renamed_to,
             None,
             date(2026, 4, 21),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -9100,8 +9107,7 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_parent<M: Memory>
             &renamed_to,
             None,
             date(2026, 4, 21),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -9164,8 +9170,7 @@ pub async fn a_same_handle_rename_with_a_different_parent_reparents<M: Memory>(s
             &child,
             Some(new_home.clone()),
             date(2026, 6, 1),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -9201,7 +9206,14 @@ pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memo
     .await;
 
     let no_parent_named = store
-        .rename_entity(&child, &child, None, date(2026, 6, 1), None, None, None)
+        .rename_entity(
+            &child,
+            &child,
+            None,
+            date(2026, 6, 1),
+            crate::memory::Override::none(),
+            None,
+        )
         .await;
     assert!(
         matches!(no_parent_named, Err(MemoryError::NothingToRename { .. })),
@@ -9214,8 +9226,7 @@ pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memo
             &child,
             Some(home.clone()),
             date(2026, 6, 1),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await;
@@ -9240,8 +9251,7 @@ pub async fn a_same_handle_rename_naming_an_unknown_parent_is_blocked<M: Memory>
             &child,
             Some(unknown_parent.clone()),
             date(2026, 6, 1),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -10072,7 +10082,14 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     let target = EntityId("view:contract-supplied-rename-target".into());
 
     let err = store
-        .rename_entity(&shipped, &target, None, date(2026, 6, 10), None, None, None)
+        .rename_entity(
+            &shipped,
+            &target,
+            None,
+            date(2026, 6, 10),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect_err("a rename of a build-supplied handle must be refused, not silently accepted");
     assert!(
@@ -10100,7 +10117,14 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     .await;
     let now = EntityId("thing:contract-supplied-rename-stored-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 10), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 6, 10),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("a stored entity's rename should succeed")
         .written()
@@ -10510,7 +10534,14 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
     .await;
     let now = EntityId("work:contract-double-rename-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 11), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 6, 11),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the first rename lands")
         .written()
@@ -10518,7 +10549,14 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
 
     let elsewhere = EntityId("person:contract-double-rename-elsewhere".into());
     let moved = store
-        .rename_entity(&was, &elsewhere, None, date(2026, 6, 12), None, None, None)
+        .rename_entity(
+            &was,
+            &elsewhere,
+            None,
+            date(2026, 6, 12),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect_err("a stale handle must not be renamed as if it still had a row");
     assert!(
@@ -10534,8 +10572,7 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
             &elsewhere,
             None,
             date(2026, 6, 12),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -12899,7 +12936,14 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
     .await;
 
     store
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 8, 2),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands")
         .written()
@@ -15383,8 +15427,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
             &renamed,
             None,
             date(2026, 9, 3),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -15410,7 +15453,14 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     };
     assert_eq!(said(&folded).await, Some(renamed.clone()));
     let refused = store
-        .rename_entity(&folded, &folded, None, date(2026, 9, 5), None, None, None)
+        .rename_entity(
+            &folded,
+            &folded,
+            None,
+            date(2026, 9, 5),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect_err("a forwarding row is not renamed");
     let MemoryError::AlreadyMerged { into, .. } = &refused else {
@@ -15424,7 +15474,14 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     // **The paired negative**: a rename that nears another thing is blocked.
     let near = EntityId::person("person:contract-survives-other-later");
     let blocked = store
-        .rename_entity(&renamed, &near, None, date(2026, 9, 4), None, None, None)
+        .rename_entity(
+            &renamed,
+            &near,
+            None,
+            date(2026, 9, 4),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename answers");
     let Guarded::Blocked { candidates, .. } = &blocked else {
@@ -15445,8 +15502,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
             &renamed_again,
             None,
             date(2026, 9, 6),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await
@@ -15523,7 +15579,14 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     .await;
 
     store
-        .rename_entity(&before, &after, None, date(2026, 7, 2), None, None, None)
+        .rename_entity(
+            &before,
+            &after,
+            None,
+            date(2026, 7, 2),
+            crate::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands")
         .written()

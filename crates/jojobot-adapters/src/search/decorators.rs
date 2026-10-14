@@ -400,8 +400,7 @@ impl Memory for IndexedMemory {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
@@ -413,15 +412,7 @@ impl Memory for IndexedMemory {
         };
         let written = self
             .inner
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await?;
         if let Guarded::Written(entity) = &written {
             let mut reread = vec![self.refresh(&entity.id).await];

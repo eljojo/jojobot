@@ -480,8 +480,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         if self.provisions.record_for(from).is_some() {
@@ -490,15 +489,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             });
         }
         self.inner
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await
     }
     /// **The build's own half has no row to mark.** Same shape as

@@ -468,7 +468,14 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
-        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None, None)
+        .rename_entity(
+            &pet,
+            &renamed,
+            None,
+            date(2026, 7, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands");
 
@@ -552,7 +559,14 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     );
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
-        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None, None)
+        .rename_entity(
+            &pet,
+            &renamed,
+            None,
+            date(2026, 7, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands");
 
@@ -3658,8 +3672,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
             &EntityId("bot:delta".into()),
             None,
             date(2026, 8, 1),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             None,
         )
         .await
@@ -4879,8 +4892,7 @@ impl Memory for Scanned {
         to: &EntityId,
         parent: Option<EntityId>,
         _: Date,
-        _: Option<&str>,
-        _: Option<&str>,
+        _: jojobot_domain::memory::Override<'_>,
         _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let mut docs = self.docs.write().expect("docs poisoned");
@@ -5082,20 +5094,11 @@ impl Memory for SummarizedScan {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -5260,8 +5263,7 @@ impl Memory for Delegated {
         _: &EntityId,
         _: Option<EntityId>,
         _: Date,
-        _: Option<&str>,
-        _: Option<&str>,
+        _: jojobot_domain::memory::Override<'_>,
         _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
@@ -9378,20 +9380,11 @@ impl Memory for FixedWriteSummary {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {

@@ -213,8 +213,7 @@ mod tests {
                 _: &EntityId,
                 _: Option<EntityId>,
                 _: jiff::civil::Date,
-                _: Option<&str>,
-                _: Option<&str>,
+                _: jojobot_domain::memory::Override<'_>,
                 _session: Option<&str>,
             ) -> Result<Guarded<Entity>, MemoryError> {
                 unimplemented!("the owner index only reads the index")

@@ -138,8 +138,7 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
             &moved,
             None,
             jiff::civil::date(2026, 6, 1),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             Some("mk07"),
         )
         .await
@@ -225,8 +224,7 @@ async fn the_history_of_an_entity_follows_its_handle_and_marks_what_an_older_bui
             &renamed,
             None,
             jiff::civil::date(2026, 6, 1),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             Some("rn01"),
         )
         .await
@@ -313,8 +311,7 @@ async fn an_old_version_filed_under_a_reused_handle_belongs_to_the_thing_that_wo
             &renamed,
             None,
             jiff::civil::date(2026, 6, 1),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             Some("rn01"),
         )
         .await
@@ -374,8 +371,7 @@ async fn a_fold_names_its_survivor_by_the_handle_it_wears_after_the_old_handle_i
             &renamed,
             None,
             jiff::civil::date(2026, 9, 3),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             Some("rn02"),
         )
         .await
@@ -416,8 +412,7 @@ async fn a_version_counts_only_the_writes_of_the_thing_after_its_handle_is_reuse
             &renamed,
             None,
             jiff::civil::date(2026, 6, 1),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             Some("rn01"),
         )
         .await
@@ -460,8 +455,7 @@ async fn a_version_counts_the_writes_an_older_build_filed_for_the_thing_that_lef
             &renamed,
             None,
             jiff::civil::date(2026, 6, 1),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             Some("rn01"),
         )
         .await

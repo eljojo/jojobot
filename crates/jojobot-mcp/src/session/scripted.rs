@@ -198,20 +198,11 @@ impl Memory for Scripted {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await
     }
     async fn archive_entity(

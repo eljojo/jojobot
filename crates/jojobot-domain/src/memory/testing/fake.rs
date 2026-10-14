@@ -2370,8 +2370,7 @@ impl Memory for InMemoryMemory {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: crate::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
@@ -2484,8 +2483,8 @@ impl Memory for InMemoryMemory {
                 &renamed.labels(),
                 renamed.parent.as_ref(),
                 &others,
-                override_token,
-                override_reason,
+                resemblance.token,
+                resemblance.reason,
             )
         {
             return Ok(Guarded::Blocked {

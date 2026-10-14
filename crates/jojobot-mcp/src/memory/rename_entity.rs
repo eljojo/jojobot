@@ -325,8 +325,10 @@ impl Jojobot {
                 &to,
                 parent,
                 date,
-                args.override_token.as_deref(),
-                args.override_reason.as_deref(),
+                jojobot_domain::memory::Override::new(
+                    args.override_token.as_deref(),
+                    args.override_reason.as_deref(),
+                ),
                 Some(caller.sid.as_str()),
             )
             .await

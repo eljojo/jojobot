@@ -2211,8 +2211,7 @@ mod tests {
                 &EntityId("bot:contract-migrate-bot-column-delta".to_string()),
                 None,
                 jiff::civil::date(2026, 1, 2),
-                None,
-                None,
+                jojobot_domain::memory::Override::none(),
                 None,
             )
             .await
@@ -2225,8 +2224,7 @@ mod tests {
                 &EntityId("bot:contract-migrate-bot-column-sigma".to_string()),
                 None,
                 jiff::civil::date(2026, 1, 3),
-                None,
-                None,
+                jojobot_domain::memory::Override::none(),
                 None,
             )
             .await

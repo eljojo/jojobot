@@ -973,8 +973,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
             &EntityId("thing:handcart-2".into()),
             None,
             Date::constant(2026, 3, 10),
-            None,
-            None,
+            jojobot_domain::memory::Override::none(),
             None,
         )
         .await

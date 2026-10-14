@@ -554,8 +554,7 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
         &id("work:tau"),
         None,
         date(2026, 9, 4),
-        None,
-        None,
+        jojobot_domain::memory::Override::none(),
         None,
     )
     .await

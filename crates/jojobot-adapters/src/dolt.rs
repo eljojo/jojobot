@@ -1589,8 +1589,7 @@ pub(crate) mod tests {
             _: &jojobot_domain::memory::EntityId,
             _: Option<jojobot_domain::memory::EntityId>,
             _: jiff::civil::Date,
-            _: Option<&str>,
-            _: Option<&str>,
+            _: jojobot_domain::memory::Override<'_>,
             _session: Option<&str>,
         ) -> Result<
             jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,

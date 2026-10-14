@@ -67,20 +67,11 @@ impl Memory for WithoutBuiltOn {
         to: &EntityId,
         parent: Option<EntityId>,
         date: jiff::civil::Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: crate::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await
     }
     async fn archive_entity(

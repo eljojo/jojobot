@@ -1543,7 +1543,14 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
 
     let now = EntityId("work:alias-rename-now".into());
     indexed
-        .rename_entity(&was, &now, None, date(2026, 1, 1), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 1, 1),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("rename_entity ok")
         .written()
@@ -2007,7 +2014,14 @@ async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
 
     let now = EntityId("work:rename-no-badge-now".into());
     let result = memory
-        .rename_entity(&was, &now, None, date(2026, 1, 1), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 1, 1),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await;
     assert!(
         matches!(result, Err(MemoryError::Store(_))),
@@ -2067,7 +2081,14 @@ async fn a_rename_near_the_handle_length_limit_still_lands() {
 
     let now = EntityId(format!("work:{}", "y".repeat(115)));
     memory
-        .rename_entity(&was, &now, None, date(2026, 1, 1), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 1, 1),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("a rename past 64 characters must not fail on the forwarding row")
         .written()
@@ -2413,7 +2434,14 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
     // A row from before: the handle as it was typed.
     let renamed = EntityId("work:contract-stored-renamed".into());
     memory
-        .rename_entity(&target, &renamed, None, date(2026, 8, 2), None, None, None)
+        .rename_entity(
+            &target,
+            &renamed,
+            None,
+            date(2026, 8, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands")
         .written()
@@ -4485,7 +4513,14 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
 
     let now = EntityId("role:contract-lease-now".into());
     memory
-        .rename_entity(&role, &now, None, date(2026, 9, 2), None, None, None)
+        .rename_entity(
+            &role,
+            &now,
+            None,
+            date(2026, 9, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("rename ok")
         .written()
@@ -5729,7 +5764,14 @@ async fn write_summary_answers_the_real_store() {
     // `rename_entity` moves the entity half.
     let renamed = EntityId::person("person:homer-simpson");
     memory
-        .rename_entity(&homer, &renamed, None, date(2026, 1, 1), None, None, None)
+        .rename_entity(
+            &homer,
+            &renamed,
+            None,
+            date(2026, 1, 1),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("rename_entity ok")
         .written()
@@ -7172,7 +7214,14 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
     // **The handle two things have answered to.** `was` is renamed to `now`, then
     // a newcomer takes the freed name.
     memory
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            date(2026, 8, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename lands")
         .written()
@@ -7367,7 +7416,14 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
         .await
         .expect("the fold lands");
     memory
-        .rename_entity(&second, &third, None, date(2026, 9, 3), None, None, None)
+        .rename_entity(
+            &second,
+            &third,
+            None,
+            date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename answers")
         .written()
@@ -7435,7 +7491,14 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
         .await
         .expect("the fold lands");
     memory
-        .rename_entity(&fifth, &sixth, None, date(2026, 9, 5), None, None, None)
+        .rename_entity(
+            &fifth,
+            &sixth,
+            None,
+            date(2026, 9, 5),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename answers")
         .written()
@@ -7792,7 +7855,14 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
         .await
         .expect("the fold lands");
     memory
-        .rename_entity(&first, &third, None, date(2026, 9, 3), None, None, None)
+        .rename_entity(
+            &first,
+            &third,
+            None,
+            date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename answers")
         .written()
@@ -7980,7 +8050,14 @@ async fn dolt_repairs_a_link_the_deployed_pass_skipped_and_marked_finished() {
         .await
         .expect("the fold lands");
     memory
-        .rename_entity(&first, &third, None, date(2026, 9, 3), None, None, None)
+        .rename_entity(
+            &first,
+            &third,
+            None,
+            date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
         .await
         .expect("the rename answers")
         .written()

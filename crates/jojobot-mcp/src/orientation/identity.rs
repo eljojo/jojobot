@@ -1551,8 +1551,7 @@ mod tests {
                 &EntityId("bot:sigma".into()),
                 None,
                 jiff::civil::date(2026, 9, 1),
-                None,
-                None,
+                jojobot_domain::memory::Override::none(),
                 None,
             )
             .await
@@ -1607,8 +1606,7 @@ mod tests {
                 &EntityId("bot:sigma".into()),
                 None,
                 jiff::civil::date(2026, 9, 1),
-                None,
-                None,
+                jojobot_domain::memory::Override::none(),
                 None,
             )
             .await
@@ -1682,8 +1680,7 @@ mod tests {
                 &EntityId("bot:sigma".into()),
                 None,
                 jiff::civil::date(2026, 9, 1),
-                None,
-                None,
+                jojobot_domain::memory::Override::none(),
                 None,
             )
             .await

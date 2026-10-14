@@ -1606,8 +1606,7 @@ async fn a_plain_text_handle_under_an_undeclared_key_resolves_through_a_rename_i
             &now,
             None,
             jiff::civil::date(2026, 8, 2),
-            None,
-            None,
+            crate::memory::Override::none(),
             None,
         )
         .await

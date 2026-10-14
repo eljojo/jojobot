@@ -105,6 +105,31 @@ pub struct EntityMatch {
 /// together: a refusal's candidate list and a search hit.
 pub const TOLD_APART_BY: &str = "told_apart_by";
 
+/// **What a caller sends to lift a refusal for a resemblance**: the token that
+/// refusal minted and the reason the caller gives for insisting. The two travel
+/// together (rule 498), so a verb that takes one takes this, and a refusal that
+/// rests on the name alone ([`MatchReason::needs_a_reason`]) is lifted only when
+/// both are present.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Override<'a> {
+    /// The token the refusal minted, handed back.
+    pub token: Option<&'a str>,
+    /// Why the caller insists.
+    pub reason: Option<&'a str>,
+}
+
+impl<'a> Override<'a> {
+    /// No override: the call is the first one, or a call that expects no refusal.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// A token and a reason, either of them absent.
+    pub fn new(token: Option<&'a str>, reason: Option<&'a str>) -> Self {
+        Self { token, reason }
+    }
+}
+
 /// The guard's verdict on a write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {

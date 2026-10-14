@@ -313,22 +313,13 @@ impl Memory for Folded {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.writing.lock().await;
         let renamed = self
             .inner
-            .rename_entity(
-                from,
-                to,
-                parent,
-                date,
-                override_token,
-                override_reason,
-                session,
-            )
+            .rename_entity(from, to, parent, date, resemblance, session)
             .await?;
         if matches!(renamed, Guarded::Written(_)) {
             Folded::follow("rename_entity", self.reload().await);
@@ -1139,20 +1130,11 @@ mod tests {
             to: &EntityId,
             parent: Option<EntityId>,
             date: Date,
-            override_token: Option<&str>,
-            override_reason: Option<&str>,
+            resemblance: jojobot_domain::memory::Override<'_>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.0
-                .rename_entity(
-                    from,
-                    to,
-                    parent,
-                    date,
-                    override_token,
-                    override_reason,
-                    session,
-                )
+                .rename_entity(from, to, parent, date, resemblance, session)
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1351,20 +1333,11 @@ mod tests {
             to: &EntityId,
             parent: Option<EntityId>,
             date: Date,
-            override_token: Option<&str>,
-            override_reason: Option<&str>,
+            resemblance: jojobot_domain::memory::Override<'_>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(
-                    from,
-                    to,
-                    parent,
-                    date,
-                    override_token,
-                    override_reason,
-                    session,
-                )
+                .rename_entity(from, to, parent, date, resemblance, session)
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1521,20 +1494,11 @@ mod tests {
             to: &EntityId,
             parent: Option<EntityId>,
             date: Date,
-            override_token: Option<&str>,
-            override_reason: Option<&str>,
+            resemblance: jojobot_domain::memory::Override<'_>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(
-                    from,
-                    to,
-                    parent,
-                    date,
-                    override_token,
-                    override_reason,
-                    session,
-                )
+                .rename_entity(from, to, parent, date, resemblance, session)
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1855,20 +1819,11 @@ mod tests {
             to: &EntityId,
             parent: Option<EntityId>,
             date: Date,
-            override_token: Option<&str>,
-            override_reason: Option<&str>,
+            resemblance: jojobot_domain::memory::Override<'_>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(
-                    from,
-                    to,
-                    parent,
-                    date,
-                    override_token,
-                    override_reason,
-                    session,
-                )
+                .rename_entity(from, to, parent, date, resemblance, session)
                 .await
         }
         /// **The counter moves here, before the write is even reported back**
@@ -2208,7 +2163,14 @@ mod tests {
 
         let gamma = EntityId::person("person:gamma");
         folded
-            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None, None)
+            .rename_entity(
+                &alpha(),
+                &gamma,
+                None,
+                date(2026, 9, 2),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
             .await
             .expect("rename ok")
             .written()
@@ -2282,7 +2244,14 @@ mod tests {
         );
 
         folded
-            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None, None)
+            .rename_entity(
+                &alpha(),
+                &gamma,
+                None,
+                date(2026, 9, 2),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
             .await
             .expect("rename ok")
             .written()

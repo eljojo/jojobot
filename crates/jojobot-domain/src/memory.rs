@@ -28,6 +28,7 @@ pub mod entitlement;
 pub mod filter;
 pub mod graph;
 pub mod guard;
+pub use guard::Override;
 pub mod kinds;
 pub mod list;
 pub mod mention;
@@ -6744,8 +6745,7 @@ pub trait Memory: Send + Sync {
         to: &EntityId,
         parent: Option<EntityId>,
         date: Date,
-        override_token: Option<&str>,
-        override_reason: Option<&str>,
+        resemblance: crate::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError>;
 
