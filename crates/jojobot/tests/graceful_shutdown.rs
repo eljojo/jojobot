@@ -50,6 +50,11 @@ impl Drop for Server {
 /// nothing, so this is long; a wait ends the moment the line comes.
 const PATIENCE: Duration = Duration::from_secs(120);
 
+/// How long a closed log waits for the process to be gone before the failure
+/// calls it running. A process that closed its log is on its way out; a server
+/// under load can take seconds to finish. Only a failure reaches it.
+const EXIT_GRACE: Duration = Duration::from_secs(10);
+
 /// How long a case waits for the server to answer a signal, beyond the drain
 /// window. Only a failure reaches it.
 const STOP_PATIENCE: Duration = Duration::from_secs(30);
@@ -155,21 +160,33 @@ impl Running {
                 ),
                 Err(mpsc::RecvTimeoutError::Disconnected) => panic!(
                     "the server closed its log before it said {needle:?}. {}\nWhat it said:\n{}",
-                    self.how_it_ended(),
+                    self.how_it_ended(EXIT_GRACE),
                     self.seen.join("\n")
                 ),
             }
         }
     }
 
-    /// What is known of a server whose log has closed: how it exited, if it
-    /// has, and what it wrote to its standard error.
-    fn how_it_ended(&mut self) -> String {
-        let status = match self.server.0.as_mut().map(Child::try_wait) {
-            Some(Ok(Some(status))) => format!("it exited: {status}"),
-            Some(Ok(None)) => "it is still running".to_string(),
-            Some(Err(e)) => format!("its exit could not be read: {e}"),
-            None => "it was already collected".to_string(),
+    /// What is known of a server whose log has closed: how it exited and what it
+    /// wrote to its standard error.
+    ///
+    /// **The log closes when the process closes its standard output, which can
+    /// come before the process is gone**, and a status read at that instant says
+    /// "still running" about a server that exits a moment later. So this waits for
+    /// the exit up to `within`, polling, and only a server still alive at the end
+    /// of that time is reported as running.
+    fn how_it_ended(&mut self, within: Duration) -> String {
+        let deadline = Instant::now() + within;
+        let status = loop {
+            match self.server.0.as_mut().map(Child::try_wait) {
+                Some(Ok(Some(status))) => break format!("it exited: {status}"),
+                Some(Ok(None)) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Some(Ok(None)) => break format!("it is still running after {within:?}"),
+                Some(Err(e)) => break format!("its exit could not be read: {e}"),
+                None => break "it was already collected".to_string(),
+            }
         };
         let stderr = std::fs::read_to_string(&self.stderr_path)
             .unwrap_or_else(|e| format!("(its stderr could not be read: {e})"));
@@ -419,4 +436,74 @@ fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
     assert!(said.contains("exit status: 3"), "{said}");
     assert!(said.contains("the store would not open"), "{said}");
     assert!(said.contains("starting up"), "{said}");
+}
+
+/// **A server whose log has closed but which has not finished exiting is reported
+/// by how it exits.** The log closes when the process closes its standard output,
+/// which can come a moment before the process is gone. The failure waits for the
+/// exit and names it; reading the status once at the instant the log closed says
+/// "still running" about a server that exits a moment later.
+#[test]
+fn a_server_that_closes_its_log_and_exits_a_moment_later_is_reported_with_its_exit() {
+    let state_dir = std::env::temp_dir().join(format!("jojobot-exits-late-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let stderr_path = state_dir.join("server.stderr");
+    let child = Command::new("sh")
+        .args([
+            "-c",
+            "echo 'starting up'; echo 'the store would not open' >&2; exec >&-; sleep 1; exit 3",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
+        .spawn()
+        .expect("sh runs");
+    let mut running = watch(child, 0, stderr_path, scratch);
+
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        running.wait_for_line("serving http://", PATIENCE);
+    }))
+    .expect_err("a server that never serves is a failure");
+    let said = panic
+        .downcast_ref::<String>()
+        .cloned()
+        .expect("the failure is a message");
+
+    assert!(said.contains("exit status: 3"), "{said}");
+    assert!(said.contains("the store would not open"), "{said}");
+    assert!(!said.contains("still running"), "{said}");
+}
+
+/// **A server that closes its log and stays alive is still reported as running**,
+/// after the wait for its exit, so the wait does not turn every closed log into
+/// an exit.
+#[test]
+fn a_server_that_closes_its_log_and_stays_alive_is_reported_as_running() {
+    let state_dir =
+        std::env::temp_dir().join(format!("jojobot-stays-alive-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let stderr_path = state_dir.join("server.stderr");
+    let child = Command::new("sh")
+        .args(["-c", "exec >&-; sleep 60"])
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
+        .spawn()
+        .expect("sh runs");
+    let mut running = watch(child, 0, stderr_path, scratch);
+
+    let started = Instant::now();
+    let said = running.how_it_ended(Duration::from_millis(300));
+
+    assert!(said.contains("still running"), "{said}");
+    assert!(
+        started.elapsed() >= Duration::from_millis(300),
+        "it was judged before the deadline: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the wait did not end at the deadline: {:?}",
+        started.elapsed()
+    );
 }
