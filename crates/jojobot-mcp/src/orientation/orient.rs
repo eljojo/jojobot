@@ -15,10 +15,10 @@ use super::*;
 /// when there is something to say.
 fn own_mail_json(mailbox: &jojobot_domain::mailbox::Mailbox) -> serde_json::Value {
     let mut mail = mailbox_json(mailbox);
-    if mail["quarantined"]["count"] == 0 {
-        if let Some(object) = mail.as_object_mut() {
-            object.remove("quarantined");
-        }
+    if mail["quarantined"]["count"] == 0
+        && let Some(object) = mail.as_object_mut()
+    {
+        object.remove("quarantined");
     }
     mail
 }
@@ -889,10 +889,11 @@ impl Jojobot {
         // whole essay is `essay_for_boot`'s own note, already built there:
         // a named boot's core-only is a rule, and an anonymous boot's cut
         // names exactly which units were left out.
-        if !brief && let Some(obj) = answer.as_object_mut() {
-            if let Some(note) = essay.note {
-                obj.insert("orientation_note".into(), note.into());
-            }
+        if !brief
+            && let Some(obj) = answer.as_object_mut()
+            && let Some(note) = essay.note
+        {
+            obj.insert("orientation_note".into(), note.into());
         }
         if let (Some(notice), Some(obj)) = (over_the_ceiling, answer.as_object_mut()) {
             obj.insert("over_the_ceiling".into(), notice);

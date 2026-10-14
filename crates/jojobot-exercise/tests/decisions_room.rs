@@ -229,28 +229,26 @@ async fn file_register(surface: &Surface, playbook: &Playbook) {
                     .await
                     .unwrap_or_else(|e| panic!("rule {number} is archived: {e:#}"));
             }
-            if !archived {
-                if let Some(edges) = rest.split(" This also bears on ").nth(1) {
-                    let edges = edges
-                        .split(". ")
-                        .next()
-                        .unwrap_or(edges)
-                        .trim_end_matches('.');
-                    for edge in edges.split("; ") {
-                        let edge = edge.replace(' ', "-");
-                        surface
-                            .must(
-                                "capture",
-                                json!({"subject": format!("topic:{thread}"),
+            if !archived && let Some(edges) = rest.split(" This also bears on ").nth(1) {
+                let edges = edges
+                    .split(". ")
+                    .next()
+                    .unwrap_or(edges)
+                    .trim_end_matches('.');
+                for edge in edges.split("; ") {
+                    let edge = edge.replace(' ', "-");
+                    surface
+                        .must(
+                            "capture",
+                            json!({"subject": format!("topic:{thread}"),
                                 "content": bears_on_pointer(number, &thread),
                             "provenance":"testimony", "shape":"connection",
                             "object":format!("topic:{edge}"), "sid":sid,
                             "standing": if conditional { "open" } else { "settled" },
                             "fields":{"rule_number":number}}),
-                            )
-                            .await
-                            .unwrap_or_else(|e| panic!("rule {number} links to {edge}: {e:#}"));
-                    }
+                        )
+                        .await
+                        .unwrap_or_else(|e| panic!("rule {number} links to {edge}: {e:#}"));
                 }
             }
             filed += 1;
@@ -442,22 +440,16 @@ fn numbers_in(value: &Value, conditional_only: bool, out: &mut BTreeSet<String>)
         Value::Object(object) => {
             if object.get("address").is_some()
                 && object.get("status").and_then(Value::as_str) == Some("active")
+                && let Some(content) = object.get("content").and_then(Value::as_str)
+                && content.starts_with("Rule ")
+                && (!conditional_only || content.contains("Conditional rule:"))
+                && let Some(number) = content
+                    .strip_prefix("Rule ")
+                    .and_then(|rest| rest.split_once(':'))
+                    .map(|(number, _)| number)
+                && number.chars().all(|ch| ch.is_ascii_digit())
             {
-                if let Some(content) = object.get("content").and_then(Value::as_str) {
-                    if content.starts_with("Rule ")
-                        && (!conditional_only || content.contains("Conditional rule:"))
-                    {
-                        if let Some(number) = content
-                            .strip_prefix("Rule ")
-                            .and_then(|rest| rest.split_once(':'))
-                            .map(|(number, _)| number)
-                        {
-                            if number.chars().all(|ch| ch.is_ascii_digit()) {
-                                out.insert(number.to_string());
-                            }
-                        }
-                    }
-                }
+                out.insert(number.to_string());
             }
             for nested in object.values() {
                 numbers_in(nested, conditional_only, out);

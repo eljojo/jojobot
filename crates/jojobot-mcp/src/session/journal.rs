@@ -81,10 +81,10 @@ impl Jojobot {
         // (rule 130). One screen closes both, and it runs before the entry is
         // appended, so nothing is written and the whole call can simply be sent
         // again.
-        if let Some(theirs) = focus.map(str::trim).filter(|f| !f.is_empty()) {
-            if let Err(e) = jojobot_domain::session::validate_focus(theirs) {
-                return session_declined(e, caller.sid.as_str());
-            }
+        if let Some(theirs) = focus.map(str::trim).filter(|f| !f.is_empty())
+            && let Err(e) = jojobot_domain::session::validate_focus(theirs)
+        {
+            return session_declined(e, caller.sid.as_str());
         }
         // **What the receipt's `changed` needs from before the write.** Whether
         // this beat brings the record into being, and the focus it holds now: a

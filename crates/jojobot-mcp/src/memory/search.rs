@@ -934,23 +934,22 @@ impl Jojobot {
         // `type_keys` an empty `recall` carries, so the spelling to write under
         // is in the answer. The first one under a type the software ships also
         // teaches, through the same ledger row `recall` spends.
-        if hits.is_empty() && offset == 0 {
-            if let Some(declared) = asked_answers.as_ref() {
-                body["type_keys"] =
-                    serde_json::Value::Array(vec![crate::memory::wire::declared_type_json(
-                        declared,
-                    )]);
-                let only_narrowing = query.terms().is_none()
-                    && query.kind.is_none()
-                    && query.status.is_none()
-                    && query.provenance.is_none()
-                    && query.standing.is_none()
-                    && query.subject.is_none()
-                    && query.edge.is_none()
-                    && query.fits_type.is_none();
-                self.note_empty_answers_type(&mut body, declared, asking.as_ref(), only_narrowing)
-                    .await;
-            }
+        if hits.is_empty()
+            && offset == 0
+            && let Some(declared) = asked_answers.as_ref()
+        {
+            body["type_keys"] =
+                serde_json::Value::Array(vec![crate::memory::wire::declared_type_json(declared)]);
+            let only_narrowing = query.terms().is_none()
+                && query.kind.is_none()
+                && query.status.is_none()
+                && query.provenance.is_none()
+                && query.standing.is_none()
+                && query.subject.is_none()
+                && query.edge.is_none()
+                && query.fits_type.is_none();
+            self.note_empty_answers_type(&mut body, declared, asking.as_ref(), only_narrowing)
+                .await;
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());

@@ -406,10 +406,10 @@ pub fn unmapped_ids(sittings: &[Sitting]) -> Vec<String> {
     let mut found: std::collections::BTreeMap<String, usize> = Default::default();
     for call in sittings.iter().flat_map(|sitting| &sitting.calls) {
         for (_, leaf) in leaf_paths(&call.input) {
-            if looks_minted(&leaf) {
-                if let Some(origin) = seen.get(&leaf) {
-                    *found.entry(origin.clone()).or_default() += 1;
-                }
+            if looks_minted(&leaf)
+                && let Some(origin) = seen.get(&leaf)
+            {
+                *found.entry(origin.clone()).or_default() += 1;
             }
         }
         let Some(answer) = call

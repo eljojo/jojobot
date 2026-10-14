@@ -3981,18 +3981,16 @@ impl Jojobot {
         // **The first empty read of a type the software ships says that reading
         // again finds nothing, and where to keep what the session worked out.**
         // Shared with `search`, so the ledger row is spent once across both.
-        if nothing_selected {
-            if let Some(declared) = asked_answers.as_ref() {
-                let select = &query.select;
-                let only_narrowing = select.subject.is_none()
-                    && select.kind.is_none()
-                    && select.parent.is_none()
-                    && select.fields.is_empty()
-                    && select.near.is_none()
-                    && as_of.is_none();
-                self.note_empty_answers_type(&mut body, declared, caller.as_ref(), only_narrowing)
-                    .await;
-            }
+        if nothing_selected && let Some(declared) = asked_answers.as_ref() {
+            let select = &query.select;
+            let only_narrowing = select.subject.is_none()
+                && select.kind.is_none()
+                && select.parent.is_none()
+                && select.fields.is_empty()
+                && select.near.is_none()
+                && as_of.is_none();
+            self.note_empty_answers_type(&mut body, declared, caller.as_ref(), only_narrowing)
+                .await;
         }
         // **A caller with no identity owns no run, and the count above is all
         // it can see of them.** Say how to read its own, because "withheld" on
@@ -4088,23 +4086,22 @@ impl Jojobot {
     ) -> FillSessionProseFuture<'a> {
         Box::pin(async move {
             for object in objects {
-                if object.entity.kind == EntityKind::SESSION {
-                    if let Some(prose) = &object.prose {
-                        // **Only ever empty here.** `session::projected_summary`
-                        // never sets anything else, and nothing else can have
-                        // set `Some` on a session object — a non-empty value
-                        // would mean this ran twice, which the loop shape
-                        // cannot do.
-                        debug_assert!(prose.is_empty());
-                        let id =
-                            jojobot_domain::session::SessionId(object.entity.id.slug().to_string());
-                        match self.sessions.read_session(&id).await {
-                            Ok(full) => {
-                                object.prose =
-                                    Some(jojobot_domain::session::projected(&full).prose);
-                            }
-                            Err(e) => return Some(session_declined(e, caller_sid)),
+                if object.entity.kind == EntityKind::SESSION
+                    && let Some(prose) = &object.prose
+                {
+                    // **Only ever empty here.** `session::projected_summary`
+                    // never sets anything else, and nothing else can have
+                    // set `Some` on a session object — a non-empty value
+                    // would mean this ran twice, which the loop shape
+                    // cannot do.
+                    debug_assert!(prose.is_empty());
+                    let id =
+                        jojobot_domain::session::SessionId(object.entity.id.slug().to_string());
+                    match self.sessions.read_session(&id).await {
+                        Ok(full) => {
+                            object.prose = Some(jojobot_domain::session::projected(&full).prose);
                         }
+                        Err(e) => return Some(session_declined(e, caller_sid)),
                     }
                 }
                 if let Some(refused) = self

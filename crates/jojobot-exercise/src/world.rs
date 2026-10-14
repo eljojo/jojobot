@@ -92,12 +92,12 @@ fn lines_of(document: &str) -> Vec<(usize, String)> {
         // and a format that could only carry one line could not furnish a real
         // room at all. Found by converting one, which is why the conversion
         // came before the year.
-        if line.starts_with(' ') || line.starts_with('\t') {
-            if let Some((_, carried)) = found.last_mut() {
-                carried.push('\n');
-                carried.push_str(trimmed);
-                continue;
-            }
+        if (line.starts_with(' ') || line.starts_with('\t'))
+            && let Some((_, carried)) = found.last_mut()
+        {
+            carried.push('\n');
+            carried.push_str(trimmed);
+            continue;
         }
         // A blank line inside a body is a paragraph break and belongs to it.
         if trimmed.is_empty() {
