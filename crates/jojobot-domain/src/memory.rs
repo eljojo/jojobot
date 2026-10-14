@@ -569,9 +569,14 @@ pub struct FormerHandle {
 /// read. The one place "whose child is it" is decided: [`Memory::children`] lists
 /// them by handle and the walk counts them for a subject, so the two cannot
 /// disagree about who is whose. `parent` is the current handle of the parent.
+///
+/// **A thing folded into another is not a child of anything any more.** It stays
+/// as a row that forwards to the survivor, and the survivor is where the thing
+/// lives now, so the row is left out here and the survivor's own parent decides.
+/// An archived child is still a child: it is listed, and a count can tell it apart.
 pub fn children_in<'a>(all: &'a [Entity], parent: &EntityId) -> Vec<&'a Entity> {
     all.iter()
-        .filter(|e| e.parent.as_ref() == Some(parent))
+        .filter(|e| e.parent.as_ref() == Some(parent) && e.merged_into.is_none())
         .collect()
 }
 

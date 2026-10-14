@@ -9803,3 +9803,60 @@ async fn a_thing_reached_by_a_walk_does_not_carry_a_child_count() {
         "nothing in a leaf's answer says it is a parent: {body}"
     );
 }
+
+/// **A child folded into another thing is neither counted nor listed under its
+/// old parent, and a live sibling is both.** The count in a one-subject recall,
+/// the children reader behind the parent listing, and the parent listing itself
+/// agree about who is whose.
+#[tokio::test]
+async fn a_folded_child_is_neither_counted_nor_listed_and_a_live_sibling_is_both() {
+    let jojobot = crate::harness::handler_shipped();
+    project_with_children(&jojobot).await;
+    let landed = json_of(
+        &jojobot
+            .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                request_id: None,
+                duplicate: "work:tau".into(),
+                survivor: "work:sigma".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(writing_as(&jojobot)),
+            }))
+            .await
+            .expect("merge ok"),
+    );
+    assert_eq!(landed["merged"], "work:tau", "{landed}");
+
+    let counted = recall_subject(&jojobot, "project:atlas").await;
+    assert_eq!(counted["objects"][0]["children"]["count"], 2, "{counted}");
+
+    let read = jojobot
+        .memory
+        .children(&EntityId("project:atlas".into()))
+        .await
+        .expect("children ok");
+    let read: Vec<&str> = read.iter().map(EntityId::as_str).collect();
+    assert_eq!(
+        read,
+        ["work:kappa", "work:omega", "work:sigma"],
+        "the reader lists the live sibling and the archived one, and not the folded child"
+    );
+
+    let listed_under = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                parent: Some("project:atlas".into()),
+                subject: None,
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("project:atlas")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(
+        listed(&listed_under),
+        ["work:kappa", "work:sigma"],
+        "{listed_under}"
+    );
+}

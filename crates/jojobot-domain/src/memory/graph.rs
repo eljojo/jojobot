@@ -1647,10 +1647,7 @@ pub struct ChildCounts {
 
 impl ChildCounts {
     fn of(all: &[Entity], parent: &EntityId) -> ChildCounts {
-        let children: Vec<&Entity> = super::children_in(all, parent)
-            .into_iter()
-            .filter(|child| child.merged_into.is_none())
-            .collect();
+        let children = super::children_in(all, parent);
         let archived = children.iter().filter(|c| c.archived.is_some()).count();
         ChildCounts {
             parent: parent.clone(),
