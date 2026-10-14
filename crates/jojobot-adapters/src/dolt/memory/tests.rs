@@ -2016,3 +2016,134 @@ async fn a_stale_revision_is_counted_on_a_claim_left_in_place_as_on_one_moved() 
     assert_eq!(refusal().await, moved);
     store.stop().await;
 }
+
+/// What one write of a claim kept: its references and its mark, as handles.
+type KeptMarks = (Option<Vec<String>>, Option<Vec<String>>);
+
+/// The refs and the mark of every write of a claim, as the claim's history
+/// serves them: one entry per write.
+fn kept_marks_of(writes: &[ClaimWrite]) -> Vec<KeptMarks> {
+    writes
+        .iter()
+        .map(|write| {
+            (
+                write
+                    .refs
+                    .as_ref()
+                    .map(|refs| refs.iter().map(|r| r.as_str().to_string()).collect()),
+                write.stands_for.as_ref().map(|marked| {
+                    marked
+                        .iter()
+                        .map(|a| format!("{}#{}", a.home.as_str(), a.local.as_str()))
+                        .collect()
+                }),
+            )
+        })
+        .collect()
+}
+
+/// **A claim's history names what the claim touched as it is now, through a
+/// merge.** The claim on the third thing pointed at the folded thing in a
+/// reference, and a later write marked the folded thing's first claim. The
+/// snapshot each write kept names the folded thing, and the history serves the
+/// survivor and the id the merge gave that claim, in the shape that moved the
+/// folded claims and in the shape that left them. Paired: the survivor is named
+/// and the folded thing is not.
+#[tokio::test]
+async fn a_claims_history_serves_its_kept_marks_through_a_merge() {
+    let scratch = Scratch::new("merged-kept-marks");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_kept_marks")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+    assert!(
+        merged.moved.contains(&("f1".to_string(), "f3".to_string())),
+        "the folded thing's first claim is the survivor's third: {:?}",
+        merged.moved
+    );
+
+    let read = || async {
+        kept_marks_of(
+            &merged
+                .memory
+                .claim_history(&merged.pointing_claim)
+                .await
+                .expect("the history reads"),
+        )
+    };
+    let moved = read().await;
+    assert_eq!(
+        moved,
+        vec![
+            (Some(vec!["person:homer".to_string()]), Some(Vec::new())),
+            (
+                Some(vec!["person:homer".to_string()]),
+                Some(vec!["person:homer#f3".to_string()])
+            ),
+        ]
+    );
+
+    merged.leave_in_place().await;
+
+    assert_eq!(read().await, moved);
+    store.stop().await;
+}
+
+/// **The history follows a second merge too**: the survivor is folded into a
+/// third thing, and the claim's history names that thing and the id its first
+/// claim has there.
+#[tokio::test]
+async fn a_claims_history_serves_its_kept_marks_through_a_chain_of_merges() {
+    let scratch = Scratch::new("merged-kept-marks-chain");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_kept_marks_chain")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let merged = Merged::make(pool.clone()).await;
+    let lisa = EntityId::person("person:lisa");
+    merged
+        .memory
+        .add_entity(NewEntity::new(lisa.clone(), "Lisa", "fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    merged
+        .memory
+        .merge(
+            &merged.survivor,
+            &lisa,
+            Some("filed twice again"),
+            date(2026, 9, 3),
+            &merged.pointing,
+            Some("run-b"),
+        )
+        .await
+        .expect("the second fold lands");
+
+    let history = kept_marks_of(
+        &merged
+            .memory
+            .claim_history(&merged.pointing_claim)
+            .await
+            .expect("the history reads"),
+    );
+    assert_eq!(
+        history,
+        vec![
+            (Some(vec!["person:lisa".to_string()]), Some(Vec::new())),
+            (
+                Some(vec!["person:lisa".to_string()]),
+                Some(vec!["person:lisa#f3".to_string()])
+            ),
+        ]
+    );
+    store.stop().await;
+}

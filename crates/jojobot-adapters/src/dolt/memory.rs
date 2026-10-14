@@ -1659,7 +1659,9 @@ impl DoltMemory {
     }
 
     /// **Read what a write kept of the claim's references and mark, onto the
-    /// write**, served under the handles the keys answer to today.
+    /// write**, served under the handles the keys answer to today and, for a
+    /// thing a merge folded away, under the survivor and the id the merge gave
+    /// the marked claim. The stored snapshot is not rewritten.
     ///
     /// A write kept before the columns existed holds NULL in both, and reads as
     /// `None` rather than as a write that pointed at or stood for nothing. A
@@ -1683,7 +1685,7 @@ impl DoltMemory {
             let keys: Vec<String> = serde_json::from_str(&cell).map_err(|_| damaged("refs"))?;
             let mut refs = Vec::with_capacity(keys.len());
             for key in keys {
-                refs.push(self.current_handle(tx, &EntityId(key)).await?);
+                refs.push(self.pointer_handle(tx, &EntityId(key)).await?);
             }
             write.refs = Some(refs);
         } else {
@@ -1697,8 +1699,10 @@ impl DoltMemory {
                 serde_json::from_str(&cell).map_err(|_| damaged("mark"))?;
             let mut marked = Vec::with_capacity(pairs.len());
             for [home, local] in pairs {
-                let resolved = self.current_handle(tx, &EntityId(home)).await?;
-                marked.push(FactAddress::new(resolved, FactId(local)));
+                let at = self
+                    .pointer_address(tx, &FactAddress::new(EntityId(home), FactId(local)))
+                    .await?;
+                marked.push(at);
             }
             write.stands_for = Some(marked);
         } else {
