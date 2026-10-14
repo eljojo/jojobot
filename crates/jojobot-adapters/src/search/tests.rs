@@ -8028,8 +8028,8 @@ async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_re
                     // whatever it answers.
                     let _ = mail
                         .repoint_owner(
-                            &jojobot_domain::memory::EntityId("bot:pm".into()),
-                            &jojobot_domain::memory::EntityId("bot:ops".into()),
+                            &jojobot_domain::memory::EntityId("bot:bart".into()),
+                            &jojobot_domain::memory::EntityId("bot:marge".into()),
                         )
                         .await;
                 }
