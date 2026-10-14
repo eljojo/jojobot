@@ -79,6 +79,54 @@ pub fn date_word(word: &str, today: Date) -> Result<String, MemoryError> {
     }
 }
 
+/// **Whether a word is a number**: one that parses and is finite. The one place
+/// that is decided, for an ordering in an expression and for an input a call sends.
+pub fn is_a_number(text: &str) -> bool {
+    text.parse::<f64>().is_ok_and(f64::is_finite)
+}
+
+/// **The inputs a saved expression names where a key goes.** An input stands for a
+/// value, so a name there is never filled; a write that finds one refuses it.
+pub fn placeholders_in_key_position(text: &str) -> Vec<String> {
+    fn walk(node: &Node, found: &mut Vec<String>) {
+        match node {
+            Node::Term(words) => {
+                if let Some(Token {
+                    kind: Kind::Word(word),
+                    ..
+                }) = words.first()
+                    && let Some(name) = word
+                        .strip_prefix('$')
+                        .filter(|name| crate::memory::view_inputs::is_a_name(name))
+                {
+                    found.push(name.to_string());
+                }
+            }
+            Node::Not(inner) | Node::Group(inner) => walk(inner, found),
+            Node::All(parts) | Node::Any(parts) => {
+                for part in parts {
+                    walk(part, found);
+                }
+            }
+        }
+    }
+    let Ok(tokens) = lex(text) else {
+        return Vec::new();
+    };
+    let mut shape = Shape {
+        tokens,
+        at: 0,
+        depth: 0,
+    };
+    let mut found = Vec::new();
+    if let Some(tree) = shape.any()
+        && shape.at == shape.tokens.len()
+    {
+        walk(&tree, &mut found);
+    }
+    found
+}
+
 /// **The inputs a saved expression names**, as `$name` words, in the order
 /// written.
 pub fn placeholders(text: &str) -> Vec<String> {
@@ -757,9 +805,7 @@ impl Reader {
         match self.read(word, &token)? {
             Operand::Day(day) => Ok((ValueType::Date, day)),
             Operand::Text(text) if text.parse::<Date>().is_ok() => Ok((ValueType::Date, text)),
-            Operand::Text(text) if text.parse::<f64>().is_ok_and(f64::is_finite) => {
-                Ok((ValueType::Number, text))
-            }
+            Operand::Text(text) if is_a_number(&text) => Ok((ValueType::Number, text)),
             Operand::Text(_) => Err(refused(format!(
                 "the expression does not parse: '{}' compares dates and numbers, and '{word}' \
                  at position {} is neither. Accepted: {accepted}",

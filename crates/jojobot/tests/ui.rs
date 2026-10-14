@@ -4447,10 +4447,7 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
     assert_eq!(listed_handles(&blank), all_ready, "{blank}");
 
     // ── refused on the page in the verb's words, with the form still there ──
-    for (path, named) in [
-        ("/view:ready/?project=person:alpha", "person:alpha"),
-        ("/view:ready/?projekt=project:atlas", "projekt"),
-    ] {
+    for (path, named) in [("/view:ready/?project=person:alpha", "person:alpha")] {
         let refused = page(path.into()).await;
         assert!(
             refused.contains("This view cannot be run")
@@ -4462,6 +4459,24 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
         assert!(
             !refused.contains("<table id=\"answer\""),
             "a refused page lists nothing: {refused}"
+        );
+    }
+
+    // ── a key the view does not declare is not the view's: it is ignored ─────
+    // (a tracking parameter on a link must not turn a page into a refusal)
+    for path in [
+        "/view:ready/?utm_source=newsletter",
+        "/view:ready/?projekt=project:atlas",
+    ] {
+        let ignored = page(path.into()).await;
+        assert_eq!(
+            listed_handles(&ignored),
+            all_ready,
+            "{path} answers as the page does with nothing asked: {ignored}"
+        );
+        assert!(
+            !ignored.contains("This view cannot be run"),
+            "{path} is not a refusal: {ignored}"
         );
     }
 

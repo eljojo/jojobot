@@ -132,6 +132,8 @@ fn row_with(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>, cells: &[Strin
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct NodeQuery {
     /// A key to open: the page renders every write behind it, oldest first.
+    /// **A field added here is a key a view's input can no longer have**, so its
+    /// name goes in [`view_inputs::RESERVED_NAMES`] too.
     #[serde(default)]
     pub(crate) history: Option<String>,
     /// **The values of a view's inputs**, each under the input's own name: the
@@ -817,8 +819,12 @@ async fn view_section(
         }
     };
     let form = inputs_form(&declared, sent, &known);
+    // **Only the keys the view declares are read from the URL.** A link carries
+    // other keys (a tracking parameter), and a page that refused them would turn
+    // every such link into an error.
     let given: BTreeMap<String, String> = sent
         .iter()
+        .filter(|(name, _)| declared.iter().any(|input| &input.name == *name))
         .filter(|(_, value)| !value.trim().is_empty())
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
@@ -1368,5 +1374,29 @@ mod tests {
             "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;"
         );
         assert_eq!(escape("Ampersand & co"), "Ampersand &amp; co");
+    }
+
+    /// **Every name a view cannot give an input is a key the page reads for
+    /// itself**, so a link carrying it reaches the page and never an input.
+    /// **Paired**: a name that is not reserved reaches the inputs, so the list is
+    /// the page's own keys and not every key.
+    #[test]
+    fn the_names_an_input_cannot_have_are_the_pages_own_keys() {
+        use jojobot_domain::memory::view_inputs::RESERVED_NAMES;
+        let read = |key: &str| {
+            axum::extract::Query::<super::NodeQuery>::try_from_uri(
+                &format!("/view:ready/?{key}=x").parse().expect("a uri"),
+            )
+            .expect("a query")
+            .0
+        };
+        for reserved in RESERVED_NAMES {
+            assert!(
+                read(reserved).inputs.is_empty(),
+                "{reserved} is reserved but the page does not take it for itself"
+            );
+        }
+        assert_eq!(read("project").inputs.len(), 1);
+        assert_eq!(read("history").history.as_deref(), Some("x"));
     }
 }

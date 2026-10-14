@@ -29,6 +29,11 @@ use super::{Entity, EntityId, FormerHandle};
 /// **The view's key that declares its inputs.**
 pub const KEY: &str = "inputs";
 
+/// **The names an input cannot have**, because the page of a view reads them for
+/// itself: the key of a page's own query. A URL gives such a key to the page, so an
+/// input of that name could never be filled from it.
+pub const RESERVED_NAMES: &[&str] = &["history"];
+
 /// What an input holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputType {
@@ -117,12 +122,35 @@ pub fn breaks_a_view(
         Ok(declared) => declared,
         Err(refused) => return Some((KEY.to_string(), refused.words)),
     };
-    if declared.is_empty() {
-        return None;
+    if let Some(input) = declared
+        .iter()
+        .find(|d| RESERVED_NAMES.contains(&d.name.as_str()))
+    {
+        return Some((
+            KEY.to_string(),
+            format!(
+                "'{}' cannot be the name of an input: the page of a view reads it for itself, \
+                 so a link could never fill it. Reserved: {}",
+                input.name,
+                RESERVED_NAMES.join(", ")
+            ),
+        ));
     }
-    let says = spelled(&declared);
+    let says = match declared.is_empty() {
+        true => "it declares no inputs".to_string(),
+        false => format!("It declares: {}", spelled(&declared)),
+    };
     let mut uses: Vec<(&str, String)> = Vec::new();
     if let Some(line) = after.get(WHERE) {
+        if let Some(name) = super::filter::expression::placeholders_in_key_position(line).first() {
+            return Some((
+                WHERE.to_string(),
+                format!(
+                    "the view puts ${name} where a key goes. An input stands for a value: \
+                     write `key = ${name}`"
+                ),
+            ));
+        }
         uses.extend(
             super::filter::expression::placeholders(line)
                 .into_iter()
@@ -140,9 +168,7 @@ pub fn breaks_a_view(
         let Some(decl) = declared.iter().find(|d| d.name == name) else {
             return Some((
                 key.to_string(),
-                format!(
-                    "the view uses ${name}, which its `inputs` do not declare. It declares: {says}"
-                ),
+                format!("the view uses ${name}, which its `inputs` do not declare. {says}"),
             ));
         };
         if key == PARENT && !matches!(decl.ty, InputType::Kind(_)) {
@@ -318,13 +344,11 @@ pub fn bind(
                 text: sent.to_string(),
                 handle: None,
             },
-            InputType::Number => match sent.parse::<f64>() {
-                Ok(number) if number.is_finite() => Value {
-                    text: sent.to_string(),
-                    handle: None,
-                },
-                _ => return Err(wrong(format!("'{sent}' is not a number"))),
+            InputType::Number if super::filter::expression::is_a_number(sent) => Value {
+                text: sent.to_string(),
+                handle: None,
             },
+            InputType::Number => return Err(wrong(format!("'{sent}' is not a number"))),
             InputType::Date => match super::filter::expression::date_word(sent, today) {
                 Ok(day) => Value {
                     text: day,
@@ -547,6 +571,8 @@ mod tests {
 
         let not_a_date = refuse(&[("project", "project:atlas"), ("due", "soon")]);
         assert!(not_a_date.words.contains("due"), "{}", not_a_date.words);
+        let infinite = refuse(&[("project", "project:atlas"), ("count", "inf")]);
+        assert!(infinite.words.contains("count"), "{}", infinite.words);
         let not_a_number = refuse(&[("project", "project:atlas"), ("count", "many")]);
         assert!(
             not_a_number.words.contains("count"),
@@ -630,16 +656,102 @@ mod tests {
         .expect("a list that does not read is refused");
         assert_eq!(unreadable.0, "inputs");
 
-        // A view that declares nothing keeps `$5` and `$x` as words.
+        // A `$5` is a price and not a name, so it stays a word.
         assert_eq!(
             breaks_a_view(
                 &none,
-                &view(&[("selects", "work"), ("where", "price = $x")])
+                &view(&[("selects", "work"), ("where", "price = $5")])
             ),
             None
         );
         // An edit that leaves the three keys as they were is not asked again.
         let stored = with(&[("where", "project = $projekt")]);
         assert_eq!(breaks_a_view(&stored, &stored), None);
+    }
+
+    /// **A name the view does not declare is refused whether or not it declares
+    /// any.** A view with no inputs and a `$x` in its question would read `$x` as a
+    /// word and answer a question nobody wrote, and clearing a view's last input
+    /// must not turn the `$x` that used it into one. **Paired**: a `$5` is a price,
+    /// and a declared name is accepted.
+    #[test]
+    fn a_name_the_view_does_not_declare_is_refused_even_when_it_declares_none() {
+        let none = view(&[]);
+        let bare = view(&[("selects", "work"), ("where", "price = $x")]);
+        let refused = breaks_a_view(&none, &bare).expect("a name nothing declares");
+        assert_eq!(refused.0, "where");
+        assert!(refused.1.contains("$x"), "{}", refused.1);
+
+        let parent = view(&[("selects", "work"), ("parent", "$x")]);
+        assert_eq!(
+            breaks_a_view(&none, &parent)
+                .expect("a parent nothing declares")
+                .0,
+            "parent"
+        );
+
+        // The last input cleared while the question still uses it.
+        let with = view(&[
+            ("selects", "work"),
+            ("inputs", "x: text"),
+            ("where", "price = $x"),
+        ]);
+        let cleared = view(&[("selects", "work"), ("where", "price = $x")]);
+        assert_eq!(
+            breaks_a_view(&with, &cleared)
+                .expect("a name left without a declaration")
+                .0,
+            "where"
+        );
+        assert_eq!(breaks_a_view(&none, &with), None);
+    }
+
+    /// **An input stands for a value, so it is refused where a key goes**, since
+    /// it is never filled there. **Paired**: the same name as a value is accepted.
+    #[test]
+    fn an_input_may_not_stand_where_a_key_goes() {
+        let none = view(&[]);
+        let keyed = view(&[
+            ("selects", "work"),
+            ("inputs", "x: text"),
+            ("where", "$x = 1"),
+        ]);
+        let refused = breaks_a_view(&none, &keyed).expect("a name in the key place");
+        assert_eq!(refused.0, "where");
+        assert!(refused.1.contains("key"), "{}", refused.1);
+        let nested = view(&[
+            ("selects", "work"),
+            ("inputs", "x: text"),
+            ("where", "status != done && (a = 1 || !($x contains y))"),
+        ]);
+        assert_eq!(
+            breaks_a_view(&none, &nested).expect("nested too").0,
+            "where"
+        );
+        let valued = view(&[
+            ("selects", "work"),
+            ("inputs", "x: text"),
+            ("where", "name = $x"),
+        ]);
+        assert_eq!(breaks_a_view(&none, &valued), None);
+    }
+
+    /// **An input cannot be named like a parameter of the page of a view**, which
+    /// the URL would give to the page and never to the input. **Paired**: any
+    /// other name is accepted.
+    #[test]
+    fn an_input_may_not_be_named_like_a_page_parameter() {
+        let none = view(&[]);
+        for reserved in RESERVED_NAMES {
+            let named = view(&[
+                ("selects", "work"),
+                ("inputs", &format!("{reserved}: text?")),
+            ]);
+            let refused = breaks_a_view(&none, &named).expect("a reserved name");
+            assert_eq!(refused.0, "inputs");
+            assert!(refused.1.contains(reserved), "{}", refused.1);
+        }
+        let fine = view(&[("selects", "work"), ("inputs", "past: text?")]);
+        assert_eq!(breaks_a_view(&none, &fine), None);
     }
 }
