@@ -154,3 +154,92 @@ async fn the_history_of_a_runs_key_says_it_changed_and_never_what_it_changed_to(
     reader.wrap("read it back").await;
     story.finish().await;
 }
+
+/// "Can a walk hand me a sitting with the history of its journal beside it?"
+///
+/// **Not today: nothing links to a run, and a run links to nothing.** A write
+/// that names a run in its words is refused, and a walk over runs comes back
+/// with nothing connected in either direction, so a run is only ever the
+/// object a call selected.
+///
+/// 🚨 **This pins that.** `fit_run_histories` cuts the history of the objects a
+/// call selected and not of the objects it reached, and it can leave the nested
+/// case alone only while no walk reaches a run. The day a run becomes linkable
+/// this case goes red, and the cut must be extended to the objects reached by
+/// the walk (rule 498) in the same change.
+#[tokio::test]
+async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
+    let story = Story::begin("bot:otto").await;
+    let run = story.session().await;
+    run.add("person:milhouse", "Milhouse").await;
+    run.call(
+        "journal",
+        json!({"entry": "met @person:milhouse", "focus": "meeting"}),
+    )
+    .await;
+    run.call(
+        "amend_journal",
+        json!({"entry": "met @person:milhouse, said better"}),
+    )
+    .await;
+    let other = story.session_in("America/Toronto", Some("new")).await;
+    other
+        .call(
+            "journal",
+            json!({"entry": "also met @person:milhouse", "focus": "meeting again"}),
+        )
+        .await;
+    let handle = format!("session:{}", run.run());
+
+    // ── A claim that names a run is refused ───────────────────────────────────
+    let refusal = run
+        .refused(
+            "capture",
+            json!({
+                "subject": "person:milhouse",
+                "content": format!("sat in on @{handle}"),
+                "provenance": "testimony",
+            }),
+        )
+        .await;
+    assert_eq!(refusal.json()["wrote"], false, "{}", refusal.raw());
+    // Paired: the same claim naming a thing that exists lands.
+    run.add("event:birthday-party", "Birthday Party").await;
+    run.fact("person:milhouse", "sat in on @event:birthday-party")
+        .await;
+
+    // ── A walk over runs reaches nothing from them, either way ────────────────
+    for direction in ["out", "in"] {
+        let walked = run
+            .call(
+                "recall",
+                json!({
+                    "kind": "session",
+                    "follow": {"direction": direction, "depth": 3},
+                    "history": "journal",
+                }),
+            )
+            .await
+            .json();
+        let objects = walked["objects"].as_array().expect("the runs come back");
+        assert_eq!(objects.len(), 2, "both runs are selected: {walked}");
+        for object in objects {
+            assert_eq!(
+                object["connected"],
+                json!([]),
+                "a run reached something going {direction}: {walked}"
+            );
+        }
+        let cut = objects
+            .iter()
+            .find(|object| object["id"] == handle.as_str())
+            .unwrap_or_else(|| panic!("the run is selected: {walked}"));
+        assert!(
+            cut["history"].to_string().contains("said better"),
+            "the selected run carries its history: {walked}"
+        );
+    }
+    run.wrap("pinned that no walk reaches a run").await;
+    other.wrap("read it back").await;
+    story.finish().await;
+}
