@@ -5311,7 +5311,7 @@ pub struct Merge {
     pub folded: EntityId,
     /// The dated account of the act, written on the survivor.
     pub record: Fact,
-    /// How many claims moved home. **Zero is an ordinary answer** — folding an
+    /// How many claims are served from the survivor now. **Zero is an ordinary answer** — folding an
     /// empty duplicate is exactly the repair this verb exists for.
     pub rehomed: usize,
 }
@@ -6987,9 +6987,10 @@ pub trait Memory: Send + Sync {
     /// not enough: with a repair the guard only has to be good, and without one
     /// it has to be perfect.
     ///
-    /// **The claims move home and the folded row stays**, marked with
-    /// [`Entity::merged_into`], so a handle somebody wrote down goes on
-    /// answering. Taking the row away would be a delete, which is closed here;
+    /// **The claims are served from the survivor and the folded row stays**,
+    /// marked with [`Entity::merged_into`], so a handle somebody wrote down goes on
+    /// answering. The merge appends its event and moves no stored row: the event
+    /// gives each claim the id it is served under on the survivor. Taking the row away would be a delete, which is closed here;
     /// leaving it unmarked would leave a husk that answers half a question and
     /// calls it whole — the very fault this repairs.
     ///

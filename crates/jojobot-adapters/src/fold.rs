@@ -520,10 +520,11 @@ impl Memory for Folded {
         }
     }
 
-    /// **The whole image is read again.** The folded thing's writes moved to the
-    /// survivor (see [`Memory::merge`]), and every record that named the folded
-    /// thing now names the survivor, so a re-read of the two ends would leave
-    /// the holders in between serving a thing that is no longer whole.
+    /// **The whole image is read again.** The folded thing's claims are served
+    /// from the survivor (see [`Memory::merge`]), and every record that named the
+    /// folded thing now reads as naming the survivor, so a re-read of the two ends
+    /// would leave the holders in between serving a thing that is no longer
+    /// whole.
     async fn merge(
         &self,
         folded: &EntityId,

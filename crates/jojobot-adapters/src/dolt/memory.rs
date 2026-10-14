@@ -6216,13 +6216,13 @@ impl Memory for DoltMemory {
             });
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // **Rows only, deliberately** — a fold mutates stored rows, and a
-        // build-supplied record has none to mutate. The same exception
+        // **Rows only, deliberately** — a fold marks a stored row, and a
+        // build-supplied record has none to mark. The same exception
         // `rename_entity`'s own existence check reads off.
         let index = self.index(&mut tx).await?;
-        // **Everything is decided before anything moves.** A fold rewrites rows
-        // across every table that holds a handle, so a refusal discovered
-        // half-way through is the one outcome this must not produce.
+        // **Everything is decided before anything is written.** A fold writes
+        // rows in several tables, so a refusal discovered half-way through is
+        // the one outcome this must not produce.
         for side in [folded, survivor] {
             let Some(held) = index.iter().find(|e| &e.id == side) else {
                 // **A supplied record is real and still not a row** — reported
@@ -6251,10 +6251,9 @@ impl Memory for DoltMemory {
         let standing = standing_of(&account);
 
         // **Both sides resolved to their storage keys once, up front.** Every
-        // statement below that touches `entity` or `fact_home` moves the KEY,
+        // statement below that touches `entity` or `fact_home` names the KEY,
         // never the raw handle — a claim's home is the badge now, not the
-        // handle, and updating rows by the handle would silently move
-        // nothing.
+        // handle, and a statement by the handle would silently match nothing.
         let (folded_key, folded_handle) =
             self.resolve(&mut tx, folded).await?.expect("checked above");
         let (survivor_key, survivor_handle) = self
