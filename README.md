@@ -65,13 +65,15 @@ design page in [`pm/feature-briefs/`](./pm/feature-briefs).
 [Synthesis](./pm/feature-briefs/synthesis.md) ·
 [Containers](./pm/feature-briefs/containers.md) ·
 [Rules](./pm/feature-briefs/rules.md) ·
-[The chain of trust](./pm/feature-briefs/chain-of-trust.md)
+[The chain of trust](./pm/feature-briefs/chain-of-trust.md) ·
+[Documents](./pm/feature-briefs/documents.md)
 
 ○ not built ·
 [Lines](./pm/feature-briefs/lines.md) ·
 [Fronting a layer](./pm/feature-briefs/fronting-a-layer.md) ·
 [Defrag](./pm/feature-briefs/defrag.md) ·
-[Documents](./pm/feature-briefs/documents.md)
+[Lists](./pm/feature-briefs/lists.md) ·
+[Inbound mail](./pm/feature-briefs/inbound-mail.md)
 
 ## Reading further
 
