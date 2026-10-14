@@ -671,8 +671,65 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
         .await
         .says("a second quote on the same kitchen");
 
-    // **Keeping it brings it back**: the marker and the block go, and the room is
-    // full of live thoughts again.
+    // **The room block says, once, how to bring a quiet thought back.** A session
+    // that reads `aged_out: true` learns the call from the same answer.
+    let bring_back = object["room"]["bring_back"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the room block names the way back: {body}"));
+    assert!(
+        bring_back.contains("update_fact") && bring_back.contains("keep"),
+        "the way back names the call: {bring_back}"
+    );
+
+    // **A quiet thought is outside the count, so a new thought fits without the
+    // reserve.** The room holds two live of three; the fourth thought lands, and
+    // its receipt does not claim the emergency reserve was spent. The room read
+    // after it says three of three, with the quiet one still outside.
+    third.add("thing:the-fern", "The Fern").await;
+    let fern = third
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:otto", "content": "the fern needs water",
+                "shape": "connection", "object": "thing:the-fern",
+            }),
+        )
+        .await;
+    fern.never_says("emergency reserve");
+    let fern = fern.field("address");
+    let read = third
+        .call(
+            "recall",
+            json!({"subject": "bot:otto", "facts": true, "status": "active"}),
+        )
+        .await
+        .json();
+    assert_eq!(read["objects"][0]["room"]["live"], 3, "{read}");
+    assert_eq!(read["objects"][0]["room"]["aged_out"], 1, "{read}");
+
+    // **Keeping the quiet thought into a full room is refused as a capture would
+    // be**, naming the live thoughts to archive; and it stays quiet.
+    let refused = third
+        .refused("update_fact", json!({"address": quote, "keep": true}))
+        .await;
+    refused.says(&fern).says("archive");
+    third
+        .call(
+            "recall",
+            json!({"subject": "bot:otto", "facts": true, "status": "active"}),
+        )
+        .await
+        .says("\"aged_out\":true");
+
+    // **The positive it rests on: with a slot free, the same keep lands.** The
+    // fern thought is archived, and the quote comes back: the marker and the block
+    // go, and the room is full of live thoughts again.
+    third
+        .call(
+            "update_fact",
+            json!({"address": fern, "status": "archived", "details": "the fern was watered"}),
+        )
+        .await;
     third
         .call("update_fact", json!({"address": quote, "keep": true}))
         .await;
@@ -683,6 +740,34 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
         )
         .await;
     back.says("a second quote is wanted").never_says("aged_out");
+
+    // **A room over its ceiling by a borrow shows its block with nothing aged in
+    // it**, and a capture into a truly full room still claims the reserve.
+    third.add("thing:the-couch", "The Couch").await;
+    let borrowed = third
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:otto", "content": "the couch needs a leg",
+                "shape": "connection", "object": "thing:the-couch", "borrow": true,
+            }),
+        )
+        .await;
+    borrowed.says("emergency reserve").says("4 of 3");
+    let over = third
+        .call(
+            "recall",
+            json!({"subject": "bot:otto", "facts": true, "status": "active"}),
+        )
+        .await
+        .json();
+    assert_eq!(over["objects"][0]["room"]["live"], 4, "{over}");
+    assert_eq!(over["objects"][0]["room"]["aged_out"], 0, "{over}");
+    assert_eq!(over["objects"][0]["room"]["capacity"], 3, "{over}");
+    assert!(
+        !over.to_string().contains("\"aged_out\":true"),
+        "nothing is marked quiet in a room that is over: {over}"
+    );
 
     third.wrap("the quote line is live again").await;
     story.finish().await;
