@@ -153,6 +153,8 @@ async fn create_threads(surface: &Surface, playbook: &Playbook) -> String {
                     panic!("the distinct subject {subject} has no override: {first}")
                 });
             args["override_token"] = json!(token);
+            args["override_reason"] =
+                json!("these subjects are distinct design areas that resemble each other by name");
             surface
                 .must("add_entity", args)
                 .await
