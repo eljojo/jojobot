@@ -317,6 +317,32 @@ pub fn followable(text: &str) -> Vec<(std::ops::Range<usize>, EntityId)> {
     found
 }
 
+/// Where mentions sit in one text, and what each points at.
+pub type Followed = Vec<(std::ops::Range<usize>, EntityId)>;
+
+/// [`followable`] for a claim's words as a reader is served them: the mentions in
+/// the content and in the details, each placed in its own text, with what is
+/// code decided over both as one text.
+pub fn followable_words(content: &str, details: Option<&str>) -> (Followed, Followed) {
+    let Some(text) = words_joined(content, details) else {
+        return (
+            followable(content),
+            details.map(followable).unwrap_or_default(),
+        );
+    };
+    let details_from = content.len() + WORDS_BREAK.len();
+    let (mut in_content, mut in_details) = (Vec::new(), Vec::new());
+    for (span, handle) in followable(&text) {
+        // A handle holds no line break, so a span never runs across the join.
+        if span.end <= content.len() {
+            in_content.push((span, handle));
+        } else if span.start >= details_from {
+            in_details.push((span.start - details_from..span.end - details_from, handle));
+        }
+    }
+    (in_content, in_details)
+}
+
 /// **A link whose thing is no longer in the store.**
 const GONE: &str = "(gone)";
 

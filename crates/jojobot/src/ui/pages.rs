@@ -997,13 +997,17 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
          <th>State</th><th>Date</th><th>Relation</th><th>Address</th></tr>\n",
     );
     for fact in facts {
+        // **Content and details are read as one text for what is code**, so a
+        // handle inside a fence that opens on the content line is not a link.
+        let (in_content, in_details) =
+            mention::followable_words(&fact.content, fact.details.as_deref());
         let claim = match &fact.details {
             Some(details) if !details.trim().is_empty() => format!(
                 "{}<br><small>{}</small>",
-                linkify(&fact.content, by_id),
-                line_breaks(&linkify(details, by_id))
+                linkify_spans(&fact.content, in_content, by_id),
+                line_breaks(&linkify_spans(details, in_details, by_id))
             ),
-            _ => linkify(&fact.content, by_id),
+            _ => linkify_spans(&fact.content, in_content, by_id),
         };
         out.push_str(&format!(
             "<tr><td>{claim}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td>\
@@ -1078,9 +1082,19 @@ fn line_breaks(escaped: &str) -> String {
 /// served, never as a dead link**: `mention::followable` is the one place
 /// that tells them apart, so this never has to.
 fn linkify(text: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
+    linkify_spans(text, mention::followable(text), by_id)
+}
+
+/// [`linkify`] over spans the caller already found, for text whose code is
+/// decided beside other text.
+fn linkify_spans(
+    text: &str,
+    spans: mention::Followed,
+    by_id: &HashMap<&EntityId, &Entity>,
+) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cut = 0;
-    for (span, handle) in mention::followable(text) {
+    for (span, handle) in spans {
         out.push_str(&escape(&text[cut..span.start]));
         let written = escape(&text[span.clone()]);
         match by_id.get(&handle).copied() {

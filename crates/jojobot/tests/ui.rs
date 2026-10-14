@@ -993,6 +993,78 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
     ct.cancel();
 }
 
+/// **A handle inside a fence that opens on a claim's content is not a link on the
+/// page.** The content is a fence line and the details hold the code and the
+/// closing fence, so neither field alone holds a block; the page reads them as
+/// one text, and the handle in the code is text. **Paired**: a handle in a
+/// sentence of another claim on the same page is still an anchor.
+#[tokio::test]
+async fn a_handle_inside_a_fence_that_opens_on_the_content_is_not_a_link_on_the_page() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+
+    for (handle, name) in [
+        ("person:milhouse", "Milhouse"),
+        ("thing:handcart", "Handcart"),
+    ] {
+        let written = board
+            .memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the mentioned thing is written");
+        assert!(
+            matches!(written, jojobot_domain::memory::Guarded::Written(_)),
+            "{handle} was blocked rather than written: {written:?}",
+        );
+    }
+    board
+        .memory
+        .capture(NewFact {
+            details: Some("run @person:milhouse here\n```".into()),
+            ..NewFact::about(
+                EntityId("topic:widgets".into()),
+                "```text",
+                Date::constant(2026, 3, 9),
+            )
+        })
+        .await
+        .expect("the fenced claim is written");
+    board
+        .memory
+        .capture(NewFact::about(
+            EntityId("topic:widgets".into()),
+            "@person:alpha rode @thing:handcart",
+            Date::constant(2026, 3, 9),
+        ))
+        .await
+        .expect("the sentence claim is written");
+
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("<a href=\"/thing:handcart/\">@thing:handcart</a>"),
+        "a handle in a sentence is an anchor: {body}"
+    );
+    assert!(
+        body.contains("run @person:milhouse here")
+            && !body.contains("<a href=\"/person:milhouse/\">"),
+        "a handle inside the fence is text and not an anchor: {body}"
+    );
+    ct.cancel();
+}
+
 /// **A thing's page shows what the thing HOLDS — its fields, folded.**
 ///
 /// A thing's fields are what it conforms to and what that unlocks, and they
