@@ -9329,11 +9329,11 @@ async fn ready_under(
 #[tokio::test]
 async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out() {
     let jojobot = crate::harness::handler_shipped();
-    project_named(&jojobot, "omega").await;
+    project_named(&jojobot, "atlas").await;
     for slug in ["sigma", "tau", "phi"] {
         work_under(
             &jojobot,
-            "project:omega",
+            "project:atlas",
             slug,
             &[
                 ("status", "next"),
@@ -9344,7 +9344,7 @@ async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out(
         .await;
     }
 
-    let narrowed = ready_under(&jojobot, "project:omega", Some(&["status"]), None).await;
+    let narrowed = ready_under(&jojobot, "project:atlas", Some(&["status"]), None).await;
     let rows = narrowed["objects"].as_array().expect("objects");
     assert_eq!(rows.len(), 3, "{narrowed}");
     for row in rows {
@@ -9387,7 +9387,7 @@ async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out(
     );
 
     // The positive beside it: asked for, the records and the held block return.
-    let with_records = ready_under(&jojobot, "project:omega", Some(&["status"]), Some(true)).await;
+    let with_records = ready_under(&jojobot, "project:atlas", Some(&["status"]), Some(true)).await;
     for row in with_records["objects"].as_array().expect("objects") {
         assert!(
             row.get("held").is_some(),
@@ -9401,7 +9401,7 @@ async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out(
     );
 
     // A read that names no keys is what it was.
-    let whole = ready_under(&jojobot, "project:omega", None, None).await;
+    let whole = ready_under(&jojobot, "project:atlas", None, None).await;
     for row in whole["objects"].as_array().expect("objects") {
         assert!(
             row.get("held").is_some(),
@@ -9441,16 +9441,16 @@ async fn hostile_children(jojobot: &Jojobot, parent: &str, count: u64) {
 #[tokio::test]
 async fn a_narrowed_read_of_many_things_is_smaller_than_one_that_asks_for_held() {
     let jojobot = crate::harness::handler_shipped();
-    project_named(&jojobot, "omega").await;
-    hostile_children(&jojobot, "project:omega", 60).await;
+    project_named(&jojobot, "atlas").await;
+    hostile_children(&jojobot, "project:atlas", 60).await;
 
-    let narrowed = ready_under(&jojobot, "project:omega", Some(&["status"]), None).await;
+    let narrowed = ready_under(&jojobot, "project:atlas", Some(&["status"]), None).await;
     let with_held = json_of(
         &jojobot
             .recall(Parameters(RecallArgs {
                 view: Some("ready".into()),
                 subject: None,
-                parent: Some("project:omega".into()),
+                parent: Some("project:atlas".into()),
                 keys: Some(vec!["status".into()]),
                 facts: None,
                 held: Some(true),
