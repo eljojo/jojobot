@@ -2025,33 +2025,46 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
         })
 }
 
-/// **The alert sqlx logs when a statement runs past its slow threshold**, by the
-/// target and the message it logs it under. On a busy machine a statement of a
-/// healthy boot takes longer than a second, so the alert says the machine is
-/// loaded and nothing about the boot.
+/// **The alerts sqlx logs when the machine is busy**, each by its level, its
+/// target and its message together. On a busy machine a statement of a healthy
+/// boot takes longer than a second, and a connection takes longer than two to
+/// acquire, so these say the machine is loaded and nothing about the boot. A real
+/// boot that waits over two seconds for a connection no longer fails the gate.
 ///
-/// **Narrower than raising the threshold for the booted binary.** A raised
-/// threshold hides every slow statement, whichever target logs it, and needs a
-/// setting in the binary's own code for the gate to turn. This reads the one line
-/// the library writes and nothing else, so a statement alert from another target
-/// or another message, and every other warning, still fails the gate.
-fn is_the_slow_statement_alert(line: &str) -> bool {
+/// **Narrower than raising the thresholds for the booted binary.** A raised
+/// threshold hides every slow statement and connection, whichever target logs
+/// it, and needs a setting in the binary's own code for the gate to turn. This
+/// reads the two lines the library writes and nothing else, so an alert from
+/// another target or with another message, and every other warning, still fails
+/// the gate.
+fn is_a_busy_host_alert(line: &str) -> bool {
+    const ALERTS: [(&str, &str); 2] = [
+        (
+            "sqlx::query",
+            "slow statement: execution time exceeded alert threshold",
+        ),
+        (
+            "sqlx::pool::acquire",
+            "acquired connection, but time to acquire exceeded slow threshold",
+        ),
+    ];
     line.contains("WARN")
-        && line.contains("sqlx::query")
-        && line.contains("slow statement: execution time exceeded alert threshold")
+        && ALERTS
+            .iter()
+            .any(|(target, message)| line.contains(&format!("{target}: {message}")))
 }
 
 /// **The lines of a boot's log that say part of the boot failed or degraded.**
 /// Every warning and every error counts, except the ones the gate itself causes
 /// or expects, the ones the caller names in `tolerated_warnings` (each by a word
-/// the line holds), and the slow-statement alert of a loaded machine.
+/// the line holds), and the alerts of a loaded machine.
 fn degradations<'a>(
     seen: &'a [String],
     stored_over_the_ceiling: bool,
     tolerated_warnings: &[&str],
 ) -> Vec<&'a String> {
     seen.iter()
-        .filter(|line| !is_the_slow_statement_alert(line))
+        .filter(|line| !is_a_busy_host_alert(line))
         .filter(|line| {
             let expected = line.contains(WARNING_THE_GATE_CAUSES)
                 || is_the_recorded_ambiguous_handle(line)
@@ -4689,6 +4702,102 @@ async fn any_other_warning_or_error_is_still_a_degradation_beside_the_alert() {
         "an alert of another kind",
         "execution time exceeded alert threshold",
         "a pass could not finish",
+    ] {
+        assert!(
+            failing.iter().any(|line| line.contains(said)),
+            "{said:?} did not fail the gate: {failing:?}"
+        );
+    }
+}
+
+/// **What a real pool logs when a connection takes longer to acquire than its
+/// slow-acquire threshold, and three other lines logged beside it.** The pool is
+/// opened onto a fresh store with a threshold no acquire can meet, so the line is
+/// the one sqlx writes and not one invented for the case. The real line carries
+/// no label, so the threshold is the case's own mark: a sibling case's pool
+/// keeps the default and is not read as this case's. The three others carry
+/// `label`.
+async fn lines_logged_around_a_slow_acquire(label: &str, threshold: Duration) -> Vec<String> {
+    let state_dir = std::env::temp_dir().join(format!(
+        "jojobot-upgrade-gate-{}-{label}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let _scratch = Scratch(state_dir.clone());
+    let port = free_port();
+    let _store = Dolt::start(&state_dir.join("db"), port)
+        .await
+        .expect("a fresh store comes up");
+    let pool = sqlx::mysql::MySqlPoolOptions::new()
+        .acquire_slow_threshold(threshold)
+        .connect(&format!("mysql://root@127.0.0.1:{port}"))
+        .await
+        .expect("a pool onto the store");
+    drop(pool.acquire().await.expect("a connection is acquired"));
+    tracing::warn!(target: "sqlx::pool::acquire", "{label} an alert of another message");
+    tracing::warn!(
+        target: "sqlx::query",
+        "acquired connection, but time to acquire exceeded slow threshold {label}"
+    );
+    tracing::warn!("{label} a boot step degraded");
+    let mark = format!("slow_acquire_threshold_secs={:?}", threshold.as_secs_f64());
+    jojobot_adapters::testing::store_log()
+        .lines()
+        .filter(|line| line.contains(label) || line.contains(&mark))
+        .map(str::to_string)
+        .collect()
+}
+
+/// **The slow-acquire alert is not a failed boot.** On a busy machine a
+/// connection of the boot takes longer to acquire than sqlx's threshold and sqlx
+/// says so at warning level. That says nothing about the boot, so the gate lets
+/// exactly that line through: by its target and its message.
+#[tokio::test]
+async fn a_slow_acquire_alert_is_not_a_degradation() {
+    let logged =
+        lines_logged_around_a_slow_acquire("slow-acquire-alone", Duration::from_micros(7)).await;
+    let alert = logged
+        .iter()
+        .find(|line| line.contains("sqlx::pool::acquire: acquired connection"))
+        .unwrap_or_else(|| {
+            panic!("sqlx logged no slow-acquire alert, so this proves nothing: {logged:?}")
+        });
+    assert!(
+        degradations(std::slice::from_ref(alert), false, &[]).is_empty(),
+        "the slow-acquire alert counted as a degraded boot: {alert}"
+    );
+}
+
+/// **Every other warning still fails the gate**, beside the alert it lets
+/// through. A warning from the same target with another message, the alert's own
+/// message from another target and a warning from anywhere else are each a
+/// degradation, and the alert in the same log is not.
+#[tokio::test]
+async fn any_other_warning_is_still_a_degradation_beside_the_acquire_alert() {
+    let logged =
+        lines_logged_around_a_slow_acquire("slow-acquire-beside", Duration::from_micros(9)).await;
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.contains("sqlx::pool::acquire: acquired connection")),
+        "sqlx logged no slow-acquire alert, so this proves nothing: {logged:?}"
+    );
+    let failing = degradations(&logged, false, &[]);
+    assert_eq!(
+        failing.len(),
+        3,
+        "the three other lines fail, and only they: {logged:?}"
+    );
+    assert!(
+        failing
+            .iter()
+            .all(|line| !line.contains("sqlx::pool::acquire: acquired connection")),
+        "the alert was counted as a degradation: {failing:?}"
+    );
+    for said in [
+        "an alert of another message",
+        "exceeded slow threshold slow-acquire-beside",
+        "a boot step degraded",
     ] {
         assert!(
             failing.iter().any(|line| line.contains(said)),
