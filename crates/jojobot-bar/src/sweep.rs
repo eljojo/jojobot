@@ -116,8 +116,11 @@ fn candidates_in(dir: &Path, user: u32, found: &mut Vec<(PathBuf, u32)>) {
 }
 
 /// What every live process is working in or has been told about: its working
-/// directory and each word of its command line. One read of `/proc`, however
-/// many directories are judged against it.
+/// directory, each word of its command line and the temp directory it holds. A
+/// server a run started keeps the temp directory that run gave it, and a build
+/// fails once that directory is gone, so a directory held as one is in use
+/// whatever its cwd and arguments say. One read of `/proc`, however many
+/// directories are judged against it.
 fn where_processes_work() -> Vec<String> {
     let mut places = Vec::new();
     let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -135,6 +138,15 @@ fn where_processes_work() -> Vec<String> {
             for word in command.split(|b| *b == 0) {
                 if !word.is_empty() {
                     places.push(String::from_utf8_lossy(word).into_owned());
+                }
+            }
+        }
+        // A process of another user has an environment this cannot read, and is
+        // not one of this user's servers.
+        if let Ok(environment) = std::fs::read(entry.path().join("environ")) {
+            for variable in environment.split(|b| *b == 0) {
+                if let Some(held) = variable.strip_prefix(b"TMPDIR=") {
+                    places.push(String::from_utf8_lossy(held).into_owned());
                 }
             }
         }

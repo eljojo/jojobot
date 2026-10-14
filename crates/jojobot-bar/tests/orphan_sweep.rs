@@ -153,6 +153,46 @@ fn a_directory_a_live_process_works_in_is_kept() {
     std::fs::remove_dir_all(&parent).expect("cleanup");
 }
 
+/// **A dead owner's directory that a live process holds as its temp directory
+/// is kept**, though the process works elsewhere and names it nowhere on its
+/// command line. A server a run started keeps the temp directory the run gave
+/// it, and a build fails the moment that directory is gone. Beside it, the same
+/// dead owner's directory with no such process is removed, and once the process
+/// ends the held directory is removed too.
+#[test]
+fn a_directory_a_live_process_holds_as_its_temp_directory_is_kept() {
+    let parent = scratch("held-temp");
+    let dead = a_dead_pid();
+    let names = names_for(dead);
+    let held = make(&parent, &names[5]);
+    let idle = make(&parent, &names[0]);
+    let mut server = Command::new("sleep")
+        .arg("60")
+        .env("TMPDIR", &held)
+        .current_dir("/")
+        .spawn()
+        .expect("a process to start");
+
+    let swept = sweep_orphans(&parent, &process_is_gone);
+
+    assert!(
+        held.is_dir(),
+        "a directory held as a temp directory was removed"
+    );
+    assert!(!idle.exists(), "an idle directory of a dead owner was kept");
+    assert_eq!(swept.in_use, vec![held.clone()], "{swept:?}");
+    assert_eq!(swept.removed, vec![idle.clone()], "{swept:?}");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let after = sweep_orphans(&parent, &process_is_gone);
+    assert!(
+        !held.exists(),
+        "a directory nobody holds any more was kept: {after:?}"
+    );
+    std::fs::remove_dir_all(&parent).expect("cleanup");
+}
+
 /// **The directories one level inside a shell's scratch directory are reached,
 /// and the shell's directory is not removed**, even when the sweep empties it:
 /// nothing says its shell is gone.

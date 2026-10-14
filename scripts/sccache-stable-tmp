@@ -1,0 +1,19 @@
+#!/bin/sh
+# Run sccache with a temp directory no bar run owns.
+#
+#     RUSTC_WRAPPER=scripts/sccache-stable-tmp JOJOBOT_SCCACHE=<the real sccache>
+#
+# sccache has no temp setting of its own. Its server uses the TMPDIR of the
+# process that started it, and cargo starts the first client with the TMPDIR of
+# its bar run, which the run removes when it ends. A server that outlives the run
+# then fails every build on the host with "Failed to create temp dir" until
+# someone restarts it. The dev shell's shellHook points RUSTC_WRAPPER here, so
+# a server started from any run holds the directory below and not the run's.
+#
+# The directory is made on every call. A server that kept it finds it again at
+# its next request even if something removed it in between.
+set -eu
+: "${JOJOBOT_SCCACHE:?JOJOBOT_SCCACHE names the sccache this wrapper runs}"
+stable="${XDG_CACHE_HOME:-$HOME/.cache}/jojobot-sccache-tmp"
+[ -d "$stable" ] || mkdir -p "$stable"
+TMPDIR="$stable" exec "$JOJOBOT_SCCACHE" "$@"

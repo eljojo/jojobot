@@ -222,6 +222,24 @@
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run
           # from a parent directory.
+
+          # **sccache runs under a temp directory no run owns.** A host that
+          # exports `RUSTC_WRAPPER` as sccache shares one server among every
+          # build, and that server keeps the TMPDIR of whichever run started it
+          # — a bar run's own, removed when the run ends, or a shell's, removed
+          # when the shell does. Every build then fails with "Failed to create
+          # temp dir" until the server is restarted. sccache has no temp setting
+          # of its own, so the shell points the wrapper at a script that runs the
+          # real sccache with a stable TMPDIR. A host with no sccache wrapper
+          # is untouched.
+          shellHook = ''
+            case "''${RUSTC_WRAPPER:-}" in
+              */sccache)
+                export JOJOBOT_SCCACHE="$RUSTC_WRAPPER"
+                export RUSTC_WRAPPER=${./scripts/sccache-stable-tmp}
+                ;;
+            esac
+          '';
         };
       }
     )
