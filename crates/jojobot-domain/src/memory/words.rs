@@ -10,6 +10,63 @@ use std::collections::BTreeSet;
 /// things share.
 pub const MIN_WORD: usize = 4;
 
+/// **Function words that are four letters or more, and so pass [`MIN_WORD`]**,
+/// kept sorted so a lookup can bisect. Used by the shared-word reason of the
+/// name guard and by nothing else: search and the notes that compare claims keep
+/// the rarity rule alone, so this list changes what they match not at all.
+///
+/// **Why rarity alone is not enough.** A word is evidence only when few other
+/// things of the kind carry it, and in a store of two things "with" is carried
+/// once, so it counts as rare. "Pickles with Mustard" would then be refused
+/// beside "Bread with Butter". A fixed list of the words that join other words
+/// says so in any store.
+const STOP_WORDS: &[&str] = &[
+    "about", "above", "after", "again", "also", "among", "around", "because", "been", "before",
+    "being", "below", "between", "both", "cannot", "could", "does", "doing", "down", "during",
+    "each", "either", "else", "from", "further", "have", "having", "here", "hers", "into",
+    "itself", "just", "might", "more", "most", "must", "never", "only", "other", "over", "same",
+    "shall", "should", "since", "some", "such", "than", "that", "their", "them", "then", "there",
+    "these", "they", "this", "those", "through", "thus", "under", "until", "upon", "very", "were",
+    "what", "when", "where", "whether", "which", "while", "whom", "whose", "will", "with",
+    "within", "without", "would", "your", "yours",
+];
+
+/// Whether `word` is a stop word, whatever its case.
+pub fn is_stop_word(word: &str) -> bool {
+    STOP_WORDS
+        .binary_search(&word.to_lowercase().as_str())
+        .is_ok()
+}
+
+/// **A name's words and the words inside them, for the shared-word reason of
+/// the name guard.** [`words`] is unchanged and keeps `KwikEMart` whole; this
+/// adds the parts a capital starts, so the name shares `mart` with `Kwik E
+/// Mart`. A run of capitals is one part (`HTMLParser` is `html` and `parser`),
+/// a part is a word in its own right (4 letters or more), and a name with no
+/// capital inside a word reads exactly as `words` reads it.
+pub fn camel_words(text: &str) -> BTreeSet<String> {
+    let mut found = words(text);
+    for segment in text.split(|c: char| !c.is_alphanumeric()) {
+        let chars: Vec<char> = segment.chars().collect();
+        let mut part = String::new();
+        for (at, &c) in chars.iter().enumerate() {
+            let after_lower =
+                at > 0 && (chars[at - 1].is_lowercase() || chars[at - 1].is_numeric());
+            let before_lower = chars.get(at + 1).is_some_and(|next| next.is_lowercase());
+            let starts_part = c.is_uppercase()
+                && !part.is_empty()
+                && (after_lower || (chars[at - 1].is_uppercase() && before_lower));
+            if starts_part {
+                found.extend(words(&part));
+                part.clear();
+            }
+            part.push(c);
+        }
+        found.extend(words(&part));
+    }
+    found
+}
+
 /// How many other things of one kind must carry a word for the word to be
 /// common: a common word is never evidence that two things are one. See
 /// [`Rarity`].
@@ -187,6 +244,77 @@ mod tests {
         folded.merged_into = Some(EntityId("work:delta".into()));
         held.push(folded);
         held
+    }
+
+    /// **`words` is not changed by the new reason**: a camelCase name stays one
+    /// word, so search tokenizes exactly as it did. `camel_words` is a separate
+    /// function that only the shared-word reason calls, and it reads the name as
+    /// its whole words and the words inside them: `KwikEMart` shares `mart` with
+    /// `Kwik E Mart`. Snake case already splits at the underscore. A part is a
+    /// word in its own right (4 letters or more), a run of capitals is one part
+    /// (`HTMLParser`), and a part never straddles a capital.
+    #[test]
+    fn camel_words_reads_the_parts_of_a_camel_case_name_and_words_does_not() {
+        let got = camel_words("KwikEMart and snake_case plus HTMLParser");
+        for expected in [
+            "kwikemart",
+            "kwik",
+            "mart",
+            "snake",
+            "case",
+            "htmlparser",
+            "html",
+            "parser",
+        ] {
+            assert!(
+                got.contains(expected),
+                "{expected} is a word of the name: {got:?}"
+            );
+        }
+        assert!(
+            !got.contains("and"),
+            "a short word is no name word: {got:?}"
+        );
+        assert!(
+            !got.contains("emart"),
+            "no part straddles a capital: {got:?}"
+        );
+        assert_eq!(
+            words("KwikEMart"),
+            ["kwikemart".to_string()].into_iter().collect(),
+            "words keeps a camel case name whole"
+        );
+        assert_eq!(
+            camel_words("plain lowercase words"),
+            words("plain lowercase words"),
+            "a name with no inner capitals reads as words reads it"
+        );
+    }
+
+    /// The list is bisected, so it must stay sorted and free of repeats.
+    #[test]
+    fn the_stop_words_stay_sorted() {
+        assert!(STOP_WORDS.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(
+            STOP_WORDS
+                .iter()
+                .all(|word| word.chars().count() >= MIN_WORD)
+        );
+    }
+
+    /// **A stop word is never evidence that two names mean one thing.** Rarity
+    /// cannot say so alone: in a store of two things "with" is carried once, so
+    /// it counts as rare. The list is closed and fixed, so these pin the words
+    /// that matter and a name word that must stay out of it.
+    #[test]
+    fn a_stop_word_is_named_and_a_name_word_is_not() {
+        for stop in ["with", "from", "that", "this", "their", "about", "which"] {
+            assert!(is_stop_word(stop), "{stop} is a stop word");
+        }
+        for name in ["plant", "tavern", "nuclear", "springfield", "kwik"] {
+            assert!(!is_stop_word(name), "{name} names something");
+        }
+        assert!(is_stop_word("WITH"), "case does not matter");
     }
 
     /// **A word is rare when no more than the limit of things of its kind carry
