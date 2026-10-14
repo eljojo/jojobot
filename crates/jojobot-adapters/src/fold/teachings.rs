@@ -73,6 +73,15 @@ impl FoldedTeachings {
         }
     }
 
+    /// **Run a write and the set's following it inside the one scope every write
+    /// of every fold shares** (see [`super::uncertain::guarded`]).
+    async fn scoped<T>(
+        &self,
+        write: impl std::future::Future<Output = Result<T, TeachingError>>,
+    ) -> Result<T, TeachingError> {
+        super::uncertain::guarded(&self.taught, None, "teachings", write).await
+    }
+
     /// Bring the set up to date with a write that landed. With no set held, a
     /// ledger that was asked for is read again, so the set carries the write.
     async fn follow(&self, verb: &str, apply: impl FnOnce(&mut BTreeSet<(Sid, String)>)) {
@@ -122,23 +131,29 @@ impl Teachings for FoldedTeachings {
             return Ok(false);
         }
         let _gate = self.writing.lock().await;
-        if self.holds(&pair) == Some(true) {
-            return Ok(false);
-        }
-        let first = self.inner.first_contact(sid, domain, at).await?;
-        self.follow("first_contact", |taught| {
-            taught.insert(pair);
+        self.scoped(async {
+            if self.holds(&pair) == Some(true) {
+                return Ok(false);
+            }
+            let first = self.inner.first_contact(sid, domain, at).await?;
+            self.follow("first_contact", |taught| {
+                taught.insert(pair);
+            })
+            .await;
+            Ok(first)
         })
-        .await;
-        Ok(first)
+        .await
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         let _gate = self.writing.lock().await;
-        self.inner.forget(sid).await?;
-        self.follow("forget", |taught| taught.retain(|(held, _)| held != sid))
-            .await;
-        Ok(())
+        self.scoped(async {
+            self.inner.forget(sid).await?;
+            self.follow("forget", |taught| taught.retain(|(held, _)| held != sid))
+                .await;
+            Ok(())
+        })
+        .await
     }
 
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {

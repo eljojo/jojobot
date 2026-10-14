@@ -615,3 +615,149 @@ async fn a_teaching_ledger_that_failed_to_fill_is_filled_again_by_the_next_write
         counted.calls.seen()
     );
 }
+
+/// How long a case waits on a write that never answers before it drops it.
+const GIVE_UP: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// **A write whose future is dropped after the store committed leaves the next
+/// read correct.** The runs image: an entry was appended in the store and the
+/// caller left before the image followed it.
+#[tokio::test]
+async fn a_dropped_append_leaves_the_next_read_of_the_run_correct() {
+    use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+    let store = Arc::new(InMemorySessions::new());
+    let counted = Arc::new(CountedSessions::new(store.clone()));
+    let folded = FoldedSessions::new(counted.clone(), store.write_stamp(), Clock::Real);
+    folded.rebuild().await.expect("the image loads");
+    let begun = folded
+        .begin(NewSession {
+            bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+            sid: Sid("s001".into()),
+            focus: "reading the hand-off".into(),
+            started_at: jiff::Timestamp::from_second(1_780_000_000).expect("a valid instant"),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("the begin lands");
+
+    counted.calls.hang_after_next("append");
+    let waited = tokio::time::timeout(
+        GIVE_UP,
+        folded.append(
+            &begun.id,
+            NewEntry::manual(
+                "written, then the caller left",
+                jiff::Timestamp::from_second(1_780_000_100).expect("a valid instant"),
+                None,
+            ),
+        ),
+    )
+    .await;
+    assert!(waited.is_err(), "the append is cancelled: {waited:?}");
+    let in_store = store
+        .read_session(&begun.id)
+        .await
+        .expect("the store answers");
+    assert_eq!(
+        in_store.entries.len(),
+        1,
+        "the append committed in the store"
+    );
+
+    let in_image = folded
+        .read_session(&begun.id)
+        .await
+        .expect("the image answers");
+    assert_eq!(
+        in_image.entries, in_store.entries,
+        "the image misses a committed append"
+    );
+}
+
+/// The mail image: a message was posted in the store and the caller left.
+#[tokio::test]
+async fn a_dropped_post_leaves_the_next_read_of_the_board_correct() {
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
+    jojobot_domain::memory::kinds::load_shipped();
+    let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    let counted = Arc::new(CountedMailboxes::new(store.clone()));
+    let folded = FoldedMailboxes::new(counted.clone());
+    folded.rebuild().await.expect("the image loads");
+    folded
+        .create_mailbox(
+            &MailboxName("alpha".into()),
+            &jojobot_domain::memory::EntityId("bot:alpha".into()),
+            None,
+        )
+        .await
+        .expect("the box is made");
+
+    counted.calls.hang_after_next("post_message");
+    let waited = tokio::time::timeout(
+        GIVE_UP,
+        folded.post_message(NewMessage {
+            mailbox: MailboxName("alpha".into()),
+            body: "written, then the caller left".into(),
+            subject: None,
+            sender: "beta".into(),
+            sent_at: jiff::Timestamp::UNIX_EPOCH,
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: None,
+        }),
+    )
+    .await;
+    assert!(waited.is_err(), "the post is cancelled: {waited:?}");
+    let in_store = store.scan_messages().await.expect("the store answers");
+    assert_eq!(in_store.len(), 1, "the post committed in the store");
+
+    let in_image = folded.scan_messages().await.expect("the image answers");
+    assert_eq!(
+        in_image.len(),
+        in_store.len(),
+        "the image misses a committed post"
+    );
+}
+
+/// The teaching ledger: the store forgot a session and the caller left, so the
+/// ledger must not go on saying the session was told.
+#[tokio::test]
+async fn a_dropped_forget_leaves_the_next_first_contact_correct() {
+    use jojobot_domain::session::Sid;
+    use jojobot_domain::teaching::Teachings;
+    let store = Arc::new(InMemoryTeachings::new());
+    let counted = Arc::new(CountedTeachings::new(store.clone()));
+    let folded = FoldedTeachings::new(counted.clone());
+    folded.rebuild().await.expect("the ledger loads");
+    let sid = Sid("s001".into());
+    let at = jiff::Timestamp::UNIX_EPOCH;
+    assert!(
+        folded
+            .first_contact(&sid, "claims", at)
+            .await
+            .expect("lands")
+    );
+    assert!(
+        !folded
+            .first_contact(&sid, "claims", at)
+            .await
+            .expect("held"),
+        "the ledger holds the pair before the forget"
+    );
+
+    counted.calls.hang_after_next("forget");
+    let waited = tokio::time::timeout(GIVE_UP, folded.forget(&sid)).await;
+    assert!(waited.is_err(), "the forget is cancelled: {waited:?}");
+
+    assert!(
+        folded
+            .first_contact(&sid, "claims", at)
+            .await
+            .expect("answers"),
+        "the store forgot the session, so its next contact is a first one again"
+    );
+}

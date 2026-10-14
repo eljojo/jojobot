@@ -8,8 +8,64 @@
 //! contents unless the write disarms it. A dropped image sends every read to the
 //! store until the next write fills it again.
 
+use std::future::Future;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use jojobot_domain::mailbox::MailboxError;
+use jojobot_domain::memory::MemoryError;
+use jojobot_domain::session::SessionError;
+use jojobot_domain::teaching::TeachingError;
+
+/// **Whether an error leaves the outcome of a write unknown.** A store that
+/// failed to answer may have committed first, so the image cannot say what the
+/// store holds. A refusal says the store did not write.
+pub(super) trait Unsure {
+    fn outcome_unknown(&self) -> bool;
+}
+
+impl Unsure for MemoryError {
+    fn outcome_unknown(&self) -> bool {
+        matches!(self, MemoryError::Store(_))
+    }
+}
+
+impl Unsure for SessionError {
+    fn outcome_unknown(&self) -> bool {
+        matches!(self, SessionError::Store(_))
+    }
+}
+
+impl Unsure for MailboxError {
+    fn outcome_unknown(&self) -> bool {
+        matches!(self, MailboxError::Store(_))
+    }
+}
+
+impl Unsure for TeachingError {
+    fn outcome_unknown(&self) -> bool {
+        matches!(self, TeachingError::Store(_))
+    }
+}
+
+/// **The one scope every write of every fold runs in.** The store write and the
+/// image's following it happen inside `write`. If its future is dropped, or it
+/// ends in an error that leaves the outcome unknown, the image is dropped: reads
+/// go to the store, and the next write fills the image again. Any other end
+/// leaves the image as the write left it (rule 498).
+pub(super) async fn guarded<I, T, E: Unsure>(
+    image: &RwLock<Option<I>>,
+    generation: Option<&AtomicU64>,
+    what: &'static str,
+    write: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let uncertain = Uncertain::armed(image, generation, what);
+    let out = write.await;
+    if !matches!(&out, Err(e) if e.outcome_unknown()) {
+        uncertain.disarm();
+    }
+    out
+}
 
 /// **Drops the image unless disarmed**: armed across a write whose outcome the
 /// image cannot know if the write does not finish.

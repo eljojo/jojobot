@@ -49,7 +49,6 @@ use jojobot_domain::memory::{
     search::{self, DocScan},
     types::{self, DeclaredType},
 };
-use uncertain::Uncertain;
 
 /// A [`Memory`] wrapped in a RAM image of everything its reads answer.
 ///
@@ -197,6 +196,17 @@ impl Folded {
         self.fill().await.map(|_| ())
     }
 
+    /// **Run a write and the image's following it inside the one scope every
+    /// write of every fold shares**: a write whose future is dropped, or that ends
+    /// with the store's outcome unknown, drops the image, and the next write fills
+    /// it again (see [`uncertain::guarded`]).
+    async fn scoped<T>(
+        &self,
+        write: impl std::future::Future<Output = Result<T, MemoryError>>,
+    ) -> Result<T, MemoryError> {
+        uncertain::guarded(&self.image, Some(&self.generation), "memory", write).await
+    }
+
     /// A write that has no [`Landed`] to carry its own answer, whose image could
     /// not follow it. The write stands; the image is gone, so every read goes to
     /// the store until the next write fills it again.
@@ -229,11 +239,14 @@ fn fold_behind(landed: Landed, source: MemoryError) -> MemoryError {
 impl Memory for Folded {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.writing.lock().await;
-        let made = self.inner.add_entity(new).await?;
-        if let Guarded::Written(entity) = &made {
-            Folded::follow("add_entity", self.refresh(&entity.id).await);
-        }
-        Ok(made)
+        self.scoped(async {
+            let made = self.inner.add_entity(new).await?;
+            if let Guarded::Written(entity) = &made {
+                Folded::follow("add_entity", self.refresh(&entity.id).await);
+            }
+            Ok(made)
+        })
+        .await
     }
 
     /// **A creation that writes its first claim refreshes the image for the new
@@ -245,16 +258,19 @@ impl Memory for Folded {
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         let _gate = self.writing.lock().await;
-        match self.inner.add_entity_with_first_claim(new, first).await? {
-            Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
-                Ok(()) => Ok(Guarded::Written((entity, fact))),
-                Err(source) => Err(fold_behind(
-                    Landed::Creation(Box::new((entity, fact))),
-                    source,
-                )),
-            },
-            blocked => Ok(blocked),
-        }
+        self.scoped(async {
+            match self.inner.add_entity_with_first_claim(new, first).await? {
+                Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
+                    Ok(()) => Ok(Guarded::Written((entity, fact))),
+                    Err(source) => Err(fold_behind(
+                        Landed::Creation(Box::new((entity, fact))),
+                        source,
+                    )),
+                },
+                blocked => Ok(blocked),
+            }
+        })
+        .await
     }
 
     /// **An edit that writes a claim refreshes the image for the thing, as a
@@ -267,20 +283,23 @@ impl Memory for Folded {
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         let _gate = self.writing.lock().await;
-        match self
-            .inner
-            .update_entity_with_claim(handle, patch, claim)
-            .await?
-        {
-            Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
-                Ok(()) => Ok(Guarded::Written((entity, fact))),
-                Err(source) => Err(fold_behind(
-                    Landed::Creation(Box::new((entity, fact))),
-                    source,
-                )),
-            },
-            blocked => Ok(blocked),
-        }
+        self.scoped(async {
+            match self
+                .inner
+                .update_entity_with_claim(handle, patch, claim)
+                .await?
+            {
+                Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
+                    Ok(()) => Ok(Guarded::Written((entity, fact))),
+                    Err(source) => Err(fold_behind(
+                        Landed::Creation(Box::new((entity, fact))),
+                        source,
+                    )),
+                },
+                blocked => Ok(blocked),
+            }
+        })
+        .await
     }
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
@@ -303,11 +322,14 @@ impl Memory for Folded {
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.writing.lock().await;
-        let edited = self.inner.update_entity(handle, patch).await?;
-        if let Guarded::Written(entity) = &edited {
-            Folded::follow("update_entity", self.refresh(&entity.id).await);
-        }
-        Ok(edited)
+        self.scoped(async {
+            let edited = self.inner.update_entity(handle, patch).await?;
+            if let Guarded::Written(entity) = &edited {
+                Folded::follow("update_entity", self.refresh(&entity.id).await);
+            }
+            Ok(edited)
+        })
+        .await
     }
 
     /// **A rename reads the whole image again.** The handle a thing answers to,
@@ -325,14 +347,17 @@ impl Memory for Folded {
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.writing.lock().await;
-        let renamed = self
-            .inner
-            .rename_entity(from, to, parent, date, resemblance, session)
-            .await?;
-        if matches!(renamed, Guarded::Written(_)) {
-            Folded::follow("rename_entity", self.reload().await);
-        }
-        Ok(renamed)
+        self.scoped(async {
+            let renamed = self
+                .inner
+                .rename_entity(from, to, parent, date, resemblance, session)
+                .await?;
+            if matches!(renamed, Guarded::Written(_)) {
+                Folded::follow("rename_entity", self.reload().await);
+            }
+            Ok(renamed)
+        })
+        .await
     }
 
     async fn archive_entity(
@@ -342,9 +367,12 @@ impl Memory for Folded {
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
         let _gate = self.writing.lock().await;
-        let archived = self.inner.archive_entity(id, reason, session).await?;
-        Folded::follow("archive_entity", self.refresh(&archived.id).await);
-        Ok(archived)
+        self.scoped(async {
+            let archived = self.inner.archive_entity(id, reason, session).await?;
+            Folded::follow("archive_entity", self.refresh(&archived.id).await);
+            Ok(archived)
+        })
+        .await
     }
 
     async fn restore_entity(
@@ -353,34 +381,26 @@ impl Memory for Folded {
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
         let _gate = self.writing.lock().await;
-        let restored = self.inner.restore_entity(id, session).await?;
-        Folded::follow("restore_entity", self.refresh(&restored.0.id).await);
-        Ok(restored)
+        self.scoped(async {
+            let restored = self.inner.restore_entity(id, session).await?;
+            Folded::follow("restore_entity", self.refresh(&restored.0.id).await);
+            Ok(restored)
+        })
+        .await
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.writing.lock().await;
-        // **A capture whose future is dropped after the store committed drops the
-        // image.** The claim is then in the store and out of the image, and the
-        // next write fills the image again from the store.
-        let uncertain = Uncertain::armed(&self.image, Some(&self.generation), "memory");
-        let landed = match self.inner.capture(fact).await {
-            Ok(landed) => landed,
-            Err(e @ MemoryError::Store(_)) => return Err(e),
-            Err(e) => {
-                uncertain.disarm();
-                return Err(e);
+        self.scoped(async {
+            match self.inner.capture(fact).await? {
+                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
+                    Ok(()) => Ok(Guarded::Written(fact)),
+                    Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
+                },
+                blocked => Ok(blocked),
             }
-        };
-        let answer = match landed {
-            Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
-                Ok(()) => Ok(Guarded::Written(fact)),
-                Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
-            },
-            blocked => Ok(blocked),
-        };
-        uncertain.disarm();
-        answer
+        })
+        .await
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -512,13 +532,16 @@ impl Memory for Folded {
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.writing.lock().await;
-        match self.inner.update_fact(address, patch, caller).await? {
-            Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
-                Ok(()) => Ok(Guarded::Written(fact)),
-                Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
-            },
-            blocked => Ok(blocked),
-        }
+        self.scoped(async {
+            match self.inner.update_fact(address, patch, caller).await? {
+                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
+                    Ok(()) => Ok(Guarded::Written(fact)),
+                    Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
+                },
+                blocked => Ok(blocked),
+            }
+        })
+        .await
     }
 
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
@@ -558,17 +581,20 @@ impl Memory for Folded {
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let _gate = self.writing.lock().await;
-        let taken_back = self
-            .inner
-            .retract(address, reason, date, caller, session)
-            .await?;
-        match self.refresh_claims(&taken_back.retracted.home).await {
-            Ok(()) => Ok(taken_back),
-            Err(source) => Err(fold_behind(
-                Landed::Retraction(Box::new(taken_back)),
-                source,
-            )),
-        }
+        self.scoped(async {
+            let taken_back = self
+                .inner
+                .retract(address, reason, date, caller, session)
+                .await?;
+            match self.refresh_claims(&taken_back.retracted.home).await {
+                Ok(()) => Ok(taken_back),
+                Err(source) => Err(fold_behind(
+                    Landed::Retraction(Box::new(taken_back)),
+                    source,
+                )),
+            }
+        })
+        .await
     }
 
     /// **The whole image is read again.** The folded thing's claims are served
@@ -586,14 +612,17 @@ impl Memory for Folded {
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         let _gate = self.writing.lock().await;
-        let done = self
-            .inner
-            .merge(folded, survivor, reason, date, caller, session)
-            .await?;
-        match self.reload().await {
-            Ok(()) => Ok(done),
-            Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),
-        }
+        self.scoped(async {
+            let done = self
+                .inner
+                .merge(folded, survivor, reason, date, caller, session)
+                .await?;
+            match self.reload().await {
+                Ok(()) => Ok(done),
+                Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),
+            }
+        })
+        .await
     }
 
     async fn set_prose(
@@ -603,9 +632,12 @@ impl Memory for Folded {
         session: Option<&str>,
     ) -> Result<String, MemoryError> {
         let _gate = self.writing.lock().await;
-        let stored = self.inner.set_prose(entity, prose, session).await?;
-        Folded::follow("set_prose", self.refresh(entity).await);
-        Ok(stored)
+        self.scoped(async {
+            let stored = self.inner.set_prose(entity, prose, session).await?;
+            Folded::follow("set_prose", self.refresh(entity).await);
+            Ok(stored)
+        })
+        .await
     }
 
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
@@ -726,22 +758,25 @@ impl Memory for Folded {
         by_session: Option<&str>,
     ) -> Result<DeclaredType, MemoryError> {
         let _gate = self.writing.lock().await;
-        let written = self.inner.declare_type(declared, by_session).await?;
-        // **A declaration the image already holds, word for word, folds nothing
-        // differently.** A boot declares every type the build ships, so on a
-        // store that has them each of those would read the whole image again.
-        if self
-            .held(|image| image.types().contains(&written))
-            .unwrap_or(false)
-        {
-            return Ok(written);
-        }
-        self.reload().await.map_err(|source| {
-            MemoryError::Store(format!(
-                "declare_type landed, but the fold could not rebuild to reflect it: {source}"
-            ))
-        })?;
-        Ok(written)
+        self.scoped(async {
+            let written = self.inner.declare_type(declared, by_session).await?;
+            // **A declaration the image already holds, word for word, folds nothing
+            // differently.** A boot declares every type the build ships, so on a
+            // store that has them each of those would read the whole image again.
+            if self
+                .held(|image| image.types().contains(&written))
+                .unwrap_or(false)
+            {
+                return Ok(written);
+            }
+            self.reload().await.map_err(|source| {
+                MemoryError::Store(format!(
+                    "declare_type landed, but the fold could not rebuild to reflect it: {source}"
+                ))
+            })?;
+            Ok(written)
+        })
+        .await
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
@@ -765,12 +800,15 @@ impl Memory for Folded {
         fields: Vec<types::Field>,
     ) -> Result<(), MemoryError> {
         let _gate = self.writing.lock().await;
-        self.inner.declare_kind(token, origin, fields).await?;
-        self.reload().await.map_err(|source| {
-            MemoryError::Store(format!(
-                "declare_kind landed, but the fold could not rebuild to reflect it: {source}"
-            ))
+        self.scoped(async {
+            self.inner.declare_kind(token, origin, fields).await?;
+            self.reload().await.map_err(|source| {
+                MemoryError::Store(format!(
+                    "declare_kind landed, but the fold could not rebuild to reflect it: {source}"
+                ))
+            })
         })
+        .await
     }
 
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
@@ -785,12 +823,15 @@ impl Memory for Folded {
     /// every entity that answered to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
         let _gate = self.writing.lock().await;
-        self.inner.reclaim_kind(token).await?;
-        self.reload().await.map_err(|source| {
-            MemoryError::Store(format!(
-                "reclaim_kind landed, but the fold could not rebuild to reflect it: {source}"
-            ))
+        self.scoped(async {
+            self.inner.reclaim_kind(token).await?;
+            self.reload().await.map_err(|source| {
+                MemoryError::Store(format!(
+                    "reclaim_kind landed, but the fold could not rebuild to reflect it: {source}"
+                ))
+            })
         })
+        .await
     }
 }
 
@@ -924,7 +965,7 @@ mod tests {
         folded.rebuild().await.expect("an empty store fills");
         seeded(&folded, &alpha(), "Alpha").await;
 
-        counted.hang_after_next_capture();
+        counted.hang_after_next("capture");
         let waited = tokio::time::timeout(
             std::time::Duration::from_millis(50),
             folded.capture(jojobot_domain::memory::testing::contract::state(NewFact {
@@ -948,6 +989,30 @@ mod tests {
             claims.iter().any(|f| f.content.contains("the caller left")),
             "the image does not hold the claim: {claims:?}"
         );
+    }
+
+    /// **A creation whose caller stopped waiting after the store committed is in
+    /// the image.** The same scope guards every write verb, not only `capture`.
+    #[tokio::test]
+    async fn an_add_entity_dropped_after_the_store_committed_is_in_the_image() {
+        use crate::counted::Counted;
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store.clone()));
+        let folded = Folded::new(counted.clone());
+        folded.rebuild().await.expect("an empty store fills");
+
+        counted.hang_after_next("add_entity");
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            folded.add_entity(NewEntity::new(alpha(), "Alpha", "user-named")),
+        )
+        .await;
+        assert!(waited.is_err(), "the creation is cancelled: {waited:?}");
+        let in_store = store.list_entities(None).await.expect("the store answers");
+        assert_eq!(in_store.len(), 1, "the creation committed in the store");
+
+        let in_image = folded.list_entities(None).await.expect("the image answers");
+        assert_eq!(in_image, in_store, "the image misses a committed creation");
     }
 
     /// **The writes of a claim a survivor cannot serve are answered from the

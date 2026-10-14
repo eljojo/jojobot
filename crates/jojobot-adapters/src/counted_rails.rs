@@ -40,6 +40,9 @@ pub struct Calls {
     seen: std::sync::Mutex<BTreeMap<&'static str, (Kind, usize)>>,
     /// While set, the reads that fill an image fail.
     unreachable: std::sync::atomic::AtomicBool,
+    /// Set once: the next call of this name commits in the store and then never
+    /// answers.
+    hang_after: std::sync::Mutex<Option<&'static str>>,
 }
 
 impl Calls {
@@ -93,6 +96,27 @@ impl Calls {
     pub fn set_unreachable(&self, down: bool) {
         self.unreachable
             .store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// **The next call of `name` commits and its caller never hears.** The store
+    /// writes, then the call stays pending, so a caller that stops waiting drops a
+    /// future whose write already landed. Only `append`, `post_message` and
+    /// `forget` hang.
+    pub fn hang_after_next(&self, name: &'static str) {
+        *self.hang_after.lock().expect("count lock") = Some(name);
+    }
+
+    async fn hang_if_armed(&self, name: &'static str) {
+        let armed = {
+            let mut slot = self.hang_after.lock().expect("count lock");
+            match *slot == Some(name) {
+                true => slot.take().is_some(),
+                false => false,
+            }
+        };
+        if armed {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// The message a fill read fails with while the store is unreachable.
@@ -160,7 +184,9 @@ impl Sessions for CountedSessions {
     }
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
         self.calls.hit("append", Kind::Write);
-        self.inner.append(id, entry).await
+        let landed = self.inner.append(id, entry).await;
+        self.calls.hang_if_armed("append").await;
+        landed
     }
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
         self.calls.hit("amend_last", Kind::Write);
@@ -346,7 +372,9 @@ impl Mailboxes for CountedMailboxes {
     }
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
         self.calls.hit("post_message", Kind::Write);
-        self.inner.post_message(message).await
+        let landed = self.inner.post_message(message).await;
+        self.calls.hang_if_armed("post_message").await;
+        landed
     }
     async fn read_mailbox(
         &self,
@@ -439,7 +467,9 @@ impl Teachings for CountedTeachings {
     }
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         self.calls.hit("forget", Kind::Write);
-        self.inner.forget(sid).await
+        let landed = self.inner.forget(sid).await;
+        self.calls.hang_if_armed("forget").await;
+        landed
     }
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
         self.calls.hit("taught", Kind::Read);

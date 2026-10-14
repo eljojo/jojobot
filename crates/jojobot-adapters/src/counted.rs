@@ -28,8 +28,9 @@ pub struct Counted {
     by_name: std::sync::Mutex<BTreeMap<&'static str, usize>>,
     /// While set, the listing every fill of the image starts with fails.
     unreachable: AtomicBool,
-    /// Set once: the next capture commits in the store and then never answers.
-    hang_after_capture: AtomicBool,
+    /// Set once: the next call of this name commits in the store and then never
+    /// answers.
+    hang_after: std::sync::Mutex<Option<&'static str>>,
 }
 
 impl Counted {
@@ -39,7 +40,7 @@ impl Counted {
             total: AtomicUsize::new(0),
             by_name: std::sync::Mutex::default(),
             unreachable: AtomicBool::new(false),
-            hang_after_capture: AtomicBool::new(false),
+            hang_after: std::sync::Mutex::new(None),
         }
     }
 
@@ -50,11 +51,24 @@ impl Counted {
         self.unreachable.store(down, Ordering::SeqCst);
     }
 
-    /// **The next capture commits and its caller never hears.** The store writes,
-    /// then the call stays pending, so a caller that stops waiting drops a future
-    /// whose write already landed.
-    pub fn hang_after_next_capture(&self) {
-        self.hang_after_capture.store(true, Ordering::SeqCst);
+    /// **The next call of `name` commits and its caller never hears.** The store
+    /// writes, then the call stays pending, so a caller that stops waiting drops a
+    /// future whose write already landed. Only `capture` and `add_entity` hang.
+    pub fn hang_after_next(&self, name: &'static str) {
+        *self.hang_after.lock().expect("count lock") = Some(name);
+    }
+
+    async fn hang_if_armed(&self, name: &'static str) {
+        let armed = {
+            let mut slot = self.hang_after.lock().expect("count lock");
+            match *slot == Some(name) {
+                true => slot.take().is_some(),
+                false => false,
+            }
+        };
+        if armed {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// Calls made since the last [`reset`](Self::reset).
@@ -88,7 +102,9 @@ impl Counted {
 impl Memory for Counted {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.hit("add_entity");
-        self.inner.add_entity(new).await
+        let landed = self.inner.add_entity(new).await;
+        self.hang_if_armed("add_entity").await;
+        landed
     }
     async fn add_entity_with_first_claim(
         &self,
@@ -185,9 +201,7 @@ impl Memory for Counted {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.hit("capture");
         let landed = self.inner.capture(fact).await;
-        if self.hang_after_capture.swap(false, Ordering::SeqCst) {
-            std::future::pending::<()>().await;
-        }
+        self.hang_if_armed("capture").await;
         landed
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
