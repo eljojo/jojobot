@@ -3502,7 +3502,10 @@ you have never seen and read its shape from the answer.
 ```text
 **Which keys of each object's fields come back, and only those.** Name
 the keys you want, and every object in the answer — the ones a walk
-reaches included — carries just those of its fields.
+reaches included — carries its handle and name, just those of its fields
+and what the read computes. Its other identity fields (alternateName,
+archived, boot, crm, source, type, parent, as_of) are not there unless a key
+names them, and `connected` is left out where nothing was reached.
 
 **Eliding is never silent.** The answer says once, in `narrowed`, what
 the objects left out: the keys they hold that were not brought

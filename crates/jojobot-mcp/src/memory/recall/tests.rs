@@ -9518,3 +9518,138 @@ async fn the_narrowed_note_says_only_what_is_true_of_the_answer() {
     }
     assert_eq!(with_field["left_out_keys"][0], "mood", "{with_field}");
 }
+
+/// The identity fields an object carries beside its handle and name.
+const ENVELOPE: [&str; 8] = [
+    "alternateName",
+    "archived",
+    "boot",
+    "crm",
+    "source",
+    "type",
+    "parent",
+    "as_of",
+];
+
+/// **A read that names keys gets those keys and nothing else unless asked.** Each
+/// object carries its handle, its name, the keys asked and what the read computes;
+/// the identity fields are left out, and the answer says once which. A key named
+/// in `keys` comes back. **Paired**: the same read without keys carries the whole
+/// of it, and a walk keeps what it reached.
+#[tokio::test]
+async fn a_narrowed_object_carries_none_of_the_identity_fields_and_the_answer_says_so() {
+    let jojobot = crate::harness::handler_shipped();
+    project_named(&jojobot, "atlas").await;
+    for slug in ["sigma", "tau"] {
+        work_under(&jojobot, "project:atlas", slug, &[("status", "next")]).await;
+    }
+
+    let narrowed = ready_under(&jojobot, "project:atlas", Some(&["status"]), None).await;
+    let rows = narrowed["objects"].as_array().expect("objects");
+    assert_eq!(rows.len(), 2, "{narrowed}");
+    for row in rows {
+        for left_out in ENVELOPE.iter().chain(&["connected"]) {
+            assert!(
+                row.get(*left_out).is_none(),
+                "{left_out} is on the object: {row}"
+            );
+        }
+        assert!(row["id"].is_string() && row["name"].is_string(), "{row}");
+        assert_eq!(row["fields"]["status"], "next", "{row}");
+        assert_eq!(row["ready"], true, "the computed answer stays: {row}");
+    }
+    let said = narrowed["narrowed"]["envelope"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the answer says once what it left out: {narrowed}"));
+    for left_out in ENVELOPE.iter().chain(&["connected"]) {
+        assert!(said.contains(left_out), "{left_out} is not named: {said}");
+    }
+
+    // A key the caller names comes back, and only that one.
+    let named = ready_under(&jojobot, "project:atlas", Some(&["status", "parent"]), None).await;
+    for row in named["objects"].as_array().expect("objects") {
+        assert_eq!(row["parent"], "project:atlas", "{row}");
+        assert!(
+            row.get("type").is_none() && row.get("as_of").is_none(),
+            "{row}"
+        );
+    }
+    let said = named["narrowed"]["envelope"].as_str().expect("named once");
+    assert!(
+        !said.contains("parent"),
+        "a returned key is not left out: {said}"
+    );
+
+    // The same read without keys carries the whole of it.
+    let whole = ready_under(&jojobot, "project:atlas", None, None).await;
+    for row in whole["objects"].as_array().expect("objects") {
+        for kept in ENVELOPE.iter().chain(&["connected"]) {
+            assert!(
+                row.get(*kept).is_some(),
+                "{kept} is missing without keys: {row}"
+            );
+        }
+    }
+    assert!(whole.get("narrowed").is_none(), "{whole}");
+}
+
+/// **A walked object is narrowed like the one that reached it.** The root keeps
+/// `connected` because it holds what the walk reached, and each of those carries
+/// none of the identity fields either.
+#[tokio::test]
+async fn a_walked_object_of_a_narrowed_read_carries_none_of_the_identity_fields() {
+    let jojobot = handler();
+    for (kind, slug, name) in [
+        ("event", "birthday-party", "Birthday Party"),
+        ("person", "ned-flanders", "Ned Flanders"),
+    ] {
+        jojobot
+            .add_entity(Parameters(add_args(kind, slug, name)))
+            .await
+            .expect("add_entity ok");
+    }
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("attendance".into()),
+            object: Some("event:birthday-party".into()),
+            sets: Some([("nick".to_string(), "pat".to_string())].into()),
+            ..capture_args("ned-flanders", "coming to the party")
+        },
+    )
+    .await;
+
+    let walked = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("event:birthday-party".into()),
+                follow: Some(FollowArgs {
+                    shape: Some("attendance".into()),
+                    relation: None,
+                    direction: Some("in".into()),
+                    depth: None,
+                    keeping: None,
+                    fits_type: None,
+                }),
+                keys: Some(vec!["nick".into()]),
+                facts: None,
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let root = &walked["objects"][0];
+    let guest = &root["connected"][0];
+    assert_eq!(guest["id"], "person:ned-flanders", "{walked}");
+    assert_eq!(guest["fields"]["nick"], "pat", "{walked}");
+    assert!(
+        guest["via"].is_object(),
+        "how the walk got here stays: {walked}"
+    );
+    for object in [root, guest] {
+        for left_out in ENVELOPE {
+            assert!(object.get(left_out).is_none(), "{left_out} on {object}");
+        }
+    }
+    assert!(walked["narrowed"]["envelope"].is_string(), "{walked}");
+}

@@ -378,7 +378,10 @@ pub struct RecallArgs {
     pub(crate) charter: Option<bool>,
     /// **Which keys of each object's fields come back, and only those.** Name
     /// the keys you want, and every object in the answer — the ones a walk
-    /// reaches included — carries just those of its fields.
+    /// reaches included — carries its handle and name, just those of its fields
+    /// and what the read computes. Its other identity fields (alternateName,
+    /// archived, boot, crm, source, type, parent, as_of) are not there unless a key
+    /// names them, and `connected` is left out where nothing was reached.
     ///
     /// **Eliding is never silent.** The answer says once, in `narrowed`, what
     /// the objects left out: the keys they hold that were not brought
@@ -1617,6 +1620,20 @@ struct KeyNarrowing<'a> {
     by_view: bool,
 }
 
+/// **The identity fields an object carries beside its handle and name**, which a
+/// read that names its keys leaves out unless a key names them. `connected` is
+/// left out with them when nothing was reached.
+const IDENTITY: [&str; 8] = [
+    "alternateName",
+    "archived",
+    "boot",
+    "crm",
+    "source",
+    "type",
+    "parent",
+    "as_of",
+];
+
 impl KeyNarrowing<'_> {
     /// Whether `key` is one of the keys the read kept.
     fn wants(&self, key: &str) -> bool {
@@ -1676,12 +1693,21 @@ fn held_by(objects: &[graph::Object], narrowing: KeyNarrowing<'_>, into: &mut He
 /// names the argument that returns what it left out.
 fn narrowed_note(
     keys: &[String],
+    identity_left_out: &[&str],
     left_out_keys: &std::collections::BTreeSet<String>,
     records_left_out: bool,
     held_left_out: bool,
     backing_left_out: bool,
 ) -> serde_json::Value {
     let mut note = serde_json::json!({ "keys": keys });
+    if !identity_left_out.is_empty() {
+        note["envelope"] = format!(
+            "not here: {}, and connected where nothing was reached — ask again without keys to \
+             read them, or name them in keys",
+            identity_left_out.join(", ")
+        )
+        .into();
+    }
     if !left_out_keys.is_empty() {
         note["fields"] = "every object carries only these keys; its other keys are not here — \
                           ask again without keys to read them all"
@@ -2301,6 +2327,22 @@ fn object_json(
              with a deeper follow"
                 .into(),
         );
+    }
+    // **A read that names its keys gets those keys and nothing else unless asked.**
+    // The identity fields come off here, for the objects of the answer and the ones
+    // a walk reached alike; a key the caller named stays, and the answer says once
+    // which were left out.
+    if names_keys(only)
+        && let Some(narrowing) = only
+    {
+        for key in IDENTITY.iter().filter(|key| !narrowing.wants(key)) {
+            fields.remove(*key);
+        }
+        if !narrowing.wants("connected")
+            && fields["connected"].as_array().is_some_and(Vec::is_empty)
+        {
+            fields.remove("connected");
+        }
     }
     body
 }
@@ -3724,8 +3766,17 @@ impl Jojobot {
         {
             let mut held = Held::default();
             held_by(&found, narrowing, &mut held);
+            let identity_left_out: Vec<&str> = IDENTITY
+                .into_iter()
+                .filter(|key| !narrowing.wants(key))
+                .collect();
             body["narrowed"] = narrowed_note(
                 narrowing.keys,
+                if found.is_empty() {
+                    &[]
+                } else {
+                    &identity_left_out
+                },
                 &held.left_out_keys,
                 !include.facts && held.any_record,
                 !ships_held,
