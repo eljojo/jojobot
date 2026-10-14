@@ -334,11 +334,10 @@ impl Jojobot {
                        back under your_mail, out of `new` and yours to finish. Mail an \
                        earlier read already handed you is not listed again: it is counted \
                        under your_mail.leftovers and still owed, and read_message returns it \
-                       by id (read_mailbox with new_only: false returns them all). The sender \
+                       by id. The sender \
                        is the bot behind the `sid` you pass, never one you declare, and a sid \
                        jojobot is not holding comes back status: blocked with nothing \
-                       written. The receipt's `changed` lists what this call changed, or \
-                       says nothing. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       written. The receipt's `changed` lists what moved. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn post_message(
         &self,

@@ -58,9 +58,7 @@ impl Jojobot {
                        IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how \
                        many bytes were stored — compare it with what you sent and you learn \
                        the store trimmed it — and the opening line, so you can tell which \
-                       charter this was. You wrote the prose; start_here with this bot returns \
-                       it in full. The receipt's `changed` lists what this call changed, or says \
-                       nothing. A bot that \
+                       charter this was. The receipt's `changed` lists what moved. A bot that \
                        does not exist comes back status: blocked with the nearest handles — \
                        add_entity first; nothing is created here. Rules are not written here \
                        either: a rule is a fact about the bot, so capture it. Neither is a short \

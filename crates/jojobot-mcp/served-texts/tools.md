@@ -1951,9 +1951,9 @@ To correct or withdraw a message you sent, post again to the same box with `supe
 IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (it can already say `read` if a person picked it up, and that is success), body_bytes and body_elided: true.
 Your body is not echoed back; list_sent with include_bodies returns it and takes no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
-Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id (read_mailbox with new_only: false returns them all).
+Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id.
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists what moved.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -4457,8 +4457,7 @@ A CHARTER THAT WOULD TAKE THE BOOT OVER ITS CEILING IS REFUSED, with floor_parts
 IT REPLACES RATHER THAN ADDS, so send the whole charter rather than an addition.
 SEND WHAT YOU ARE WRITING, never a charter you just read back: some of what a read hands you may be text the software already supplies, and a charter repeating it comes back status: blocked with nothing written and says so.
 IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and the opening line, so you can tell which charter this was.
-You wrote the prose; start_here with this bot returns it in full.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists what moved.
 A bot that does not exist comes back status: blocked with the nearest handles — add_entity first; nothing is created here.
 Rules are not written here either: a rule is a fact about the bot, so capture it.
 Neither is a short self-description for the colleagues view: capture sets.one_liner on this bot instead — that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
