@@ -28,30 +28,62 @@ struct World {
 }
 
 impl World {
-    /// **One merge applied to the rows**: the claims it mapped are served under the
-    /// survivor, and what pointed at the folded thing or at one of those claims
-    /// points at the survivor now.
-    fn apply(&mut self, merge: &StoredMerge, declared: &[crate::memory::types::DeclaredType]) {
-        let (folded_key, survivor_key) = (&merge.folded, &merge.survivor);
-        let now_of = |was: &FactId| {
-            merge
-                .claims
-                .iter()
-                .find(|(old, _)| old == was)
-                .map(|(_, now)| now)
+    /// **Every claim address moved to where the one walk says it went.** A claim
+    /// the events map is served under the survivor and the id the newest event
+    /// gave it, through a survivor folded later; a claim no event maps stays where
+    /// it was made. This is [`follow_claim`], the walk every store applies, and
+    /// not a second resolver: the fake asks it for each address it holds.
+    fn relocate(&mut self, merges: &[StoredMerge]) {
+        let end_of = |home: &EntityId, id: &FactId| {
+            follow_claim::<_, std::convert::Infallible>(
+                home.clone(),
+                id.clone(),
+                claim_moves(merges),
+            )
+            .unwrap_or_else(|never| match never {})
+        };
+        let follow = |address: &mut FactAddress| {
+            if let Some((home, local)) = end_of(&address.home, &address.local) {
+                *address = FactAddress::new(home, local);
+            }
         };
         for fact in self.facts.iter_mut() {
-            if fact.home == *folded_key
-                && let Some(now) = now_of(&fact.id)
-            {
-                fact.home = survivor_key.clone();
-                fact.id = now.clone();
+            if let Some((home, id)) = end_of(&fact.home, &fact.id) {
+                if fact.subject == fact.home {
+                    fact.subject = home.clone();
+                }
+                fact.home = home;
+                fact.id = id;
             }
-            if fact.subject == *folded_key && fact.home != *folded_key {
-                fact.subject = survivor_key.clone();
+            if let Some(source) = &mut fact.derived_from {
+                follow(source);
             }
-            // An edge drawn AT the folded thing, a ref and a field value naming it
-            // read as the survivor's.
+            for named in fact.stands_for.iter_mut() {
+                follow(named);
+            }
+        }
+        for write in self.writes.iter_mut() {
+            if let Some((entity, fact)) = end_of(&write.entity, &write.fact) {
+                write.entity = entity;
+                write.fact = fact;
+            }
+        }
+        for (home, id, write) in self.claim_writes.iter_mut() {
+            if let Some((entity, fact)) = end_of(home, id) {
+                *home = entity;
+                *id = fact;
+            }
+            if let Some(source) = &mut write.derived_from {
+                follow(source);
+            }
+        }
+    }
+
+    /// **One merge applied to what points at the folded thing**: an edge drawn at
+    /// it, a ref and a field value naming it all read as the survivor's.
+    fn repoint(&mut self, merge: &StoredMerge, declared: &[crate::memory::types::DeclaredType]) {
+        let (folded_key, survivor_key) = (&merge.folded, &merge.survivor);
+        for fact in self.facts.iter_mut() {
             if let Some(edge) = &mut fact.edge
                 && edge.object == *folded_key
             {
@@ -74,30 +106,7 @@ impl World {
                 }
             }
         }
-        // A lineage pointer or a mark at a mapped claim follows it.
-        let follow = |address: &mut FactAddress| {
-            if address.home == *folded_key {
-                if let Some(now) = now_of(&address.local) {
-                    address.local = now.clone();
-                    address.home = survivor_key.clone();
-                }
-            }
-        };
-        for fact in self.facts.iter_mut() {
-            if let Some(source) = &mut fact.derived_from {
-                follow(source);
-            }
-            for named in fact.stands_for.iter_mut() {
-                follow(named);
-            }
-        }
         for write in self.writes.iter_mut() {
-            if write.entity == *folded_key
-                && let Some(now) = now_of(&write.fact)
-            {
-                write.entity = survivor_key.clone();
-                write.fact = now.clone();
-            }
             if let Some(value) = &write.value
                 && let Some(repointed) = super::super::repoint_field_value(
                     &write.key,
@@ -110,22 +119,39 @@ impl World {
                 write.value = Some(repointed);
             }
         }
-        for (home, id, write) in self.claim_writes.iter_mut() {
-            if *home == *folded_key
-                && let Some(now) = now_of(id)
-            {
-                *home = survivor_key.clone();
-                *id = now.clone();
-            }
+        for (_, _, write) in self.claim_writes.iter_mut() {
             if let Some(edge) = &mut write.edge
                 && edge.object == *folded_key
             {
                 edge.object = survivor_key.clone();
             }
-            if let Some(source) = &mut write.derived_from {
-                follow(source);
-            }
         }
+    }
+}
+
+/// **The events that moved one claim address**, as the walk asks for them: the
+/// position of a merge among all merges is its order, so the newest wins.
+fn claim_moves(
+    merges: &[StoredMerge],
+) -> impl Fn(&EntityId, &FactId) -> Result<Vec<ClaimMove<EntityId>>, std::convert::Infallible> + '_
+{
+    |home, local| {
+        Ok(merges
+            .iter()
+            .enumerate()
+            .filter(|(_, merge)| &merge.folded == home)
+            .filter_map(|(order, merge)| {
+                merge
+                    .claims
+                    .iter()
+                    .find(|(was, _)| was == local)
+                    .map(|(_, now)| ClaimMove {
+                        order: order as u64,
+                        survivor: merge.survivor.clone(),
+                        survivor_id: now.clone(),
+                    })
+            })
+            .collect())
     }
 }
 
@@ -809,23 +835,7 @@ impl InMemoryMemory {
         let (key, local) = follow_claim::<_, std::convert::Infallible>(
             key,
             address.local.clone(),
-            |home, local| {
-                Ok(merges
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, m)| &m.folded == home)
-                    .filter_map(|(order, m)| {
-                        m.claims
-                            .iter()
-                            .find(|(was, _)| was == local)
-                            .map(|(_, now)| ClaimMove {
-                                order: order as u64,
-                                survivor: m.survivor.clone(),
-                                survivor_id: now.clone(),
-                            })
-                    })
-                    .collect())
-            },
+            claim_moves(&merges),
         )
         .unwrap_or_else(|never| match never {})?;
         drop(merges);
@@ -866,9 +876,12 @@ impl InMemoryMemory {
                 .clone(),
         };
         let declared = self.types.lock().expect("fake mutex poisoned").clone();
-        for merge in self.merges.lock().expect("fake mutex poisoned").iter() {
-            world.apply(merge, &declared);
+        let merges = self.merges.lock().expect("fake mutex poisoned");
+        world.relocate(&merges);
+        for merge in merges.iter() {
+            world.repoint(merge, &declared);
         }
+        drop(merges);
         let world = std::sync::Arc::new(world);
         *self.world_cache.lock().expect("fake mutex poisoned") = Some((key, world.clone()));
         world
@@ -909,7 +922,7 @@ impl InMemoryMemory {
 
     /// **The claims of a thing that cannot be served**: stored under a key a merge
     /// folded into it, through a survivor folded later, that the merge's event
-    /// does not map. [`World::apply`] leaves such a claim under the folded key.
+    /// does not map. [`World::relocate`] leaves such a claim under the folded key.
     fn unmapped_among(
         &self,
         key: &EntityId,
@@ -3050,6 +3063,9 @@ impl Memory for InMemoryMemory {
             Some(badge) => EntityId(badge.clone()),
             None => resolved.id.clone(),
         };
+        // **The keys written on the thing or on any thing folded into it**, as the
+        // real store reads them, and none for a key that was folded away: what it
+        // still stores is its survivor's now.
         let keys: std::collections::BTreeSet<String> = self
             .writes
             .lock()
@@ -3734,7 +3750,7 @@ impl Memory for InMemoryMemory {
         // **A merge appends its event and moves no row.** A fact id is local to
         // the doc that holds it, so both sides own an `f1`: the event gives each
         // claim the folded thing serves an id that is free on the survivor, and
-        // [`World::apply`] serves the claim under it, exactly as the real store
+        // [`World::relocate`] serves the claim under it, exactly as the real store
         // reads its events.
         let mut next = held_facts.iter().filter(|f| f.home == survivor_key).count();
         let mut folded_claims: Vec<&Fact> =
@@ -4188,5 +4204,89 @@ impl Memory for InMemoryMemory {
             .expect("fake mutex poisoned")
             .retain(|t| t.name != token);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jiff::civil::date;
+
+    async fn thing(store: &InMemoryMemory, handle: &str, name: &str) -> EntityId {
+        let id = EntityId(handle.to_string());
+        store
+            .add_entity(NewEntity::new(id.clone(), name, "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        id
+    }
+
+    async fn say(store: &InMemoryMemory, about: &EntityId, what: &str) -> FactAddress {
+        store
+            .capture(NewFact::about(about.clone(), what, date(2026, 6, 2)))
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address()
+    }
+
+    /// **Two events for one address: the newest decides, in the rows served as
+    /// well as in the address a caller is told.** The walk takes the newest, so
+    /// the world built from the same events must agree with it rather than apply
+    /// the first.
+    #[tokio::test]
+    async fn the_rows_served_follow_the_newest_event_for_an_address() {
+        let store = InMemoryMemory::booted();
+        let first = thing(&store, "person:lisa", "Lisa").await;
+        let folded = thing(&store, "person:nelson", "Nelson").await;
+        let second = thing(&store, "person:skinner", "Skinner").await;
+        let made = say(&store, &folded, "owes a dollar").await;
+        store
+            .merge(
+                &folded,
+                &first,
+                Some("one boy, filed twice"),
+                date(2026, 6, 3),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("the fold lands");
+        // The state a hand-edited store holds: a later event moves the same
+        // address somewhere else.
+        let (folded_key, _) = store.resolve(&folded).expect("the folded thing");
+        let (second_key, _) = store.resolve(&second).expect("the other survivor");
+        store
+            .merges
+            .lock()
+            .expect("fake mutex poisoned")
+            .push(StoredMerge {
+                folded: folded_key,
+                survivor: second_key,
+                at: jiff::Timestamp::now(),
+                session: None,
+                claims: vec![(made.local.clone(), FactId("f77".into()))],
+            });
+
+        assert_eq!(
+            store.moved(&made),
+            Some(FactAddress::new(second.clone(), FactId("f77".into()))),
+            "the walk takes the newest event"
+        );
+        let served = store.recall(&second).await.expect("recall reads");
+        assert!(
+            served
+                .iter()
+                .any(|fact| fact.id.as_str() == "f77" && fact.content == "owes a dollar"),
+            "the rows are served where the walk says: {served:?}"
+        );
+        let left = store.recall(&first).await.expect("recall reads");
+        assert!(
+            left.iter().all(|fact| fact.content != "owes a dollar"),
+            "and not where the older event put them: {left:?}"
+        );
     }
 }
