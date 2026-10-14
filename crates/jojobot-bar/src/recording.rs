@@ -225,6 +225,42 @@ pub fn iso_utc(seconds: u64) -> String {
     )
 }
 
+/// **Seconds since the epoch from `YYYY-MM-DDTHH:MM:SSZ`**, the inverse of
+/// [`iso_utc`]. Any other spelling is `None`.
+pub fn parse_iso_utc(moment: &str) -> Option<u64> {
+    let (date, time) = moment.strip_suffix('Z')?.split_once('T')?;
+    let mut date = date.split('-');
+    let year: i64 = date.next()?.parse().ok()?;
+    let month: i64 = date.next()?.parse().ok()?;
+    let day: i64 = date.next()?.parse().ok()?;
+    let mut time = time.split(':');
+    let hours: u64 = time.next()?.parse().ok()?;
+    let minutes: u64 = time.next()?.parse().ok()?;
+    let seconds: u64 = time.next()?.parse().ok()?;
+    if date.next().is_some()
+        || time.next().is_some()
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hours > 23
+        || minutes > 59
+        || seconds > 59
+    {
+        return None;
+    }
+    // The day count from the civil date, by the same era arithmetic as
+    // `iso_utc` run the other way: March is the first month of the shifted year.
+    let shifted_year = year - i64::from(month <= 2);
+    let era = shifted_year.div_euclid(400);
+    let year_of_era = shifted_year.rem_euclid(400);
+    let shifted_month = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    u64::try_from(days)
+        .ok()
+        .map(|days| days * 86_400 + hours * 3_600 + minutes * 60 + seconds)
+}
+
 /// **A run's name**: when it began, the checkout it ran in and the process.
 pub fn run_id(started_at: &str, checkout: &str, pid: u32) -> String {
     let compact: String = started_at.chars().filter(char::is_ascii_digit).collect();
@@ -308,6 +344,26 @@ mod tests {
             "2100-02-28T23:59:59Z",
             "2100 has no leap day"
         );
+    }
+
+    /// **A moment read back is the moment written.** The same days as above,
+    /// and a spelling that is not a moment reads as none.
+    #[test]
+    fn a_moment_written_reads_back_the_same_and_a_bad_spelling_reads_as_none() {
+        for seconds in [0, 1_700_000_000, 1_709_164_800, 951_782_400, 4_107_542_399] {
+            assert_eq!(parse_iso_utc(&iso_utc(seconds)), Some(seconds));
+        }
+        for bad in [
+            "",
+            "2026-10-08",
+            "2026-10-08T10:00:00",
+            "2026-13-08T10:00:00Z",
+            "2026-10-08T24:00:00Z",
+            "2026-10-08T10:00:00:00Z",
+            "1969-12-31T23:59:59Z",
+        ] {
+            assert_eq!(parse_iso_utc(bad), None, "{bad}");
+        }
     }
 
     /// **A job's file name says which job it is, and a run's name says when,

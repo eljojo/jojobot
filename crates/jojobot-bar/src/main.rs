@@ -28,8 +28,8 @@ use jojobot_bar::{
     Summary, TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision,
     is_slow, iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, oversized_files,
     parse_call, parse_job, read_history, render_roster_report, render_size_report, report_line,
-    report_plan, roster_entries, run_id, summarize_test_output, test_healthy, test_jobs,
-    write_call,
+    report_plan, roster_entries, run_id, start_lines, summarize_test_output, test_healthy,
+    test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -46,6 +46,11 @@ fn cargo_bin() -> String {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(target @ ("check" | "report" | "narrow" | "dev" | "rooms")) =
+        args.first().map(String::as_str)
+    {
+        announce_expectation(target);
+    }
     // **Refused before any phase runs**, like a limit that is not a number: a
     // list that cannot be read must not cost a build and then be ignored.
     let known = match load_known_reds(Path::new(KNOWN_REDS_FILE)) {
@@ -87,6 +92,21 @@ fn main() -> ExitCode {
             eprintln!("bar: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// **Say how long this target is expected to take and what a background run
+/// has to allow for**, before anything else is printed. Every target that runs
+/// tests starts through here, so a caller that has run the bar in the
+/// background learns the timeout it needed from the log, not from a kill.
+fn announce_expectation(target: &str) {
+    let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
+    let home = std::env::var("HOME").ok();
+    let history = history_root(variable.as_deref(), home.as_deref())
+        .map(|root| read_history(&root, &[target]))
+        .unwrap_or_default();
+    for line in start_lines(target, &history) {
+        println!("{line}");
     }
 }
 

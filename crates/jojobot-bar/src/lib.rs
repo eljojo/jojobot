@@ -12,6 +12,7 @@
 
 mod calls;
 pub mod dev;
+mod expectation;
 mod history;
 mod known_reds;
 mod levels;
@@ -19,6 +20,7 @@ mod reading;
 mod recording;
 pub mod sweep;
 pub use calls::{CALL_USAGE, Call, parse_call, write_call};
+pub use expectation::{BACKGROUND_TIMEOUT_MS, start_lines};
 pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
 pub use levels::{

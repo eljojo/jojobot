@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use crate::recording::parse_iso_utc;
+
 /// **One value of a flat JSON object.**
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Json {
@@ -150,6 +152,10 @@ pub struct RecordedCall {
 pub struct History {
     /// Per job name, its runs oldest first.
     pub jobs: BTreeMap<String, Vec<JobRun>>,
+    /// Per level, how long each run that finished took from start to end, in
+    /// milliseconds, oldest first. A run with no end, or a time that cannot be
+    /// read, is left out: its length is unknown, not zero.
+    pub walls_ms: BTreeMap<String, Vec<u64>>,
     pub calls: Vec<RecordedCall>,
 }
 
@@ -178,6 +184,17 @@ pub fn read_history(root: &Path, levels: &[&str]) -> History {
         let Some(run_id) = text(&header, "run_id") else {
             continue;
         };
+        if let Some(level) = text(&header, "level") {
+            let started = text(&header, "started_at").and_then(|at| parse_iso_utc(&at));
+            let ended = text(&header, "ended_at").and_then(|at| parse_iso_utc(&at));
+            if let (Some(started), Some(ended)) = (started, ended) {
+                history
+                    .walls_ms
+                    .entry(level)
+                    .or_default()
+                    .push(ended.saturating_sub(started) * 1000);
+            }
+        }
         let head = text(&header, "head");
         let load_average = number(&header, "load_average");
         let cpus = number(&header, "cpus").map(|n| n as u64);
