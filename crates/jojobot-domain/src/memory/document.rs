@@ -443,9 +443,38 @@ pub fn fit(
     }
 }
 
+/// **The byte ranges of the fenced blocks in `text`**, each from the start of its
+/// opening line to the end of its closing line. A fence opens and closes by the
+/// rule [`heading_starts`] reads fences with. A fence nothing closes is not a
+/// block: it holds no code a cut could break.
+fn fenced_blocks(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut blocks = Vec::new();
+    let mut open: Option<(char, usize, usize)> = None;
+    let mut at = 0;
+    for raw in text.split_inclusive('\n') {
+        let line = raw.strip_suffix('\n').unwrap_or(raw);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        match (open, fence_of(line)) {
+            (None, Some((c, run, _))) => open = Some((c, run, at)),
+            (Some((c, run, start)), Some((fc, frun, after)))
+                if fc == c && frun >= run && after.trim().is_empty() =>
+            {
+                blocks.push(start..at + raw.len());
+                open = None;
+            }
+            _ => {}
+        }
+        at += raw.len();
+    }
+    blocks
+}
+
 /// The longest prefix of `text` that passes, cut at the coarsest kind of place
-/// that has one: after a blank line, after a line, after a character.
+/// that has one: after a blank line, after a line, after a character. **No cut
+/// falls inside a fenced block**, so code is never split from its fences; a
+/// block too big to fit whole leaves no cut and the section is refused.
 fn largest_cut(text: &str, passes: &mut dyn FnMut(&str) -> bool) -> Option<usize> {
+    let blocks = fenced_blocks(text);
     let first_text = text.len() - text.trim_start().len();
     let blank_line_ends = text
         .match_indices('\n')
@@ -470,6 +499,11 @@ fn largest_cut(text: &str, passes: &mut dyn FnMut(&str) -> bool) -> Option<usize
         let candidates: Vec<usize> = tier
             .into_iter()
             .filter(|at| *at < text.len() && *at > first_text && !text[..*at].trim().is_empty())
+            .filter(|at| {
+                !blocks
+                    .iter()
+                    .any(|block| *at > block.start && *at < block.end)
+            })
             .collect();
         // Binary search for the last candidate that passes.
         let (mut low, mut high) = (0, candidates.len());
@@ -719,6 +753,44 @@ mod tests {
         let firsts: Vec<&str> = chunks.iter().map(|c| c.first_line.as_str()).collect();
         assert_eq!(firsts, ["# T", "bbbb"]);
         assert_eq!(chunks[1].body, "cccc");
+    }
+
+    /// **A cut never falls inside a fenced block.** The natural cut here, the
+    /// last blank line that leaves a chunk passing, is inside the fence, so it is
+    /// skipped and the cut falls before the block, which then rides whole in the
+    /// next chunk. **Paired**: the same text with no fence is cut at that blank
+    /// line, so the skip is the fence's doing and not a cut that never moved.
+    #[test]
+    fn a_cut_never_falls_inside_a_fenced_block() {
+        let text = "# H\n\naaaa aaaa\n\n```\nxxxx\n\nyyyy\n```\n\nbbbb\n";
+        let section = split(text).expect("splits").remove(0);
+        let chunks = fit(section, &mut |s| size_of(s) <= 28).expect("fits");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].first_line, "# H");
+        assert_eq!(chunks[0].body, "aaaa aaaa");
+        assert_eq!(chunks[1].first_line, "```");
+        assert_eq!(chunks[1].body, "xxxx\n\nyyyy\n```\n\nbbbb");
+        assert_eq!(join(&chunks), text);
+
+        let open = "# H\n\naaaa aaaa\n\nzzzz\nxxxx\n\nyyyy\nwwww\n\nbbbb\n";
+        let section = split(open).expect("splits").remove(0);
+        let chunks = fit(section, &mut |s| size_of(s) <= 28).expect("fits");
+        assert_eq!(chunks[1].first_line, "yyyy");
+        assert_eq!(join(&chunks), open);
+    }
+
+    /// **A fenced block bigger than a record cannot be cut, so the section is
+    /// refused**, the way a section nothing of which fits is. **Paired**: the same
+    /// text with no fence is cut and fits.
+    #[test]
+    fn a_fenced_block_bigger_than_the_cap_is_refused_not_cut() {
+        let fenced = split("# H\n\n```\nxxxx\n\nyyyy\n```\n")
+            .expect("splits")
+            .remove(0);
+        assert_eq!(fit(fenced, &mut |s| size_of(s) <= 12), Err(TooBig));
+        let plain = split("# H\n\nxxxx\n\nyyyy\n").expect("splits").remove(0);
+        let chunks = fit(plain, &mut |s| size_of(s) <= 12).expect("fits");
+        assert!(chunks.len() > 1);
     }
 
     /// **No more chunks than the cap takes.** Thirty short paragraphs of two
