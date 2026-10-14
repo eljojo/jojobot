@@ -409,13 +409,22 @@ pub(crate) fn elide_aliases_past_the_ceiling(body: &mut serde_json::Value) {
 
 /// One of the guard's candidates on the wire.
 pub(crate) fn candidate_json(candidate: &EntityMatch) -> serde_json::Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "handle": candidate.handle.as_str(),
         "type": type_name(candidate.kind),
         "name": candidate.name,
         "source": candidate.source,
         "reason": candidate.reason,
-    })
+    });
+    // **Beside the name, so the list alone tells the candidates apart.** Absent
+    // for a candidate nobody said how to tell apart, rather than rendered empty.
+    if let (Some(told), Some(body)) = (&candidate.told_apart_by, body.as_object_mut()) {
+        body.insert(
+            jojobot_domain::memory::guard::TOLD_APART_BY.into(),
+            told.as_str().into(),
+        );
+    }
+    body
 }
 
 /// The schema.org-flavored type name for an entity kind — **names only**, no

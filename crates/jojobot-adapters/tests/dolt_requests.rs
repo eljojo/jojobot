@@ -479,7 +479,7 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
     // The bot is renamed. The id is found under both handles.
     let renamed = EntityId("bot:omega".into());
     memory
-        .rename_entity(&sigma, &renamed, None, date(2026, 9, 2), None, None)
+        .rename_entity(&sigma, &renamed, None, date(2026, 9, 2), None, None, None)
         .await
         .expect("renamed")
         .written()

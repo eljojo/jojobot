@@ -675,6 +675,11 @@ pub struct NewEntity {
     /// read the candidates and judged them a different entity. It lifts only
     /// the refusal that minted it, and never an exact handle collision.
     pub override_token: Option<String>,
+    /// **Why the caller insists**, sent beside `override_token`. A refusal that
+    /// rests on the name alone is lifted only when this is present
+    /// ([`guard::MatchReason::needs_a_reason`]); the reason is kept on the new
+    /// thing's first claim by the caller that wrote it.
+    pub override_reason: Option<String>,
 }
 
 impl NewEntity {
@@ -691,6 +696,7 @@ impl NewEntity {
             parent: None,
             boot: Boot::default(),
             override_token: None,
+            override_reason: None,
         }
     }
 
@@ -732,6 +738,8 @@ pub struct EntityPatch {
     /// the candidates and judged them different. Same mechanism, and the same
     /// type, as [`NewEntity::override_token`].
     pub override_token: Option<String>,
+    /// Why the caller insists, as [`NewEntity::override_reason`].
+    pub override_reason: Option<String>,
 }
 
 /// An in-place edit to one addressed fact. A `None` field is left alone; this is
@@ -4275,6 +4283,7 @@ pub fn screen_entity_patch(
         &entity.labels(),
         index,
         patch.override_token.as_deref(),
+        patch.override_reason.as_deref(),
     )
 }
 
@@ -6736,6 +6745,7 @@ pub trait Memory: Send + Sync {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError>;
 

@@ -975,6 +975,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
             Date::constant(2026, 3, 10),
             None,
             None,
+            None,
         )
         .await
         .expect("the rename is written");

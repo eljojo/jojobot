@@ -256,6 +256,7 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
             parent: None,
             sets: None,
             override_token: None,
+            override_reason: None,
             // The handler's own registry, for the same reason `make_bot` uses
             // it: a bare-registry test must be able to provision a subject.
             sid: Some(crate::harness::writing_as(jojobot)),
@@ -340,6 +341,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
         parent: None,
         sets: None,
         override_token: None,
+        override_reason: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
 }
@@ -492,6 +494,7 @@ pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
                 parent: None,
                 recorded_at: None,
                 override_token: None,
+                override_reason: None,
                 sid: Some(owner),
             }))
             .await
@@ -591,10 +594,19 @@ impl Memory for DownMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.1
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(
@@ -773,10 +785,19 @@ impl Memory for FoldBehindMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(
@@ -948,10 +969,19 @@ impl Memory for RacingMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(
@@ -1122,10 +1152,19 @@ impl Memory for MovesAfterTheRead {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(
@@ -1339,10 +1378,19 @@ impl Memory for YieldsLikeAStore {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(
@@ -1497,10 +1545,19 @@ impl Memory for ConflictingMemory {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(
@@ -1655,10 +1712,19 @@ impl Memory for FailsOnCapture {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(

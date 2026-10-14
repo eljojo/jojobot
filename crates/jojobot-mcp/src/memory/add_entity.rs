@@ -133,6 +133,12 @@ pub struct AddEntityArgs {
     /// collision.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
+    /// **Why you insist**, sent beside `override_token` when the refusal rests
+    /// on the name alone: the same name under another kind, or a name that holds
+    /// or sits inside another. Without it that refusal stands. The reason is
+    /// kept on the new thing as `told_apart_by`, shown beside its name.
+    #[serde(default)]
+    pub(crate) override_reason: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -156,6 +162,9 @@ pub struct AddEntityArgs {
 impl AcceptsOverride for AddEntityArgs {
     fn override_token(&self) -> Option<&str> {
         self.override_token.as_deref()
+    }
+    fn override_reason(&self) -> Option<&str> {
+        self.override_reason.as_deref()
     }
 }
 
@@ -259,7 +268,8 @@ impl Jojobot {
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \
                        carries if this genuinely is a different thing sharing a name — a token \
-                       lifts the one refusal that minted it and no other. An exact handle \
+                       lifts the one refusal that minted it and no other. A refusal on the name \
+                       alone also needs override_reason, shown beside the name. An exact handle \
                        collision can never be forced — a handle has exactly one owner. A creation whose aliases, or whose `sets` as a first claim, could not \
                        be read back whole in one answer is refused and nothing is made: send \
                        fewer or shorter aliases, or move the long text onto a claim. A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing."
@@ -306,6 +316,14 @@ impl Jojobot {
         // **What the first claim says**, when there is one: the thing's own
         // name, as it will be stored. A claim needs words and the caller sent
         // fields, so the name is what a fields-only claim about a new thing says.
+        // **An override's reason is a key on the new thing**, so what tells it apart
+        // from the thing it resembles is shown beside its name wherever the two are
+        // seen together. It rides only with a token: a reason alone overrides
+        // nothing.
+        let override_reason = kept_override_reason(
+            args.override_token.as_deref(),
+            args.override_reason.as_deref(),
+        );
         let claim_words = args.name.trim().to_string();
         let new = NewEntity {
             id,
@@ -321,6 +339,7 @@ impl Jojobot {
             parent: args.parent.as_deref().map(EntityId::person),
             boot: parse_boot(args.boot.as_deref())?,
             override_token: args.override_token.clone(),
+            override_reason: args.override_reason.clone(),
         };
         // Routed through the declined path rather than straight to the mapper,
         // for the reason capture is: an entity the validators refuse is a
@@ -329,7 +348,13 @@ impl Jojobot {
         // first claim in the same act**, through the store's own combined write:
         // the store runs the guards of a capture inside the transaction that
         // creates the thing, and a refusal takes the creation back with it.
-        let first_fields = args.sets.clone().filter(|sets| !sets.is_empty());
+        let first_fields = {
+            let mut sets = args.sets.clone().unwrap_or_default();
+            if let Some(reason) = override_reason {
+                sets.insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+            }
+            (!sets.is_empty()).then_some(sets)
+        };
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let (added, first_claim) = match first_fields {
@@ -725,11 +750,15 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(
-                &attempted,
-                &candidates,
-                Blocked::Creating(token_slot),
-            )),
+            } => {
+                // **Each candidate carries what tells it apart**, when anyone said.
+                let candidates = self.told_apart(candidates).await;
+                Ok(blocked_result(
+                    &attempted,
+                    &candidates,
+                    Blocked::Creating(token_slot),
+                ))
+            }
         }
     }
 }
@@ -1862,6 +1891,7 @@ mod tests {
                     parent: None,
                     recorded_at: None,
                     override_token: None,
+                    override_reason: None,
                     sid: Some(TEST_SID.into()),
                 }))
                 .await

@@ -371,7 +371,7 @@ pub async fn a_receipt_of_a_survivor_names_the_folded_names_the_roster_shows<M: 
         .expect("the restore lands");
 
     let moved = store
-        .rename_entity(&kept, &renamed, None, date(2026, 7, 3), None, None)
+        .rename_entity(&kept, &renamed, None, date(2026, 7, 3), None, None, None)
         .await
         .expect("the rename lands")
         .written()

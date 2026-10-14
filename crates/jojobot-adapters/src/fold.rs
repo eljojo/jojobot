@@ -314,12 +314,21 @@ impl Memory for Folded {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.writing.lock().await;
         let renamed = self
             .inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await?;
         if matches!(renamed, Guarded::Written(_)) {
             Folded::follow("rename_entity", self.reload().await);
@@ -1131,10 +1140,19 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            override_reason: Option<&str>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.0
-                .rename_entity(from, to, parent, date, override_token, session)
+                .rename_entity(
+                    from,
+                    to,
+                    parent,
+                    date,
+                    override_token,
+                    override_reason,
+                    session,
+                )
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1334,10 +1352,19 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            override_reason: Option<&str>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(from, to, parent, date, override_token, session)
+                .rename_entity(
+                    from,
+                    to,
+                    parent,
+                    date,
+                    override_token,
+                    override_reason,
+                    session,
+                )
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1495,10 +1522,19 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            override_reason: Option<&str>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(from, to, parent, date, override_token, session)
+                .rename_entity(
+                    from,
+                    to,
+                    parent,
+                    date,
+                    override_token,
+                    override_reason,
+                    session,
+                )
                 .await
         }
         async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -1706,6 +1742,7 @@ mod tests {
                         inner
                             .add_entity(NewEntity {
                                 override_token: Some(token),
+                                override_reason: Some("a fixture sharing a name".into()),
                                 ..new
                             })
                             .await
@@ -1819,10 +1856,19 @@ mod tests {
             parent: Option<EntityId>,
             date: Date,
             override_token: Option<&str>,
+            override_reason: Option<&str>,
             session: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.inner
-                .rename_entity(from, to, parent, date, override_token, session)
+                .rename_entity(
+                    from,
+                    to,
+                    parent,
+                    date,
+                    override_token,
+                    override_reason,
+                    session,
+                )
                 .await
         }
         /// **The counter moves here, before the write is even reported back**
@@ -2162,7 +2208,7 @@ mod tests {
 
         let gamma = EntityId::person("person:gamma");
         folded
-            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None)
+            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None, None)
             .await
             .expect("rename ok")
             .written()
@@ -2236,7 +2282,7 @@ mod tests {
         );
 
         folded
-            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None)
+            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None, None, None)
             .await
             .expect("rename ok")
             .written()

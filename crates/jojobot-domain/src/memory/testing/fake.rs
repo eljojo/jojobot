@@ -1964,6 +1964,7 @@ impl Memory for InMemoryMemory {
             new.parent.as_ref(),
             &index,
             new.override_token.as_deref(),
+            new.override_reason.as_deref(),
         ) {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
@@ -2370,6 +2371,7 @@ impl Memory for InMemoryMemory {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
@@ -2473,13 +2475,19 @@ impl Memory for InMemoryMemory {
             .filter(|e| &e.id != from && !earlier_selves.contains(&e.id))
             .cloned()
             .collect();
-        if let Decision::Block(candidates) = guard::decide_under(
-            to,
-            &renamed.labels(),
-            renamed.parent.as_ref(),
-            &others,
-            override_token,
-        ) {
+        // **A move that keeps its name is never screened for resemblance**: it
+        // gives the thing no new name, so there is nothing new to resemble. A
+        // call that changes the handle is screened as before.
+        if from != to
+            && let Decision::Block(candidates) = guard::decide_under(
+                to,
+                &renamed.labels(),
+                renamed.parent.as_ref(),
+                &others,
+                override_token,
+                override_reason,
+            )
+        {
             return Ok(Guarded::Blocked {
                 attempted: to.clone(),
                 candidates,

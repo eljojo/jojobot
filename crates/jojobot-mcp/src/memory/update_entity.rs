@@ -32,6 +32,12 @@ pub struct UpdateEntityArgs {
     /// is.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
+    /// **Why you insist**, sent beside `override_token` when the refusal rests
+    /// on the name alone: the same name under another kind, or a name that holds
+    /// or sits inside another. Without it that refusal stands. The reason is
+    /// kept on this entity as `told_apart_by`, shown beside its name.
+    #[serde(default)]
+    pub(crate) override_reason: Option<String>,
     /// **What this call sets on the thing**, as key/value pairs, written as one
     /// claim about it in the same act as the edit. The claim says what was set
     /// and carries these keys in its setting bag, and it faces every guard a
@@ -68,6 +74,9 @@ impl AcceptsOverride for UpdateEntityArgs {
     fn override_token(&self) -> Option<&str> {
         self.override_token.as_deref()
     }
+    fn override_reason(&self) -> Option<&str> {
+        self.override_reason.as_deref()
+    }
 }
 
 /// Edit an entity's metadata in place. The handle itself never changes, and
@@ -86,7 +95,8 @@ impl Jojobot {
                        check a creation does, because an alias is a name: it can come back \
                        status: blocked with candidates, and the override_token that refusal \
                        carries is how you confirm a genuinely shared name — a token lifts the one \
-                       refusal that minted it and no other. Passing `aliases` REPLACES the whole \
+                       refusal that minted it and no other. A refusal on the name alone also \
+                       needs override_reason, shown beside the name. Passing `aliases` REPLACES the whole \
                        set ([] clears \
                        it); source and crm edits are never questioned. `sets` sets keys on the \
                        thing in the same call, through a claim of inference; a call that sends \
@@ -122,7 +132,14 @@ impl Jojobot {
             crm: args.crm,
             session: Some(caller.sid.as_str().to_string()),
             override_token: args.override_token.clone(),
+            override_reason: args.override_reason.clone(),
         };
+        // **An override's reason is a key on the thing**, set in the same act as the
+        // edit through the combined write below.
+        let override_reason = kept_override_reason(
+            args.override_token.as_deref(),
+            args.override_reason.as_deref(),
+        );
         // **What this call sets, when it sends anything**, is written as one claim
         // about the thing in the same act, through the store's own combined write:
         // the store runs the guards of a capture inside the transaction that edits
@@ -143,7 +160,13 @@ impl Jojobot {
         {
             return memory_declined("update_entity", refused);
         }
-        let sets = args.sets.clone().filter(|sets| !sets.is_empty());
+        let sets = {
+            let mut sets = args.sets.clone().unwrap_or_default();
+            if let Some(reason) = override_reason {
+                sets.insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+            }
+            (!sets.is_empty()).then_some(sets)
+        };
         let mut claim = None;
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
@@ -322,11 +345,15 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(
-                &attempted,
-                &candidates,
-                Blocked::Relabelling(token_slot),
-            )),
+            } => {
+                // **Each candidate carries what tells it apart**, when anyone said.
+                let candidates = self.told_apart(candidates).await;
+                Ok(blocked_result(
+                    &attempted,
+                    &candidates,
+                    Blocked::Relabelling(token_slot),
+                ))
+            }
         }
     }
 }
@@ -367,6 +394,7 @@ mod tests {
             crm: None,
             sets: None,
             override_token: None,
+            override_reason: None,
             sid: Some(sid.clone()),
         };
 
@@ -417,6 +445,7 @@ mod tests {
                 crm: Some("card:551".into()),
                 sets: None,
                 override_token: None,
+                override_reason: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -446,6 +475,7 @@ mod tests {
             .expect("add ok");
 
         let rename = |override_token: Option<String>| UpdateEntityArgs {
+            override_reason: None,
             request_id: None,
             handle: "person:zenith".into(),
             name: Some("Alpha".into()),
@@ -548,6 +578,7 @@ mod tests {
                 crm: None,
                 sets: None,
                 override_token: None,
+                override_reason: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -617,6 +648,7 @@ mod tests {
             crm: None,
             sets: None,
             override_token: None,
+            override_reason: None,
             sid: Some(crate::harness::TEST_SID.into()),
         };
 
@@ -679,6 +711,7 @@ mod tests {
                 crm: None,
                 sets: None,
                 override_token: None,
+                override_reason: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -700,6 +733,7 @@ mod tests {
             source: None,
             crm: None,
             override_token: None,
+            override_reason: None,
             sets: None,
             sid: Some(crate::harness::TEST_SID.into()),
         }

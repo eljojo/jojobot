@@ -4736,6 +4736,7 @@ mod tests {
                         parent: None,
                         recorded_at: None,
                         override_token: override_token.take(),
+                        override_reason: None,
                         sid: Some(crate::harness::TEST_SID.into()),
                     }))
                     .await

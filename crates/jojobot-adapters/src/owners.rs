@@ -214,6 +214,7 @@ mod tests {
                 _: Option<EntityId>,
                 _: jiff::civil::Date,
                 _: Option<&str>,
+                _: Option<&str>,
                 _session: Option<&str>,
             ) -> Result<Guarded<Entity>, MemoryError> {
                 unimplemented!("the owner index only reads the index")

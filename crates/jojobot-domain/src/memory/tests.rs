@@ -1601,7 +1601,15 @@ async fn a_plain_text_handle_under_an_undeclared_key_resolves_through_a_rename_i
     }
     memory.fields_past_the_guard(&holder, &[("blocks", was.as_str())]);
     memory
-        .rename_entity(&was, &now, None, jiff::civil::date(2026, 8, 2), None, None)
+        .rename_entity(
+            &was,
+            &now,
+            None,
+            jiff::civil::date(2026, 8, 2),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("the rename lands")
         .written()

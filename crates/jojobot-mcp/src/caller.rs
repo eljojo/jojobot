@@ -1358,6 +1358,7 @@ mod tests {
                             parent: None,
                             sets: None,
                             override_token: None,
+                            override_reason: None,
                             sid: Some(dead.clone()),
                         }))
                         .await
@@ -1377,6 +1378,7 @@ mod tests {
                             crm: None,
                             sets: None,
                             override_token: None,
+                            override_reason: None,
                             sid: Some(dead.clone()),
                         }))
                         .await

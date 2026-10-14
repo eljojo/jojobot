@@ -765,6 +765,7 @@ impl Jojobot {
         // shipped, because a cut over the grouped order keeps hits from all over
         // the page and the next page cannot start at a single offset.
         let documents = self.documents_of(&hits).await;
+        let told_apart = self.told_apart_in(&hits).await;
         // **The day this answer is read against**, in the zone of the run that
         // asked: whether a claim has passed the day it stays good is a question
         // about a day, and two runs in two zones answer it differently for one
@@ -965,6 +966,12 @@ impl Jojobot {
             .iter()
             .map(|hit| {
                 let mut json = hit_json(hit, as_of);
+                // **Beside the name**, so a list of resembling things tells them
+                // apart without a second call. Absent for a thing nobody said how
+                // to tell apart.
+                if let Some(told) = entity_of(hit).and_then(|e| told_apart.get(e.id.as_str())) {
+                    json[jojobot_domain::memory::guard::TOLD_APART_BY] = told.as_str().into();
+                }
                 if let Some(document) =
                     section_document(hit).and_then(|home| documents.get(home.id.as_str()))
                 {
@@ -1073,7 +1080,40 @@ fn grouped_order(hits: &[Hit]) -> Vec<usize> {
     order
 }
 
+/// **The entity a hit is about, when it is a hit on a thing itself** and not on
+/// a claim, a message or a run.
+fn entity_of(hit: &Hit) -> Option<&Entity> {
+    match hit {
+        Hit::Entity { entity, .. } => Some(entity),
+        _ => None,
+    }
+}
+
 impl Jojobot {
+    /// **What tells each hit thing apart from one that resembles it**, read from
+    /// the thing's own fields and keyed by handle. A thing whose fields cannot
+    /// be read is served without it.
+    async fn told_apart_in(&self, hits: &[Hit]) -> std::collections::BTreeMap<String, String> {
+        let mut found = std::collections::BTreeMap::new();
+        for entity in hits.iter().filter_map(entity_of) {
+            if let Some(told) = self
+                .memory
+                .fields(&entity.id)
+                .await
+                .ok()
+                .and_then(|fields| {
+                    fields
+                        .get(jojobot_domain::memory::guard::TOLD_APART_BY)
+                        .cloned()
+                })
+                .filter(|told| !told.trim().is_empty())
+            {
+                found.insert(entity.id.as_str().to_string(), told);
+            }
+        }
+        found
+    }
+
     /// **What a section hit says of its document**: the handle, the name and the
     /// one-liner, once per document however many of its sections matched. A
     /// document whose fields cannot be read is named without a one-liner, and the

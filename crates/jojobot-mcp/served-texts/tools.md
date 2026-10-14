@@ -20,6 +20,7 @@ The claim is inference: a field that needs the operator's own word (testimony), 
 Answers with the entity as stored and says what it changed on the way in; with sets it also returns first_claim, the claim written with it.
 If its handle or any of its names resembles something jojobot already knows, NOTHING is written: the result says status: blocked with candidates and how_to_proceed.
 Use the candidate you meant, or re-call with the override_token that refusal carries if this genuinely is a different thing sharing a name — a token lifts the one refusal that minted it and no other.
+A refusal on the name alone also needs override_reason, shown beside the name.
 An exact handle collision can never be forced — a handle has exactly one owner.
 A creation whose aliases, or whose `sets` as a first claim, could not be read back whole in one answer is refused and nothing is made: send fewer or shorter aliases, or move the long text onto a claim.
 A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing.
@@ -64,6 +65,13 @@ A `request_id` (not for a bot) makes a resend safe: a repeat returns the first r
       },
       "name": {
         "type": "string"
+      },
+      "override_reason": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "override_token": {
         "default": null,
@@ -215,6 +223,15 @@ voucher by booting with the operator's code: `start_here` with `bot` and
 
 ```text
 Display name, as a human would write it.
+```
+
+#### `add_entity` — argument `/inputSchema.override_reason`
+
+```text
+**Why you insist**, sent beside `override_token` when the refusal rests
+on the name alone: the same name under another kind, or a name that holds
+or sits inside another. Without it that refusal stands. The reason is
+kept on the new thing as `told_apart_by`, shown beside its name.
 ```
 
 #### `add_entity` — argument `/inputSchema.override_token`
@@ -3758,7 +3775,7 @@ A rename that moves an owner across the person line (a bot into a person, a pers
 A role object (kind role) is renamed, retyped or reparented only by the bot it belongs to or a bot heading the chart; anyone else is refused and told who may.
 The display name stays as it was: update_entity's name changes it.
 `to` is always `kind:slug`, fully qualified: a bare slug is refused rather than guessed at.
-The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced.
+The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced; a collision on the name alone also needs override_reason, shown beside the name.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
 Each argument's own description holds the rest.
 ```
@@ -3772,6 +3789,13 @@ Each argument's own description holds the rest.
     "properties": {
       "handle": {
         "type": "string"
+      },
+      "override_reason": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "override_token": {
         "default": null,
@@ -3825,6 +3849,15 @@ reference-typed field value, a claim's home, a journal beat and a
 mailbox message — all of them stay current after a move. A stale
 `handle` given here is refused with the name it moved to, rather
 than a bare miss.
+```
+
+#### `rename_entity` — argument `/inputSchema.override_reason`
+
+```text
+**Why you insist**, sent beside `override_token` when the refusal rests
+on the name alone: the same name under another kind, or a name that holds
+or sits inside another. Without it that refusal stands. The reason is
+kept on the renamed entity as `told_apart_by`, shown beside its name.
 ```
 
 #### `rename_entity` — argument `/inputSchema.override_token`
@@ -4840,6 +4873,7 @@ Edit what an entity is called and where it came from (name/aliases/source/crm), 
 This verb does not edit the handle — its slug, kind or parent — use `rename_entity` for that.
 THIS VERB DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can be edited or reassigned — it belongs to the bot it is named for and opens with it, in add_entity (the operator's opens at the first post to them), so there is nothing here to point at a different one.
 Any change to what it is CALLED — name or aliases — faces the same check a creation does, because an alias is a name: it can come back status: blocked with candidates, and the override_token that refusal carries is how you confirm a genuinely shared name — a token lifts the one refusal that minted it and no other.
+A refusal on the name alone also needs override_reason, shown beside the name.
 Passing `aliases` REPLACES the whole set ([] clears it); source and crm edits are never questioned.
 `sets` sets keys on the thing in the same call, through a claim of inference; a call that sends only `sets` leaves the entity itself alone, and a key that needs the operator's word is written with capture.
 A rule's `starred` mark stays on its claim, so it is not set here: update_fact on the rule's address with fields {starred: "true"} or {starred: "false"} stars or unstars it.
@@ -4876,6 +4910,13 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
         "type": "string"
       },
       "name": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "override_reason": {
         "default": null,
         "type": [
           "string",
@@ -4955,6 +4996,15 @@ edit it.
 
 ```text
 New display name.
+```
+
+#### `update_entity` — argument `/inputSchema.override_reason`
+
+```text
+**Why you insist**, sent beside `override_token` when the refusal rests
+on the name alone: the same name under another kind, or a name that holds
+or sits inside another. Without it that refusal stands. The reason is
+kept on this entity as `told_apart_by`, shown beside its name.
 ```
 
 #### `update_entity` — argument `/inputSchema.override_token`

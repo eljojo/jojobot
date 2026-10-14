@@ -468,7 +468,7 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
-        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None)
+        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None, None)
         .await
         .expect("the rename lands");
 
@@ -552,7 +552,7 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     );
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
-        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None)
+        .rename_entity(&pet, &renamed, None, date(2026, 7, 2), None, None, None)
         .await
         .expect("the rename lands");
 
@@ -3660,6 +3660,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
             date(2026, 8, 1),
             None,
             None,
+            None,
         )
         .await
         .expect("the rename lands");
@@ -4879,6 +4880,7 @@ impl Memory for Scanned {
         parent: Option<EntityId>,
         _: Date,
         _: Option<&str>,
+        _: Option<&str>,
         _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let mut docs = self.docs.write().expect("docs poisoned");
@@ -5081,10 +5083,19 @@ impl Memory for SummarizedScan {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -5249,6 +5260,7 @@ impl Memory for Delegated {
         _: &EntityId,
         _: Option<EntityId>,
         _: Date,
+        _: Option<&str>,
         _: Option<&str>,
         _session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
@@ -9367,10 +9379,19 @@ impl Memory for FixedWriteSummary {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.0
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {

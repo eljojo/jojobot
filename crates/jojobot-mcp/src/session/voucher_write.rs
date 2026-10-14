@@ -100,6 +100,10 @@ impl Jojobot {
                     let token = guard::override_token(&attempted, &candidates);
                     let new = NewEntity {
                         override_token: Some(token),
+                        // A resemblance of the name alone takes a reason (rule 498).
+                        override_reason: Some(
+                            "an engine-written record is named for its holder".into(),
+                        ),
                         ..new
                     };
                     match self.memory.add_entity_with_first_claim(new, first).await {

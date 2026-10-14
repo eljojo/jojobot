@@ -18,6 +18,11 @@ use super::*;
 /// [`TokenSlot`].
 pub(crate) trait AcceptsOverride {
     fn override_token(&self) -> Option<&str>;
+    /// The reason sent beside the token. It is what a refusal that rests on
+    /// the name alone asks for (rule 498).
+    fn override_reason(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// **Evidence that a promising arm is being built from a verb that actually
@@ -49,11 +54,97 @@ pub(crate) trait AcceptsOverride {
 /// naming the trait, in a place a diff shows and a reader can ask "why does
 /// this verb suddenly accept overrides?" — never a one-line change to an
 /// existing call, which is what the gap before this looked like.
-pub(crate) struct TokenSlot(#[allow(dead_code)] Option<String>);
+pub(crate) struct TokenSlot {
+    /// Whether the call already sent the token this refusal could mint. The
+    /// advice reads only this, never the token: a refusal for a reason still owed
+    /// says so rather than repeating the first advice.
+    token_sent: bool,
+    reason_sent: bool,
+}
 
 impl TokenSlot {
     pub(crate) fn from(args: &impl AcceptsOverride) -> Self {
-        TokenSlot(args.override_token().map(str::to_string))
+        TokenSlot {
+            token_sent: args.override_token().is_some(),
+            reason_sent: args
+                .override_reason()
+                .is_some_and(|reason| !reason.trim().is_empty()),
+        }
+    }
+}
+
+impl Jojobot {
+    /// **Each candidate with what tells it apart from a thing that resembles it**,
+    /// read from the thing's own fields. A candidate nobody said how to tell
+    /// apart, or whose fields cannot be read, comes back as it was: the refusal is
+    /// served either way.
+    pub(crate) async fn told_apart(&self, candidates: Vec<EntityMatch>) -> Vec<EntityMatch> {
+        let mut told = Vec::with_capacity(candidates.len());
+        for mut candidate in candidates {
+            candidate.told_apart_by = self
+                .memory
+                .fields(&candidate.handle)
+                .await
+                .ok()
+                .and_then(|fields| fields.get(guard::TOLD_APART_BY).cloned())
+                .filter(|reason| !reason.trim().is_empty());
+            told.push(candidate);
+        }
+        told
+    }
+}
+
+/// **The reason a call carries, when it carries one that counts**: present,
+/// not blank once trimmed, and sent beside the token it explains. A reason
+/// alone overrides nothing, so it is not kept.
+pub(crate) fn kept_override_reason<'a>(
+    token: Option<&str>,
+    reason: Option<&'a str>,
+) -> Option<&'a str> {
+    reason
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty() && token.is_some())
+}
+
+/// **Whether any candidate is a resemblance of the name alone**, which takes a
+/// reason beside the token to lift (rule 498).
+fn rests_on_the_name_alone(candidates: &[EntityMatch]) -> bool {
+    candidates.iter().any(|c| c.reason.needs_a_reason())
+}
+
+/// **The advice for a refusal that rests on the name alone.** It names the
+/// candidates the reason is about. A call that already sent the token is told
+/// the token was not enough, rather than handed the first advice again.
+fn reason_advice(
+    verb: &str,
+    nothing: &str,
+    attempted: &EntityId,
+    candidates: &[EntityMatch],
+    slot: &TokenSlot,
+    token: &str,
+) -> String {
+    let by_name = candidates
+        .iter()
+        .filter(|c| c.reason.needs_a_reason())
+        .map(|c| c.handle.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if slot.token_sent && !slot.reason_sent {
+        format!(
+            "{nothing} The override_token was not enough: '{attempted}' resembles {by_name} by \
+             name alone, and lifting that takes a reason. Re-call {verb} with override_token: \
+             \"{token}\" and override_reason: \"<why these are different things>\". The reason \
+             is kept as told_apart_by on the thing, and shown beside its name."
+        )
+    } else {
+        format!(
+            "{nothing} If '{attempted}' IS one of the entities above, use that one instead. \
+             '{attempted}' resembles {by_name} by name alone. If it is genuinely a different \
+             thing, re-call {verb} with override_token: \"{token}\" and override_reason: \
+             \"<why these are different things>\". The reason is kept as told_apart_by, shown beside the \
+             name. That token \
+             belongs to THIS refusal and lifts no other."
+        )
     }
 }
 
@@ -72,7 +163,7 @@ pub(crate) enum Blocked {
     /// unforgivable and the token covers only a shared *name*. The
     /// [`TokenSlot`] is never read — see its own doc for why holding one at
     /// all is the point.
-    Creating(#[allow(dead_code)] TokenSlot),
+    Creating(TokenSlot),
     /// A relabel — a change to a name or an alias. No handle is moving, so
     /// nothing here is unforgivable.
     Relabelling(#[allow(dead_code)] TokenSlot),
@@ -125,6 +216,15 @@ pub(crate) fn blocked_result(
              forced — a handle has exactly one owner. Either this IS the entity above (use its \
              handle and carry on), or it is a different one and needs a more qualified slug.",
         ),
+        // **A resemblance of the name alone is lifted with a reason** (rule 498).
+        Blocked::Creating(slot) if rests_on_the_name_alone(candidates) => reason_advice(
+            "add_entity",
+            "Nothing was written.",
+            attempted,
+            candidates,
+            &slot,
+            &token,
+        ),
         Blocked::Creating(_) => format!(
             "Nothing was written. If '{attempted}' IS one of the entities above, use that handle \
              instead. If it is genuinely a different one that happens to share a name, re-call \
@@ -145,6 +245,14 @@ pub(crate) fn blocked_result(
         // Says "name" rather than "rename": this gate fires on an alias write
         // too, and telling a caller nothing was renamed when they renamed
         // nothing sends them looking for a rename they never made.
+        Blocked::Relabelling(slot) if rests_on_the_name_alone(candidates) => reason_advice(
+            "update_entity",
+            "Nothing was written.",
+            attempted,
+            candidates,
+            &slot,
+            &token,
+        ),
         Blocked::Relabelling(_) => format!(
             "Nothing was written, and the handle '{attempted}' is unaffected either way — this \
              only moves the names it answers to. Either pick a name or alias that isn't already \
@@ -187,6 +295,14 @@ pub(crate) fn blocked_result(
              forced — a handle has exactly one owner. Either this IS the entity above (nothing \
              to do — it already has this name), or it is a different thing and the destination \
              needs a more qualified slug.",
+        ),
+        Blocked::Renaming(slot) if rests_on_the_name_alone(candidates) => reason_advice(
+            "rename_entity",
+            "Nothing was renamed.",
+            attempted,
+            candidates,
+            &slot,
+            &token,
         ),
         Blocked::Renaming(_) => format!(
             "Nothing was renamed. If '{attempted}' IS one of the entities above, renaming onto \
@@ -2479,6 +2595,7 @@ pub(crate) mod tests {
                 name: "Alphaa".into(),
                 source: "user-named".into(),
                 reason,
+                told_apart_by: None,
             }]
         };
         let rows: Vec<(&str, CallToolResult)> = vec![
@@ -2565,6 +2682,7 @@ pub(crate) mod tests {
                 parent: None,
                 recorded_at: None,
                 override_token: None,
+                override_reason: None,
                 sid: Some(sid.clone()),
             }))
             .await

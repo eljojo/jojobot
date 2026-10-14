@@ -707,6 +707,7 @@ mod tests {
                 parent: None,
                 boot: Default::default(),
                 override_token: None,
+                override_reason: None,
             })
             .await
             .expect("the store writes it");

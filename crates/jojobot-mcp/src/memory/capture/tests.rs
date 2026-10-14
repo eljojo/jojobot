@@ -2786,6 +2786,7 @@ async fn a_renamed_bot_cannot_raise_its_own_ceiling_through_its_former_handle() 
                     parent: None,
                     recorded_at: None,
                     override_token: None,
+                    override_reason: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await

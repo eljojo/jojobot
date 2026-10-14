@@ -535,6 +535,8 @@ const ORDINARY: &[&str] = &[
     "person:contract-zzz",
     "person:contract-zzz-nobody",
     "place:contract-a",
+    "place:contract-zzz",
+    "place:contract-moes-tavern-annex", // made up: contains two names at once, for a refusal that lists both
     "place:contract-atlas",
     "place:bet",
     "place:capital-citty",

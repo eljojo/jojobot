@@ -142,6 +142,9 @@ pub async fn ensure_role_object<M: Memory + ?Sized>(
             match store
                 .add_entity(NewEntity {
                     override_token: Some(token),
+                    // A resemblance of the name alone takes a reason (rule 498):
+                    // a role is named for what it does, never for a bot.
+                    override_reason: Some("a role object is named for the work it holds".into()),
                     ..new
                 })
                 .await?

@@ -265,7 +265,8 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     // ── a rename, and everything that names the renamed thing ────────────────
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     let (moved, write) =
-        counted(indexed.rename_entity(&pet, &renamed, None, date(2026, 7, 3), None, None)).await;
+        counted(indexed.rename_entity(&pet, &renamed, None, date(2026, 7, 3), None, None, None))
+            .await;
     moved.expect("the rename lands");
     let (by_new, after) = counted(retrieval.search(&holding_companion(&renamed))).await;
     let by_new = by_new.expect("search ok");

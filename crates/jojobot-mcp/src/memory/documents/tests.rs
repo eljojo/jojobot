@@ -801,6 +801,7 @@ async fn a_section_addressed_by_a_former_handle_moves_behind_the_right_section()
             parent: None,
             recorded_at: None,
             override_token: None,
+            override_reason: None,
             sid: Some(sid),
         }))
         .await
@@ -1510,6 +1511,7 @@ async fn rename_document(jojobot: &Jojobot, from: &str, to: &str) {
             parent: None,
             recorded_at: None,
             override_token: None,
+            override_reason: None,
             sid: Some(TEST_SID.into()),
         }))
         .await
@@ -1641,6 +1643,7 @@ async fn two_puts_under_two_names_of_one_document_mint_different_keys() {
         parent: None,
         recorded_at: None,
         override_token: None,
+        override_reason: None,
         sid: Some(TEST_SID.into()),
     }))
     .await

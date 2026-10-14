@@ -49,6 +49,12 @@ pub struct RenameEntityArgs {
     /// never an exact handle collision — a handle has exactly one owner.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
+    /// **Why you insist**, sent beside `override_token` when the refusal rests
+    /// on the name alone: the same name under another kind, or a name that holds
+    /// or sits inside another. Without it that refusal stands. The reason is
+    /// kept on the renamed entity as `told_apart_by`, shown beside its name.
+    #[serde(default)]
+    pub(crate) override_reason: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -62,6 +68,9 @@ pub struct RenameEntityArgs {
 impl AcceptsOverride for RenameEntityArgs {
     fn override_token(&self) -> Option<&str> {
         self.override_token.as_deref()
+    }
+    fn override_reason(&self) -> Option<&str> {
+        self.override_reason.as_deref()
     }
 }
 
@@ -246,7 +255,8 @@ impl Jojobot {
                        near-miss guard a creation does: a collision with something that \
                        resembles it comes back status: blocked with candidates, liftable with \
                        override_token unless the collision is an exact handle, which can \
-                       never be forced. A `handle` that names nothing jojobot ever held is \
+                       never be forced; a collision on the name alone also needs \
+                       override_reason, shown beside the name. A `handle` that names nothing jojobot ever held is \
                        blocked with the nearest handles; one that named something BEFORE an \
                        earlier rename moved it is told what it is called now. Each argument's \
                        own description holds the rest."
@@ -316,6 +326,7 @@ impl Jojobot {
                 parent,
                 date,
                 args.override_token.as_deref(),
+                args.override_reason.as_deref(),
                 Some(caller.sid.as_str()),
             )
             .await
@@ -336,6 +347,36 @@ impl Jojobot {
                 // done for us.
                 self.registry.rebind_bot(&from, &entity.id);
                 let mut body = entity_json(&entity);
+                // **An override's reason is a key on the renamed thing.** The rename
+                // has landed and is never reported as failed, so a key that could
+                // not be written is said in the answer instead.
+                if let Some(reason) = kept_override_reason(
+                    args.override_token.as_deref(),
+                    args.override_reason.as_deref(),
+                ) {
+                    let mut claim = jojobot_domain::memory::NewFact::about(
+                        entity.id.clone(),
+                        entity.name.clone(),
+                        date,
+                    );
+                    claim.session = Some(caller.sid.as_str().to_string());
+                    claim
+                        .fields
+                        .insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+                    claim.sets.insert(guard::TOLD_APART_BY.to_string());
+                    let kept = matches!(
+                        jojobot_domain::request::armed(self.memory.capture(claim)).await,
+                        Ok(Guarded::Written(_))
+                    );
+                    if !kept && let Some(obj) = body.as_object_mut() {
+                        obj.insert(
+                            "reason_not_kept".into(),
+                            "the rename landed and the reason could not be kept: set the \
+                             told_apart_by key on the renamed entity"
+                                .into(),
+                        );
+                    }
+                }
                 if let Some(obj) = body.as_object_mut() {
                     for (key, value) in self.repoint_mailbox(&from, &entity.id).await {
                         obj.insert(key.into(), value);
@@ -404,11 +445,15 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(
-                &attempted,
-                &candidates,
-                Blocked::Renaming(TokenSlot::from(&args)),
-            )),
+            } => {
+                // **Each candidate carries what tells it apart**, when anyone said.
+                let candidates = self.told_apart(candidates).await;
+                Ok(blocked_result(
+                    &attempted,
+                    &candidates,
+                    Blocked::Renaming(TokenSlot::from(&args)),
+                ))
+            }
         }
     }
 }
@@ -426,6 +471,7 @@ mod tests {
             parent: None,
             recorded_at: None,
             override_token: None,
+            override_reason: None,
             sid: Some(sid.into()),
         }
     }
@@ -1004,6 +1050,7 @@ mod tests {
                     parent: Some("thing:no-such-bike".into()),
                     recorded_at: None,
                     override_token: None,
+                    override_reason: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -1037,6 +1084,7 @@ mod tests {
                     parent: Some("work:sigma".into()),
                     recorded_at: None,
                     override_token: None,
+                    override_reason: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -1066,6 +1114,7 @@ mod tests {
                         &EntityId::person("thing:no-such-bike"),
                         &[],
                     )),
+                    override_reason: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -1085,6 +1134,7 @@ mod tests {
                     parent: Some("thing:kettle".into()),
                     recorded_at: None,
                     override_token: None,
+                    override_reason: None,
                     sid: Some(sid),
                 }))
                 .await

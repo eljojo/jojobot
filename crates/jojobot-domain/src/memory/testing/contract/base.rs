@@ -27,6 +27,12 @@ async fn add_over_the_screen<M: Memory>(store: &M, new: NewEntity) -> Entity {
     store
         .add_entity(NewEntity {
             override_token: Some(guard::override_token(&attempted, &candidates)),
+            // Asked for only where the refusal rests on the name alone, so a
+            // refusal on the spelling is still lifted by the token it minted.
+            override_reason: candidates
+                .iter()
+                .any(|m| m.reason.needs_a_reason())
+                .then(|| "a different thing that shares the name".to_string()),
             ..new
         })
         .await
@@ -2071,7 +2077,7 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     .await;
 
     store
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None)
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -3784,6 +3790,222 @@ pub async fn update_entity_does_not_re_screen_the_handle<M: Memory>(store: &M) {
         .written()
         .expect("a near-slug settled at creation must not block a later name edit");
     assert_eq!(renamed.name, "Quite Another Three");
+}
+
+/// **A creation refused on the name alone is lifted by the token and a
+/// reason** (rule 498). The same name under another kind, and a name that
+/// holds another, are often two real things, so the caller may insist, and
+/// insisting means saying why. A refusal on the spelling alone keeps the token.
+pub async fn a_creation_refused_on_the_name_alone_needs_a_reason_beside_the_token<M: Memory>(
+    store: &M,
+) {
+    let held = EntityId::person("person:contract-x");
+    add(
+        store,
+        NewEntity::new(held.clone(), "Contract X", "user-named"),
+    )
+    .await;
+
+    // The same name under another kind.
+    let other_kind = NewEntity::new(
+        EntityId("place:contract-x".into()),
+        "Contract X",
+        "user-named",
+    );
+    let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = store
+        .add_entity(other_kind.clone())
+        .await
+        .expect("the call itself succeeds; the guard answers in the result")
+    else {
+        panic!("the same name under another kind must be refused");
+    };
+    assert!(
+        candidates
+            .iter()
+            .any(|m| m.handle == held && m.reason == guard::MatchReason::SameNameOtherKind),
+        "{candidates:?}"
+    );
+    let token = guard::override_token(&attempted, &candidates);
+    for reason in [None, Some(""), Some("  ")] {
+        assert!(
+            matches!(
+                store
+                    .add_entity(NewEntity {
+                        override_token: Some(token.clone()),
+                        override_reason: reason.map(str::to_string),
+                        ..other_kind.clone()
+                    })
+                    .await
+                    .expect("the call itself succeeds; the guard answers in the result"),
+                Guarded::Blocked { .. }
+            ),
+            "the token with the reason {reason:?} lifts a refusal on the name alone"
+        );
+    }
+    assert!(
+        matches!(
+            store
+                .add_entity(NewEntity {
+                    override_reason: Some("a place, not a project".into()),
+                    ..other_kind.clone()
+                })
+                .await
+                .expect("the call itself succeeds; the guard answers in the result"),
+            Guarded::Blocked { .. }
+        ),
+        "a reason without the token lifts nothing"
+    );
+    store
+        .add_entity(NewEntity {
+            override_token: Some(token),
+            override_reason: Some("a place, not a project".into()),
+            ..other_kind
+        })
+        .await
+        .expect("add_entity should succeed")
+        .written()
+        .expect("the token and a reason lift a refusal on the name alone");
+}
+
+/// **A rename and a relabel refused on the name alone take the same reason a
+/// creation does** (rule 498): the token alone is refused again, and the token
+/// with a reason lands.
+pub async fn a_rename_and_a_relabel_refused_on_the_name_alone_need_a_reason_beside_the_token<
+    M: Memory,
+>(
+    store: &M,
+) {
+    let held = EntityId::person("person:contract-zzz");
+    add(
+        store,
+        NewEntity::new(held.clone(), "Contract Zzz", "user-named"),
+    )
+    .await;
+
+    // A rename onto a handle whose slug another kind's name spells out.
+    let moving = EntityId("place:north-haverbook".into());
+    add(
+        store,
+        NewEntity::new(moving.clone(), "North Haverbook", "user-named"),
+    )
+    .await;
+    let to = EntityId("place:contract-zzz".into());
+    let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = store
+        .rename_entity(&moving, &to, None, date(2026, 9, 1), None, None, None)
+        .await
+        .expect("the call itself succeeds; the guard answers in the result")
+    else {
+        panic!("a rename onto a name another kind wears must be refused");
+    };
+    assert!(
+        candidates
+            .iter()
+            .any(|m| m.handle == held && m.reason == guard::MatchReason::SameNameOtherKind),
+        "{candidates:?}"
+    );
+    let token = guard::override_token(&attempted, &candidates);
+    assert!(
+        matches!(
+            store
+                .rename_entity(
+                    &moving,
+                    &to,
+                    None,
+                    date(2026, 9, 1),
+                    Some(&token),
+                    Some(" "),
+                    None
+                )
+                .await
+                .expect("the call itself succeeds; the guard answers in the result"),
+            Guarded::Blocked { .. }
+        ),
+        "the token alone lifts a rename refused on the name alone"
+    );
+    let renamed = store
+        .rename_entity(
+            &moving,
+            &to,
+            None,
+            date(2026, 9, 1),
+            Some(&token),
+            Some("a place, not a person"),
+            None,
+        )
+        .await
+        .expect("rename should succeed")
+        .written()
+        .expect("the token and a reason lift a rename refused on the name alone");
+    assert_eq!(renamed.id, to);
+
+    // A move that keeps the handle is never screened for resemblance: the thing
+    // still resembles the person it was kept apart from, and it moves freely.
+    let moved = store
+        .rename_entity(
+            &to,
+            &to,
+            Some(held.clone()),
+            date(2026, 9, 2),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("rename should succeed")
+        .written()
+        .expect("a reparent that keeps the handle is not screened for resemblance");
+    assert_eq!(moved.parent, Some(held.clone()));
+
+    // A relabel onto a name another kind wears.
+    let relabelled = EntityId("place:gorge-spot".into());
+    add(
+        store,
+        NewEntity::new(relabelled.clone(), "Gorge Spot", "user-named"),
+    )
+    .await;
+    let patch = |token: Option<&str>, reason: Option<&str>| EntityPatch {
+        name: Some("Contract Zzz".into()),
+        override_token: token.map(str::to_string),
+        override_reason: reason.map(str::to_string),
+        ..Default::default()
+    };
+    let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = store
+        .update_entity(&relabelled, patch(None, None))
+        .await
+        .expect("the call itself succeeds; the guard answers in the result")
+    else {
+        panic!("a name another kind wears must be refused");
+    };
+    let token = guard::override_token(&attempted, &candidates);
+    assert!(
+        matches!(
+            store
+                .update_entity(&relabelled, patch(Some(&token), None))
+                .await
+                .expect("the call itself succeeds; the guard answers in the result"),
+            Guarded::Blocked { .. }
+        ),
+        "the token alone lifts a relabel refused on the name alone"
+    );
+    let relabelled = store
+        .update_entity(
+            &relabelled,
+            patch(Some(&token), Some("sold under one sign")),
+        )
+        .await
+        .expect("update should succeed")
+        .written()
+        .expect("the token and a reason lift a relabel refused on the name alone");
+    assert_eq!(relabelled.name, "Contract Zzz");
 }
 
 /// Editing metadata that isn't the name is never screened — an entity's own
@@ -6668,7 +6890,15 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
     // Renamed BEFORE the drop — a fix that merely carried the room's own
     // served value forward would already show this name, coincidentally.
     store
-        .rename_entity(&pointer_v1, &pointer_v2, None, date(2026, 9, 3), None, None)
+        .rename_entity(
+            &pointer_v1,
+            &pointer_v2,
+            None,
+            date(2026, 9, 3),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("rename ok")
         .written()
@@ -6689,7 +6919,15 @@ pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>
     // Renamed AGAIN, AFTER the drop — only a permanent id, never a handle
     // the drop happened to see, survives this one.
     store
-        .rename_entity(&pointer_v2, &pointer_v3, None, date(2026, 9, 5), None, None)
+        .rename_entity(
+            &pointer_v2,
+            &pointer_v3,
+            None,
+            date(2026, 9, 5),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("rename ok")
         .written()
@@ -8380,6 +8618,11 @@ async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M
         store,
         NewEntity {
             override_token: Some(token),
+            // Asked for only where the refusal rests on the name alone.
+            override_reason: candidates
+                .iter()
+                .any(|m| m.reason.needs_a_reason())
+                .then(|| "a genuinely different thing".to_string()),
             ..NewEntity::new(near.clone(), "Near Miss", "user-named")
         },
     )
@@ -8728,7 +8971,15 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_an_edge<M: Memory>(
 
     let renamed_to = EntityId("thing:contract-hijack-elsewhere".into());
     store
-        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None, None)
+        .rename_entity(
+            &original,
+            &renamed_to,
+            None,
+            date(2026, 4, 21),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("rename should succeed")
         .written()
@@ -8785,7 +9036,15 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_ref<M: Memory>(st
 
     let renamed_to = EntityId("thing:contract-ref-departed".into());
     store
-        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None, None)
+        .rename_entity(
+            &original,
+            &renamed_to,
+            None,
+            date(2026, 4, 21),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("rename should succeed")
         .written()
@@ -8836,7 +9095,15 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_parent<M: Memory>
 
     let renamed_to = EntityId("thing:contract-parented-departed".into());
     store
-        .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None, None)
+        .rename_entity(
+            &original,
+            &renamed_to,
+            None,
+            date(2026, 4, 21),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("rename should succeed")
         .written()
@@ -8899,6 +9166,7 @@ pub async fn a_same_handle_rename_with_a_different_parent_reparents<M: Memory>(s
             date(2026, 6, 1),
             None,
             None,
+            None,
         )
         .await
         .expect("a same-handle call naming a different parent is a reparent")
@@ -8933,7 +9201,7 @@ pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memo
     .await;
 
     let no_parent_named = store
-        .rename_entity(&child, &child, None, date(2026, 6, 1), None, None)
+        .rename_entity(&child, &child, None, date(2026, 6, 1), None, None, None)
         .await;
     assert!(
         matches!(no_parent_named, Err(MemoryError::NothingToRename { .. })),
@@ -8946,6 +9214,7 @@ pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memo
             &child,
             Some(home.clone()),
             date(2026, 6, 1),
+            None,
             None,
             None,
         )
@@ -8971,6 +9240,7 @@ pub async fn a_same_handle_rename_naming_an_unknown_parent_is_blocked<M: Memory>
             &child,
             Some(unknown_parent.clone()),
             date(2026, 6, 1),
+            None,
             None,
             None,
         )
@@ -9802,7 +10072,7 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     let target = EntityId("view:contract-supplied-rename-target".into());
 
     let err = store
-        .rename_entity(&shipped, &target, None, date(2026, 6, 10), None, None)
+        .rename_entity(&shipped, &target, None, date(2026, 6, 10), None, None, None)
         .await
         .expect_err("a rename of a build-supplied handle must be refused, not silently accepted");
     assert!(
@@ -9830,7 +10100,7 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     .await;
     let now = EntityId("thing:contract-supplied-rename-stored-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 10), None, None)
+        .rename_entity(&was, &now, None, date(2026, 6, 10), None, None, None)
         .await
         .expect("a stored entity's rename should succeed")
         .written()
@@ -10240,7 +10510,7 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
     .await;
     let now = EntityId("work:contract-double-rename-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 11), None, None)
+        .rename_entity(&was, &now, None, date(2026, 6, 11), None, None, None)
         .await
         .expect("the first rename lands")
         .written()
@@ -10248,7 +10518,7 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
 
     let elsewhere = EntityId("person:contract-double-rename-elsewhere".into());
     let moved = store
-        .rename_entity(&was, &elsewhere, None, date(2026, 6, 12), None, None)
+        .rename_entity(&was, &elsewhere, None, date(2026, 6, 12), None, None, None)
         .await
         .expect_err("a stale handle must not be renamed as if it still had a row");
     assert!(
@@ -10259,7 +10529,15 @@ pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(
 
     let never = EntityId("person:contract-rename-attempt-never-existed".into());
     let missed = store
-        .rename_entity(&never, &elsewhere, None, date(2026, 6, 12), None, None)
+        .rename_entity(
+            &never,
+            &elsewhere,
+            None,
+            date(2026, 6, 12),
+            None,
+            None,
+            None,
+        )
         .await
         .expect_err("a handle nothing ever held must miss");
     assert!(
@@ -12621,7 +12899,7 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
     .await;
 
     store
-        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None)
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -15100,7 +15378,15 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     // **Without an override.** The survivor now carries the folded side's name,
     // and the forwarding row still wears it.
     let landed = store
-        .rename_entity(&survivor, &renamed, None, date(2026, 9, 3), None, None)
+        .rename_entity(
+            &survivor,
+            &renamed,
+            None,
+            date(2026, 9, 3),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("the rename answers");
     assert!(
@@ -15124,7 +15410,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     };
     assert_eq!(said(&folded).await, Some(renamed.clone()));
     let refused = store
-        .rename_entity(&folded, &folded, None, date(2026, 9, 5), None, None)
+        .rename_entity(&folded, &folded, None, date(2026, 9, 5), None, None, None)
         .await
         .expect_err("a forwarding row is not renamed");
     let MemoryError::AlreadyMerged { into, .. } = &refused else {
@@ -15138,7 +15424,7 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     // **The paired negative**: a rename that nears another thing is blocked.
     let near = EntityId::person("person:contract-survives-other-later");
     let blocked = store
-        .rename_entity(&renamed, &near, None, date(2026, 9, 4), None, None)
+        .rename_entity(&renamed, &near, None, date(2026, 9, 4), None, None, None)
         .await
         .expect("the rename answers");
     let Guarded::Blocked { candidates, .. } = &blocked else {
@@ -15154,7 +15440,15 @@ pub async fn a_survivor_renamed_after_a_fold_is_not_a_near_miss_of_its_folded_si
     );
 
     let again = store
-        .rename_entity(&renamed, &renamed_again, None, date(2026, 9, 6), None, None)
+        .rename_entity(
+            &renamed,
+            &renamed_again,
+            None,
+            date(2026, 9, 6),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("the rename answers");
     assert!(matches!(again, Guarded::Written(_)), "{again:?}");
@@ -15229,7 +15523,7 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     .await;
 
     store
-        .rename_entity(&before, &after, None, date(2026, 7, 2), None, None)
+        .rename_entity(&before, &after, None, date(2026, 7, 2), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -17515,6 +17809,8 @@ macro_rules! all_cases {
         $m!(update_entity_screens_a_colliding_alias($store));
         $m!(update_entity_is_not_blocked_by_its_own_labels($store));
         $m!(update_entity_does_not_re_screen_the_handle($store));
+        $m!(a_creation_refused_on_the_name_alone_needs_a_reason_beside_the_token($store));
+        $m!(a_rename_and_a_relabel_refused_on_the_name_alone_need_a_reason_beside_the_token($store));
         $m!(update_entity_without_a_rename_is_not_screened($store));
         $m!(update_entity_unknown_handle_never_creates($store));
         $m!(a_second_rename_of_a_stale_handle_reports_where_it_went($store));

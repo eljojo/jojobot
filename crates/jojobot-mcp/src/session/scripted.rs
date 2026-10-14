@@ -199,10 +199,19 @@ impl Memory for Scripted {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(

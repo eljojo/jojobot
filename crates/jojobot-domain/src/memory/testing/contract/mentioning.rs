@@ -787,7 +787,7 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
 
     let now = EntityId::person("person:contract-scope-owner-now");
     mentioning
-        .rename_entity(&was, &now, None, date(2026, 7, 2), None, None)
+        .rename_entity(&was, &now, None, date(2026, 7, 2), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -1043,7 +1043,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
 
     let now = EntityId("work:contract-rename-now".into());
     mentioning
-        .rename_entity(&was, &now, None, date(2026, 6, 2), None, None)
+        .rename_entity(&was, &now, None, date(2026, 6, 2), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -1228,7 +1228,7 @@ pub async fn an_edit_that_touches_only_the_content_still_follows_a_later_rename<
 
     let now = EntityId("work:contract-edit-pointer-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 11), None, None)
+        .rename_entity(&was, &now, None, date(2026, 6, 11), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -1295,7 +1295,7 @@ pub async fn a_retraction_still_follows_a_later_rename<M: Memory + ?Sized>(store
 
     let now = EntityId("work:contract-retract-pointer-now".into());
     store
-        .rename_entity(&was, &now, None, date(2026, 6, 14), None, None)
+        .rename_entity(&was, &now, None, date(2026, 6, 14), None, None, None)
         .await
         .expect("the rename lands")
         .written()
@@ -1348,7 +1348,15 @@ pub async fn a_former_handle_reused_after_a_rename_resolves_to_the_newest_event<
     .await;
     let first_gone = EntityId("work:contract-reused-former-first-gone".into());
     store
-        .rename_entity(&shared, &first_gone, None, date(2026, 6, 20), None, None)
+        .rename_entity(
+            &shared,
+            &first_gone,
+            None,
+            date(2026, 6, 20),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("the first rename lands")
         .written()
@@ -1361,7 +1369,15 @@ pub async fn a_former_handle_reused_after_a_rename_resolves_to_the_newest_event<
     .await;
     let second_gone = EntityId("work:contract-reused-former-second-gone".into());
     store
-        .rename_entity(&shared, &second_gone, None, date(2026, 6, 21), None, None)
+        .rename_entity(
+            &shared,
+            &second_gone,
+            None,
+            date(2026, 6, 21),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("the second rename of the reused handle lands")
         .written()
@@ -1448,6 +1464,7 @@ pub async fn a_retype_and_a_reparent_are_each_a_rename<M: Memory + ?Sized>(store
             &now,
             Some(parent.clone()),
             date(2026, 6, 3),
+            None,
             None,
             None,
         )

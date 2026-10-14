@@ -71,6 +71,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
         json!({
             "kind": "person", "handle": "homer-simpson", "name": "Homer Simpson",
             "source": "user-named", "override_token": token,
+            "override_reason": "the family name, not the first",
         }),
     )
     .await
@@ -114,6 +115,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
         json!({
             "handle": "person:homer-simpson", "name": "Homer",
             "override_token": relabel.advised("override_token"),
+            "override_reason": "the first name alone",
         }),
     )
     .await

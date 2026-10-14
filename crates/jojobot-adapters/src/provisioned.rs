@@ -225,6 +225,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                     name: supplied.name.clone(),
                     source: supplied.source.clone(),
                     reason: guard::MatchReason::ExactHandle,
+                    told_apart_by: None,
                 }],
             });
         }
@@ -248,6 +249,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                     name: supplied.name.clone(),
                     source: supplied.source.clone(),
                     reason: guard::MatchReason::ExactHandle,
+                    told_apart_by: None,
                 }],
             });
         }
@@ -301,6 +303,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                     name: supplied.name.clone(),
                     source: supplied.source.clone(),
                     reason: guard::MatchReason::ExactHandle,
+                    told_apart_by: None,
                 }],
             });
         }
@@ -455,6 +458,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                     name: supplied.name.clone(),
                     source: supplied.source.clone(),
                     reason: guard::MatchReason::ExactHandle,
+                    told_apart_by: None,
                 }],
             });
         }
@@ -477,6 +481,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         if self.provisions.record_for(from).is_some() {
@@ -485,7 +490,15 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             });
         }
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     /// **The build's own half has no row to mark.** Same shape as

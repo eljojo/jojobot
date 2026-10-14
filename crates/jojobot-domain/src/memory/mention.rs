@@ -1278,10 +1278,19 @@ impl super::Memory for Mentioning {
         parent: Option<EntityId>,
         date: jiff::civil::Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<super::Guarded<Entity>, super::MemoryError> {
         self.inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await
     }
     async fn archive_entity(

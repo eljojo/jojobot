@@ -330,6 +330,7 @@ pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
             parent: None,
             boot: Default::default(),
             override_token: None,
+            override_reason: None,
         })
         .await
         .expect("the store writes it");

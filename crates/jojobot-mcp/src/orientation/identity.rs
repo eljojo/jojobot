@@ -1553,6 +1553,7 @@ mod tests {
                 jiff::civil::date(2026, 9, 1),
                 None,
                 None,
+                None,
             )
             .await
             .expect("rename ok")
@@ -1608,6 +1609,7 @@ mod tests {
                 jiff::civil::date(2026, 9, 1),
                 None,
                 None,
+                None,
             )
             .await
             .expect("rename ok")
@@ -1659,6 +1661,7 @@ mod tests {
             parent: None,
             recorded_at: None,
             override_token: None,
+            override_reason: None,
             sid: Some(sid.into()),
         };
         jojobot
@@ -1679,6 +1682,7 @@ mod tests {
                 &EntityId("bot:sigma".into()),
                 None,
                 jiff::civil::date(2026, 9, 1),
+                None,
                 None,
                 None,
             )

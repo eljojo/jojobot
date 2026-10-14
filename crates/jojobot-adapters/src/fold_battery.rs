@@ -346,6 +346,7 @@ async fn add(store: &dyn Memory, handle: &str, name: &str, parent: Option<&str>)
             store
                 .add_entity(NewEntity {
                     override_token: Some(token),
+                    override_reason: Some("a fixture sharing a name".into()),
                     ..new
                 })
                 .await
@@ -553,6 +554,7 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
         &id("work:tau"),
         None,
         date(2026, 9, 4),
+        None,
         None,
         None,
     )

@@ -401,6 +401,7 @@ impl Memory for IndexedMemory {
         parent: Option<EntityId>,
         date: Date,
         override_token: Option<&str>,
+        override_reason: Option<&str>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
@@ -412,7 +413,15 @@ impl Memory for IndexedMemory {
         };
         let written = self
             .inner
-            .rename_entity(from, to, parent, date, override_token, session)
+            .rename_entity(
+                from,
+                to,
+                parent,
+                date,
+                override_token,
+                override_reason,
+                session,
+            )
             .await?;
         if let Guarded::Written(entity) = &written {
             let mut reread = vec![self.refresh(&entity.id).await];

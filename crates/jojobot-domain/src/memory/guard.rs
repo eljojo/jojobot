@@ -58,6 +58,24 @@ pub enum MatchReason {
     NearName,
 }
 
+impl MatchReason {
+    /// **Whether lifting a refusal for this reason takes a reason from the
+    /// caller, beside the token** (rule 498). This is the one place that says
+    /// so. A resemblance of the NAME alone is often two real things, so the
+    /// caller may insist, and insisting means saying why. A resemblance of the
+    /// spelling is a typo's distance and keeps the token alone.
+    pub fn needs_a_reason(self) -> bool {
+        match self {
+            MatchReason::SameNameOtherKind | MatchReason::Contains => true,
+            MatchReason::ExactHandle
+            | MatchReason::SelfParent
+            | MatchReason::SameName
+            | MatchReason::NearSlug
+            | MatchReason::NearName => false,
+        }
+    }
+}
+
 /// An existing entity the guard suspects the incoming write means. Carries what
 /// the caller needs to decide — handle, kind, name, **source** (where this one
 /// came from is usually what settles same-or-different) — and why it matched.
@@ -73,7 +91,19 @@ pub struct EntityMatch {
     pub source: String,
     /// Why the guard flagged it.
     pub reason: MatchReason,
+    /// **What tells this one apart from a thing that resembles it**, when a
+    /// caller who insisted on a resemblance said so (the thing's
+    /// [`TOLD_APART_BY`] key). Filled by the verb that serves the refusal, from
+    /// the thing's own fields: the guard screens rows and holds no fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub told_apart_by: Option<String>,
 }
+
+/// **The key an override's reason is kept under**, on the thing that was made,
+/// renamed or relabelled over a resemblance. It is an ordinary field of the
+/// thing, so it is shown beside the thing's name wherever the two are seen
+/// together: a refusal's candidate list and a search hit.
+pub const TOLD_APART_BY: &str = "told_apart_by";
 
 /// The guard's verdict on a write.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +238,7 @@ pub fn screen_under(
                 name: e.name.clone(),
                 source: e.source.clone(),
                 reason,
+                told_apart_by: None,
             })
         })
         .collect();
@@ -252,6 +283,7 @@ pub fn screen_labels(
                 name: e.name.clone(),
                 source: e.source.clone(),
                 reason,
+                told_apart_by: None,
             })
         })
         .collect();
@@ -466,8 +498,30 @@ pub fn decide(
     labels: &[&str],
     index: &[Entity],
     override_token: Option<&str>,
+    override_reason: Option<&str>,
 ) -> Decision {
-    decide_under(handle, labels, None, index, override_token)
+    decide_under(handle, labels, None, index, override_token, override_reason)
+}
+
+/// **Whether a token and a reason lift this refusal** (rule 498). The token
+/// must be the one THIS refusal minted. A refusal that rests on the name alone
+/// ([`MatchReason::needs_a_reason`]) also takes a reason, and a reason that is
+/// empty once trimmed is no reason. An exact handle collision is lifted by
+/// nothing.
+fn lifted(
+    handle: &EntityId,
+    matches: &[EntityMatch],
+    override_token: Option<&str>,
+    override_reason: Option<&str>,
+) -> bool {
+    if matches.iter().any(|m| m.reason == MatchReason::ExactHandle) {
+        return false;
+    }
+    if !collision(handle, matches).honours(override_token) {
+        return false;
+    }
+    let owed = matches.iter().any(|m| m.reason.needs_a_reason());
+    !owed || override_reason.is_some_and(|reason| !reason.trim().is_empty())
 }
 
 /// [`decide`] for a write that also says what it sits under: a creation, or a
@@ -479,13 +533,10 @@ pub fn decide_under(
     parent: Option<&EntityId>,
     index: &[Entity],
     override_token: Option<&str>,
+    override_reason: Option<&str>,
 ) -> Decision {
     let matches = screen_under(handle, labels, parent, index);
-    if matches.is_empty() {
-        return Decision::Proceed;
-    }
-    let exact = matches.iter().any(|m| m.reason == MatchReason::ExactHandle);
-    if !exact && collision(handle, &matches).honours(override_token) {
+    if matches.is_empty() || lifted(handle, &matches, override_token, override_reason) {
         return Decision::Proceed;
     }
     Decision::Block(matches)
@@ -548,6 +599,7 @@ pub fn decide_parent(child: &Entity, parent: &EntityId, index: &[Entity]) -> Dec
             name: child.name.clone(),
             source: child.source.clone(),
             reason: MatchReason::SelfParent,
+            told_apart_by: None,
         }]);
     }
     decide_existing(parent, index)
@@ -577,13 +629,15 @@ pub fn decide_parent(child: &Entity, parent: &EntityId, index: &[Entity]) -> Dec
 ///   boot) is screened against nothing, with no special case needed for it.
 ///
 /// The token clears any suspicion here: only a handle can collide
-/// unforgivably, and no handle is moving.
+/// unforgivably, and no handle is moving. A refusal that rests on the name
+/// alone also takes a reason (see [`lifted`]).
 pub fn decide_relabel(
     handle: &EntityId,
     incoming: &[&str],
     current: &[&str],
     index: &[Entity],
     override_token: Option<&str>,
+    override_reason: Option<&str>,
 ) -> Decision {
     let worn = folded(current);
     let added: Vec<&str> = incoming
@@ -595,7 +649,7 @@ pub fn decide_relabel(
         return Decision::Proceed;
     }
     let matches = screen_labels(handle.kind(), &added, Some(handle), index);
-    if matches.is_empty() || collision(handle, &matches).honours(override_token) {
+    if matches.is_empty() || lifted(handle, &matches, override_token, override_reason) {
         Decision::Proceed
     } else {
         Decision::Block(matches)
@@ -666,7 +720,8 @@ mod tests {
     #[test]
     fn a_second_person_at_the_same_handle_can_never_be_forced_through() {
         let taken = EntityId("person:alpha".into());
-        let Decision::Block(candidates) = decide(&taken, &["Alpha Two"], &index(), None) else {
+        let Decision::Block(candidates) = decide(&taken, &["Alpha Two"], &index(), None, None)
+        else {
             panic!("a colliding handle must block");
         };
         assert_eq!(candidates[0].reason, MatchReason::ExactHandle);
@@ -677,7 +732,8 @@ mod tests {
         );
 
         let minted = override_token(&taken, &candidates);
-        let Decision::Block(again) = decide(&taken, &["Alpha Two"], &index(), Some(&minted)) else {
+        let Decision::Block(again) = decide(&taken, &["Alpha Two"], &index(), Some(&minted), None)
+        else {
             panic!("a colliding handle stays blocked, token or not");
         };
         assert_eq!(again[0].reason, MatchReason::ExactHandle);
@@ -688,7 +744,8 @@ mod tests {
     #[test]
     fn a_qualified_slug_is_flagged_by_name_and_its_own_token_clears_it() {
         let qualified = EntityId("person:alpha-two".into());
-        let Decision::Block(candidates) = decide(&qualified, &["Alpha"], &index(), None) else {
+        let Decision::Block(candidates) = decide(&qualified, &["Alpha"], &index(), None, None)
+        else {
             panic!("a same-name person must block");
         };
         assert_eq!(candidates[0].reason, MatchReason::SameName);
@@ -698,6 +755,7 @@ mod tests {
                 &["Alpha"],
                 &index(),
                 Some(&override_token(&qualified, &candidates)),
+                None,
             ),
             Decision::Proceed,
             "the token this refusal minted resolves a fuzzy match"
@@ -729,7 +787,7 @@ mod tests {
             ("place:golden-daredevil-gorge", "place:daredevil-gorge"),
         ] {
             let handle = EntityId(incoming.into());
-            let Decision::Block(candidates) = decide(&handle, &[], &idx, None) else {
+            let Decision::Block(candidates) = decide(&handle, &[], &idx, None, None) else {
                 panic!("{incoming} must block: its tokens sit inside {expected}");
             };
             assert_eq!(candidates[0].handle.as_str(), expected);
@@ -744,20 +802,34 @@ mod tests {
     fn a_containment_refusal_is_lifted_by_its_own_token() {
         let idx = vec![entity("place:springfield", "Springfield", "user-named")];
         let mall = EntityId("place:springfield-mall".into());
-        let Decision::Block(candidates) = decide(&mall, &[], &idx, None) else {
+        let Decision::Block(candidates) = decide(&mall, &[], &idx, None, None) else {
             panic!("a containing handle must block");
         };
         assert!(
             matches!(
-                decide(&mall, &[], &idx, Some("0000000000000000")),
+                decide(&mall, &[], &idx, Some("0000000000000000"), None),
                 Decision::Block(_)
             ),
             "a token nobody minted lifts nothing"
         );
+        let minted = override_token(&mall, &candidates);
+        assert!(
+            matches!(
+                decide(&mall, &[], &idx, Some(&minted), None),
+                Decision::Block(_)
+            ),
+            "a refusal on the name alone takes a reason beside its token"
+        );
         assert_eq!(
-            decide(&mall, &[], &idx, Some(&override_token(&mall, &candidates))),
+            decide(
+                &mall,
+                &[],
+                &idx,
+                Some(&minted),
+                Some("a mall, not the town")
+            ),
             Decision::Proceed,
-            "the token this refusal minted says the two really are different"
+            "the token this refusal minted, with a reason, says the two really are different"
         );
     }
 
@@ -787,7 +859,7 @@ mod tests {
         ] {
             let handle = EntityId(unrelated.into());
             assert_eq!(
-                decide(&handle, &["Somewhere Else"], &idx, None),
+                decide(&handle, &["Somewhere Else"], &idx, None, None),
                 Decision::Proceed,
                 "{unrelated} overlaps but is not contained, so it is not a near miss"
             );
@@ -801,7 +873,7 @@ mod tests {
     fn only_this_refusals_own_token_lifts_it() {
         let qualified = EntityId("person:alpha-two".into());
         let elsewhere = EntityId("project:atlas-two".into());
-        let Decision::Block(other) = decide(&elsewhere, &["Atlas"], &index(), None) else {
+        let Decision::Block(other) = decide(&elsewhere, &["Atlas"], &index(), None, None) else {
             panic!("a same-name project must block");
         };
         let borrowed = override_token(&elsewhere, &other);
@@ -809,7 +881,7 @@ mod tests {
         for offered in [borrowed.as_str(), "0000000000000000", ""] {
             assert!(
                 matches!(
-                    decide(&qualified, &["Alpha"], &index(), Some(offered)),
+                    decide(&qualified, &["Alpha"], &index(), Some(offered), None),
                     Decision::Block(_)
                 ),
                 "a token this refusal did not mint lifts nothing: {offered:?}"
@@ -981,6 +1053,7 @@ mod tests {
                 &[incoming_name],
                 std::slice::from_ref(&existing),
                 None,
+                None,
             );
             let blocked = matches!(decision, Decision::Block(_));
             // The distance rides the failure, so a red reports the number
@@ -1026,12 +1099,13 @@ mod tests {
                 &EntityId("person:zenith".into()),
                 &["Zenith"],
                 &index(),
+                None,
                 None
             ),
             Decision::Proceed
         );
         assert_eq!(
-            decide(&EntityId("topic:widgets".into()), &[], &[], None),
+            decide(&EntityId("topic:widgets".into()), &[], &[], None, None),
             Decision::Proceed
         );
     }
@@ -1106,6 +1180,7 @@ mod tests {
             &["Max Power"],
             &idx,
             None,
+            None,
         ) else {
             panic!("a name the entity already answers to must block");
         };
@@ -1139,6 +1214,7 @@ mod tests {
             &EntityId("person:barney-gumble".into()),
             &["Barney Gumble", "Homer Simpson"],
             &idx,
+            None,
             None,
         ) else {
             panic!("an incoming alias that names someone here must block");
@@ -1235,7 +1311,14 @@ mod tests {
         index: &[Entity],
         override_token: Option<&str>,
     ) -> Decision {
-        decide_relabel(handle, &[new_name], &[current_name], index, override_token)
+        decide_relabel(
+            handle,
+            &[new_name],
+            &[current_name],
+            index,
+            override_token,
+            None,
+        )
     }
 
     /// A rename onto a name the index already holds is blocked, and the token
@@ -1341,9 +1424,14 @@ mod tests {
             entity("person:zenith", "Zenith", "user-named"),
         ];
         let borrower = EntityId("person:zenith".into());
-        let Decision::Block(candidates) =
-            decide_relabel(&borrower, &["Zenith", "Max Power"], &["Zenith"], &idx, None)
-        else {
+        let Decision::Block(candidates) = decide_relabel(
+            &borrower,
+            &["Zenith", "Max Power"],
+            &["Zenith"],
+            &idx,
+            None,
+            None,
+        ) else {
             panic!("an alias onto a name another entity wears must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
@@ -1357,6 +1445,7 @@ mod tests {
                 &["Zenith"],
                 &idx,
                 Some(&override_token(&borrower, &candidates)),
+                None,
             ),
             Decision::Proceed
         );
@@ -1381,6 +1470,7 @@ mod tests {
                 &["Second Alpha", "Alpha"],
                 &["Second Alpha", "Alpha"],
                 &idx,
+                None,
                 None
             ),
             Decision::Proceed,
@@ -1392,13 +1482,14 @@ mod tests {
                 &["  SECOND   alpha ", "alpha"],
                 &["Second Alpha", "Alpha"],
                 &idx,
+                None,
                 None
             ),
             Decision::Proceed,
             "case and spacing folded on both sides"
         );
         assert_eq!(
-            decide_relabel(&settled, &[], &["Second Alpha"], &idx, None),
+            decide_relabel(&settled, &[], &["Second Alpha"], &idx, None, None),
             Decision::Proceed,
             "a patch carrying no label at all screens against nothing"
         );
@@ -1709,13 +1800,13 @@ mod tests {
         let alpha = EntityId("person:alpha".into());
         let gama = EntityId("person:gama".into());
         assert_eq!(
-            decide_relabel(&alpha, &["Alpha", "Alphaa"], &["Alpha"], &known, None),
+            decide_relabel(&alpha, &["Alpha", "Alphaa"], &["Alpha"], &known, None, None),
             Decision::Proceed,
             "a near spelling of its own name"
         );
         assert!(
             matches!(
-                decide_relabel(&gama, &["Gama", "Alphaa"], &["Gama"], &known, None),
+                decide_relabel(&gama, &["Gama", "Alphaa"], &["Gama"], &known, None, None),
                 Decision::Block(found) if found.iter().any(|m| m.handle == alpha)
             ),
             "the same spelling is a near miss of the other entity"
