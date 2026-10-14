@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use jojobot_domain::memory::claim_walk::{ClaimMove, MergeLoop, follow_claim};
+use jojobot_domain::memory::numbered::{
+    NUMBERS_BY, derived_formers, nearest_numbers, numbered_handle,
+};
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FieldAges, FieldBacking,
     FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fields,
@@ -100,6 +103,11 @@ impl Doc {
 pub(super) struct Image {
     entities: Vec<Entity>,
     former: Vec<FormerHandle>,
+    /// **The handles the held numbers make**, served as former handles and
+    /// derived from the documents held, so a write that moves a number moves
+    /// its handle with it. Never read from the store: it is the rename history
+    /// alone that `former` holds.
+    numbered: Vec<FormerHandle>,
     types: Vec<DeclaredType>,
     kinds: Vec<(String, Origin)>,
     docs: HashMap<EntityId, Doc>,
@@ -175,9 +183,17 @@ impl Image {
         kinds: Vec<(String, Origin)>,
         docs: HashMap<EntityId, Doc>,
     ) -> Image {
+        // The store's list of former handles carries the numbered ones it
+        // derived at the moment of the read; the image derives its own, from the
+        // documents it holds, so they stay current as the documents change.
+        let former = former
+            .into_iter()
+            .filter(|f| numbered_handle(&f.former).is_none())
+            .collect();
         let mut image = Image {
             entities,
             former,
+            numbered: Vec::new(),
             types,
             kinds,
             docs,
@@ -189,6 +205,7 @@ impl Image {
         };
         image.reindex();
         image.index_docs();
+        image.derive_numbered();
         image
     }
 
@@ -222,7 +239,31 @@ impl Image {
             self.docs.retain(|handle, _| live.contains(handle));
         }
         self.index_docs();
+        self.derive_numbered();
         self.referring.extend(referring);
+    }
+
+    /// **Each thing's folded fields by handle**, as the documents hold them.
+    fn fields_by_handle(&self) -> BTreeMap<EntityId, BTreeMap<String, String>> {
+        self.docs
+            .iter()
+            .map(|(handle, doc)| (handle.clone(), doc.fields.clone()))
+            .collect()
+    }
+
+    /// Derive the handles the held numbers make. A pass over the documents,
+    /// paid by a write and never by a read, and skipped altogether while no
+    /// thing numbers its members.
+    fn derive_numbered(&mut self) {
+        if !self
+            .docs
+            .values()
+            .any(|doc| doc.fields.contains_key(NUMBERS_BY))
+        {
+            self.numbered.clear();
+            return;
+        }
+        self.numbered = derived_formers(&self.entities, &self.fields_by_handle());
     }
 
     /// Rebuild the two lookups from the documents held. A single pass over the
@@ -273,7 +314,12 @@ impl Image {
         if let Some(at) = self.by_id.get(id) {
             return self.entities.get(*at);
         }
-        let badge = &self.former.iter().find(|f| &f.former == id)?.badge;
+        let badge = &self
+            .former
+            .iter()
+            .chain(self.numbered.iter())
+            .find(|f| &f.former == id)?
+            .badge;
         self.by_badge
             .get(badge)
             .and_then(|at| self.entities.get(*at))
@@ -284,7 +330,9 @@ impl Image {
     fn unknown(&self, id: &EntityId) -> MemoryError {
         MemoryError::UnknownEntity {
             attempted: id.to_string(),
-            nearest: guard::screen(id, &[], &self.entities),
+            nearest: nearest_numbers(id, &self.entities, &self.fields_by_handle())
+                .filter(|held| !held.is_empty())
+                .unwrap_or_else(|| guard::screen(id, &[], &self.entities)),
         }
     }
 
@@ -308,7 +356,11 @@ impl Image {
     }
 
     pub fn former(&self) -> Vec<FormerHandle> {
-        self.former.clone()
+        self.former
+            .iter()
+            .chain(self.numbered.iter())
+            .cloned()
+            .collect()
     }
 
     pub fn types(&self) -> Vec<DeclaredType> {

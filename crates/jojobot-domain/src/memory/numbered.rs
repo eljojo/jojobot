@@ -107,7 +107,7 @@ impl Numbered {
 /// **Every descendant of `root`, however deep**, by the parent pointers. Merged
 /// things are not members: a fold moved what they held to the survivor. A cycle
 /// in the pointers ends the walk rather than looping.
-fn descendants<'a>(root: &EntityId, entities: &'a [Entity]) -> Vec<&'a Entity> {
+pub fn descendants<'a>(root: &EntityId, entities: &'a [Entity]) -> Vec<&'a Entity> {
     let mut found: Vec<&Entity> = Vec::new();
     let mut seen: BTreeSet<&EntityId> = BTreeSet::from([root]);
     let mut frontier: Vec<&EntityId> = vec![root];

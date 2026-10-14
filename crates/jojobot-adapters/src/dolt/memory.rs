@@ -1247,7 +1247,9 @@ impl DoltMemory {
             .find(|f| &f.former == id)
             .map(|f| f.badge.clone())
         else {
-            return Ok(None);
+            // **The last tier: a number a member holds.** Tried only for a
+            // handle that ends in a slash and a whole number.
+            return self.resolve_numbered(tx, id).await;
         };
         self.resolve_by_badge(tx, &badge).await
     }
@@ -2349,7 +2351,7 @@ impl DoltMemory {
         let Some(mut entity) = rows.iter().find(|e| &e.id == handle).cloned() else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
-                nearest: guard::screen(handle, &[], &rows),
+                nearest: self.nearest(tx, handle, &rows).await?,
             });
         };
         // **The screen alone reads the wider set** — rows plus what the build
@@ -2463,7 +2465,7 @@ impl DoltMemory {
             let Some((source_key, _)) = self.resolve(tx, &source.home).await? else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
-                    nearest: guard::screen(&source.home, &[], &index),
+                    nearest: self.nearest(tx, &source.home, &index).await?,
                 });
             };
             let resolved_source = FactAddress::new(source_key, source.local.clone());
@@ -2706,6 +2708,7 @@ impl DoltMemory {
             &after,
             &governs,
         )?;
+        self.guard_numbering(tx, &subject_handle, &after).await?;
         Self::write_fact(tx, &stored, &self.clock, fact.session.as_deref()).await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing. **A reference-typed value is
@@ -4568,9 +4571,29 @@ impl Memory for DoltMemory {
             .collect())
     }
 
+    async fn numbering_of(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Option<jojobot_domain::memory::numbered::Numbering>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((key, handle)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
+            });
+        };
+        let scope = Self::collection_at(&mut tx, &handle, &key).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(scope
+            .as_ref()
+            .map(jojobot_domain::memory::numbered::Numbering::from))
+    }
+
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let out = Self::former_handles_in(&mut tx).await?;
+        let mut out = Self::former_handles_in(&mut tx).await?;
+        out.extend(self.derived_formers_in(&mut tx).await?);
         tx.commit().await.map_err(store)?;
         Ok(out)
     }
@@ -4619,7 +4642,7 @@ impl Memory for DoltMemory {
                 None => {
                     return Err(MemoryError::UnknownEntity {
                         attempted: handle.to_string(),
-                        nearest: guard::screen(handle, &[], &rows),
+                        nearest: self.nearest(&mut tx, handle, &rows).await?,
                     });
                 }
             }
@@ -4681,7 +4704,7 @@ impl Memory for DoltMemory {
             }
             return Err(MemoryError::UnknownEntity {
                 attempted: id.to_string(),
-                nearest: guard::screen(id, &[], &rows),
+                nearest: self.nearest(&mut tx, id, &rows).await?,
             });
         };
         // A forwarding row is not a thing to archive, for the same reason it
@@ -4744,7 +4767,7 @@ impl Memory for DoltMemory {
             }
             return Err(MemoryError::UnknownEntity {
                 attempted: id.to_string(),
-                nearest: guard::screen(id, &[], &rows),
+                nearest: self.nearest(&mut tx, id, &rows).await?,
             });
         };
         if let Some(into) = &entity.merged_into {
@@ -4821,7 +4844,7 @@ impl Memory for DoltMemory {
             }
             return Err(MemoryError::UnknownEntity {
                 attempted: from.to_string(),
-                nearest: guard::screen(from, &[], &known),
+                nearest: self.nearest(&mut tx, from, &known).await?,
             });
         };
         // A forwarding row is not a thing to rename, for the same reason it
@@ -5032,7 +5055,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: subject.to_string(),
-                nearest: guard::screen(subject, &[], &index),
+                nearest: self.nearest(&mut tx, subject, &index).await?,
             });
         };
         let facts = self.facts_of(&mut tx, &key).await?;
@@ -5059,7 +5082,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         let mut held = Self::held_by(&mut tx, &key).await?;
@@ -5091,7 +5114,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         let mut held = Self::held_by(&mut tx, &key).await?;
@@ -5133,7 +5156,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         // The keys come off the same fold the values do, in the same
@@ -5185,7 +5208,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest(&mut tx, &address.home, &index).await?,
             });
         };
         Ok(Self::held_classes(&mut tx, &key, &address.local)
@@ -5296,7 +5319,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         // **Every thing folded into this one wrote versions of its own**, and
@@ -5431,7 +5454,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest(&mut tx, &address.home, &index).await?,
             });
         };
         // **The whole chain, through the same assembler every other claim read
@@ -5534,7 +5557,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         // **One query for the whole entity**, the batched sibling of
@@ -5629,7 +5652,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
@@ -5695,7 +5718,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
@@ -5781,7 +5804,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest(&mut tx, &address.home, &index).await?,
             });
         };
         let resolved_address = FactAddress::new(key.clone(), address.local.clone());
@@ -5920,7 +5943,7 @@ impl Memory for DoltMemory {
                     let index = self.index(&mut tx).await?;
                     return Err(MemoryError::UnknownEntity {
                         attempted: named.home.to_string(),
-                        nearest: guard::screen(&named.home, &[], &index),
+                        nearest: self.nearest(&mut tx, &named.home, &index).await?,
                     });
                 };
                 let resolved_named = FactAddress::new(named_key.clone(), named.local.clone());
@@ -5969,7 +5992,7 @@ impl Memory for DoltMemory {
                 let index = self.index(&mut tx).await?;
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
-                    nearest: guard::screen(&source.home, &[], &index),
+                    nearest: self.nearest(&mut tx, &source.home, &index).await?,
                 });
             };
             let resolved_source = FactAddress::new(source_key, source.local.clone());
@@ -6083,6 +6106,8 @@ impl Memory for DoltMemory {
         self.compose_reference_fields(&mut tx, &mut served_after)
             .await?;
         guard_fit(kind.as_token(), &served_before, &served_after, &governs)?;
+        self.guard_numbering(&mut tx, &handle, &served_after)
+            .await?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind, atomically with the write that would leave it.** See
         // `refuses_unlicensed_change` and `refuses_room_overflow` in the
@@ -6296,7 +6321,7 @@ impl Memory for DoltMemory {
                 let known = self.extend_with_supplied(index.clone());
                 return Err(MemoryError::UnknownEntity {
                     attempted: side.to_string(),
-                    nearest: guard::screen(side, &[], &known),
+                    nearest: self.nearest(&mut tx, side, &known).await?,
                 });
             };
             if let Some(into) = &held.merged_into {
@@ -6518,7 +6543,7 @@ impl Memory for DoltMemory {
             let index = self.index(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, &[], &index),
+                nearest: self.nearest(&mut tx, &address.home, &index).await?,
             });
         };
         let resolved_address = FactAddress::new(key.clone(), address.local.clone());
@@ -6670,7 +6695,7 @@ impl Memory for DoltMemory {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
         let writes = Self::writes_on(&mut tx, &key).await?;
@@ -6838,7 +6863,7 @@ impl Memory for DoltMemory {
         if !index.iter().any(|e| &e.id == entity) {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &index),
+                nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         }
         let stored = normalize_prose(prose);
@@ -7893,6 +7918,8 @@ async fn append_merge_event(
     }
     Ok(())
 }
+
+mod numbered;
 
 #[cfg(test)]
 mod tests;

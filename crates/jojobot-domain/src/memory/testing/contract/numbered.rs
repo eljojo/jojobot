@@ -104,6 +104,19 @@ pub async fn a_member_is_named_by_its_number_and_the_collection_says_the_next<M:
         Some("Parking"),
         "/2 is the member holding 2: {read:?}"
     );
+    let formers = store.former_handles().await.expect("the handles list");
+    assert!(
+        formers
+            .iter()
+            .any(|f| f.former == numbered(&o.collection, 2)),
+        "a number a member holds is a handle it answers to, and the list says so: {formers:?}"
+    );
+    assert!(
+        !formers
+            .iter()
+            .any(|f| f.former == numbered(&o.collection, 9)),
+        "a number nobody holds is no handle"
+    );
     let archived = store
         .fields(&numbered(&o.collection, 3))
         .await

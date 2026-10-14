@@ -2808,6 +2808,156 @@ async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
     store.stop().await;
 }
 
+/// **Numbered collections, against the real store.** The same specs the fake
+/// passes: a member named by its number, a number held by one member archived
+/// or not, the whole subtree as the scope, and a miss that offers the numbers.
+#[tokio::test]
+async fn dolt_satisfies_the_numbered_collection_contract() {
+    let scratch = Scratch::new("numbered");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "numbered")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::run_all_numbered(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
+/// **The same specs, through the fold**: the image answers a handle and a
+/// collection's next number from what the store gave it.
+#[tokio::test]
+async fn dolt_satisfies_the_numbered_collection_contract_when_folded() {
+    let scratch = Scratch::new("numbered-folded");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "numberedfolded")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    folded.rebuild().await.expect("the image fills");
+
+    memory::run_all_numbered(&folded).await;
+
+    store.stop().await;
+}
+
+/// **Two writes of one number at once: one lands, and the other is refused
+/// naming the one that did.** Through the fold, which is how every write reaches
+/// the store: its write gate holds the second write until the first one's
+/// re-read has landed, so the second meets the number held. Paired: a different
+/// number sent at the same moment lands beside the winner.
+#[tokio::test]
+async fn two_writes_of_one_number_at_once_land_one_and_refuse_the_other_naming_it() {
+    use jojobot_domain::memory::MemoryError;
+    let scratch = Scratch::new("numbered-race");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "numberedrace")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let folded = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool))));
+    folded.rebuild().await.expect("the image fills");
+
+    let collection = EntityId("topic:contract-ordinances-race".into());
+    folded
+        .add_entity(NewEntity::new(
+            collection.clone(),
+            "Race codes",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    folded
+        .capture(memory::state(NewFact {
+            fields: [("numbers_by".to_string(), "number".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(collection.clone(), "numbers its members", date(2026, 5, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let mut members = Vec::new();
+    for (handle, name) in [
+        ("decision:contract-ordinance-race-first", "First race rule"),
+        (
+            "decision:contract-ordinance-race-second",
+            "Second race rule",
+        ),
+        ("decision:contract-ordinance-race-third", "Third race rule"),
+    ] {
+        let id = EntityId(handle.into());
+        folded
+            .add_entity(NewEntity {
+                parent: Some(collection.clone()),
+                ..NewEntity::new(id.clone(), name, "contract-fixture")
+            })
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+        members.push(id);
+    }
+    let write = |id: &EntityId, number: &str| {
+        let folded = folded.clone();
+        let fact = memory::state(NewFact {
+            fields: [("number".to_string(), number.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(id.clone(), format!("takes {number}"), date(2026, 5, 2))
+        });
+        async move { folded.capture(fact).await }
+    };
+    let (first, second, third) = tokio::join!(
+        write(&members[0], "7"),
+        write(&members[1], "7"),
+        write(&members[2], "8")
+    );
+    store.stop().await;
+
+    let landed = |result: &Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+        MemoryError,
+    >| matches!(result, Ok(g) if g.clone().written().is_some());
+    assert!(
+        landed(&third),
+        "a different number lands beside the winner: {third:?}"
+    );
+    let (winner, loser) = match (landed(&first), landed(&second)) {
+        (true, false) => (&members[0], second),
+        (false, true) => (&members[1], first),
+        other => panic!("exactly one of two writes of 7 must land, got {other:?}"),
+    };
+    let Err(MemoryError::NumberTaken {
+        holder,
+        number,
+        next,
+        ..
+    }) = loser
+    else {
+        panic!("the loser must be refused for the number, got {loser:?}");
+    };
+    assert_eq!((holder.as_str(), number), (winner.as_str(), 7));
+    assert!(
+        next >= 8,
+        "7 is held, so the next free number is above it; whether the 8 beside it had landed yet is the scheduler's: {next}"
+    );
+}
+
 /// **A write kept before the store kept references and marks reads as not
 /// recorded, and a cell that is not what the store wrote is damage.** The same
 /// claim is read three ways: as written, with both cells NULL as an older build
