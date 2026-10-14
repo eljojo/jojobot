@@ -57,6 +57,9 @@ impl Jojobot {
         // the one thing this must not do.
         timezone: Option<&str>,
         today: Option<jiff::civil::Date>,
+        // **The moment an offer made by this call is cut off at**, taken by the
+        // door before the rules were read.
+        offered_at: jiff::Timestamp,
     ) -> Result<serde_json::Value, CallToolResult> {
         // **A boot is a read-the-board → decide → write-the-registry span like
         // the write verbs, so it takes the same gate, on the same key.** Its
@@ -313,7 +316,7 @@ impl Jojobot {
                     // **The proof that the caller holds this answer.** Sent
                     // back beside `resume`, once, it is what lets the answer
                     // leave out what this boot shipped.
-                    "offer_code": self.registry.mint_offer(bot, swept_at),
+                    "offer_code": self.registry.mint_offer(bot, offered_at),
                     "how_to_proceed": "This identity has work already in flight. Call start_here \
                                        again with resume: the name of the run you are picking up, \
                                        or resume: \"new\" for a fresh session, and send \
@@ -4624,6 +4627,46 @@ mod tests {
         assert!(short["snapshot"].is_null(), "{short}");
     }
 
+    /// **A compaction report keeps the run it reports**, a `resume` beside it
+    /// included: the same run, the same key, and no new run started. **Paired**:
+    /// the same `resume: new` with no report starts another run.
+    #[tokio::test]
+    async fn a_compaction_report_keeps_its_run_even_with_resume_new() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        let live = answer_the_offer(&jojobot, "new", None, None).await;
+        let sid = live["session"]["sid"].as_str().expect("a key").to_string();
+        let run = live["session"]["run"].as_str().expect("a run").to_string();
+
+        let compacted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    compacted: Some(true),
+                    claim: None,
+                    timezone: None,
+                    today: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: Some("new".into()),
+                    sid: Some(sid.clone()),
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(compacted["session"]["sid"], sid, "{compacted}");
+        assert_eq!(compacted["session"]["run"], run, "{compacted}");
+
+        let another = answer_the_offer(&jojobot, "new", None, None).await;
+        assert_ne!(another["session"]["run"], run, "{another}");
+    }
+
     /// **A run that reports a compaction always gets its charter back**, a
     /// `resume` beside the report included: the charter is the first thing a run
     /// that lost its context needs. **Paired**: the same `resume` with no report
@@ -4678,6 +4721,71 @@ mod tests {
         assert!(compacted["identity"].get("note").is_none(), "{compacted}");
     }
 
+    /// Rename a bot. A near-miss against a name another bot still wears is
+    /// blocked with a token, and the rename is sent again with it.
+    async fn rename_bot(jojobot: &Jojobot, from: &str, to: &str) {
+        let mut override_token = None;
+        for _ in 0..2 {
+            let answer = json_of(
+                &jojobot
+                    .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                        handle: from.into(),
+                        to: to.into(),
+                        parent: None,
+                        recorded_at: None,
+                        override_token: override_token.take(),
+                        sid: Some(crate::harness::TEST_SID.into()),
+                    }))
+                    .await
+                    .expect("rename ok"),
+            );
+            // The token rides the refusal's own instruction, quoted.
+            let token = answer["how_to_proceed"]
+                .as_str()
+                .and_then(|way| way.split("override_token: \"").nth(1))
+                .and_then(|rest| rest.split('"').next());
+            match token {
+                Some(token) if answer["status"] == "blocked" => {
+                    override_token = Some(token.to_string())
+                }
+                _ => {
+                    assert_eq!(answer["id"], to, "{answer}");
+                    return;
+                }
+            }
+        }
+        panic!("the rename of {from} to {to} was blocked twice");
+    }
+
+    /// **An offer belongs to the bot it was made for, not to the handle that bot
+    /// wore.** The code follows its bot through a rename, so the bot that now
+    /// wears the old handle cannot spend it. **Paired**: the bot that was
+    /// renamed spends the same code under its new handle and gets the short
+    /// answer.
+    #[tokio::test]
+    async fn an_offer_follows_its_bot_through_a_rename_and_not_the_handle() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+        make_bot(&jojobot, "delta").await;
+        let code = the_offer_code(&boot(&jojobot, "gamma").await);
+
+        rename_bot(&jojobot, "bot:gamma", "bot:sigma").await;
+        rename_bot(&jojobot, "bot:delta", "bot:gamma").await;
+
+        let former_delta = answer_the_offer_of(&jojobot, "gamma", "new", None, Some(&code)).await;
+        assert!(former_delta["orientation"].is_string(), "{former_delta}");
+        assert!(
+            former_delta["snapshot"]["entities"].is_object(),
+            "{former_delta}"
+        );
+        assert!(former_delta.get("left_out").is_none(), "{former_delta}");
+
+        let renamed = answer_the_offer_of(&jojobot, "sigma", "new", None, Some(&code)).await;
+        assert!(renamed["snapshot"].is_null(), "{renamed}");
+        assert!(renamed.get("left_out").is_some(), "{renamed}");
+    }
+
     /// **A rule written after the offer rides the short answer**, because the
     /// offering call could not have shipped it. **Paired**: a rule written before
     /// the offer does not ride, and the answer says that rules were left out.
@@ -4707,6 +4815,63 @@ mod tests {
         );
         assert_eq!(answer["identity"]["rules_elided"], true, "{answer}");
         assert!(answer["snapshot"].is_null(), "{answer}");
+    }
+
+    /// **A rule written while the offering boot is still running rides the
+    /// short answer**, because neither answer shipped it. The boot reads its
+    /// rules, then waits at the bot's gate; a rule lands there, and the gate
+    /// opens. **Paired**: a rule the offering boot did read does not ride, so the
+    /// cutoff is not moved past everything.
+    #[tokio::test]
+    async fn a_rule_written_while_the_offering_boot_waits_rides_the_answer() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+
+        let gate = jojobot.registry.gate("bot:gamma");
+        let held = gate.lock().await;
+        let offering = tokio::spawn({
+            let jojobot = jojobot.clone();
+            async move { boot(&jojobot, "gamma").await }
+        });
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !offering.is_finished(),
+            "the boot has read its rules and waits at the gate"
+        );
+        capture_ok(
+            &jojobot,
+            capture_args("bot:gamma", "writes the handover before the standup"),
+        )
+        .await;
+        drop(held);
+        let offer = offering.await.expect("the boot ran");
+        let shipped: Vec<&str> = offer["identity"]["rules"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the offer carries rules: {offer}"))
+            .iter()
+            .filter_map(|rule| rule["content"].as_str())
+            .collect();
+        assert!(
+            !shipped.iter().any(|rule| rule.contains("standup")),
+            "the offer read its rules before this one was written: {offer}"
+        );
+
+        let code = the_offer_code(&offer);
+        let answer = answer_the_offer(&jojobot, "new", None, Some(&code)).await;
+        let rules: Vec<&str> = answer["identity"]["rules"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the newer rule rides: {answer}"))
+            .iter()
+            .filter_map(|rule| rule["content"].as_str())
+            .collect();
+        assert_eq!(
+            rules,
+            ["writes the handover before the standup"],
+            "{answer}"
+        );
     }
 
     /// **A rule rewritten after the offer rides the short answer as well**: the

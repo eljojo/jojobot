@@ -850,6 +850,15 @@ impl SessionRegistry {
                 moved += 1;
             }
         }
+        // **An offer follows its bot.** It is keyed by the handle the bot wore
+        // when the offer was made, so a bot that took the old handle after the
+        // rename would otherwise spend a code it was never shipped.
+        let mut offers = self.offers.lock().expect("the offers are poisoned");
+        for (made_for, _) in offers.values_mut() {
+            if made_for == from {
+                *made_for = to.clone();
+            }
+        }
         moved
     }
 }

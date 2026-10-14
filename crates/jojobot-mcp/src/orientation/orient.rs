@@ -499,6 +499,10 @@ impl Jojobot {
         // down — a fresh agent on a half-configured server still gets the map.
         let index = self.memory.list_entities(None).await;
         let entities = entity_summary(&index);
+        // **The moment an offer from this call is cut off at**, taken before the
+        // identity reads the rules: a rule stamped after it was not shipped, so
+        // the answer to the offer must carry it.
+        let offered_at = self.clock().now();
         // A memory world that is down cannot answer who anybody is; the
         // snapshot below already says so, and this stays null rather than
         // claiming the identity is missing.
@@ -573,7 +577,15 @@ impl Jojobot {
         // session: attaching again would offer it a choice between itself and a
         // new one, and no claim would be answered. Only a live handle of the
         // named bot counts, and only when no answer to an offer comes with it.
-        let running_as = match (bot, claim.or(compacted.then_some("")), resume, arrived_with) {
+        //
+        // **A compaction report names its live run, so a `resume` beside it
+        // chooses no other.**
+        let running_as = match (
+            bot,
+            claim.or(compacted.then_some("")),
+            resume.filter(|_| !compacted),
+            arrived_with,
+        ) {
             (Some(bot), Some(_), None, Some(raw)) if carried == "held" => {
                 match self.caller(Some(raw)) {
                     Ok(Some(caller)) if &caller.bot == bot => {
@@ -608,7 +620,10 @@ impl Jojobot {
                 }
                 running
             }
-            Some(bot) => match self.attach(bot, resume, answering, timezone, today).await {
+            Some(bot) => match self
+                .attach(bot, resume, answering, timezone, today, offered_at)
+                .await
+            {
                 Ok(session) => session,
                 // A handle that addresses nothing stops the whole answer.
                 // Handing back orientation around it would bury the one thing

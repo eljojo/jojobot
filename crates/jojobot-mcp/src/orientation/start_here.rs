@@ -90,11 +90,11 @@ pub struct OrientArgs {
     ///
     /// **The run stays the run.** Same `sid`, same chronology, same identity: no
     /// new key, no voucher moves, and no other run of the bot is touched. The
-    /// answer is the full orientation, whatever `brief` says, because that is
-    /// what the compaction took, the charter included, whatever else the call
-    /// sends: `resume` and `offer_code` change nothing about it. A `sid` that
-    /// opens no run is refused. Naming `bot` is optional; when you do, it has to
-    /// be the bot the `sid` belongs to.
+    /// answer is the full orientation, charter included, whatever `brief` says,
+    /// because that is what the compaction took. A `resume` or an `offer_code`
+    /// beside it changes neither the answer nor the run. A `sid` that opens no
+    /// run is refused. Naming `bot` is optional; when you do, it has to be the
+    /// bot the `sid` belongs to.
     #[serde(default)]
     pub(crate) compacted: Option<bool>,
     /// **The day this run is in**, as `YYYY-MM-DD`, when it is not the day the
