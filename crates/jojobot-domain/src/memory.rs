@@ -1245,6 +1245,18 @@ impl EdgeShape {
         Self::ALL.into_iter().find(|s| s.as_token() == token.trim())
     }
 
+    /// **The one place a word naming a shape is understood when a caller
+    /// FILTERS by it**: the token it was written with or the name a read
+    /// served for it, so a name copied from an answer is understood. Writes
+    /// stay on [`Self::from_token`], because a drawn edge is only ever drawn
+    /// by its token.
+    pub fn from_word(word: &str) -> Option<Self> {
+        let word = word.trim();
+        Self::ALL
+            .into_iter()
+            .find(|s| s.as_token() == word || s.as_name() == word)
+    }
+
     /// The kind this shape's object must be, or `None` where any kind will do.
     /// A `location` pointing at a person is a mis-drawn edge, not a nuance.
     pub fn object_kind(self) -> Option<EntityKind> {

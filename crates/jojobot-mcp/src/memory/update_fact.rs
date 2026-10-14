@@ -139,7 +139,10 @@ pub struct UpdateFactArgs {
     pub(crate) confirmed_by_user: Option<bool>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
     /// `about` · `connection` (a link is there and how it relates was not
-    /// recorded). Requires `object`; neither works alone.
+    /// recorded). Requires `object`; neither works alone. A read serves the
+    /// shape by its schema.org word: `connection` reads back as `relatedTo`,
+    /// `membership` as `memberOf`, `attendance` as `attendee`, and `location`
+    /// and `about` as written.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist** —

@@ -9,7 +9,8 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EdgeFilterArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about` ·
-    /// `connection`).
+    /// `connection`), or the word a read served for it (`memberOf`, `attendee`,
+    /// `relatedTo`): either is understood.
     /// Omit for **any** edge pointing at `object` — "what's connected to X".
     #[serde(default)]
     pub(crate) shape: Option<String>,
@@ -697,7 +698,7 @@ impl Jojobot {
             .as_ref()
             .map(|e| -> Result<EdgeFilter, McpError> {
                 Ok(EdgeFilter {
-                    shape: e.shape.as_deref().map(parse_shape).transpose()?,
+                    shape: e.shape.as_deref().map(parse_shape_filter).transpose()?,
                     object: EntityId(e.object.trim().to_string()),
                 })
             })
@@ -1664,6 +1665,30 @@ mod tests {
         assert_eq!(edge.object.as_str(), "place:shelbyville");
         assert_eq!(query.limit, 5);
         assert_eq!(query.rank_clock, RankClock::HappenedAt);
+    }
+
+    /// **The edge filter takes the word a read served as well as the word a
+    /// caller writes**: `relatedTo` and `connection` reach the port as the same
+    /// shape. The unknown word is the negative half, in
+    /// `malformed_search_filters_are_refused` above.
+    #[tokio::test]
+    async fn the_edge_filter_takes_either_word_for_a_shape() {
+        for word in ["connection", "relatedTo"] {
+            let spy = Arc::new(SpySearch::default());
+            handler_with(spy.clone())
+                .search(Parameters(SearchArgs {
+                    edge: Some(EdgeFilterArgs {
+                        shape: Some(word.into()),
+                        object: "person:nelson".into(),
+                    }),
+                    query: Some("winter".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok");
+            let edge = spy.query().edge.expect("the edge filter must survive");
+            assert_eq!(edge.shape, Some(EdgeShape::Connection), "{word}");
+        }
     }
 
     /// An edge filter with no shape means any edge pointing at the object, and the

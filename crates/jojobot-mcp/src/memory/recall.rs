@@ -104,7 +104,8 @@ pub struct OrderArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FollowArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about`
-    /// · `connection`). Omit for **any** edge — "whatever it is connected to"
+    /// · `connection`), or the word a read served for it (`memberOf`,
+    /// `attendee`, `relatedTo`): either is understood. Omit for **any** edge — "whatever it is connected to"
     /// — which is also what reaches a mention, a ref or a field link; naming a shape here
     /// reaches edges of that shape alone.
     #[serde(default)]
@@ -2151,7 +2152,7 @@ impl Jojobot {
                 Ok(graph::Follow {
                     along: match (&f.relation, &f.shape) {
                         (Some(relation), _) => graph::Along::Relation(relation.trim().to_string()),
-                        (None, Some(shape)) => graph::Along::Edge(parse_shape(shape)?),
+                        (None, Some(shape)) => graph::Along::Edge(parse_shape_filter(shape)?),
                         (None, None) => graph::Along::AnyEdge,
                     },
                     // Kept as an Option all the way down, because a relation

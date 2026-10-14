@@ -2589,6 +2589,77 @@ async fn recall_returns_the_edge_a_fact_draws() {
     assert_eq!(edged["edge"]["object"], "org:contract-guild");
 }
 
+/// **A walk along a shape answers to the word a caller wrote AND the word a
+/// read served.** A `connection` edge reads back as `relatedTo`; a caller who
+/// copies that word into `follow.shape` reaches the same edge as one who sends
+/// `connection`. Both literals are pinned: nothing outside this process
+/// declares either spelling. The negative half is a word in neither
+/// vocabulary, refused with both named.
+#[tokio::test]
+async fn a_walk_takes_either_word_for_a_shape_and_refuses_a_third() {
+    let jojobot = handler();
+    for (slug, name) in [("milhouse", "Milhouse"), ("nelson", "Nelson")] {
+        jojobot
+            .add_entity(Parameters(add_args("person", slug, name)))
+            .await
+            .expect("add_entity ok");
+    }
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("person:nelson".into()),
+            ..capture_args("milhouse", "sat beside him at the assembly")
+        },
+    )
+    .await;
+
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(of("milhouse")))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(
+        read["objects"][0]["facts"][0]["edge"]["type"], "relatedTo",
+        "reads keep serving the schema.org word: {read}"
+    );
+
+    let walk = |shape: &'static str| RecallArgs {
+        subject: Some("person:milhouse".into()),
+        follow: Some(FollowArgs {
+            shape: Some(shape.into()),
+            direction: Some("out".into()),
+            ..no_follow()
+        }),
+        ..of_nothing()
+    };
+    for word in ["connection", "relatedTo"] {
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(walk(word)))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            walked["objects"][0]["connected"][0]["id"], "person:nelson",
+            "following with {word} reaches the edge: {walked}"
+        );
+    }
+
+    let refused = jojobot
+        .recall(Parameters(walk("knows")))
+        .await
+        .expect_err("a word in neither vocabulary is refused");
+    let message = refused.message.to_string();
+    for named in ["connection", "relatedTo", "membership", "memberOf"] {
+        assert!(
+            message.contains(named),
+            "the refusal names {named}: {message}"
+        );
+    }
+}
+
 /// **Objects of a kind, with their pages** — through the wire, and with
 /// nothing in the call naming what the page is for.
 ///

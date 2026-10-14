@@ -2132,6 +2132,15 @@ fn the_edge_shapes_round_trip_and_the_set_is_closed() {
             "{unknown:?} is not a shape token"
         );
     }
+    // A filter takes either word, and only those: the written token or the
+    // read name of the same shape, nothing else.
+    for (shape, token, name) in all {
+        assert_eq!(EdgeShape::from_word(token), Some(shape));
+        assert_eq!(EdgeShape::from_word(name), Some(shape));
+    }
+    for unknown in ["knows", "Location", "MemberOf", "", "locaton"] {
+        assert_eq!(EdgeShape::from_word(unknown), None, "{unknown:?}");
+    }
 }
 
 /// **The fifth shape, and the whole point of it is that it is not the

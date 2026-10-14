@@ -862,7 +862,10 @@ A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fa
 The shape of the edge this fact draws: `location` (object is a place) ·
 `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
 `connection` (any kind — a link is there and how it relates was not
-recorded). Requires `object`; neither works alone.
+recorded). Requires `object`; neither works alone. A read serves the
+shape by its schema.org word: `connection` reads back as `relatedTo`,
+`membership` as `memberOf`, `attendance` as `attendee`, and `location`
+and `about` as written.
 
 **Draw `connection` with the subject as YOUR OWN bot handle and the
 claim becomes a thought of yours, not an ordinary claim about an
@@ -2887,7 +2890,8 @@ both.
 
 ```text
 Narrow to one shape (`location` · `membership` · `attendance` · `about`
-· `connection`). Omit for **any** edge — "whatever it is connected to"
+· `connection`), or the word a read served for it (`memberOf`,
+`attendee`, `relatedTo`): either is understood. Omit for **any** edge — "whatever it is connected to"
 — which is also what reaches a mention, a ref or a field link; naming a shape here
 reaches edges of that shape alone.
 ```
@@ -4013,7 +4017,8 @@ The entity the edge must point at, as `kind:slug`.
 
 ```text
 Narrow to one shape (`location` · `membership` · `attendance` · `about` ·
-`connection`).
+`connection`), or the word a read served for it (`memberOf`, `attendee`,
+`relatedTo`): either is understood.
 Omit for **any** edge pointing at `object` — "what's connected to X".
 ```
 
@@ -5382,7 +5387,10 @@ A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fa
 ```text
 The shape of an edge to attach: `location` · `membership` · `attendance` ·
 `about` · `connection` (a link is there and how it relates was not
-recorded). Requires `object`; neither works alone.
+recorded). Requires `object`; neither works alone. A read serves the
+shape by its schema.org word: `connection` reads back as `relatedTo`,
+`membership` as `memberOf`, `attendance` as `attendee`, and `location`
+and `about` as written.
 ```
 
 #### `update_fact` — argument `/inputSchema.sid`
