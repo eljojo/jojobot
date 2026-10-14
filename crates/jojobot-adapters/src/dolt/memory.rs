@@ -1818,17 +1818,14 @@ impl DoltMemory {
         Ok(())
     }
 
-    /// **A stored list served as a merge's repoint would leave it**: each item is
-    /// the handle its target answers to now, and a handle that two items forward
-    /// to is kept once, at its first place.
+    /// **A stored list served as a merge's repoint would leave it**: the domain's
+    /// rule for naming each thing once, joined the way a list is written.
     fn serve_list(items: Vec<EntityId>) -> String {
-        let mut served: Vec<String> = Vec::with_capacity(items.len());
-        for handle in items {
-            if !served.iter().any(|held| held == handle.as_str()) {
-                served.push(handle.to_string());
-            }
-        }
-        served.join(", ")
+        jojobot_domain::memory::list::name_each_once(items, EntityId::clone)
+            .iter()
+            .map(EntityId::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// **The other direction**: every reference-typed field value, composed

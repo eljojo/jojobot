@@ -28,6 +28,7 @@ pub mod filter;
 pub mod graph;
 pub mod guard;
 pub mod kinds;
+pub mod list;
 pub mod mention;
 pub mod order;
 pub mod owned;
@@ -3871,31 +3872,33 @@ pub fn repoint_field_value(
         Some(field) => field.items(value).into_iter().map(str::to_string).collect(),
         None => value.split(',').map(str::to_string).collect(),
     };
-    let mut kept: Vec<String> = Vec::with_capacity(items.len());
-    let mut seen: Vec<String> = Vec::with_capacity(items.len());
-    for item in items {
-        let item = item.trim().to_string();
-        let marked = stored_handle_id(&item).is_some();
-        let id = stored_handle_id(&item).unwrap_or(&item).to_string();
-        let (id, item) = if id == from {
-            (
-                to.to_string(),
-                if marked {
-                    marked_stored_handle(to)
-                } else {
-                    to.to_string()
-                },
-            )
-        } else {
-            (id, item)
-        };
-        if seen.contains(&id) {
-            continue;
-        }
-        seen.push(id);
-        kept.push(item);
-    }
-    Some(kept.join(", "))
+    let repointed: Vec<(String, String)> = items
+        .into_iter()
+        .map(|item| {
+            let item = item.trim().to_string();
+            let marked = stored_handle_id(&item).is_some();
+            let id = stored_handle_id(&item).unwrap_or(&item).to_string();
+            if id == from {
+                (
+                    to.to_string(),
+                    if marked {
+                        marked_stored_handle(to)
+                    } else {
+                        to.to_string()
+                    },
+                )
+            } else {
+                (id, item)
+            }
+        })
+        .collect();
+    let kept = list::name_each_once(repointed, |(id, _)| id.clone());
+    Some(
+        kept.into_iter()
+            .map(|(_, item)| item)
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 /// **Whether any field of a record names `target`**, the question
