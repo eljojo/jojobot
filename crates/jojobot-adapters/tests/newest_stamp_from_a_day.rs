@@ -9,11 +9,16 @@
 use jiff::Timestamp;
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::clock::Clock;
+use jojobot_domain::mailbox::{
+    MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
+};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::push::Outbox;
 use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 
 /// A directory of this run's own, removed when it is done.
@@ -199,4 +204,91 @@ async fn a_store_stamped_only_before_the_day_has_no_newest_stamp() {
 
     store.stop().await;
     assert_eq!(newest, None);
+}
+
+/// An owner index that answers for anybody: the case needs a box a person owns,
+/// not the roster that decides who may.
+struct AnyOwner;
+
+#[async_trait::async_trait]
+impl OwnerIndex for AnyOwner {
+    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
+        Ok(OwnerLookup::Known)
+    }
+}
+
+/// **A push is chased on the wall clock, so the rows that chase it are not
+/// stamps of the day being acted out.** The outbox is written on the real clock
+/// because its window and its retries are real time. On a store a server acting
+/// out an earlier day restarts over, those stamps are later than the day, and a
+/// scan that counted them would carry the stated clock out of its day. The
+/// message posted on the stated day is the control: it is the answer, so the
+/// scan still reads the table it sits in.
+#[tokio::test]
+async fn a_push_row_stamped_on_the_wall_clock_is_not_a_stamp_of_the_stated_day() {
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("jojobot-newest-stamp-push-{}", std::process::id())),
+    );
+    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "newest_stamp_push")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    // The rest of a boot: without it this process cannot read a handle.
+    migrate::seed_kinds(&pool)
+        .await
+        .expect("the kinds are seeded");
+    let mail = DoltMailboxes::open(pool.clone(), std::sync::Arc::new(AnyOwner)).pushing();
+    let person = EntityId("person:ned-flanders".into());
+    mail.create_mailbox(&MailboxName::named_for(&person), &person, None)
+        .await
+        .expect("create ok")
+        .written()
+        .expect("not blocked");
+    let posted = mail
+        .post_message(NewMessage {
+            mailbox: MailboxName("person-ned-flanders".into()),
+            body: "a word for the person".into(),
+            subject: None,
+            sender: "gamma".into(),
+            sent_at: at("2026-06-01T10:00:00Z"),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: None,
+        })
+        .await
+        .expect("post ok")
+        .written()
+        .expect("not blocked")
+        .id;
+    // One failed try and then the landing, as the drain records them: each
+    // writes a row of the outbox and a row of the attempt record.
+    let wall = Timestamp::now();
+    let retry = wall
+        .checked_add(std::time::Duration::from_secs(60))
+        .unwrap();
+    mail.failed(&posted, 1, retry)
+        .await
+        .expect("a failure is kept");
+    mail.sent(&posted, retry)
+        .await
+        .expect("the landing is kept");
+    let rows: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM push_outbox), (SELECT COUNT(*) FROM push_attempt)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the push rows read");
+
+    let newest = jojobot_adapters::dolt::newest_stamp_from(&pool, date(2026, 6, 1))
+        .await
+        .expect("the store answers");
+
+    store.stop().await;
+    assert_eq!(rows, (1, 2), "the case wrote the rows it is about");
+    assert_eq!(newest, Some(at("2026-06-01T10:00:00Z")));
 }

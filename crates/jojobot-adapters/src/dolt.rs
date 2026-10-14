@@ -951,7 +951,9 @@ pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
 /// added later is read without anybody remembering to name it. The ledger of
 /// applied migrations and the record of finished passes are left out, because
 /// each records when the work RAN, on the real clock, and not a moment of the run
-/// being acted out.
+/// being acted out. **The two tables of the push outbox are left out for the
+/// same reason**: a push is chased in real time, so its window and its retries
+/// are counted on the wall clock.
 ///
 /// **The newest is found by the instant, not by the text.** `…:00.5Z` sorts
 /// before `…:00Z` as text and is the later of the two. So each column is asked
@@ -965,7 +967,7 @@ pub async fn newest_stamp_from(
          FROM information_schema.columns \
          WHERE table_schema = DATABASE() AND data_type = 'varchar' \
            AND character_maximum_length IN (40, 48) \
-           AND table_name NOT IN ('schema_migration', 'store_pass')",
+           AND table_name NOT IN ('schema_migration', 'store_pass', 'push_outbox', 'push_attempt')",
     )
     .fetch_all(pool)
     .await?;
