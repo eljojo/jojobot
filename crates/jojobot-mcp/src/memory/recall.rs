@@ -623,6 +623,11 @@ pub struct RecallArgs {
     /// What the view says is what this call asks; anything you send beside it
     /// is yours and wins, so a view is a starting point rather than a cage.
     ///
+    /// **A view may take inputs, and you fill them with `inputs`** rather than
+    /// with a `where` of your own: `view: "ready", inputs: {project:
+    /// "project:atlas"}` lists the ready work under that project. Recall a view's
+    /// handle, or `kind: "view"` for all of them, to read what each takes.
+    ///
     /// A name that is no view comes back blocked, with the views that exist.
     ///
     /// `view: "colleagues"` lists the identities here and what each is for; `view:
@@ -641,6 +646,23 @@ pub struct RecallArgs {
     /// carries its own `shows_keys`, and a `keys` you send wins over it.
     #[serde(default)]
     pub(crate) view: Option<String>,
+    /// **The values a view takes**, as `{name: value}`, beside `view`.
+    ///
+    /// A view is a saved question with typed inputs, and this is how you fill
+    /// them: ask `view: "ready"` with `inputs: {project: "project:atlas"}` and it
+    /// lists only the work under that project. **What a view takes is on the
+    /// view**: recall it (`subject: "view:ready"`, or `kind: "view"` for all of
+    /// them) and its `inputs` field reads `name: type`, where a type is `kind
+    /// <kind>` (a handle of that kind), `date`, `number` or `text`, and a `?`
+    /// after it means the input may be left out. A value is checked as a write
+    /// is: a handle must exist and be of that kind, a date takes the relative
+    /// days `where` takes, a number must parse. An input left out drops the part
+    /// of the question that uses it. **A call with a required input missing, an
+    /// input the view does not declare, or a value of the wrong type is refused,
+    /// and the refusal names every input the view takes**, so you can ask a view
+    /// you have never seen and read its shape from the answer.
+    #[serde(default)]
+    pub(crate) inputs: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -1319,6 +1341,7 @@ impl Jojobot {
         &self,
         named: &str,
         args: RecallArgs,
+        today: jiff::civil::Date,
     ) -> Result<(RecallArgs, Vec<graph::FieldFilter>, Option<readiness::Ask>), Box<CallToolResult>>
     {
         let handle = match named.trim().split_once(':') {
@@ -1379,6 +1402,29 @@ impl Jojobot {
         // already answered.
         let facts = self.memory.recall(&handle).await.unwrap_or_default();
         let asked = graph::asked_by_view(&held, &facts);
+        // **The call's inputs are bound to what the view declares, and the view is
+        // filled from them**, through the one function the page fills a view
+        // through. A call that does not fit is refused naming what the view takes,
+        // and nothing else runs. Handles are bound by the resolvers a write uses:
+        // the current and former names of a thing, and the nearest things when a
+        // handle names nothing.
+        let given = match inputs_as_text(args.inputs.as_ref()) {
+            Ok(given) => given,
+            Err(words) => return Err(Box::new(blocked_body(&handle, &[], words))),
+        };
+        let known = self.memory.list_entities(None).await.unwrap_or_default();
+        let former = self.memory.former_handles().await.unwrap_or_default();
+        let (asked, view_parent) =
+            match asked.filled(handle.as_str(), &given, &known, &former, today) {
+                Ok(filled) => filled,
+                Err(refused) => {
+                    return Err(Box::new(blocked_body(
+                        &handle,
+                        &refused.nearest,
+                        refused.words,
+                    )));
+                }
+            };
         // **The view's own filters, handed on whole.** Whether they apply is
         // decided once, where the query is built: the caller's own `fields`
         // replace them there.
@@ -1391,7 +1437,7 @@ impl Jojobot {
         // wins, because the view's is not the one that runs.
         if args.expression.is_none()
             && let Some(line) = asked.expression.as_deref()
-            && let Err(why) = filter::expression::value_words(line)
+            && let Err(why) = filter::expression::reads_saved(line)
         {
             return Err(Box::new(blocked_body(
                 &handle,
@@ -1437,6 +1483,7 @@ impl Jojobot {
                 scope: args.scope.or(asked.scope),
                 order: args.order.or(view_order),
                 kind: args.kind.or(asked.selects),
+                parent: args.parent.or(view_parent.map(|parent| parent.to_string())),
                 facts: args.facts.or(asked.facts.then_some(true)),
                 prose: args.prose.or(asked.prose.then_some(true)),
                 charter: args.charter.or(asked.charter.then_some(true)),
@@ -1461,6 +1508,31 @@ impl Jojobot {
             asked.ready,
         ))
     }
+}
+
+/// **The values of a call's `inputs` as the text a view reads them as.** A string
+/// is itself and a number or a boolean is what it prints as; an object, a list
+/// or null is no value for an input.
+fn inputs_as_text(
+    sent: Option<&std::collections::BTreeMap<String, serde_json::Value>>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut text = std::collections::BTreeMap::new();
+    for (name, value) in sent.into_iter().flatten() {
+        let word = match value {
+            serde_json::Value::String(word) => word.clone(),
+            serde_json::Value::Number(number) => number.to_string(),
+            serde_json::Value::Bool(flag) => flag.to_string(),
+            _ => {
+                return Err(format!(
+                    "Nothing was read: the input '{name}' was sent as something other than text \
+                     or a number. Send each input as a single value: `inputs: {{\"{name}\": \
+                     \"...\"}}`"
+                ));
+            }
+        };
+        text.insert(name.clone(), word);
+    }
+    Ok(text)
 }
 
 /// **The charter a bot answers with** — its prose, read.
@@ -2214,11 +2286,24 @@ impl Jojobot {
         let caller_named_scope = args.scope.is_some();
         let where_is_the_views = args.expression.is_none();
         let (args, view_filters, readiness_asked) = match args.view.clone() {
+            None if args.inputs.is_some() => {
+                return memory_declined(
+                    "recall",
+                    MemoryError::InvalidQuery(
+                        "inputs fill the inputs of a view, so send `view` beside them: recall \
+                         a view's handle (`subject: \"view:ready\"`) to read what it takes"
+                            .into(),
+                    ),
+                );
+            }
             None => (args, Vec::new(), None),
-            Some(named) => match self.asked_by_name(&named, args).await {
-                Ok(filled) => filled,
-                Err(refused) => return Ok(*refused),
-            },
+            Some(named) => {
+                let day = self.dated(None, args.sid.as_deref()).await?;
+                match self.asked_by_name(&named, args, day).await {
+                    Ok(filled) => filled,
+                    Err(refused) => return Ok(*refused),
+                }
+            }
         };
         // **Readiness is a question about work, and only work answers it.** The
         // view selects the work kind; a caller that sent another kind beside it,

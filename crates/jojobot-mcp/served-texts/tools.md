@@ -2802,6 +2802,14 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "inputs": {
+        "additionalProperties": true,
+        "default": null,
+        "type": [
+          "object",
+          "null"
+        ]
+      },
       "keys": {
         "default": null,
         "items": {
@@ -3476,6 +3484,26 @@ has a version of its own for the move.
 Omit it and no chain comes back, which is the normal read.
 ```
 
+#### `recall` — argument `/inputSchema.inputs`
+
+```text
+**The values a view takes**, as `{name: value}`, beside `view`.
+
+A view is a saved question with typed inputs, and this is how you fill
+them: ask `view: "ready"` with `inputs: {project: "project:atlas"}` and it
+lists only the work under that project. **What a view takes is on the
+view**: recall it (`subject: "view:ready"`, or `kind: "view"` for all of
+them) and its `inputs` field reads `name: type`, where a type is `kind
+<kind>` (a handle of that kind), `date`, `number` or `text`, and a `?`
+after it means the input may be left out. A value is checked as a write
+is: a handle must exist and be of that kind, a date takes the relative
+days `where` takes, a number must parse. An input left out drops the part
+of the question that uses it. **A call with a required input missing, an
+input the view does not declare, or a value of the wrong type is refused,
+and the refusal names every input the view takes**, so you can ask a view
+you have never seen and read its shape from the answer.
+```
+
 #### `recall` — argument `/inputSchema.keys`
 
 ```text
@@ -3719,6 +3747,11 @@ on where the view came from.
 
 What the view says is what this call asks; anything you send beside it
 is yours and wins, so a view is a starting point rather than a cage.
+
+**A view may take inputs, and you fill them with `inputs`** rather than
+with a `where` of your own: `view: "ready", inputs: {project:
+"project:atlas"}` lists the ready work under that project. Recall a view's
+handle, or `kind: "view"` for all of them, to read what each takes.
 
 A name that is no view comes back blocked, with the views that exist.
 

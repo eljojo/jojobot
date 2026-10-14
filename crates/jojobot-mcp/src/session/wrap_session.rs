@@ -993,6 +993,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     view: None,
+                    inputs: None,
                     subject: Some(format!("session:{session_id}")),
                     kind: None,
                     parent: None,

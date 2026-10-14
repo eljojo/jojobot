@@ -171,6 +171,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
 pub(crate) fn recall_args(subject: &str) -> RecallArgs {
     RecallArgs {
         view: None,
+        inputs: None,
         subject: Some(subject.into()),
         kind: None,
         parent: None,

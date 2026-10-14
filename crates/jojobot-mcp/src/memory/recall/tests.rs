@@ -51,6 +51,7 @@ async fn captured(memory: &InMemoryMemory, id: &str) -> Entity {
 fn of(subject: &str) -> RecallArgs {
     RecallArgs {
         view: None,
+        inputs: None,
         subject: Some(subject.into()),
         kind: None,
         parent: None,
@@ -4885,6 +4886,7 @@ fn no_follow() -> FollowArgs {
 fn of_nothing() -> RecallArgs {
     RecallArgs {
         view: None,
+        inputs: None,
         subject: None,
         kind: None,
         parent: None,

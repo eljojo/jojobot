@@ -219,6 +219,7 @@ mod tests {
             near: None,
             follow: None,
             view: None,
+            inputs: None,
             sid: None,
         }
     }

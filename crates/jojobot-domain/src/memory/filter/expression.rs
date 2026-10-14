@@ -97,18 +97,14 @@ pub fn placeholders(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// **Whether a saved expression reads, with each `$name` standing for a value.**
-/// A view's `where` is written before any call has bound its inputs, so it is
-/// checked as it will read once they are: every `$name` is a value, and the rest
-/// is the line the reader would take. Which value a name is bound to, and
-/// whether it is the right type for the key, is a call's question.
-pub fn reads_saved(text: &str) -> Result<(), MemoryError> {
-    let today = Date::constant(2000, 1, 1);
+/// **A saved expression with each `$name` standing for a value**, the same length
+/// as the name so every other place in the line stays where it was.
+fn standing(text: &str) -> String {
     let Ok(tokens) = lex(text) else {
-        return read(text, today).map(|_| ());
+        return text.to_string();
     };
     let chars: Vec<char> = text.chars().collect();
-    let mut standing = String::with_capacity(text.len());
+    let mut out = String::with_capacity(text.len());
     let mut cut = 0;
     for token in &tokens {
         let Kind::Word(word) = &token.kind else {
@@ -118,13 +114,28 @@ pub fn reads_saved(text: &str) -> Result<(), MemoryError> {
             .strip_prefix('$')
             .is_some_and(crate::memory::view_inputs::is_a_name)
         {
-            standing.extend(&chars[cut..token.position - 1]);
-            standing.push('0');
+            out.extend(&chars[cut..token.position - 1]);
+            out.extend(std::iter::repeat_n('0', word.chars().count()));
             cut = token.end - 1;
         }
     }
-    standing.extend(&chars[cut..]);
-    read(&standing, today).map(|_| ())
+    out.extend(&chars[cut..]);
+    out
+}
+
+/// **Whether a saved expression reads, with each `$name` standing for a value.**
+/// A view's `where` is written before any call has bound its inputs, so it is
+/// checked as it will read once they are: every `$name` is a value, and the rest
+/// is the line the reader would take. Which value a name is bound to, and
+/// whether it is the right type for the key, is a call's question.
+pub fn reads_saved(text: &str) -> Result<(), MemoryError> {
+    read(&standing(text), Date::constant(2000, 1, 1)).map(|_| ())
+}
+
+/// [`value_words`] of a saved expression, with each `$name` standing for a value.
+/// A name is not a handle, so the places returned for it bind nothing.
+pub fn saved_value_words(text: &str) -> Result<Vec<ValueWord>, MemoryError> {
+    value_words(&standing(text))
 }
 
 /// **A saved expression with its inputs filled in.** A `$name` the view declared

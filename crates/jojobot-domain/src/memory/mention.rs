@@ -857,7 +857,7 @@ fn is_badge_byte(b: u8) -> bool {
 /// badge. An expression that does not parse is refused with the words the
 /// parser gives.
 pub fn bound_expression(text: &str, known: &[Entity]) -> Result<String, super::MemoryError> {
-    let values = super::filter::expression::value_words(text)?;
+    let values = super::filter::expression::saved_value_words(text)?;
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut cut = 0;

@@ -279,6 +279,9 @@ mod unsure;
 #[path = "user_stories/upgrading.rs"]
 mod upgrading;
 /// A question you ask by name, whether the software shipped it or you did.
+/// A view is a saved recall with typed inputs: asked by name, filled, refused plainly.
+#[path = "user_stories/view_inputs.rs"]
+mod view_inputs;
 #[path = "user_stories/views.rs"]
 mod views;
 #[path = "user_stories/vocabulary.rs"]

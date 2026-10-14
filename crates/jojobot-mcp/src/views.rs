@@ -101,6 +101,10 @@ pub fn provisions() -> Vec<Provision> {
             &[
                 ("selects", "work"),
                 ("asks", jojobot_domain::memory::readiness::ASK),
+                // **Only the work under one project, when a call names it.** Left
+                // out, the question is every piece of ready work.
+                ("inputs", "project: kind project?"),
+                ("parent", "$project"),
             ],
         ),
         // **A whole plan in one call.** The work that is not finished, each
