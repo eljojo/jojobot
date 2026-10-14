@@ -239,6 +239,13 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.history(entity, key).await
     }
 
+    async fn key_trails(
+        &self,
+        entity: &jojobot_domain::memory::EntityId,
+    ) -> Result<jojobot_domain::memory::KeyTrails, jojobot_domain::memory::MemoryError> {
+        self.inner.key_trails(entity).await
+    }
+
     async fn claim_history(
         &self,
         address: &jojobot_domain::memory::FactAddress,

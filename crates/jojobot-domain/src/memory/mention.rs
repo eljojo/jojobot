@@ -1526,6 +1526,27 @@ impl super::Memory for Mentioning {
         }
         Ok(writes)
     }
+    /// **A trail carries the notes its writes' records carried**, which are text,
+    /// so they render as [`Self::history`] renders them. What else the trails
+    /// hold is names and moments, and comes through as it is.
+    async fn key_trails(&self, entity: &EntityId) -> Result<super::KeyTrails, super::MemoryError> {
+        let mut trails = self.inner.key_trails(entity).await?.open();
+        if trails
+            .history
+            .values()
+            .flatten()
+            .all(|write| write.note.is_none())
+        {
+            return Ok(trails);
+        }
+        let known = self.known().await?;
+        for write in trails.history.values_mut().flatten() {
+            if let Some(note) = &write.note {
+                write.note = Some(rendered(note, &known));
+            }
+        }
+        Ok(trails)
+    }
     /// **Every wording a claim ever had is text**, so the chain renders like
     /// the claim does — otherwise reading what a record used to say is the one
     /// place a badge leaks to a caller.
@@ -2142,6 +2163,16 @@ mod tests {
             &store,
         )
         .await;
+    }
+
+    /// The mention layer forwards the writes of a key that stays on its record,
+    /// with the moment of each.
+    #[tokio::test]
+    async fn the_mention_layer_forwards_the_writes_that_stay_on_their_record() {
+        let store = Mentioning::new(std::sync::Arc::new(
+            crate::memory::testing::InMemoryMemory::booted(),
+        ));
+        crate::memory::testing::contract::a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment(&store).await;
     }
 
     /// **The stored mark is jojobot's, so a caller's text may not carry one.**

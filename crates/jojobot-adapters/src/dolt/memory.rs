@@ -5682,6 +5682,20 @@ impl Memory for DoltMemory {
                 }
             }
             if !jojobot_domain::memory::reaches_the_thing(class) {
+                // **A key that stays on its record keeps its writes here**, with
+                // their moments, because the history of a key on a thing leaves
+                // them out.
+                if by_id.contains_key(&carried) {
+                    trails
+                        .record_writes
+                        .push(jojobot_domain::memory::RecordFieldWrite {
+                            fact: carried,
+                            key,
+                            ordinal: row.ordinal.max(0) as u64,
+                            value,
+                            written_at: row.written_at,
+                        });
+                }
                 continue;
             }
             let Some(fact) = by_id.get(&carried) else {
@@ -5702,6 +5716,9 @@ impl Memory for DoltMemory {
                 trails.kept_off.entry(fact).or_default().insert(key);
             }
         }
+        trails
+            .record_writes
+            .sort_by(|a, b| (&a.key, a.ordinal).cmp(&(&b.key, b.ordinal)));
         Ok(trails)
     }
 

@@ -810,6 +810,7 @@ const ORDINARY: &[&str] = &[
     "thing:contract-relinked-spare",
     "thing:contract-relinked-first",
     "thing:contract-relinked-last",
+    "thing:contract-record-writes",
     "thing:contract-relinked-keeper",
     "person:contract-forwarded-declared",
     "person:contract-forwarded-marked",

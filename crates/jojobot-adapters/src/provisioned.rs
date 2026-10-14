@@ -756,6 +756,14 @@ mod tests {
         jojobot_domain::memory::testing::contract::own_fields_stay_while_settings_and_computed_keys_reach(&over).await;
     }
 
+    /// The layer forwards the writes of a key that stays on its record, with the
+    /// moment of each.
+    #[tokio::test]
+    async fn the_layer_forwards_the_writes_that_stay_on_their_record() {
+        let over = Provisioned::new(InMemoryMemory::booted(), Provisions::new(vec![]));
+        jojobot_domain::memory::testing::contract::a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment(&over).await;
+    }
+
     /// The prose a reader gets for that entity, through the read every reader
     /// above this layer takes it from.
     async fn read(store: &Provisioned<InMemoryMemory>, bot: &EntityId) -> String {

@@ -151,6 +151,11 @@ pub trait StoredMemory: Send + Sync {
         &self,
         address: &super::FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, super::MemoryError>;
+    /// A write in a trail carries the note its record carried, which is text.
+    async fn key_trails(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Stored<super::KeyTrails>, super::MemoryError>;
     /// Handles, ids and moments only: no text a caller wrote, so the plain type.
     async fn merge_events(
         &self,
@@ -375,6 +380,12 @@ impl StoredMemory for Unrendered {
         address: &super::FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, super::MemoryError> {
         self.0.keys_kept_off_the_thing(address).await
+    }
+    async fn key_trails(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Stored<super::KeyTrails>, super::MemoryError> {
+        self.0.key_trails(entity).await.map(Stored::new)
     }
     async fn merge_events(
         &self,

@@ -3425,6 +3425,34 @@ impl Memory for InMemoryMemory {
                 trails.kept_off.insert(fact.id.clone(), kept);
             }
         }
+        // **The writes that stay on their record**, as the real store keeps them:
+        // each with the moment the store stamped, oldest first within a key.
+        {
+            let folded = self.keys_folded_into(&storage_key);
+            let is_folded = self
+                .merges
+                .lock()
+                .expect("fake mutex poisoned")
+                .iter()
+                .any(|merge| merge.folded == storage_key);
+            let mut kept: Vec<crate::memory::RecordFieldWrite> = self
+                .writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .iter()
+                .filter(|w| !is_folded && (w.entity == storage_key || folded.contains(&w.entity)))
+                .filter(|w| !super::super::reaches_the_thing(w.class))
+                .map(|w| crate::memory::RecordFieldWrite {
+                    fact: w.fact.clone(),
+                    key: w.key.clone(),
+                    ordinal: w.ordinal,
+                    value: w.value.clone(),
+                    written_at: w.written_at,
+                })
+                .collect();
+            kept.sort_by(|a, b| (&a.key, a.ordinal).cmp(&(&b.key, b.ordinal)));
+            trails.record_writes = kept;
+        }
         Ok(trails)
     }
 

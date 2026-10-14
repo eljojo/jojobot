@@ -493,6 +493,17 @@ impl Memory for IndexedMemory {
         self.inner.keys_kept_off_the_thing(address).await
     }
 
+    /// **Straight through, and it does not touch the index**: a trail is a read
+    /// of writes, not a document. A decorator that leaves this to the trait
+    /// default answers from its own `history`, which drops the writes that stay
+    /// on their record.
+    async fn key_trails(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
+        self.inner.key_trails(entity).await
+    }
+
     /// **Straight through, and it does not touch the index**: a merge's event
     /// is not a document. A decorator that leaves this to the trait default
     /// answers no event in production.

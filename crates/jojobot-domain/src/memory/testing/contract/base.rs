@@ -17938,6 +17938,7 @@ macro_rules! all_cases {
         $m!(a_resend_of_a_handle_valued_field_on_another_sessions_testimony_is_not_a_rewrite($store));
         $m!(a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal($store));
         $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
+        $m!(a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment($store));
         $m!(a_write_answers_with_the_bags_a_read_of_the_claim_serves($store));
         $m!(an_entity_edited_with_a_claim_is_made_whole_or_not_at_all($store));
         $m!(edge_whitespace_is_normalized($store));
@@ -18276,6 +18277,90 @@ pub async fn a_retraction_and_a_merge_record_the_session_that_made_them<M: Memor
         .await
         .expect("the history");
     assert_eq!(written(&history), vec![None], "no run, no name invented");
+}
+
+/// **A key that stays on its record is in the trails with the moment the store
+/// took each write in, and a key that reaches the thing is in the history and
+/// not here.** Paired in one claim: the setting reaches the thing, the own field
+/// stays on the record, and an edit of the own field is a second write of it.
+/// **Held on every layer**, because a layer that leaves the trails to the
+/// trait's default answers from its own `history`, which leaves these out.
+pub async fn a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment<M: Memory>(store: &M) {
+    let thing = EntityId("thing:contract-record-writes".into());
+    add(
+        store,
+        NewEntity::new(thing.clone(), "Contract Record Writes", "contract-fixture"),
+    )
+    .await;
+    let pairs = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let claim = capture(
+        store,
+        NewFact {
+            fields: pairs(&[("own_key", "o1"), ("set_key", "s1")]),
+            sets: ["set_key".to_string()].into_iter().collect(),
+            session: Some("session-record-writes".to_string()),
+            ..NewFact::about(thing.clone(), "one claim, two bags", date(2026, 9, 1))
+        },
+    )
+    .await;
+    store
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: pairs(&[("own_key", "o2")]),
+                session: Some("session-record-writes".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("an edit of an own field lands");
+
+    let trails = store.key_trails(&thing).await.expect("the trails read");
+    let own: Vec<&crate::memory::RecordFieldWrite> = trails
+        .record_writes
+        .iter()
+        .filter(|write| write.key == "own_key")
+        .collect();
+    assert_eq!(
+        own.iter()
+            .map(|write| write.value.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("o1"), Some("o2")],
+        "both writes of the own field are here, oldest first: {:?}",
+        trails.record_writes
+    );
+    assert!(
+        own.iter().all(|write| write.fact == claim.id),
+        "each write names the record that carried it: {own:?}"
+    );
+    assert!(
+        own.iter().all(|write| write.written_at.is_some()),
+        "each write carries the moment the store took it in: {own:?}"
+    );
+    assert!(
+        own[0].written_at <= own[1].written_at,
+        "the second write is not before the first: {own:?}"
+    );
+    // The pair: what reaches the thing is in the history and not in these.
+    assert!(
+        trails
+            .record_writes
+            .iter()
+            .all(|write| write.key != "set_key"),
+        "a key that reaches the thing is not one that stays on its record: {:?}",
+        trails.record_writes
+    );
+    assert!(
+        trails.history.contains_key("set_key") && !trails.history.contains_key("own_key"),
+        "the history holds the setting and leaves out the own field: {:?}",
+        trails.history.keys().collect::<Vec<_>>()
+    );
 }
 
 /// How many parts a real store runs the contract in, side by side.

@@ -5243,6 +5243,34 @@ pub struct KeyTrails {
     /// `keys_kept_off_the_thing` for every record on the thing, by its local id.
     /// A record with nothing kept off it has no entry.
     pub kept_off: BTreeMap<FactId, std::collections::BTreeSet<String>>,
+    /// **Every write of a key that stays on its record**, oldest first within a
+    /// key — the writes [`Memory::history`] leaves out because they do not reach
+    /// the thing. A section of a document keeps its place and its heading depth
+    /// this way, so a read of the document as it stood on a day needs them with
+    /// their moments.
+    pub record_writes: Vec<RecordFieldWrite>,
+}
+
+/// **One write of a key that stays on the record that carried it**, with the
+/// moment the store took it in.
+///
+/// Where [`FieldWrite`] answers a key on a thing, this answers a key on a
+/// record: the same row of the substrate, read for a reader that asks what a
+/// record held on a day rather than what a thing holds now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldWrite {
+    /// The record that carried the write, local to the thing.
+    pub fact: FactId,
+    /// The key.
+    pub key: String,
+    /// Its place among the writes of this key on this thing, from one.
+    pub ordinal: u64,
+    /// What the write put there; `None` says it took the key off.
+    pub value: Option<String>,
+    /// **When the store took this write in**, `None` for a write an older build
+    /// appended before the store stamped its writes. It is never filled in, for
+    /// the reason [`KeyWrite::written_at`] is not.
+    pub written_at: Option<jiff::Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
