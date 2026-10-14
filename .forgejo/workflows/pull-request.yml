@@ -43,9 +43,11 @@ jobs:
           fetch-depth: 0
       - run: nix develop -c make check
       # The bar's own log, kept a week. The job log carries only the summary,
-      # so a red case's output is in here or nowhere.
+      # so a red case's output is in here or nowhere. v3: v4 refuses any host
+      # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        uses: actions/upload-artifact@v3
         with:
           name: bar-logs-check
           path: target/bar/*.log
@@ -64,9 +66,11 @@ jobs:
           fetch-depth: 0
       - run: nix develop -c make rooms
       # The bar's own log, kept a week. The job log carries only the summary,
-      # so a red case's output is in here or nowhere.
+      # so a red case's output is in here or nowhere. v3: v4 refuses any host
+      # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        uses: actions/upload-artifact@v3
         with:
           name: bar-logs-rooms
           path: target/bar/*.log
@@ -83,9 +87,11 @@ jobs:
           fetch-depth: 0
       - run: nix develop -c make year
       # The bar's own log, kept a week. The job log carries only the summary,
-      # so a red case's output is in here or nowhere.
+      # so a red case's output is in here or nowhere. v3: v4 refuses any host
+      # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        uses: actions/upload-artifact@v3
         with:
           name: bar-logs-year
           path: target/bar/*.log
