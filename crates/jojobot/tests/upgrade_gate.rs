@@ -5066,3 +5066,112 @@ async fn deploy_4_old_messages_read_cleanly_and_a_new_change_is_kept() {
     old_messages_read_cleanly_and_a_new_change_is_kept(DEPLOY_4_FIXTURE_DIR, "message-event-4")
         .await;
 }
+
+/// **A deployed store that holds a reused handle counts each thing's own writes.**
+/// Both recordings hold a first namesake renamed away and a later heir that took
+/// the freed handle, with `entity_write` rows in the shape an older build wrote
+/// (no badge). The heir's version counts none of the rows filed under its handle
+/// before it came: the former-handle table says the first namesake left it, so
+/// they are the first namesake's. The first namesake keeps all of them, and its
+/// rename.
+async fn a_reused_handle_in_a_deployed_store_counts_each_things_own_writes(
+    fixture_dir: &str,
+    label: &str,
+) {
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_domain::memory::{EntityId, Memory};
+
+    let Restored {
+        scratch: _scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool().clone();
+    // The migrations a boot runs, so the columns the read asks about are there.
+    jojobot_adapters::dolt::migrate::run(&pool)
+        .await
+        .expect("the current migrations run over the recording");
+    let memory = DoltMemory::open(pool.clone());
+    // The other step a boot takes before it reads a handle.
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    let badge_of = |handle: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+                .bind(handle)
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{handle} is in the recording: {e}"))
+                .unwrap_or_else(|| panic!("{handle} wears a badge once the fill has run"))
+        }
+    };
+    let claim_writes = |badge: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
+                .bind(badge)
+                .fetch_one(&pool)
+                .await
+                .expect("the claim writes count")
+        }
+    };
+    let heir = "thing:upgrade-fixture-namesake";
+    let first = "thing:upgrade-fixture-successor";
+    let filed_under_the_handles: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE entity IN (?, ?)")
+            .bind(heir)
+            .bind(first)
+            .fetch_one(&pool)
+            .await
+            .expect("the rows filed under both handles count");
+    let heir_claims = claim_writes(badge_of(heir).await).await;
+    let first_claims = claim_writes(badge_of(first).await).await;
+
+    let heir_version = memory
+        .fields_versioned(&EntityId(heir.into()))
+        .await
+        .expect("the heir's version reads")
+        .1;
+    let first_version = memory
+        .fields_versioned(&EntityId(first.into()))
+        .await
+        .expect("the first namesake's version reads")
+        .1;
+    store.stop().await;
+
+    assert_eq!(
+        heir_version as i64, heir_claims,
+        "recorded at {git_ref}: the heir counts its own claim writes and none of the \
+         {filed_under_the_handles} rows filed under the handles before it came"
+    );
+    assert_eq!(
+        first_version as i64,
+        first_claims + filed_under_the_handles,
+        "recorded at {git_ref}: the first namesake keeps every row filed under the handle \
+         it left and under the one it took"
+    );
+}
+
+#[tokio::test]
+async fn a_reused_handle_in_the_deploy_3_store_counts_each_things_own_writes() {
+    a_reused_handle_in_a_deployed_store_counts_each_things_own_writes(
+        DEPLOY_3_FIXTURE_DIR,
+        "reuse-deploy3",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_reused_handle_in_the_deploy_4_store_counts_each_things_own_writes() {
+    a_reused_handle_in_a_deployed_store_counts_each_things_own_writes(
+        DEPLOY_4_FIXTURE_DIR,
+        "reuse-deploy4",
+    )
+    .await;
+}

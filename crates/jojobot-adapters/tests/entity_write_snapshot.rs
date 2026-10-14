@@ -393,3 +393,91 @@ async fn a_fold_names_its_survivor_by_the_handle_it_wears_after_the_old_handle_i
         "the survivor is named by the handle it wears now, not by the one a new thing took: {history:?}"
     );
 }
+
+/// **A thing's version counts only the writes it made, after its handle is freed by
+/// a rename and taken by a new thing.** The first krusty is renamed and a second
+/// krusty is made under the freed handle. The new thing's version is its own one
+/// write, and not that write plus the one the renamed thing filed under the
+/// handle. Paired: the renamed thing's own version is what it was before the new
+/// thing came.
+#[tokio::test]
+async fn a_version_counts_only_the_writes_of_the_thing_after_its_handle_is_reused() {
+    let (_scratch, mut store, _pool, memory) = store_with_old_rows("version-reused").await;
+    let krusty = EntityId("person:krusty".into());
+    let renamed = EntityId("person:barney-gumble".into());
+    make(&memory, "person:krusty", "Clown").await;
+    memory
+        .rename_entity(
+            &krusty,
+            &renamed,
+            None,
+            jiff::civil::date(2026, 6, 1),
+            None,
+            Some("rn01"),
+        )
+        .await
+        .expect("a rename of the handle")
+        .written()
+        .expect("nothing collides");
+    let before = memory.fields_versioned(&renamed).await.expect("version").1;
+
+    make(&memory, "person:krusty", "Showman").await;
+    let of_new = memory.fields_versioned(&krusty).await.expect("version").1;
+    let of_renamed = memory.fields_versioned(&renamed).await.expect("version").1;
+    store.stop().await;
+
+    assert_eq!(
+        of_renamed, before,
+        "the renamed thing keeps the version it had: nothing the new thing wrote is its own"
+    );
+    assert_eq!(
+        of_new, 1,
+        "the new thing made one write, and the renamed thing's earlier ones are not its own"
+    );
+}
+
+/// **The same, for versions an older build filed.** Those name no badge, so the
+/// former-handle table decides: the renamed thing left the handle and owns them;
+/// the thing that wears it now does not.
+#[tokio::test]
+async fn a_version_counts_the_writes_an_older_build_filed_for_the_thing_that_left_the_handle() {
+    let (_scratch, mut store, pool, memory) = store_with_old_rows("version-old").await;
+    let krusty = EntityId("person:krusty".into());
+    let renamed = EntityId("person:barney-gumble".into());
+    make(&memory, "person:krusty", "Clown").await;
+    sqlx::query("UPDATE entity_write SET name = NULL, kind = NULL, source = NULL, boot = NULL, aliases = NULL, prose = NULL, badge = NULL, session = NULL WHERE entity = 'person:krusty'")
+        .execute(&pool)
+        .await
+        .expect("the version is stripped to the old shape");
+    memory
+        .rename_entity(
+            &krusty,
+            &renamed,
+            None,
+            jiff::civil::date(2026, 6, 1),
+            None,
+            Some("rn01"),
+        )
+        .await
+        .expect("a rename of the handle")
+        .written()
+        .expect("nothing collides");
+    let before = memory.fields_versioned(&renamed).await.expect("version").1;
+    make(&memory, "person:krusty", "Showman").await;
+    let of_new = memory.fields_versioned(&krusty).await.expect("version").1;
+    let of_renamed = memory.fields_versioned(&renamed).await.expect("version").1;
+    store.stop().await;
+
+    assert_eq!(
+        of_renamed, before,
+        "the renamed thing still counts the old version, and nothing more"
+    );
+    assert!(
+        before >= 2,
+        "the renamed thing counts the old version beside its rename: {before}"
+    );
+    assert_eq!(
+        of_new, 1,
+        "the new thing does not count a version an older build filed for the thing that left"
+    );
+}

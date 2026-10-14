@@ -5163,8 +5163,9 @@ impl Memory for DoltMemory {
     /// a role's lease moment, which a renewal overwrites and signals through
     /// `entity_write` instead ([`Self::overwrite_lease_moment`]), so the count
     /// is the claim writes plus the signal rows filed under the handles the
-    /// entity wears and wore. It only grows, and it grows by at least one for every write that could have
-    /// changed what [`fields`](Self::fields) answers. Read in the SAME
+    /// entity wears and wore, and no row of another thing that wore the same
+    /// handle. It grows by at least one for every write that could have changed
+    /// what [`fields`](Self::fields) answers. Read in the SAME
     /// transaction as the fields it counts for, so the two halves of the answer
     /// describe the same instant rather than two reads a write could land
     /// between.
@@ -5196,22 +5197,19 @@ impl Memory for DoltMemory {
         // **A renewal of a lease adds no claim write**, only a signal row filed
         // under the entity's handle (see [`Self::overwrite_lease_moment`]), so
         // the claim writes alone would leave the version where it was while the
-        // moment moved. Rows only ever join that table, so the sum only grows
-        // — but a rename leaves the earlier signals under the handle the entity
-        // wore then, and a version that fell would be refused by the fold as a
-        // read of an earlier state. So the count covers every handle the entity
-        // has worn, and the storage key, under which older stores filed them.
-        let signalled: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM entity_write
-             WHERE entity = ? OR entity = ?
-                OR entity IN (SELECT former_handle FROM entity_former_handle WHERE badge = ?)",
-        )
-        .bind(handle.as_str())
-        .bind(key.as_str())
-        .bind(key.as_str())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(store)?;
+        // moment moved. A rename leaves the earlier signals under the handle the
+        // entity wore then, so the count covers every handle the entity has worn,
+        // and the storage key, under which older stores filed them. **It counts
+        // only the rows that are this thing's** ([`entity_writes_of`]): a handle
+        // freed by a rename and taken by a new thing lends neither of them the
+        // other's rows.
+        let signalled: i64 = entity_writes_of(&mut tx, &handle, &key, "COUNT(*)")
+            .await?
+            .first()
+            .map(|row| row.try_get::<i64, _>(0))
+            .transpose()
+            .map_err(store)?
+            .unwrap_or(0);
         tx.commit().await.map_err(store)?;
         Ok((held, (written + signalled) as u64))
     }
@@ -5246,7 +5244,10 @@ impl Memory for DoltMemory {
             asked.push(("field_write", name));
             asked.push(("fact_write", name));
         }
-        asked.push(("entity_write", handle.as_str()));
+        for row in entity_writes_of(&mut tx, &handle, &key, "written_at").await? {
+            let stamp: Option<String> = row.try_get(0).map_err(store)?;
+            newest = newest.max(parse_stamp(stamp, key.as_str()));
+        }
         for (table, name) in asked {
             let stamps: Vec<Option<String>> =
                 sqlx::query_scalar(&format!("SELECT written_at FROM {table} WHERE entity = ?"))
@@ -5395,29 +5396,14 @@ impl Memory for DoltMemory {
         // by badge; and it does not belong to a thing that wears the handle now
         // when another thing left it. Only a handle nobody left is read as
         // belonging to its wearer.
-        let rows = sqlx::query(
-            "SELECT written_at, kind, name, source, crm, parent, boot, archived_reason, \
-             archived_at, merged_into, aliases, prose, session, badge FROM entity_write \
-             WHERE (entity = ? OR entity = ? OR entity IN \
-                    (SELECT former_handle FROM entity_former_handle WHERE badge = ?)) \
-               AND (badge = ? \
-                    OR (badge IS NULL \
-                        AND (entity IN \
-                               (SELECT former_handle FROM entity_former_handle WHERE badge = ?) \
-                             OR NOT EXISTS \
-                               (SELECT 1 FROM entity_former_handle left_it \
-                                WHERE left_it.former_handle = entity_write.entity \
-                                  AND left_it.badge <> ?))))",
+        let rows = entity_writes_of(
+            &mut tx,
+            &handle,
+            &key,
+            "written_at, kind, name, source, crm, parent, boot, archived_reason, \
+             archived_at, merged_into, aliases, prose, session, badge",
         )
-        .bind(handle.as_str())
-        .bind(key.as_str())
-        .bind(key.as_str())
-        .bind(key.as_str())
-        .bind(key.as_str())
-        .bind(key.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+        .await?;
         let mut kept: Vec<(Option<jiff::Timestamp>, EntityVersion)> = Vec::new();
         for row in &rows {
             let stamp: String = row.try_get("written_at").map_err(store)?;
@@ -7825,6 +7811,49 @@ fn parse_stamp(stamp: Option<String>, entity: &str) -> Option<jiff::Timestamp> {
 /// Each caller therefore writes the entity row, and its aliases, first. A row
 /// that is not there leaves the snapshot columns NULL, which reads as "not
 /// recorded", as every row written before the snapshot does.
+/// **Which `entity_write` rows belong to this thing**, decided in one place for
+/// the history, the version count and the age of its fields.
+///
+/// `entity_write` is filed under the handle the row was written under, so a thing
+/// renamed since holds rows under every handle it wore, and a handle freed by a
+/// rename and taken by a new thing holds rows of both. **A row that names a badge
+/// belongs to that badge only.** A row from before the snapshot names none, so
+/// the handle it was filed under decides: it belongs to a thing that wore that
+/// handle and has since left it, as the former-handle table records by badge, and
+/// not to a thing that wears the handle now when another thing left it. Only a
+/// handle nobody left is read as belonging to its wearer.
+///
+/// `columns` is a list the caller writes, never input.
+async fn entity_writes_of(
+    tx: &mut Transaction<'_, MySql>,
+    handle: &EntityId,
+    key: &EntityId,
+    columns: &str,
+) -> Result<Vec<sqlx::mysql::MySqlRow>, MemoryError> {
+    sqlx::query(&format!(
+        "SELECT {columns} FROM entity_write \
+         WHERE (entity = ? OR entity = ? OR entity IN \
+                (SELECT former_handle FROM entity_former_handle WHERE badge = ?)) \
+           AND (badge = ? \
+                OR (badge IS NULL \
+                    AND (entity IN \
+                           (SELECT former_handle FROM entity_former_handle WHERE badge = ?) \
+                         OR NOT EXISTS \
+                           (SELECT 1 FROM entity_former_handle left_it \
+                            WHERE left_it.former_handle = entity_write.entity \
+                              AND left_it.badge <> ?))))"
+    ))
+    .bind(handle.as_str())
+    .bind(key.as_str())
+    .bind(key.as_str())
+    .bind(key.as_str())
+    .bind(key.as_str())
+    .bind(key.as_str())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(store)
+}
+
 async fn append_entity_write(
     tx: &mut Transaction<'_, MySql>,
     entity: &EntityId,
