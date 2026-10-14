@@ -305,3 +305,86 @@ async fn a_section_that_opens_with_a_code_fence_keeps_what_is_inside_it_literal(
         "{edited}"
     );
 }
+
+/// A paragraph of about a thousand characters, ending in a blank line.
+fn paragraph() -> String {
+    format!("{}\n\n", "word ".repeat(200).trim_end())
+}
+
+/// **A long section's code stays literal across the cut.** A section too big for
+/// one record is cut into several, and the cut here would fall inside a fenced
+/// block that holds a handle naming nothing. The cut moves to before the block,
+/// the document is stored, and it reads back byte for byte.
+///
+/// **Paired**: the same handle in a paragraph of a section as long is still
+/// refused, so the put was stored because the handle is code and not because
+/// nothing was read.
+#[tokio::test]
+async fn a_long_sections_code_stays_literal_across_the_cut() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session.add("document:marge", "Griddle manual").await;
+
+    // About 22 thousand characters of prose, then a fenced block of about 8
+    // thousand that holds the handle at its end: the record limit falls inside it.
+    let mut text = String::from("# Big\n\n");
+    for _ in 0..22 {
+        text.push_str(&paragraph());
+    }
+    text.push_str("```text\n");
+    for _ in 0..7 {
+        text.push_str(&format!("{}\n\n", "line ".repeat(200).trim_end()));
+    }
+    text.push_str("see @person:nelson here\n```\n\n");
+    for _ in 0..30 {
+        text.push_str(&paragraph());
+    }
+
+    let put = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": text}),
+        )
+        .await
+        .json();
+    assert!(
+        put["cut_for_size"].as_u64().is_some_and(|n| n >= 1),
+        "the section is cut for size: {put}"
+    );
+    // A long document is read in parts, each naming where the next begins.
+    let mut read = String::new();
+    let mut offset = 0;
+    loop {
+        let part = session
+            .call(
+                "read_document",
+                json!({"document": "document:homer", "offset": offset}),
+            )
+            .await
+            .json();
+        read.push_str(part["markdown"].as_str().expect("a part has markdown"));
+        match part["next_offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    assert_eq!(read, text, "stored whole and read back whole");
+
+    // The same handle outside code, in a section as long, is refused.
+    let mut prose = String::from("# Big\n\n");
+    for _ in 0..22 {
+        prose.push_str(&paragraph());
+    }
+    prose.push_str("see @person:nelson here\n\n");
+    for _ in 0..30 {
+        prose.push_str(&paragraph());
+    }
+    session
+        .refused(
+            "put_document",
+            json!({"document": "document:marge", "markdown": prose}),
+        )
+        .await
+        .says("person:nelson");
+}
