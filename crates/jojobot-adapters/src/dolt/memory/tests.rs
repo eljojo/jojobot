@@ -1576,6 +1576,102 @@ async fn a_merge_leaves_the_stored_rows_of_the_folded_thing_as_they_were() {
     store.stop().await;
 }
 
+/// **An edit or a retraction of a merged claim, addressed where the survivor
+/// serves it, appends to the claim's own history.** The claim stays stored under
+/// the key it was made under, so the write has to land there: filing it under the
+/// survivor would start a second claim at one served address and leave the
+/// capture out of the history. **Paired**: the claim has two writes after the
+/// edit and one claim stands at the address, and a retraction leaves it archived
+/// once with nothing active beside it.
+#[tokio::test]
+async fn an_edit_or_retraction_of_a_merged_claim_appends_to_its_own_history() {
+    let scratch = Scratch::new("merge-edit-appends");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merge_edit_appends")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let mut merged = Merged::before(pool.clone()).await;
+    merged.fold().await;
+    let caller = EntityId("bot:sigma".into());
+    let served = |now: &str| FactAddress::new(merged.survivor.clone(), FactId(now.to_string()));
+    let at_the_address = |facts: &[Fact], now: &str| {
+        facts
+            .iter()
+            .filter(|fact| fact.id.as_str() == now)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let (_, edited_id) = merged.moved[0].clone();
+    let (_, retracted_id) = merged.moved[1].clone();
+
+    merged
+        .memory
+        .update_fact(
+            &served(&edited_id),
+            FactPatch {
+                content: Some("runs the shop".into()),
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("the guard waves it through");
+    let history = merged
+        .memory
+        .claim_history(&served(&edited_id))
+        .await
+        .expect("the history reads");
+    assert_eq!(
+        history
+            .iter()
+            .map(|write| write.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["runs the store", "runs the shop"],
+        "the capture and the edit are one history"
+    );
+    let listed = merged
+        .memory
+        .recall(&merged.survivor)
+        .await
+        .expect("recall reads");
+    assert_eq!(
+        at_the_address(&listed, &edited_id).len(),
+        1,
+        "one claim stands at the edited address: {listed:?}"
+    );
+    assert_eq!(
+        at_the_address(&listed, &edited_id)[0].content,
+        "runs the shop"
+    );
+
+    merged
+        .memory
+        .retract(
+            &served(&retracted_id),
+            Some("closed"),
+            date(2026, 9, 4),
+            &caller,
+            None,
+        )
+        .await
+        .expect("retract ok");
+    let listed = merged
+        .memory
+        .recall(&merged.survivor)
+        .await
+        .expect("recall reads");
+    let taken_back = at_the_address(&listed, &retracted_id);
+    assert_eq!(taken_back.len(), 1, "one claim at the address: {listed:?}");
+    assert_eq!(taken_back[0].status, FactStatus::Archived);
+    store.stop().await;
+}
+
 /// **A claim stored under the folded thing that no merge event lists is named,
 /// not dropped.** The survivor serves every claim the event maps, names the one
 /// it cannot serve as left out with the reason and the address that reads it,

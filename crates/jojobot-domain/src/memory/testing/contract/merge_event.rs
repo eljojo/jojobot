@@ -278,12 +278,29 @@ pub async fn an_address_from_before_a_merge_still_names_its_claim<M: Memory>(sto
         .written()
         .expect("not blocked");
     let after = store.recall(&survivor).await.expect("recall reads");
-    assert!(
-        after
-            .iter()
-            .any(|f| f.address() == new_of(&moved[0]) && f.content == "skates to the old school"),
+    let at_new: Vec<&Fact> = after
+        .iter()
+        .filter(|f| f.address() == new_of(&moved[0]))
+        .collect();
+    assert_eq!(
+        at_new.len(),
+        1,
+        "one claim stands at the address, not the old one beside the edited: {after:?}"
+    );
+    assert_eq!(
+        at_new[0].content, "skates to the old school",
         "the edit landed on the claim under the survivor: {after:?}"
     );
+    let history = store
+        .claim_history(&new_of(&moved[0]))
+        .await
+        .expect("the history reads");
+    assert_eq!(
+        history.first().map(|write| write.content.as_str()),
+        Some("skates to school"),
+        "the capture is the first write of the edited claim: {history:?}"
+    );
+    assert_eq!(history.len(), 2, "the capture and the edit: {history:?}");
 
     // Taken back through the old address, the claim is taken back there.
     store
@@ -297,10 +314,16 @@ pub async fn an_address_from_before_a_merge_still_names_its_claim<M: Memory>(sto
         .await
         .expect("the old address retracts");
     let after = store.recall(&survivor).await.expect("recall reads");
-    let taken_back = after
+    let at_second: Vec<&Fact> = after
         .iter()
-        .find(|f| f.address() == new_of(&moved[1]))
-        .expect("the claim is still listed, marked");
+        .filter(|f| f.address() == new_of(&moved[1]))
+        .collect();
+    assert_eq!(
+        at_second.len(),
+        1,
+        "one claim stands at the retracted address: {after:?}"
+    );
+    let taken_back = at_second[0];
     assert_eq!(
         taken_back.status,
         crate::memory::FactStatus::Archived,

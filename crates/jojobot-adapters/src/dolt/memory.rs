@@ -2687,7 +2687,8 @@ impl DoltMemory {
                                 // changed with nothing behind it saying when.
                                 victim_fact.status = FactStatus::Archived;
                                 victim_fact.details = Some(reason.clone());
-                                Self::write_fact(tx, &victim_fact, &self.clock, None).await?;
+                                let on_disk = Self::as_stored(tx, &victim_fact).await?;
+                                Self::write_fact(tx, &on_disk, &self.clock, None).await?;
                             }
                             // **The emergency reserve, spent — never twice
                             // in a row.** Only honoured at the exact
@@ -3585,6 +3586,25 @@ impl DoltMemory {
             }
         }
         Ok(())
+    }
+
+    /// **A claim as it is stored, from the claim as it is served.** A merge leaves
+    /// a folded thing's claims under the key and the id they were made under and
+    /// the survivor serves them under ids of its own, so a write of a served claim
+    /// has to land at the stored address or it starts a second claim at one
+    /// served address. A claim that is stored where it is served comes back as it
+    /// was given.
+    async fn as_stored(tx: &mut Transaction<'_, MySql>, fact: &Fact) -> Result<Fact, MemoryError> {
+        let served = FactAddress::new(fact.home.clone(), fact.id.clone());
+        Ok(match Self::stored_address_of(tx, &served).await? {
+            Some(at) if at != served => Fact {
+                subject: at.home.clone(),
+                home: at.home,
+                id: at.local,
+                ..fact.clone()
+            },
+            _ => fact.clone(),
+        })
     }
 
     /// Write one whole fact — the row and the references under it — replacing
@@ -6126,7 +6146,8 @@ impl Memory for DoltMemory {
                 return Err(err);
             }
         }
-        Self::write_fact(&mut tx, &fact, &self.clock, patch.session.as_deref()).await?;
+        let on_disk = Self::as_stored(&mut tx, &fact).await?;
+        Self::write_fact(&mut tx, &on_disk, &self.clock, patch.session.as_deref()).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
         // **A reference-typed value is lowered to the permanent id it
@@ -6138,8 +6159,8 @@ impl Memory for DoltMemory {
             .await?;
         Self::append_writes(
             &mut tx,
-            &fact.home,
-            &fact.id,
+            &on_disk.home,
+            &on_disk.id,
             lowered_writes,
             &self.clock,
             &classes,
@@ -6151,7 +6172,8 @@ impl Memory for DoltMemory {
         // answer's `sets` is the claim as it stands after this write and never the
         // one it had before it: a setting this edit cleared must not stay in `sets`
         // with no value left in `fields`.
-        let (mut fields, sets) = Self::fields_and_sets_of(&mut tx, &fact.home, &fact.id).await?;
+        let (mut fields, sets) =
+            Self::fields_and_sets_of(&mut tx, &on_disk.home, &on_disk.id).await?;
         self.compose_reference_fields(&mut tx, &mut fields).await?;
         // **Served under the handle, stored under the key.**
         let served_derived_from = match &fact.derived_from {
@@ -6577,7 +6599,8 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
-        Self::write_fact(&mut tx, &retracted, &self.clock, session).await?;
+        let retracted_on_disk = Self::as_stored(&mut tx, &retracted).await?;
+        Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session).await?;
         Self::write_fact(&mut tx, &record, &self.clock, session).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
