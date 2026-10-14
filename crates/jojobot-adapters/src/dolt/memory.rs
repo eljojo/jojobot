@@ -1455,20 +1455,30 @@ impl DoltMemory {
         // A merge cannot fold a thing into itself, so the chain ends; the bound
         // is for a store that has been edited by hand.
         for _ in 0..64 {
-            let next: Option<String> = sqlx::query_scalar(
-                "SELECT survivor FROM merge_event WHERE ordinal = 0 AND folded = ?
-                 ORDER BY merge_no DESC LIMIT 1",
-            )
-            .bind(at.as_str())
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?;
-            match next {
-                Some(survivor) => at = EntityId(survivor),
+            match Self::survivor_of(tx, &at).await? {
+                Some(survivor) => at = survivor,
                 None => break,
             }
         }
         Ok(at)
+    }
+
+    /// **The thing a merge folded this one into**, by the key the merge events
+    /// hold, or none when no merge folded it. One hop: the survivor of the
+    /// latest fold, not the end of the chain.
+    async fn survivor_of(
+        tx: &mut Transaction<'_, MySql>,
+        folded: &EntityId,
+    ) -> Result<Option<EntityId>, MemoryError> {
+        let survivor: Option<String> = sqlx::query_scalar(
+            "SELECT survivor FROM merge_event WHERE ordinal = 0 AND folded = ?
+             ORDER BY merge_no DESC LIMIT 1",
+        )
+        .bind(folded.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(survivor.map(EntityId))
     }
 
     /// **The stored address a pointer to a claim is served as**: the claim
@@ -5295,16 +5305,29 @@ impl Memory for DoltMemory {
         // so a thing renamed since holds versions under every handle it wore. A
         // version that names a badge belongs to that badge only: a handle freed
         // by a rename and taken by a new thing does not lend its versions to
-        // either. A version from before the snapshot names none, and is read as
-        // belonging to whichever thing wears the handle it was filed under.
+        // either. **A version from before the snapshot names none, so the handle
+        // it was filed under decides.** It belongs to a thing that wore that
+        // handle and has since left it, which the former-handle table records
+        // by badge; and it does not belong to a thing that wears the handle now
+        // when another thing left it. Only a handle nobody left is read as
+        // belonging to its wearer.
         let rows = sqlx::query(
             "SELECT written_at, kind, name, source, crm, parent, boot, archived_reason, \
              archived_at, merged_into, aliases, prose, session, badge FROM entity_write \
              WHERE (entity = ? OR entity = ? OR entity IN \
                     (SELECT former_handle FROM entity_former_handle WHERE badge = ?)) \
-               AND (badge IS NULL OR badge = ?)",
+               AND (badge = ? \
+                    OR (badge IS NULL \
+                        AND (entity IN \
+                               (SELECT former_handle FROM entity_former_handle WHERE badge = ?) \
+                             OR NOT EXISTS \
+                               (SELECT 1 FROM entity_former_handle left_it \
+                                WHERE left_it.former_handle = entity_write.entity \
+                                  AND left_it.badge <> ?))))",
         )
         .bind(handle.as_str())
+        .bind(key.as_str())
+        .bind(key.as_str())
         .bind(key.as_str())
         .bind(key.as_str())
         .bind(key.as_str())
@@ -5334,6 +5357,17 @@ impl Memory for DoltMemory {
                     for column in ["parent", "merged_into"] {
                         pointed.push(match text(column)? {
                             None => None,
+                            // **A fold's survivor is found by the merge event, not
+                            // by the handle the version stored.** The version kept
+                            // the handle as it stood at the fold; a rename since
+                            // moved it, and a new thing may wear it. The event
+                            // holds the survivor's key, which a rename leaves.
+                            Some(stored) if column == "merged_into" => {
+                                let survivor = Self::survivor_of(&mut tx, &key)
+                                    .await?
+                                    .unwrap_or(EntityId(stored));
+                                Some(self.current_handle(&mut tx, &survivor).await?)
+                            }
                             Some(stored) => {
                                 Some(self.current_handle(&mut tx, &EntityId(stored)).await?)
                             }

@@ -256,3 +256,140 @@ async fn the_history_of_an_entity_follows_its_handle_and_marks_what_an_older_bui
         "the version after the rename holds the row"
     );
 }
+
+/// **A store with the pre-snapshot shape, a handle freed by a rename and taken by
+/// a new thing.** The rows an older build appended name no badge, so the table
+/// cannot say which thing they belong to; the former-handle table can.
+async fn store_with_old_rows(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
+    let scratch = Scratch(std::env::temp_dir().join(format!(
+        "jojobot-freed-handle-{name}-{}",
+        std::process::id()
+    )));
+    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
+    let store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, name)
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    kinds::seed(&memory).await.expect("the kinds are seeded");
+    (scratch, store, pool, memory)
+}
+
+async fn make(memory: &DoltMemory, handle: &str, name: &str) {
+    let made = memory
+        .add_entity(NewEntity::new(EntityId(handle.into()), name, "test"))
+        .await
+        .expect("add_entity ok");
+    assert!(
+        made.clone().written().is_some(),
+        "{handle} was blocked: {made:?}"
+    );
+}
+
+/// **A version an older build filed under a handle that has since been freed and
+/// taken by a new thing belongs to the thing that wore the handle then.** The
+/// first krusty is written, stripped to the shape an older build left (a write
+/// and a moment, no values and no badge), renamed, and a second krusty is made
+/// under the freed handle. The renamed thing's history holds the old version; the
+/// new thing's holds none of the old writes.
+#[tokio::test]
+async fn an_old_version_filed_under_a_reused_handle_belongs_to_the_thing_that_wore_it_then() {
+    let (_scratch, mut store, pool, memory) = store_with_old_rows("reused").await;
+    let krusty = EntityId("person:krusty".into());
+    make(&memory, "person:krusty", "Clown").await;
+    sqlx::query("UPDATE entity_write SET name = NULL, kind = NULL, source = NULL, boot = NULL, aliases = NULL, prose = NULL, badge = NULL, session = NULL WHERE entity = 'person:krusty'")
+        .execute(&pool)
+        .await
+        .expect("the version is stripped to the old shape");
+    let renamed = EntityId("person:barney-gumble".into());
+    memory
+        .rename_entity(
+            &krusty,
+            &renamed,
+            None,
+            jiff::civil::date(2026, 6, 1),
+            None,
+            Some("rn01"),
+        )
+        .await
+        .expect("a rename of the handle")
+        .written()
+        .expect("nothing collides");
+    make(&memory, "person:krusty", "Showman").await;
+
+    let of_renamed = memory.entity_history(&renamed).await.expect("history");
+    let of_new = memory.entity_history(&krusty).await.expect("history");
+    store.stop().await;
+
+    assert!(
+        of_renamed.iter().any(|v| v.snapshot.is_none()),
+        "the renamed thing keeps the version an older build filed under its old handle: {of_renamed:?}"
+    );
+    assert_eq!(
+        of_new.iter().filter(|v| v.snapshot.is_none()).count(),
+        0,
+        "the new thing wears the handle and owns none of the old writes: {of_new:?}"
+    );
+    assert!(
+        of_new.iter().all(|v| v
+            .snapshot
+            .as_ref()
+            .is_some_and(|held| held.name == "Showman")),
+        "and every version it does hold is its own: {of_new:?}"
+    );
+}
+
+/// **A fold's survivor that was renamed, with its old handle taken by a new thing,
+/// is still named by the handle it wears now.** The folded thing's history says
+/// where it went; after the survivor's old handle is reused it must not name the
+/// thing that wears that handle today.
+#[tokio::test]
+async fn a_fold_names_its_survivor_by_the_handle_it_wears_after_the_old_handle_is_reused() {
+    let (_scratch, mut store, _pool, memory) = store_with_old_rows("survivor").await;
+    let folded = EntityId("person:krusty".into());
+    let survivor = EntityId("person:homer".into());
+    make(&memory, "person:krusty", "Clown").await;
+    make(&memory, "person:homer", "Dad").await;
+    memory
+        .merge(
+            &folded,
+            &survivor,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
+    let renamed = EntityId("person:barney-gumble".into());
+    memory
+        .rename_entity(
+            &survivor,
+            &renamed,
+            None,
+            jiff::civil::date(2026, 9, 3),
+            None,
+            Some("rn02"),
+        )
+        .await
+        .expect("a rename of the survivor")
+        .written()
+        .expect("nothing collides");
+    make(&memory, "person:homer", "Father").await;
+
+    let history = memory.entity_history(&folded).await.expect("history");
+    store.stop().await;
+
+    let last = history
+        .iter()
+        .rev()
+        .find_map(|v| v.snapshot.as_ref().and_then(|s| s.merged_into.clone()))
+        .expect("a version records where the folded thing went");
+    assert_eq!(
+        last, renamed,
+        "the survivor is named by the handle it wears now, not by the one a new thing took: {history:?}"
+    );
+}
