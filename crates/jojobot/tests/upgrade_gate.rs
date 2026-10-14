@@ -5985,6 +5985,8 @@ const FOLD_HOLDER: &str = "person:upgrade-fixture-person";
 /// The thing the first duplicate was folded into, and the duplicate.
 const FOLD_SURVIVOR: &str = "thing:upgrade-fixture-thing";
 const FOLD_FOLDED: &str = "thing:recorded-twin";
+/// A thing made under the first duplicate after it was folded.
+const FOLD_CHILD: &str = "thing:the-fern";
 /// The second duplicate, and the name its survivor was given after the fold.
 const FOLD_FOLDED_TWO: &str = "thing:recorded-spare";
 const FOLD_SURVIVOR_TWO_NOW: &str = "thing:jukebox";
@@ -6083,10 +6085,19 @@ async fn a_pointer_at_a_thing_the_deployed_build_folded_reads_as_the_survivor_af
             .await,
     )
     .expect("the holder reads");
+    let child: serde_json::Value =
+        serde_json::from_str(&surface.call("recall", json!({"subject": FOLD_CHILD})).await)
+            .expect("the child reads");
     booted.stop().await;
 
     let fields = &read["objects"][0]["fields"];
     let mut wrong = Vec::new();
+    if child["objects"][0]["parent"] != FOLD_SURVIVOR {
+        wrong.push(format!(
+            "{FOLD_CHILD} reads {} as its parent, not {FOLD_SURVIVOR}",
+            child["objects"][0]["parent"]
+        ));
+    }
     for (words, place, survivor) in FOLD_POINTERS {
         let claim = the_claim_saying(&read, words);
         let (named, how) = match place {

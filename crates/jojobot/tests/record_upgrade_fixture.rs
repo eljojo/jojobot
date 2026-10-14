@@ -469,6 +469,15 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the second survivor is renamed after the fold");
+    // A child made under the first duplicate once it is folded.
+    let answer = surface
+        .call(
+            "add_entity",
+            json!({"kind": "thing", "handle": "the-fern", "name": "A Recorded Fern",
+                   "source": "test", "parent": "thing:recorded-twin", "sid": sid}),
+        )
+        .await;
+    eprintln!("a child under the folded handle, after the fold: {answer}");
     // An edge drawn at the second duplicate once its survivor wears a new handle.
     let answer = surface
         .call(
