@@ -32,6 +32,7 @@ mod image;
 pub mod mail;
 pub mod sessions;
 pub mod teachings;
+mod uncertain;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -48,6 +49,7 @@ use jojobot_domain::memory::{
     search::{self, DocScan},
     types::{self, DeclaredType},
 };
+use uncertain::Uncertain;
 
 /// A [`Memory`] wrapped in a RAM image of everything its reads answer.
 ///
@@ -358,13 +360,27 @@ impl Memory for Folded {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.writing.lock().await;
-        match self.inner.capture(fact).await? {
+        // **A capture whose future is dropped after the store committed drops the
+        // image.** The claim is then in the store and out of the image, and the
+        // next write fills the image again from the store.
+        let uncertain = Uncertain::armed(&self.image, Some(&self.generation), "memory");
+        let landed = match self.inner.capture(fact).await {
+            Ok(landed) => landed,
+            Err(e @ MemoryError::Store(_)) => return Err(e),
+            Err(e) => {
+                uncertain.disarm();
+                return Err(e);
+            }
+        };
+        let answer = match landed {
             Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written(fact)),
                 Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
             },
             blocked => Ok(blocked),
-        }
+        };
+        uncertain.disarm();
+        answer
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -893,6 +909,44 @@ mod tests {
             fields.get("due_on").map(String::as_str),
             Some("2026-09-14"),
             "the image does not carry the write"
+        );
+    }
+
+    /// **A capture whose caller stopped waiting after the store committed is in
+    /// the image.** The write landed and the future that would have followed it
+    /// was dropped. A read from the image must still answer as the store does.
+    #[tokio::test]
+    async fn a_capture_dropped_after_the_store_committed_is_in_the_image() {
+        use crate::counted::Counted;
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store.clone()));
+        let folded = Folded::new(counted.clone());
+        folded.rebuild().await.expect("an empty store fills");
+        seeded(&folded, &alpha(), "Alpha").await;
+
+        counted.hang_after_next_capture();
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            folded.capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
+                ..NewFact::about(alpha(), "written, then the caller left", date(2026, 9, 1))
+            })),
+        )
+        .await;
+        assert!(waited.is_err(), "the capture is cancelled: {waited:?}");
+        let in_store = store.fields(&alpha()).await.expect("the store answers");
+        assert_eq!(
+            in_store.get("due_on").map(String::as_str),
+            Some("2026-09-14"),
+            "the capture committed in the store"
+        );
+
+        let in_image = folded.fields(&alpha()).await.expect("the image answers");
+        assert_eq!(in_image, in_store, "the image misses a committed capture");
+        let claims = folded.recall(&alpha()).await.expect("recall ok");
+        assert!(
+            claims.iter().any(|f| f.content.contains("the caller left")),
+            "the image does not hold the claim: {claims:?}"
         );
     }
 

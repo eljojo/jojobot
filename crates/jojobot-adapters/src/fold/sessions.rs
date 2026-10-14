@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::uncertain::Uncertain;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use jiff::civil::Date;
@@ -138,36 +139,6 @@ fn order(a: &Session, b: &Session) -> std::cmp::Ordering {
     b.started_at
         .cmp(&a.started_at)
         .then_with(|| b.id.cmp(&a.id))
-}
-
-/// **Drops the image unless disarmed**: armed across a write whose outcome the
-/// image cannot know if the write does not finish. A future dropped while the
-/// store wrote never reaches `disarm`, and the image goes with it.
-struct Uncertain<'a> {
-    image: Option<&'a RwLock<Option<Image>>>,
-}
-
-impl<'a> Uncertain<'a> {
-    fn armed(image: &'a RwLock<Option<Image>>) -> Self {
-        Uncertain { image: Some(image) }
-    }
-
-    /// The outcome is known: keep the image.
-    fn disarm(mut self) {
-        self.image = None;
-    }
-}
-
-impl Drop for Uncertain<'_> {
-    fn drop(&mut self) {
-        if let Some(image) = self.image {
-            tracing::warn!(
-                "a write's outcome is unknown, so reads go to the store until the next write \
-                 fills the in-memory image of the runs again"
-            );
-            *image.write().expect("fold lock") = None;
-        }
-    }
 }
 
 /// A [`Sessions`] wrapped in a RAM image of everything its reads answer.
@@ -383,7 +354,7 @@ impl Sessions for FoldedSessions {
         // image, and a retry under the same sid writes nothing. Without the
         // image the retry fills it again from the store, so the image holds the
         // Begin the store holds rather than a second one stamped at the retry.
-        let uncertain = Uncertain::armed(&self.image);
+        let uncertain = Uncertain::armed(&self.image, None, "runs");
         let run = match self.inner.begin(new).await {
             Ok(run) => run,
             Err(e @ SessionError::Store(_)) => return Err(e),

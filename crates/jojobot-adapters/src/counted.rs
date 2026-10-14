@@ -28,6 +28,8 @@ pub struct Counted {
     by_name: std::sync::Mutex<BTreeMap<&'static str, usize>>,
     /// While set, the listing every fill of the image starts with fails.
     unreachable: AtomicBool,
+    /// Set once: the next capture commits in the store and then never answers.
+    hang_after_capture: AtomicBool,
 }
 
 impl Counted {
@@ -37,6 +39,7 @@ impl Counted {
             total: AtomicUsize::new(0),
             by_name: std::sync::Mutex::default(),
             unreachable: AtomicBool::new(false),
+            hang_after_capture: AtomicBool::new(false),
         }
     }
 
@@ -45,6 +48,13 @@ impl Counted {
     /// goes through, so a case can fail a first fill and let the store recover.
     pub fn set_unreachable(&self, down: bool) {
         self.unreachable.store(down, Ordering::SeqCst);
+    }
+
+    /// **The next capture commits and its caller never hears.** The store writes,
+    /// then the call stays pending, so a caller that stops waiting drops a future
+    /// whose write already landed.
+    pub fn hang_after_next_capture(&self) {
+        self.hang_after_capture.store(true, Ordering::SeqCst);
     }
 
     /// Calls made since the last [`reset`](Self::reset).
@@ -174,7 +184,11 @@ impl Memory for Counted {
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.hit("capture");
-        self.inner.capture(fact).await
+        let landed = self.inner.capture(fact).await;
+        if self.hang_after_capture.swap(false, Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        landed
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.hit("recall");
