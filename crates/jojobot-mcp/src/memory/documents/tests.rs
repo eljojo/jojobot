@@ -1452,3 +1452,53 @@ async fn placing_waits_per_document_and_never_across_documents() {
         .expect("it goes on once the holder lets go");
     assert_ne!(json_of(&done)["status"], "blocked", "{done:?}");
 }
+
+/// **Two puts after the same section, one under the document's current handle and
+/// one under a handle it used to wear, mint different keys.** The placing lock
+/// belongs to the thing, so every name it has answered to shares it. Keyed on the
+/// handle as sent, the two puts hold different locks, read the same neighbours and
+/// mint the same key.
+#[tokio::test]
+async fn two_puts_under_two_names_of_one_document_mint_different_keys() {
+    let (a, b, memory) = two_connections();
+    let (former, current) = ("document:homer", "document:krusty");
+    put_ok(&a, former, "# Anchor\n\nanchor\n").await;
+    a.rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+        handle: former.into(),
+        to: current.into(),
+        parent: None,
+        recorded_at: None,
+        override_token: None,
+        sid: Some(TEST_SID.into()),
+    }))
+    .await
+    .expect("rename_entity answers");
+    let anchor = address_of(&a, current, "# Anchor").await;
+
+    let after_anchor = |document: &'static str, markdown: &'static str| {
+        let anchor = anchor.clone();
+        async move {
+            PutDocumentArgs {
+                after: Some(anchor),
+                ..put_args(document, markdown).await
+            }
+        }
+    };
+    let left_args = after_anchor(current, "# Left\n\nleft\n").await;
+    let right_args = after_anchor(former, "# Right\n\nright\n").await;
+    let (left, right) = tokio::join!(put(&a, left_args), put(&b, right_args));
+    let (left, right) = (json_of(&left), json_of(&right));
+    assert_ne!(left["status"], "blocked", "{left}");
+    assert_ne!(right["status"], "blocked", "{right}");
+
+    let held = placed(&memory, current).await;
+    let lines: Vec<&str> = held.iter().map(|(_, line)| line.as_str()).collect();
+    assert_eq!(lines.len(), 3, "the anchor and both sections: {held:?}");
+    assert_eq!(lines[0], "# Anchor", "{held:?}");
+    assert!(
+        lines.contains(&"# Left") && lines.contains(&"# Right"),
+        "both sections exist: {held:?}"
+    );
+    let keys: std::collections::BTreeSet<&str> = held.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys.len(), 3, "every section has its own key: {held:?}");
+}

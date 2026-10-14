@@ -120,8 +120,13 @@ impl Jojobot {
         }
         // **Held from the read of the neighbours to the last write**: the keys are
         // minted from that read, and a second put on the same document that read
-        // before this one wrote would mint the same keys.
-        let _placing = self.registry.hold_placing(&subject).await;
+        // before this one wrote would mint the same keys. **The lock is on the
+        // thing the handle resolves to**, so a handle it used to wear shares it.
+        let placed_on = match self.current_handle(&subject).await {
+            Ok(current) => current,
+            Err(e) => return memory_declined("put_document", e),
+        };
+        let _placing = self.registry.hold_placing(&placed_on).await;
         let held = match self.memory.recall(&subject).await {
             Ok(held) => held,
             Err(e) => return memory_declined("put_document", e),
