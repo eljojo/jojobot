@@ -3159,19 +3159,11 @@ impl Memory for InMemoryMemory {
         // **The versions of every thing folded into this one are part of its
         // history**, in the order they were written, each marked with the
         // handle its writer answers to now.
-        let mut things = vec![key];
-        {
-            let merges = self.merges.lock().expect("fake mutex poisoned");
-            let mut at = 0;
-            while let Some(survivor) = things.get(at).cloned() {
-                at += 1;
-                for merge in merges.iter().filter(|merge| merge.survivor == survivor) {
-                    if !things.contains(&merge.folded) {
-                        things.push(merge.folded.clone());
-                    }
-                }
-            }
-        }
+        let mut things = vec![key.clone()];
+        things.extend(
+            self.keys_folded_into(&key)
+                .expect("the fake merges nothing into itself, so its merges never loop"),
+        );
         let held: Vec<(EntityId, super::super::EntityVersion)> = self
             .entity_versions
             .lock()

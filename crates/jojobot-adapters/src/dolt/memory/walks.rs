@@ -98,34 +98,6 @@ impl DoltMemory {
         }
     }
 
-    /// **The keys of every thing folded into `survivor`**, through the things
-    /// folded into those in turn, nearest fold first. The survivor itself is not
-    /// in the list.
-    pub(super) async fn folded_into(
-        tx: &mut Transaction<'_, MySql>,
-        survivor: &EntityId,
-    ) -> Result<Vec<EntityId>, MemoryError> {
-        let mut found: Vec<EntityId> = Vec::new();
-        let mut next = vec![survivor.clone()];
-        while let Some(at) = next.pop() {
-            let folded: Vec<String> = sqlx::query_scalar(
-                "SELECT folded FROM merge_event WHERE ordinal = 0 AND survivor = ?
-                 ORDER BY merge_no",
-            )
-            .bind(at.as_str())
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?;
-            for key in folded.into_iter().map(EntityId) {
-                if key != *survivor && !found.contains(&key) {
-                    found.push(key.clone());
-                    next.push(key);
-                }
-            }
-        }
-        Ok(found)
-    }
-
     /// **The things a read serves under `folded`'s survivor because of this
     /// merge**: the live children of `folded` and of everything folded into it.
     /// A merge moves no row, so each still holds the key of the parent it was
@@ -134,8 +106,13 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         folded: &EntityId,
     ) -> Result<Vec<EntityId>, MemoryError> {
-        let mut parents = Self::folded_into(tx, folded).await?;
-        parents.insert(0, folded.clone());
+        let mut parents = vec![folded.clone()];
+        parents.extend(
+            Self::merges_into(tx, folded)
+                .await?
+                .into_iter()
+                .map(|step| EntityId(step.folded)),
+        );
         let mut children = Vec::new();
         for parent in parents {
             let held: Vec<String> = sqlx::query_scalar(

@@ -5282,7 +5282,12 @@ impl Memory for DoltMemory {
         // part of its survivor's. Each is read as that thing's own history is
         // and marked with the handle that thing answers to.
         let mut things = vec![key.clone()];
-        things.extend(Self::folded_into(&mut tx, &key).await?);
+        things.extend(
+            Self::merges_into(&mut tx, &key)
+                .await?
+                .into_iter()
+                .map(|step| EntityId(step.folded)),
+        );
         // **`entity_write` is filed under the handle the row was written under**,
         // so a thing renamed since holds versions under every handle it wore. A
         // version that names a badge belongs to that badge only: a handle freed
