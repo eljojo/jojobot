@@ -1221,19 +1221,23 @@ impl Sessions for DoltSessions {
         // **The total the reset sets back is its record.** Read in the same
         // transaction, so the record holds what the row held; a run no row
         // holds is refused.
-        let total: i64 = sqlx::query_scalar("SELECT served_chars FROM session WHERE id = ?")
-            .bind(id.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(store)?
-            .ok_or_else(|| SessionError::UnknownSession {
-                attempted: id.to_string(),
-            })?;
-        sqlx::query("UPDATE session SET served_chars = 0 WHERE id = ?")
+        let total: Option<i64> =
+            sqlx::query_scalar("SELECT served_chars FROM session WHERE id = ?")
+                .bind(id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store)?;
+        // **Existence is `exists`'s question, asked only when the update matched
+        // no row**, as `add_served` asks it. A run no row holds is refused there.
+        let reset = sqlx::query("UPDATE session SET served_chars = 0 WHERE id = ?")
             .bind(id.as_str())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        if reset.rows_affected() == 0 {
+            self.exists(&mut tx, id).await?;
+        }
+        let total = total.unwrap_or(0);
         self.keep_change(&mut tx, id, Change::ServedReset(total.max(0) as u64))
             .await?;
         tx.commit().await.map_err(store)?;
