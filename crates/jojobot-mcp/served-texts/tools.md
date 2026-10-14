@@ -248,7 +248,7 @@ what says on what.
 #### `add_entity` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the entity is made once. It needs a `sid`, and a call that
@@ -434,7 +434,7 @@ set to choose from.
 #### `archive_entity` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the entity is archived or restored once. It needs a `sid`, and a call that
@@ -885,7 +885,7 @@ touches it.
 #### `capture` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time. It needs a `sid`, and a call that wrote nothing
@@ -1238,7 +1238,7 @@ type is closed and the answer says so. Pick a name of your own.
 #### `declare_type` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the type is declared once. It needs a `sid`, and a call that
@@ -1743,7 +1743,7 @@ processing outcome, because none happened.
 #### `mark_processed` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the message is retired once. It needs a `sid`, and a call that
@@ -1865,7 +1865,7 @@ your session's zone.
 #### `merge_entities` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the two are merged once. It needs a `sid`, and a call that
@@ -2038,7 +2038,7 @@ read_mailbox's own description says.
 #### `post_message` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the message is posted once. It needs a `sid`, and a call that
@@ -3968,7 +3968,7 @@ day the call is made — a session catching up on last week says so here.
 #### `retract` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the claim is taken back once. It needs a `sid`, and a call that
@@ -4449,7 +4449,7 @@ kept as written and never becomes a link.
 #### `set_charter` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the charter is written once. It needs a `sid`, and a call that
@@ -4955,7 +4955,7 @@ is.
 #### `update_entity` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the edit is made once. It needs a `sid`, and a call that
@@ -5558,7 +5558,7 @@ them. Sent with `find`, never alone.
 #### `update_fact` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 characters. Send the
+**A name of your choosing for this write**, up to 128 bytes. Send the
 same call again with the same `request_id` after an answer was lost: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the edit is made once. It needs a `sid`, and a call that

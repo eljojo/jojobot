@@ -201,9 +201,20 @@ async fn an_id_needs_a_session_and_a_good_shape() {
     }
     assert_eq!(claims(&s).await, 0);
 
-    // The positive: a good id on the same session lands.
+    // An id is counted in bytes: a hundred two-byte letters are 200 bytes, which is
+    // over the limit, and the refusal says the limit is in bytes.
+    s.refused("capture", capture("wears glasses", &"é".repeat(100)))
+        .await
+        .says("bytes")
+        .never_says("characters");
+    assert_eq!(claims(&s).await, 0);
+
+    // The positive: 64 of them are 128 bytes, the most an id may be, and a plain id
+    // lands too.
+    s.call("capture", capture("owns a radio", &"é".repeat(64)))
+        .await;
     s.call("capture", capture("wears glasses", "r1")).await;
-    assert_eq!(claims(&s).await, 1);
+    assert_eq!(claims(&s).await, 2);
 
     story.finish().await;
 }

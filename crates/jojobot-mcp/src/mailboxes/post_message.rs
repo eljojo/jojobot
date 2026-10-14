@@ -48,7 +48,7 @@ pub struct PostMessageArgs {
     /// the message later, so a reader can check a claim about your own mail against
     /// what was true when you hit send.
     pub(crate) sid: String,
-    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// **A name of your choosing for this write**, up to 128 bytes. Send the
     /// same call again with the same `request_id` after an answer was lost: if
     /// the first call wrote, you get its receipt back marked `repeat` and nothing
     /// is written a second time, so the message is posted once. It needs a `sid`, and a call that

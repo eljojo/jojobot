@@ -145,7 +145,7 @@ pub struct DeclareTypeArgs {
     /// every call — it is what tells jojobot which bot is asking.
     #[serde(default)]
     pub(crate) sid: Option<String>,
-    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// **A name of your choosing for this write**, up to 128 bytes. Send the
     /// same call again with the same `request_id` after an answer was lost: if
     /// the first call wrote, you get its receipt back marked `repeat` and nothing
     /// is written a second time, so the type is declared once. It needs a `sid`, and a call that

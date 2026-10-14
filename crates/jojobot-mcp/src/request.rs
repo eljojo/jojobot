@@ -61,7 +61,7 @@ impl Jojobot {
                 return Begun::Refused(handle_declined(
                     verb,
                     format!(
-                        "{refused}. Send a request_id of one to {} characters with no control \
+                        "{refused}. Send a request_id of one to {} bytes with no control \
                          character and no space at either end, or leave it off. Nothing was \
                          written.",
                         jojobot_domain::request::MAX_ID_BYTES
