@@ -14,6 +14,7 @@ use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention,
 };
 use jojobot_domain::text;
+use jojobot_mcp::memory::view_run;
 
 use crate::AppState;
 use crate::ui::tree;
@@ -755,65 +756,72 @@ async fn view_section(
     // the instance's record holds, and UTC only when it holds none.
     let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
     let today = state.clock.today_in(&frame);
-    // **The view's expression and ordering are read where the verb reads them**
-    // (rule 51), against the same kind of day.
-    let (filters, order) = match (asked.filters(today), asked.ordering()) {
-        (Ok(filters), Ok(order)) => (filters, order),
-        (Err(why), _) | (_, Err(why)) => return cannot_run(&escape(&why.to_string())),
-    };
-    let query = graph::GraphQuery {
-        select: graph::Selection {
-            kind: Some(kind),
-            fields: filters,
-            order,
-            ..graph::Selection::default()
+    // **The type the view names is looked up as the verb looks it up**, and a
+    // name nobody declared is a view that cannot be run.
+    let answers_type = match asked.answers_type.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(wanted) => match state.memory.declared_types().await {
+            Ok(known) => match known.into_iter().find(|declared| declared.name == wanted) {
+                Some(declared) => Some(declared),
+                None => {
+                    return cannot_run(&format!(
+                        "it asks for things that answer the type <code>{}</code>, and no type is \
+                         called that.",
+                        escape(wanted)
+                    ));
+                }
+            },
+            Err(err) => {
+                return blind(
+                    "What this view answers",
+                    "the declared types",
+                    &err.to_string(),
+                );
+            }
         },
-        // **The objects, and nothing of each.** A view's `shows` says what of
-        // each one comes back on a READ; this is a directory listing, and it
-        // lists. Asking for prose here would cost a page per result and put
-        // none of it on screen.
-        include: graph::Include {
-            facts: false,
-            prose: false,
-            stood_for: false,
-        },
-        follow: None,
-        history: None,
     };
-    let mut found = match graph::walk(&*state.memory, &[], &query).await {
-        Ok(selected) => selected.objects,
-        Err(err) => {
+    // **The question is built and answered where the verb builds and answers
+    // it** (rules 444 and 473), so a key the view holds means the same thing on
+    // both. The objects are listed and nothing of each is asked for: a view's
+    // `shows` says what of each one comes back on a READ, and a directory
+    // listing lists.
+    let question = match view_run::Question::of_view(&asked, kind, answers_type, today) {
+        Ok(question) => question,
+        Err(why) => return cannot_run(&escape(&why.to_string())),
+    };
+    // **The words the operator mapped**, so a status that means `done` here
+    // finishes a thing exactly as it does in the verbs. Read only for a view
+    // that asks what is owed.
+    let carriers = attention::shipped();
+    let carriers: Vec<&dyn attention::Carrier> =
+        carriers.iter().map(std::convert::AsRef::as_ref).collect();
+    let instance = match question.asks.overdue {
+        Some(_) => {
+            jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await
+        }
+        None => BTreeMap::new(),
+    };
+    let context = view_run::Context {
+        carriers: &carriers,
+        instance: &instance,
+    };
+    let found = match view_run::answer(&*state.memory, &question, &context).await {
+        Ok(answered) => answered.selected.objects,
+        Err(view_run::Failed::Selection(err)) => {
             return blind(
                 "What this view answers",
                 "the records it selects",
                 &err.to_string(),
             );
         }
+        Err(view_run::Failed::Readiness(err)) => {
+            return blind(
+                "What this view answers",
+                "the work it depends on",
+                &err.to_string(),
+            );
+        }
     };
-    // **The narrowings a selection cannot express, run by the functions the verb
-    // runs** (rule 444). A page that ran the selection alone would answer with
-    // more than the view asked for, which is the page telling a reader something
-    // the view does not say.
-    if asked.overdue {
-        let carriers = attention::shipped();
-        let carriers: Vec<&dyn attention::Carrier> =
-            carriers.iter().map(std::convert::AsRef::as_ref).collect();
-        // **The words the operator mapped**, so a status that means `done` here
-        // finishes a thing exactly as it does in the verbs.
-        let instance =
-            jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await;
-        jojobot_mcp::memory::view_run::keep_owed(&mut found, &carriers, &instance, today);
-    }
-    if asked.ready
-        && let Err(err) =
-            jojobot_mcp::memory::view_run::keep_ready(&*state.memory, &mut found, None).await
-    {
-        return blind(
-            "What this view answers",
-            "the work it depends on",
-            &err.to_string(),
-        );
-    }
     if found.is_empty() {
         return "<h2>What this view answers</h2>\n\
                 <p>This view matches nothing today. The question is a good one; \

@@ -1,9 +1,16 @@
-//! **The passes a view's answer goes through after its selection**, in one place.
+//! **A view's question, built once and answered once**, in one place.
 //!
 //! A view is answered twice: by the `recall` verb and by the page of the view
-//! record. The two once ran their own copies of these passes and disagreed, so a
-//! page listed work that could not start. Both call these functions now, and
-//! neither keeps a second copy (rule 444).
+//! record. The two once ran their own copies of the passes after the selection
+//! and disagreed, so a page listed work that could not start; then they built
+//! their own selections and disagreed again, so a page listed what the view's
+//! type left out. Both call these functions now, and neither keeps a second
+//! copy (rule 444, rule 473).
+//!
+//! [`Question::new`] is the one place a selection becomes a query,
+//! [`Question::of_view`] is the one reading of a stored view as a question
+//! with no caller beside it, and [`select`] and [`narrow`] (which [`answer`]
+//! runs in turn) are the one executor.
 //!
 //! What stays with each caller is what it does with the answer: the verb fits
 //! the objects to its ceiling and renders them as JSON, and the page renders a
@@ -13,9 +20,170 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
-use jojobot_domain::memory::{EntityId, Memory, MemoryError};
+use jojobot_domain::memory::search::DocScan;
+use jojobot_domain::memory::types::DeclaredType;
+use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError};
 
 use super::ready::{self, Verdict};
+
+/// **The two narrowings a selection cannot express.**
+#[derive(Default)]
+pub struct Asks {
+    /// **Only what is owed on this day**, oldest due first.
+    pub overdue: Option<jiff::civil::Date>,
+    /// **Only the work that can be started.** The inner value is the one thing
+    /// a call named, which always comes back so a caller can read why.
+    pub ready: Option<Option<EntityId>>,
+}
+
+/// **A question, ready to be answered**: a query for the graph and its
+/// narrowings.
+pub struct Question {
+    /// What the graph is asked. A caller may adjust it before the walk, as the
+    /// verb does when an address or an index narrows the selection.
+    pub query: graph::GraphQuery,
+    /// What is kept of the objects the query finds.
+    pub asks: Asks,
+}
+
+impl Question {
+    /// **The one place a selection becomes a query.** No narrowing is asked: a
+    /// caller adds `overdue` and `ready` to the question it gets back.
+    pub fn new(
+        select: graph::Selection,
+        include: graph::Include,
+        follow: Option<graph::Follow>,
+        history: Option<graph::History>,
+    ) -> Question {
+        Question {
+            query: graph::GraphQuery {
+                select,
+                include,
+                follow,
+                history,
+            },
+            asks: Asks::default(),
+        }
+    }
+
+    /// **A stored view read as a question, with nothing beside it.** The kind
+    /// is the one `selects` resolved to, and `answers_type` is the declaration
+    /// its name resolved to; both are the caller's to look up, because the
+    /// verb refuses a call where the page says the view cannot be run.
+    ///
+    /// **What is asked of each object is the objects and nothing of each**: a
+    /// view's `shows` says what of each one comes back on a read, and a
+    /// listing of the answer needs none of it. `today` is the day a relative
+    /// date in `where` and an overdue ask are read against.
+    pub fn of_view(
+        asked: &graph::Asked,
+        kind: EntityKind,
+        answers_type: Option<DeclaredType>,
+        today: jiff::civil::Date,
+    ) -> Result<Question, MemoryError> {
+        let (fields, order) = (asked.filters(today)?, asked.ordering()?);
+        let mut question = Question::new(
+            graph::Selection {
+                kind: Some(kind),
+                answers_type,
+                fields,
+                order,
+                ..graph::Selection::default()
+            },
+            graph::Include {
+                facts: false,
+                prose: false,
+                stood_for: false,
+            },
+            None,
+            None,
+        );
+        question.asks = Asks {
+            overdue: asked.overdue.then_some(today),
+            ready: asked.ready.then_some(None),
+        };
+        Ok(question)
+    }
+}
+
+/// **What the narrowings are read against**, which the caller supplies so no
+/// answer here hardcodes the carriers a build ships.
+pub struct Context<'a> {
+    /// The carriers that say when a thing falls due.
+    pub carriers: &'a [&'a dyn attention::Carrier],
+    /// The operator's own status words. Read only for an overdue question.
+    pub instance: &'a BTreeMap<String, String>,
+}
+
+/// **What the narrowings found**, aligned with the objects they kept.
+pub struct Narrowed {
+    /// Present when the question asked what is owed.
+    pub owed: Option<OwedPass>,
+    /// Present when the question asked what is ready.
+    pub ready: Option<ReadyPass>,
+}
+
+/// **The selection, walked.** `sessions` are the runs the caller joins to the
+/// walk, and `window` is the part of a browse the caller will serve.
+pub async fn select(
+    memory: &dyn Memory,
+    sessions: &[DocScan],
+    query: &graph::GraphQuery,
+    window: Option<graph::Window<'_>>,
+) -> Result<graph::Selected, MemoryError> {
+    graph::walk_in_window(memory, sessions, query, window).await
+}
+
+/// **The narrowings a selection cannot express**, run in the order the verb
+/// has always run them: what is owed, then what is ready.
+pub async fn narrow(
+    memory: &dyn Memory,
+    found: &mut Vec<graph::Object>,
+    asks: &Asks,
+    context: &Context<'_>,
+) -> Result<Narrowed, MemoryError> {
+    let owed = asks
+        .overdue
+        .map(|as_of| keep_owed(found, context.carriers, context.instance, as_of));
+    let ready = match &asks.ready {
+        Some(named) => Some(keep_ready(memory, found, named.as_ref()).await?),
+        None => None,
+    };
+    Ok(Narrowed { owed, ready })
+}
+
+/// **Where a question failed**, because a caller says different things about a
+/// selection it could not read and a dependency it could not read.
+pub enum Failed {
+    /// The walk over the records the question selects.
+    Selection(MemoryError),
+    /// The read of the work a ready question depends on.
+    Readiness(MemoryError),
+}
+
+/// **A question, answered**: the selection and then its narrowings.
+pub struct Answered {
+    /// The objects the question found, after the narrowings.
+    pub selected: graph::Selected,
+    /// What the narrowings found.
+    pub narrowed: Narrowed,
+}
+
+/// **Answer a question** as the page of a view does: the whole selection, no
+/// window, no runs joined.
+pub async fn answer(
+    memory: &dyn Memory,
+    question: &Question,
+    context: &Context<'_>,
+) -> Result<Answered, Failed> {
+    let mut selected = select(memory, &[], &question.query, None)
+        .await
+        .map_err(Failed::Selection)?;
+    let narrowed = narrow(memory, &mut selected.objects, &question.asks, context)
+        .await
+        .map_err(Failed::Readiness)?;
+    Ok(Answered { selected, narrowed })
+}
 
 /// **What an object owes, asked of its kind too**: a finished work item or
 /// project owes nothing — see [`attention::owed_as`].

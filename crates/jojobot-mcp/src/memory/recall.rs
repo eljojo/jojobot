@@ -10,6 +10,7 @@
 use jojobot_domain::attention;
 
 use super::*;
+use crate::memory::view_run;
 use crate::session::session_declined;
 use jojobot_domain::memory::search::{Coverage, HeldField};
 use jojobot_domain::memory::types::Compare;
@@ -2310,8 +2311,8 @@ impl Jojobot {
                 )),
             );
         }
-        let query = graph::GraphQuery {
-            select: graph::Selection {
+        let query = view_run::Question::new(
+            graph::Selection {
                 subject: args
                     .subject
                     .as_deref()
@@ -2342,8 +2343,9 @@ impl Jojobot {
             },
             include,
             follow,
-            history: trace,
-        };
+            trace,
+        )
+        .query;
         // 🚨 **An address is a selection.** A record's address contains its
         // subject, and a call that named only a record — to trace, or to walk
         // lineage from — was refused for naming nothing to recall, which is
@@ -2694,7 +2696,7 @@ impl Jojobot {
             decisions_archived,
             skipped,
             left_over,
-        } = match graph::walk_in_window(self.memory.as_ref(), &session_docs, &query, window).await {
+        } = match view_run::select(self.memory.as_ref(), &session_docs, &query, window).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", through_view(e)),
         };
@@ -2764,42 +2766,55 @@ impl Jojobot {
         // with `found` the same way. Only the carrier that answers for the object
         // knows which keys of its schedule are missing or unreadable.
         let mut unreadable_because: Option<Vec<Option<attention::Unreadable>>> = None;
-        if let Some(as_of) = as_of {
-            // **The read compares a moment to a day and computes none of them.**
-            // Which moment a thing falls due at is its carrier's answer, so a
-            // second sort of owed thing lands by answering here rather than by
-            // this line growing a branch — and a kind no carrier speaks for
-            // owes nothing, which is what keeps a person out of an answer about
-            // what is late.
-            let asked = self.carriers();
-            // **What the operator mapped their status words to**, read once: a
-            // word mapped to `done` finishes a work item or project here too.
-            let instance = self.instance_fields().await;
-            // **The page of a view runs this same pass** (rule 444).
-            let pass = crate::memory::view_run::keep_owed(&mut found, &asked, &instance, as_of);
-            overdue_excluded = Some(pass.excluded);
-            overdue_by_days = Some(pass.by_days);
-            unreadable_because = Some(pass.unreadable_because);
-        }
+        // **The read compares a moment to a day and computes none of them.**
+        // Which moment a thing falls due at is its carrier's answer, so a
+        // second sort of owed thing lands by answering there rather than by
+        // this line growing a branch — and a kind no carrier speaks for owes
+        // nothing, which is what keeps a person out of an answer about what is
+        // late. **The page of a view runs these same passes** (rule 444).
+        //
         // **What can be started, when the view asked.** Asked of the work the
         // selection found, against the things its `depends_on` names, and of
         // nothing else: an ordinary read never reaches here. Work that is not
         // ready is left out and counted, **except the one thing a call named**,
         // which always comes back so a caller can read why. The count names the
         // call that does.
+        let asks = view_run::Asks {
+            overdue: as_of,
+            ready: asks_ready.then(|| query.select.subject.clone()),
+        };
+        let carriers = self.carriers();
+        // **What the operator mapped their status words to**, read once and
+        // only for an overdue question: a word mapped to `done` finishes a work
+        // item or project here too.
+        let instance = match as_of {
+            Some(_) => self.instance_fields().await,
+            None => Default::default(),
+        };
+        let narrowed = match view_run::narrow(
+            &*self.memory,
+            &mut found,
+            &asks,
+            &view_run::Context {
+                carriers: &carriers,
+                instance: &instance,
+            },
+        )
+        .await
+        {
+            Ok(narrowed) => narrowed,
+            Err(e) => return memory_declined("recall", e),
+        };
+        if let Some(pass) = narrowed.owed {
+            overdue_excluded = Some(pass.excluded);
+            overdue_by_days = Some(pass.by_days);
+            unreadable_because = Some(pass.unreadable_because);
+        }
         let mut readiness: Option<Vec<crate::memory::ready::Verdict>> = None;
         let mut ready_left_out: Option<usize> = None;
-        if asks_ready {
-            let named = query.select.subject.clone();
-            match crate::memory::view_run::keep_ready(&*self.memory, &mut found, named.as_ref())
-                .await
-            {
-                Ok(pass) => {
-                    readiness = Some(pass.verdicts);
-                    ready_left_out = Some(pass.left_out);
-                }
-                Err(e) => return memory_declined("recall", e),
-            }
+        if let Some(pass) = narrowed.ready {
+            readiness = Some(pass.verdicts);
+            ready_left_out = Some(pass.left_out);
         }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that

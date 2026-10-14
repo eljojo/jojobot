@@ -4037,3 +4037,232 @@ async fn a_page_that_is_no_view_carries_no_answer() {
     );
     ct.cancel();
 }
+
+// --- one engine answers a view for the page and for recall --------------------
+
+/// **The handles an answer table lists, in the order it lists them.** Read off
+/// the link text of each row, which is the handle the row stands for.
+fn listed_handles(page: &str) -> Vec<String> {
+    answer_rows(page)
+        .into_iter()
+        .skip(1)
+        .map(|row| {
+            row.split_once("\">")
+                .and_then(|(_, rest)| rest.split_once("/</a>"))
+                .unwrap_or_else(|| panic!("a row names its handle: {row}"))
+                .0
+                .to_string()
+        })
+        .collect()
+}
+
+/// **The served `recall` of a view, as a client with no identity makes it**, and
+/// the handles it answers with in the order it answers them. Over the server's
+/// own port, so the call travels the path a client's does.
+async fn recall_of_view(addr: SocketAddr, view: &str) -> Vec<String> {
+    let http = reqwest::Client::new();
+    let url = format!("http://{addr}/mcp");
+    let (session, _) = support::open_with(&http, &url, "2025-06-18").await;
+    let mut asking = http
+        .post(&url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "recall", "arguments": { "view": view } },
+            })
+            .to_string(),
+        );
+    if let Some(session) = session {
+        asking = asking.header("mcp-session-id", session);
+    }
+    let answered = asking.send().await.unwrap().text().await.unwrap();
+    let body = support::tool_body(&support::event_stream_result(&answered));
+    body["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("recall answers with objects: {body}"))
+        .iter()
+        .map(|object| {
+            object["id"]
+                .as_str()
+                .expect("an object has an id")
+                .to_string()
+        })
+        .collect()
+}
+
+/// **The page of a view and a `recall` of it select the same things.** The
+/// views are the ones a build ships (`ready`, `colleagues`) and one an operator
+/// wrote that holds an expression, an order and a declared type. Each is read
+/// from one store, by the page and by the served verb, and the handles must
+/// match one for one and in one order.
+///
+/// **The operator's view names a type that one loop does not answer.** A page
+/// that built its own selection and dropped the type lists that loop; the verb
+/// does not.
+#[tokio::test]
+async fn a_views_page_and_a_recall_of_it_select_the_same_things() {
+    let memory = memory_with_views().await;
+    // A type the loops answer by carrying `flagged`, so the type narrows what
+    // `where` alone leaves: the loop below counts from after the cut and
+    // carries no such key.
+    memory
+        .declare_type(DeclaredType::new(
+            "marked",
+            vec![Field::new("flagged", ValueType::Text)],
+        ))
+        .await
+        .expect("the type is declared");
+    for handle in ["rhythm:worming", "rhythm:abseiling"] {
+        memory
+            .capture(set_on(NewFact {
+                fields: [("flagged".to_string(), "yes".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "set aside",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the key is written");
+    }
+    let mut unmarked = NewEntity::new(
+        EntityId("rhythm:polish".into()),
+        "Polish the brass",
+        "the fixture roster",
+    );
+    unmarked.parent = Some(EntityId("person:alpha".into()));
+    memory
+        .add_entity(unmarked)
+        .await
+        .expect("the loop is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [("counts_from".to_string(), "2300-01-06".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("rhythm:polish".into()),
+                "counted from after the cut",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the date is written");
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:marked-things".into()),
+            "Marked Things",
+            "the operator",
+        ))
+        .await
+        .expect("the view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "rhythm".to_string()),
+                ("answers_type".to_string(), "marked".to_string()),
+                ("where".to_string(), "counts_from > 2021-01-01".to_string()),
+                ("order".to_string(), "counts_from descending".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:marked-things".into()),
+                "the marked loops counted from after 2021, latest first",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    for view in ["ready", "colleagues", "marked-things"] {
+        let page = read(&client, addr, &format!("/view:{view}/"), &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        let on_the_page = listed_handles(&page);
+        let from_recall = recall_of_view(addr, view).await;
+        assert!(
+            !from_recall.is_empty(),
+            "the control: recall of {view} selects something, so agreeing is not both being empty"
+        );
+        assert_eq!(
+            on_the_page, from_recall,
+            "the page of {view} lists what recall of it selects"
+        );
+    }
+    // The operator's view, spelled out: the expression, the order and the type
+    // each took something away, so the three answers above are not one answer.
+    assert_eq!(
+        recall_of_view(addr, "marked-things").await,
+        ["rhythm:worming", "rhythm:abseiling"],
+        "the type drops the loop that is not marked, the expression the loop counted \
+         from before the cut, and the order puts the later date first"
+    );
+    ct.cancel();
+}
+
+/// **A ready view over something that is not work cannot be run on the page**,
+/// and the page says why: readiness is a question about work.
+#[tokio::test]
+async fn a_ready_view_over_something_that_is_not_work_cannot_be_run() {
+    // The half-written view the board already holds, given a question.
+    let memory = memory_with_views().await;
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "person".to_string()),
+                ("asks".to_string(), "ready".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:my-people".into()),
+                "who is ready",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:my-people/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let why = refusal_on(&page);
+    assert!(
+        why.contains("ready") && why.contains("work"),
+        "the refusal names the ask and the kind that answers it: {why}"
+    );
+    assert!(
+        !page.contains("id=\"answer\""),
+        "…and answers nothing: {page}"
+    );
+    ct.cancel();
+}
