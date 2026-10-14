@@ -217,7 +217,7 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
     // ── a declaration that does not hold together is refused when written ───
     s.refused(
         "add_entity",
-        json!({"kind": "view", "handle": "second-view", "name": "Second view",
+        json!({"kind": "view", "handle": "my-friends", "name": "My friends",
                "source": "user-named",
                "sets": {"selects": "work", "inputs": "project: kind project",
                         "where": "parent = $projekt"}}),
@@ -226,7 +226,7 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
     .says("projekt");
     s.refused(
         "add_entity",
-        json!({"kind": "view", "handle": "second-view", "name": "Second view",
+        json!({"kind": "view", "handle": "my-friends", "name": "My friends",
                "source": "user-named",
                "sets": {"selects": "work", "inputs": "project kind project"}}),
     )
