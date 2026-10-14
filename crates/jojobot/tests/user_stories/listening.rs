@@ -99,10 +99,10 @@ async fn a_client_that_listens_is_told_it_will_hear_about_the_tool_list() {
     .await;
     assert!(held.is_err(), "a listen is held open: {held:?}");
     let s = story.session().await;
-    s.add("thing:homer", "Homer's Wrench").await;
+    s.add("person:milhouse", "Milhouse").await;
     assert_eq!(
-        s.recall("thing:homer").await.json()["objects"][0]["id"],
-        "thing:homer",
+        s.recall("person:milhouse").await.json()["objects"][0]["id"],
+        "person:milhouse",
         "the server answers while a listen is open"
     );
     drop(stream);
