@@ -104,8 +104,13 @@ async fn what_can_be_started_and_what_stops_the_rest() {
 async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
+    s.call(
+        "add_entity",
+        json!({"kind": "project", "handle": "atlas", "name": "atlas", "source": "user-named"}),
+    )
+    .await;
     let work = |slug: &str, sets: serde_json::Value| {
-        json!({"kind": "work", "handle": slug, "name": slug,
+        json!({"kind": "work", "handle": slug, "name": slug, "parent": "project:atlas",
                "source": "user-named", "sets": sets})
     };
     s.call("add_entity", work("sigma", json!({"status": "done"})))
@@ -126,7 +131,9 @@ async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
     )
     .await;
 
-    let plan = s.call("recall", json!({"view": "plan"})).await;
+    let plan = s
+        .call("recall", json!({"view": "plan", "parent": "project:atlas"}))
+        .await;
 
     assert_eq!(
         listed(&plan),

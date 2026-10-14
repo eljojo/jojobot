@@ -3731,8 +3731,11 @@ and the answer names the call that says why: send the view with `subject`
 set to one piece of work and it comes back with `ready: false` and
 `blocked_by`. A view's answer can be narrowed with `where`: `view: "ready"`
 with `where` set to your board's not-started status, for example
-`where: "status = next"`, lists the ready work not yet started. A view carries its own `shows_keys`, and a `keys` you send wins
-over it.
+`where: "status = next"`, lists the ready work not yet started. `view:
+"plan"` lists all the work that is not finished, ready or not, each piece
+with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
+set to a project to read that project's whole plan in one call. A view
+carries its own `shows_keys`, and a `keys` you send wins over it.
 ```
 
 #### `recall` — argument `/inputSchema.where`

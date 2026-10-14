@@ -8340,6 +8340,44 @@ async fn the_plan_view_answers_a_whole_plan_in_one_call() {
     );
 }
 
+/// **The plan's note is true of a piece of work named by subject.** A finished
+/// piece the call names comes back whatever its state, with `ready: false` and the
+/// blocker that says it is finished, and the note says that a named piece is the
+/// exception to "not finished".
+#[tokio::test]
+async fn the_plan_note_is_true_of_a_finished_piece_named_by_subject() {
+    let jojobot = crate::harness::handler_shipped();
+    work_with(&jojobot, "work:omega", &[("status", "done")]).await;
+
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("plan".into()),
+                subject: Some("work:omega".into()),
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:omega")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+
+    assert_eq!(listed(&body), ["work:omega"], "{body}");
+    assert_eq!(body["objects"][0]["ready"], false, "{body}");
+    assert_eq!(
+        body["objects"][0]["blocked_by"],
+        serde_json::json!([{"blocker": "finished"}]),
+        "{body}"
+    );
+    let note = body["ready_note"]
+        .as_str()
+        .expect("the plan carries its note");
+    assert!(
+        note.contains("subject"),
+        "the note must say a piece named with subject is the exception: {note}"
+    );
+}
+
 /// **`ready` belongs to the work kind.** A call that uses the view and sends any
 /// other kind is refused, the refusal names the work kind as the one the ask
 /// answers for, and the same call with the work kind is answered.

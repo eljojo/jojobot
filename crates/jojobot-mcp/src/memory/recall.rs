@@ -634,8 +634,11 @@ pub struct RecallArgs {
     /// set to one piece of work and it comes back with `ready: false` and
     /// `blocked_by`. A view's answer can be narrowed with `where`: `view: "ready"`
     /// with `where` set to your board's not-started status, for example
-    /// `where: "status = next"`, lists the ready work not yet started. A view carries its own `shows_keys`, and a `keys` you send wins
-    /// over it.
+    /// `where: "status = next"`, lists the ready work not yet started. `view:
+    /// "plan"` lists all the work that is not finished, ready or not, each piece
+    /// with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
+    /// set to a project to read that project's whole plan in one call. A view
+    /// carries its own `shows_keys`, and a `keys` you send wins over it.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -3266,8 +3269,9 @@ impl Jojobot {
                      example where: \"status = next\""
                 }
                 readiness::Ask::Plan => {
-                    "every piece of work here is not finished: ready says whether it can be \
-                     started and, when it cannot, blocked_by says what stops it"
+                    "ready says whether a piece of work can be started and, when it cannot, \
+                     blocked_by says what stops it; the work here is not finished, except a \
+                     piece you name with subject, which comes back whatever its state"
                 }
             }),
             "ready_left_out": ready_left_out.filter(|left| *left > 0).map(|left| serde_json::json!({
