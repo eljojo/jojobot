@@ -9,7 +9,9 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-rust-version = "1.85"
+# **Names the pinned toolchain** (`rust-toolchain.toml`), the only Rust that builds
+# this workspace. It moves with that pin, in the same commit.
+rust-version = "1.95"
 repository = "https://github.com/eljojo/jojobot"
 
 [workspace.dependencies]
@@ -85,9 +87,8 @@ tantivy = { version = "0.25", default-features = false }
 # Default features off and the runtime named: the defaults pull a TLS stack and
 # every driver, and this talks to one child process over loopback TCP on the
 # same machine, where there is nothing to encrypt and nothing else to speak to.
-# Pinned at 0.8: 0.9 declares rustc 1.94 as its minimum, and this workspace
-# declares 1.85 (`rust-version` above). The pinned toolchain, 1.95.0 in
-# rust-toolchain.toml, would build 0.9; the declared minimum is what it breaks.
+# Pinned at 0.8: 0.9 changes every store query, so the move is a change of its
+# own and not a dependency update.
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "mysql",
