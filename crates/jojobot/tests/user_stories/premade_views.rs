@@ -165,3 +165,90 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
 
     s.wrap("read the plan of one project by name").await;
 }
+
+#[tokio::test]
+async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.call(
+        "declare_type",
+        json!({"name": "bike", "fields": [
+            {"key": "frame_size", "holds": "text"},
+            {"key": "wheel_size", "holds": "text"}]}),
+    )
+    .await;
+    s.add("thing:sigma", "Sigma").await;
+    s.add("thing:tau", "Tau").await;
+    s.add("thing:omega", "Omega").await;
+    for (handle, sets) in [
+        (
+            "thing:sigma",
+            json!({"frame_size": "56", "wheel_size": "700c"}),
+        ),
+        ("thing:tau", json!({"wheel_size": "26in"})),
+        ("thing:omega", json!({"wattage": "900"})),
+    ] {
+        s.call(
+            "capture",
+            json!({"subject": handle, "content": "described", "provenance": "testimony",
+                   "sets": sets}),
+        )
+        .await;
+    }
+
+    let bikes = s
+        .call(
+            "recall",
+            json!({"view": "of-type", "inputs": {"type": "bike"}}),
+        )
+        .await;
+    assert_eq!(
+        listed(&bikes),
+        ["thing:sigma", "thing:tau"],
+        "{}",
+        bikes.raw()
+    );
+    let answers = |handle: &str| {
+        bikes.json()["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .find(|o| o["id"] == handle)
+            .unwrap_or_else(|| panic!("{handle} is listed: {}", bikes.raw()))["answers"]
+            .clone()
+    };
+    assert_eq!(
+        answers("thing:sigma")["lacking"],
+        json!([]),
+        "{}",
+        bikes.raw()
+    );
+    assert_eq!(
+        answers("thing:tau")["lacking"],
+        json!(["frame_size"]),
+        "{}",
+        bikes.raw()
+    );
+
+    // ── what it must not include ────────────────────────────────────────────
+    bikes.never_says("thing:omega");
+
+    // ── the type is required, and a type nobody declared is refused ─────────
+    s.refused("recall", json!({"view": "of-type", "inputs": {}}))
+        .await
+        .says("type: text");
+    s.refused(
+        "recall",
+        json!({"view": "of-type", "inputs": {"type": "unicycle"}}),
+    )
+    .await
+    .says("bike");
+
+    // ── the view says what it cannot find ───────────────────────────────────
+    s.call("recall", json!({"subject": "view:of-type"}))
+        .await
+        .says("things only");
+
+    s.wrap("asked which things are bikes by name").await;
+}

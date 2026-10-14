@@ -873,6 +873,17 @@ impl Asked {
                 ),
             },
         };
+        // **The type a view asks for may be an input**, written `$name` and bound
+        // the way a `parent` is. The write rule makes it a declared text input.
+        if let Some(name) = self
+            .answers_type
+            .as_deref()
+            .and_then(|asked| asked.trim().strip_prefix('$'))
+            .filter(|name| super::view_inputs::is_a_name(name))
+            && let Some(value) = bound.get(name)
+        {
+            self.answers_type = value.map(|value| value.text.clone());
+        }
         Ok((self, parent))
     }
 

@@ -4743,6 +4743,50 @@ fn a_view_is_filled_from_the_inputs_of_a_call() {
     assert_eq!(nothing, None);
 }
 
+/// **A view's `answers_type` may be an input**, bound the way its `parent` is: the
+/// call's words become the name of the type, and a left-out input asks for no type.
+#[test]
+fn a_view_takes_the_type_it_asks_for_from_an_input() {
+    let day = jiff::civil::date(2026, 10, 14);
+    let view = || {
+        asked_by_view(
+            &sent(&[
+                ("selects", "thing"),
+                ("inputs", "type: text"),
+                ("answers_type", "$type"),
+            ]),
+            &[],
+        )
+    };
+    let (filled, _) = view()
+        .filled("view:of-type", &sent(&[("type", "bike")]), &[], &[], day)
+        .expect("a call that fits");
+    assert_eq!(filled.answers_type.as_deref(), Some("bike"));
+
+    let optional = asked_by_view(
+        &sent(&[
+            ("selects", "thing"),
+            ("inputs", "type: text?"),
+            ("answers_type", "$type"),
+        ]),
+        &[],
+    );
+    let (left_out, _) = optional
+        .filled("view:of-type", &sent(&[]), &[], &[], day)
+        .expect("the input is optional");
+    assert_eq!(left_out.answers_type, None);
+
+    // A type written into the view is the type, whatever a call sends.
+    let named = asked_by_view(
+        &sent(&[("selects", "thing"), ("answers_type", "bike")]),
+        &[],
+    );
+    let (same, _) = named
+        .filled("view:my-bikes", &sent(&[]), &[], &[], day)
+        .expect("a view that names its type");
+    assert_eq!(same.answers_type.as_deref(), Some("bike"));
+}
+
 /// **A call that does not fit is refused and the view is not run**, and a view
 /// that names a thing as its `parent` reaches it through the handles it wore.
 #[test]

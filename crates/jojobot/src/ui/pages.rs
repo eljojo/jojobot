@@ -769,36 +769,6 @@ async fn view_section(
     // the instance's record holds, and UTC only when it holds none.
     let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
     let today = state.clock.today_in(&frame);
-    // **The type the view names is looked up as the verb looks it up**, and a
-    // name nobody declared is a view that cannot be run. **An empty value is a
-    // stored value and not a removed key**: the verb resolves it as a name and
-    // finds none, so the page does too, and does not list the whole kind.
-    let answers_type = match asked.answers_type.as_deref() {
-        None => None,
-        Some(wanted) => match state.memory.declared_types().await {
-            Ok(known) => match DeclaredType::named(&known, wanted) {
-                Some(declared) => Some(declared.clone()),
-                None => {
-                    return cannot_run(&match wanted.trim() {
-                        "" => "its <code>answers_type</code> is empty, which names no type."
-                            .to_string(),
-                        name => format!(
-                            "it asks for things that answer the type <code>{}</code>, and no \
-                             type is called that.",
-                            escape(name)
-                        ),
-                    });
-                }
-            },
-            Err(err) => {
-                return blind(
-                    "What this view answers",
-                    "the declared types",
-                    &err.to_string(),
-                );
-            }
-        },
-    };
     // **The inputs the view declares are a form**, one field to an input, typed
     // as the input is, and prefilled from the URL. **The view is filled where the
     // verb fills it** ([`graph::Asked::filled`]), so a value means the same thing
@@ -844,6 +814,42 @@ async fn view_section(
                 escape(&refused.words)
             );
         }
+    };
+    // **The type the view names is looked up as the verb looks it up, after the
+    // view is filled because an input may name it**, and a name nobody declared
+    // is a view that cannot be run, with the form still on the page. **An empty
+    // value is a stored value and not a removed key**: the verb resolves it as a
+    // name and finds none, so the page does too, and does not list the whole
+    // kind.
+    let answers_type = match asked.answers_type.as_deref() {
+        None => None,
+        Some(wanted) => match state.memory.declared_types().await {
+            Ok(known) => match DeclaredType::named(&known, wanted) {
+                Some(declared) => Some(declared.clone()),
+                None => {
+                    let why = match wanted.trim() {
+                        "" => "its <code>answers_type</code> is empty, which names no type."
+                            .to_string(),
+                        name => format!(
+                            "it asks for things that answer the type <code>{}</code>, and no \
+                             type is called that.",
+                            escape(name)
+                        ),
+                    };
+                    return format!(
+                        "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: \
+                         {why}</p>\n"
+                    );
+                }
+            },
+            Err(err) => {
+                return blind(
+                    "What this view answers",
+                    "the declared types",
+                    &err.to_string(),
+                );
+            }
+        },
     };
     // **The question is built and answered where the verb builds and answers
     // it** (rules 444 and 473), so a key the view holds means the same thing on

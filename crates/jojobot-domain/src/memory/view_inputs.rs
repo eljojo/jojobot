@@ -16,8 +16,8 @@
 //! session meeting the view cold learns its shape from that refusal.
 //!
 //! This module reads and checks. It runs nothing: what a bound input does to the
-//! view's `where` and `parent` is [`super::filter::expression::with_inputs`] and
-//! the caller's.
+//! view's `where`, `parent` and `answers_type` is
+//! [`super::filter::expression::with_inputs`] and the caller's.
 
 use std::collections::BTreeMap;
 
@@ -114,8 +114,9 @@ pub fn breaks_a_view(
 ) -> Option<(String, String)> {
     const WHERE: &str = "where";
     const PARENT: &str = "parent";
+    const ANSWERS_TYPE: &str = "answers_type";
     let same = |key: &str| before.get(key) == after.get(key);
-    if same(KEY) && same(WHERE) && same(PARENT) {
+    if same(KEY) && same(WHERE) && same(PARENT) && same(ANSWERS_TYPE) {
         return None;
     }
     let declared = match parse(after.get(KEY).map_or("", String::as_str)) {
@@ -164,6 +165,13 @@ pub fn breaks_a_view(
     {
         uses.push((PARENT, name.to_string()));
     }
+    if let Some(name) = after
+        .get(ANSWERS_TYPE)
+        .and_then(|asked| asked.trim().strip_prefix('$'))
+        .filter(|name| is_a_name(name))
+    {
+        uses.push((ANSWERS_TYPE, name.to_string()));
+    }
     for (key, name) in uses {
         let Some(decl) = declared.iter().find(|d| d.name == name) else {
             return Some((
@@ -177,6 +185,15 @@ pub fn breaks_a_view(
                 format!(
                     "the view's `parent` is the input ${name}, and a parent is a thing: declare \
                      it as `{name}: kind <kind>`"
+                ),
+            ));
+        }
+        if key == ANSWERS_TYPE && decl.ty != InputType::Text {
+            return Some((
+                key.to_string(),
+                format!(
+                    "the view's `answers_type` is the input ${name}, and a type is named in \
+                     words: declare it as `{name}: text`"
                 ),
             ));
         }
@@ -734,6 +751,53 @@ mod tests {
             ("where", "name = $x"),
         ]);
         assert_eq!(breaks_a_view(&none, &valued), None);
+    }
+
+    /// **A view's `answers_type` may be an input, and the input has to be text**,
+    /// since a type is named in words. A name the view does not declare is refused
+    /// as it is in a `where`. **Paired**: a declared text input is accepted, and a
+    /// type written into the view is a type.
+    #[test]
+    fn an_answers_type_input_is_declared_and_holds_text() {
+        let none = view(&[]);
+        let typo = view(&[
+            ("selects", "thing"),
+            ("inputs", "type: text"),
+            ("answers_type", "$tipe"),
+        ]);
+        assert_eq!(
+            breaks_a_view(&none, &typo).expect("an undeclared input").0,
+            "answers_type"
+        );
+        let not_text = view(&[
+            ("selects", "thing"),
+            ("inputs", "type: number"),
+            ("answers_type", "$type"),
+        ]);
+        let refused = breaks_a_view(&none, &not_text).expect("a type is named in words");
+        assert_eq!(refused.0, "answers_type");
+        assert!(refused.1.contains("text"), "{}", refused.1);
+        let fine = view(&[
+            ("selects", "thing"),
+            ("inputs", "type: text"),
+            ("answers_type", "$type"),
+        ]);
+        assert_eq!(breaks_a_view(&none, &fine), None);
+        let written = view(&[("selects", "thing"), ("answers_type", "bike")]);
+        assert_eq!(breaks_a_view(&none, &written), None);
+        // An edit that changes only the type is asked again.
+        let declared = view(&[("selects", "thing"), ("inputs", "type: text")]);
+        let edited = view(&[
+            ("selects", "thing"),
+            ("inputs", "type: text"),
+            ("answers_type", "$tipe"),
+        ]);
+        assert_eq!(
+            breaks_a_view(&declared, &edited)
+                .expect("a type edit alone")
+                .0,
+            "answers_type"
+        );
     }
 
     /// **An input cannot be named like a parameter of the page of a view**, which

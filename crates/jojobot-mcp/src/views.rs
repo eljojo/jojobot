@@ -10,11 +10,12 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Five views ship, and that is deliberate rather than a first instalment of
-//! a catalogue.** Two are the ones the operator named and three ask about work:
-//! what can be started, what a plan holds and what a project's board shows. A rich set is generated once the
-//! shape is settled. If this file starts growing a query
-//! per question somebody asks, it has taken the wrong turn.
+//! **Six views ship, and that is deliberate rather than a first instalment of
+//! a catalogue.** Two are the ones the operator named, three ask about work
+//! (what can be started, what a plan holds and what a project's board shows) and
+//! one asks which things answer a type. A rich set is generated once the shape is
+//! settled. If this file starts growing a query per question somebody asks, it has
+//! taken the wrong turn.
 
 use std::collections::BTreeMap;
 
@@ -136,10 +137,34 @@ pub fn provisions() -> Vec<Provision> {
             "Board",
             &[
                 ("selects", "work"),
+                (
+                    "one_liner",
+                    "The work under one project, grouped by status.",
+                ),
                 ("inputs", "project: kind project"),
                 ("parent", "$project"),
                 ("order", "status"),
                 ("shows_keys", "status, depends_on, owner"),
+            ],
+        ),
+        // **The things that answer a declared type.** The tolerant question, so a
+        // thing holding some of the type's keys comes back with the ones it lacks
+        // named. **The type is an input**, bound into `answers_type`.
+        // **It finds things only**: `selects` is one kind, so a type another kind
+        // answers is asked of `recall` with `answers_type` directly, and the
+        // description says so.
+        view(
+            "view:of-type",
+            "Of Type",
+            &[
+                ("selects", "thing"),
+                (
+                    "one_liner",
+                    "The things that answer a declared type, each with the keys it lacks. It finds \
+                     things only: ask recall with answers_type for a type another kind answers.",
+                ),
+                ("inputs", "type: text"),
+                ("answers_type", "$type"),
             ],
         ),
     ]

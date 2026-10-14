@@ -4500,6 +4500,117 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
     ct.cancel();
 }
 
+/// **A view whose `answers_type` is an input asks for the type the URL names**, and
+/// answers what the verb answers for the same type. **Paired**: the loop that does
+/// not carry the type's key is left out, a name no type answers to is refused with
+/// the form still on the page, and the page asks for the type before it answers.
+#[tokio::test]
+async fn a_views_page_asks_for_the_type_its_input_names() {
+    let memory = memory_with_views().await;
+    memory
+        .declare_type(
+            DeclaredType::new("marked", vec![Field::new("flagged", ValueType::Text)]),
+            None,
+        )
+        .await
+        .expect("the type is declared");
+    for handle in ["rhythm:worming", "rhythm:abseiling"] {
+        memory
+            .capture(set_on(NewFact {
+                fields: [("flagged".to_string(), "yes".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "set aside",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the key is written");
+    }
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:my-things-of".into()),
+            "My things of a type",
+            "the operator",
+        ))
+        .await
+        .expect("the view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "rhythm".to_string()),
+                ("inputs".to_string(), "type: text".to_string()),
+                ("answers_type".to_string(), "$type".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:my-things-of".into()),
+                "the loops that answer a type",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: String| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, &path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    let asked = page("/view:my-things-of/".into()).await;
+    assert!(
+        asked.contains("Fill in the inputs") && !asked.contains("<table id=\"answer\""),
+        "the page asks for the type before it answers: {asked}"
+    );
+
+    let marked = page("/view:my-things-of/?type=marked".into()).await;
+    let mut from_the_page = listed_handles(&marked);
+    from_the_page.sort();
+    let mut from_recall = recall_body(
+        addr,
+        serde_json::json!({"view": "my-things-of", "inputs": {"type": "marked"}}),
+    )
+    .await["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect::<Vec<_>>();
+    from_recall.sort();
+    assert_eq!(
+        from_the_page,
+        ["rhythm:abseiling", "rhythm:worming"],
+        "{marked}"
+    );
+    assert_eq!(from_the_page, from_recall, "the page and the verb agree");
+
+    let unknown = page("/view:my-things-of/?type=no-such-type".into()).await;
+    let why = refusal_on(&unknown);
+    assert!(why.contains("no-such-type"), "{why}");
+    assert!(
+        unknown.contains("<form id=\"inputs\"") && !unknown.contains("<table id=\"answer\""),
+        "a refused page keeps the form and lists nothing: {unknown}"
+    );
+    ct.cancel();
+}
+
 /// **A ready view over something that is not work cannot be run on the page**,
 /// and the page says why: readiness is a question about work.
 #[tokio::test]
