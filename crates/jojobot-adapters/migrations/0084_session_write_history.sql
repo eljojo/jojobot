@@ -7,9 +7,10 @@
 -- The row stays the projection and answers every current read as before.
 --
 -- `changed` names the change (begin, entry, amend_last, amend_beat, focus,
--- timezone, stated_day, wrap_window, state, served_chars, served_reset, key,
--- charter_told). `value` is what was kept of it: the focus, the zone, the day,
--- the state moved to, the id of the entry written, the characters served. The
+-- timezone, stated_day, wrap_window, state, served_reset, key, charter_told).
+-- `value` is what was kept of it: the focus, the zone, the day, the state moved
+-- to, the id of the entry written, the total a reset of what was served set
+-- back. An answer served adds to the run's total and is no change of its own. The
 -- key a run works through is recorded as changed and never with its hash, and a
 -- wrap window as offered or open and never with its code: both open a run and
 -- neither is read back. `written_at` is the moment on the server's own clock.

@@ -1389,7 +1389,9 @@ pub trait Sessions: Send + Sync {
     ///
     /// Refused exactly as [`Sessions::add_served`] is: never on a closed
     /// session, and [`SessionError::UnknownSession`] on a card that does not
-    /// exist.
+    /// exist. **The reset is recorded as one change of the run carrying the
+    /// total it set back**; an answer served adds to the total and records
+    /// nothing.
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError>;
 
     /// Take an `abandoned` session back to `active`, so the run continues where

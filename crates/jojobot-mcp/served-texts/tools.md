@@ -3394,7 +3394,10 @@ cut to its newest twenty, saying how many exist and how many it left out;
 
 On a session it traces the run's own fields, named focus, timezone,
 stated_day, wrap_window, state, served_chars, charter_told or key, and
-`journal` returns the wordings of each entry written more than once.
+`journal` returns the wordings of each entry written more than once. A
+run's history comes back in parts under the answer ceiling, newest
+first: `history_most` counts the changes or wordings of a part, and
+`offset` reads on.
 ```
 
 #### `recall` — argument `/inputSchema.history_most`
@@ -3510,6 +3513,10 @@ One subject with more facts than fit is read the same way, `offset` counting
 its facts; an object that cannot fit even first in its part carries
 `facts_not_shown` naming that subject to recall alone, which reads its facts
 in parts, and a single fact larger than the ceiling still comes back whole.
+
+**On a session named as the subject with `history`, `offset` counts the
+changes or wordings of its history already read, newest first.** A run
+holds no facts, so that call has one thing to read on through.
 ```
 
 #### `recall` — argument `/inputSchema.order`

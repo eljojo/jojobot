@@ -421,7 +421,10 @@ pub struct RecallArgs {
     ///
     /// On a session it traces the run's own fields, named focus, timezone,
     /// stated_day, wrap_window, state, served_chars, charter_told or key, and
-    /// `journal` returns the wordings of each entry written more than once.
+    /// `journal` returns the wordings of each entry written more than once. A
+    /// run's history comes back in parts under the answer ceiling, newest
+    /// first: `history_most` counts the changes or wordings of a part, and
+    /// `offset` reads on.
     #[serde(default)]
     pub(crate) history: Option<String>,
     /// **The writes behind one RECORD, oldest first** — name a record's address
@@ -477,6 +480,10 @@ pub struct RecallArgs {
     /// its facts; an object that cannot fit even first in its part carries
     /// `facts_not_shown` naming that subject to recall alone, which reads its facts
     /// in parts, and a single fact larger than the ceiling still comes back whole.
+    ///
+    /// **On a session named as the subject with `history`, `offset` counts the
+    /// changes or wordings of its history already read, newest first.** A run
+    /// holds no facts, so that call has one thing to read on through.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
     /// **Where each folded value came from**, and who backs it: the claim whose
@@ -949,16 +956,19 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
 /// through, oldest first, each with its place in the run's order, what kind of
 /// change it was, when the store made the record and what was kept of it. A
 /// change that kept no value says what it was instead: a cleared field is
-/// `cleared`, a key that changed is `changed` and never carries the key, and
-/// served characters set back to nothing are `reset`. The journal comes back as
-/// the wordings of each entry that was written more than once.
+/// `cleared`, and a key that changed is `changed` and never carries the key. The
+/// journal comes back as the wordings of each entry that was written more than
+/// once, with how many wordings the entry has in all. `count` is how many records
+/// there are and `shown` how many this part carries; what the part left out is
+/// named by [`fit_run_histories`].
 fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
     use jojobot_domain::session::history::ChangeKind;
-    let mut body = match history {
+    match history {
         graph::RunHistory::Field {
             field,
             changes,
             total,
+            ..
         } => serde_json::json!({
             "key": field,
             "count": total,
@@ -979,9 +989,6 @@ fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
                         (None, Some(ChangeKind::Key)) => {
                             fields.insert("changed".into(), true.into());
                         }
-                        (None, Some(ChangeKind::ServedReset)) => {
-                            fields.insert("reset".into(), true.into());
-                        }
                         (None, _) => {
                             fields.insert("cleared".into(), true.into());
                         }
@@ -990,13 +997,13 @@ fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
                 rendered
             }).collect::<Vec<_>>(),
         }),
-        graph::RunHistory::Journal { entries, total } => serde_json::json!({
+        graph::RunHistory::Journal { entries, total, .. } => serde_json::json!({
             "key": jojobot_domain::session::history::JOURNAL,
             "count": total,
-            "shown": entries.len(),
-            "entries": entries.iter().map(|(entry, wordings)| serde_json::json!({
+            "shown": history.shown(),
+            "entries": entries.iter().map(|(entry, held, wordings)| serde_json::json!({
                 "entry": entry.as_str(),
-                "count": wordings.len(),
+                "count": held,
                 "wordings": wordings.iter().map(|wording| {
                     let mut rendered = serde_json::json!({
                         "revision": wording.revision,
@@ -1010,21 +1017,108 @@ fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
                 }).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
         }),
-    };
-    if let Some(fields) = body.as_object_mut()
-        && history.elided() > 0
-    {
-        fields.insert(
-            "older".into(),
-            format!(
-                "{} older records are not here — ask again with a bigger history_most to reach \
-                 them",
-                history.elided()
-            )
-            .into(),
-        );
     }
-    body
+}
+
+/// **Cut each run's history under the answer ceiling, newest kept, and name
+/// what it left out** (rule 466). A part keeps the newest records it carries
+/// that fit with the rest of its object, never cutting a record, and always
+/// keeps one, so reading on always moves. A single record larger than the
+/// ceiling still comes back whole.
+///
+/// `paged` is the `offset` the caller sent when the call named a run alone: the
+/// block that names what was left out then says to repeat the call with the
+/// next offset. In a call that selected several objects `offset` counts objects,
+/// so the block names the call that reads the run alone.
+fn fit_run_histories(body: &mut serde_json::Value, traced: &str, paged: Option<usize>) {
+    use jojobot_domain::text::ANSWER_CEILING;
+    let Some(objects) = body.get_mut("objects").and_then(|o| o.as_array_mut()) else {
+        return;
+    };
+    let mut objects = std::mem::take(objects);
+    let rest = crate::answer::served_len(body)
+        + crate::answer::STATUS_BAR_ROOM
+        + crate::answer::widest_not_shown("objects");
+    let skip = paged.unwrap_or(0);
+    let what = if traced == jojobot_domain::session::history::JOURNAL {
+        "wordings"
+    } else {
+        "changes"
+    };
+    for object in &mut objects {
+        let Some(history) = object.get("history").cloned() else {
+            continue;
+        };
+        let id = object["id"].as_str().unwrap_or_default().to_string();
+        let count = history["count"].as_u64().unwrap_or(0) as usize;
+        // Every record of the part, in the order it is served, with the entry it
+        // belongs to for the journal.
+        let mut records: Vec<(Option<usize>, serde_json::Value)> = Vec::new();
+        let mut skeleton = history.clone();
+        if let Some(entries) = skeleton.get_mut("entries").and_then(|e| e.as_array_mut()) {
+            for (at, entry) in entries.iter_mut().enumerate() {
+                let wordings = entry["wordings"].as_array_mut().map(std::mem::take);
+                for wording in wordings.unwrap_or_default() {
+                    records.push((Some(at), wording));
+                }
+            }
+        } else if let Some(writes) = skeleton.get_mut("writes").and_then(|w| w.as_array_mut()) {
+            for write in std::mem::take(writes) {
+                records.push((None, write));
+            }
+        }
+        let pointer = |left: usize, next: usize| match paged {
+            Some(_) => crate::answer::not_shown(left, next, what),
+            None => serde_json::json!({
+                "count": left,
+                "offset": next,
+                "how_to_proceed": format!(
+                    "these {what} are older than the ones above: recall subject: {id} with \
+                     history: {traced} and offset: {next} reads them"
+                ),
+            }),
+        };
+        object["history"] = skeleton.clone();
+        let reserve = crate::answer::under_key("not_shown", &pointer(usize::MAX, usize::MAX));
+        let mut room =
+            ANSWER_CEILING.saturating_sub(rest + crate::answer::served_len(object) + 1 + reserve);
+        // Newest first: the records are served oldest first, so fill from the end.
+        let mut kept = 0usize;
+        for (_, record) in records.iter().rev() {
+            let cost = crate::answer::served_len(record) + 1;
+            if kept > 0 && cost > room {
+                break;
+            }
+            room = room.saturating_sub(cost);
+            kept += 1;
+        }
+        let first = records.len() - kept;
+        let mut history = skeleton;
+        for (entry, record) in records.into_iter().skip(first) {
+            match entry {
+                Some(at) => {
+                    if let Some(wordings) = history["entries"][at]["wordings"].as_array_mut() {
+                        wordings.push(record);
+                    }
+                }
+                None => {
+                    if let Some(writes) = history["writes"].as_array_mut() {
+                        writes.push(record);
+                    }
+                }
+            }
+        }
+        if let Some(entries) = history.get_mut("entries").and_then(|e| e.as_array_mut()) {
+            entries.retain(|entry| entry["wordings"].as_array().is_some_and(|w| !w.is_empty()));
+        }
+        history["shown"] = kept.into();
+        let left = count.saturating_sub(skip + kept);
+        if left > 0 {
+            history["not_shown"] = pointer(left, skip + kept);
+        }
+        object["history"] = history;
+    }
+    body["objects"] = objects.into();
 }
 
 /// **One claim's writes on the wire, oldest first, with how many there are.**
@@ -2782,6 +2876,16 @@ impl Jojobot {
         // to answer — an overdue day, the values in use, backing, a status, a
         // lineage — reads them all as it always did.
         let offset = args.offset.map_or(0, |o| o as usize);
+        // **On a run named alone, `offset` reads on through its history.** The
+        // history is cut newest first under the ceiling, and `offset` counts
+        // what was already read of it. A run holds no records, so on such a call
+        // there are no facts for `offset` to count, and one offset is enough.
+        let pages_history = args.history.is_some()
+            && query
+                .select
+                .subject
+                .as_ref()
+                .is_some_and(|subject| subject.kind() == Some(EntityKind::SESSION));
         let narrowing = only_keys.as_deref().map(|keys| KeyNarrowing {
             keys,
             by_view: keys_from_view,
@@ -2878,8 +2982,9 @@ impl Jojobot {
         // journal. The key is the same argument a thing's key is traced with.
         if let Some(traced) = args.history.as_deref().map(str::trim) {
             let caller_sid = caller.as_ref().map(|c| c.sid.as_str()).unwrap_or_default();
+            let skip = if pages_history { offset } else { 0 };
             if let Some(refused) = self
-                .fill_run_history(&mut found, traced, history_most, caller_sid)
+                .fill_run_history(&mut found, traced, history_most, skip, caller_sid)
                 .await
             {
                 return refused;
@@ -3688,9 +3793,12 @@ impl Jojobot {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
         }
         crate::memory::ready::fit_under_ceiling(&mut body);
+        if let Some(traced) = args.history.as_deref().map(str::trim) {
+            fit_run_histories(&mut body, traced, pages_history.then_some(offset));
+        }
         fit_recall(
             &mut body,
-            offset - skipped,
+            if pages_history { 0 } else { offset - skipped },
             Outside {
                 before: skipped,
                 after: left_over,
@@ -3762,6 +3870,7 @@ impl Jojobot {
         objects: &'a mut [graph::Object],
         field: &'a str,
         most: usize,
+        skip: usize,
         caller_sid: &'a str,
     ) -> FillSessionProseFuture<'a> {
         Box::pin(async move {
@@ -3782,14 +3891,14 @@ impl Jojobot {
                                 Err(e) => return Some(session_declined(e, caller_sid)),
                             }
                         }
-                        let (entries, total) = trace_journal(entries, most);
+                        let (entries, total) = trace_journal(entries, most, skip);
                         graph::RunHistory::Journal { entries, total }
                     } else {
                         let changes = match self.sessions.session_history(&id).await {
                             Ok(changes) => changes,
                             Err(e) => return Some(session_declined(e, caller_sid)),
                         };
-                        let (changes, total) = trace_field(field, &changes, most);
+                        let (changes, total) = trace_field(field, &changes, most, skip);
                         graph::RunHistory::Field {
                             field: field.to_string(),
                             changes,
@@ -3799,7 +3908,7 @@ impl Jojobot {
                     object.run_history = Some(traced);
                 }
                 if let Some(refused) = self
-                    .fill_run_history(&mut object.connected, field, most, caller_sid)
+                    .fill_run_history(&mut object.connected, field, most, 0, caller_sid)
                     .await
                 {
                     return Some(refused);

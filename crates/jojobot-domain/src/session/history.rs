@@ -39,10 +39,9 @@ pub enum ChangeKind {
     WrapWindow,
     /// The run was closed or walked back. Its value is the state it moved to.
     State,
-    /// An answer's size was added to what the run has been served. Its value is
-    /// the number of characters added.
-    ServedChars,
-    /// What the run has been served was set back to nothing.
+    /// What the run has been served was set back to nothing. Its value is the
+    /// total it held at the reset. An answer served adds to the total and is
+    /// not a change of its own.
     ServedReset,
     /// The key the run works through changed. It never has a value.
     Key,
@@ -52,7 +51,7 @@ pub enum ChangeKind {
 
 impl ChangeKind {
     /// Every kind, in the order the run can first meet them.
-    pub const ALL: [ChangeKind; 13] = [
+    pub const ALL: [ChangeKind; 12] = [
         ChangeKind::Begin,
         ChangeKind::Entry,
         ChangeKind::AmendLast,
@@ -62,7 +61,6 @@ impl ChangeKind {
         ChangeKind::StatedDay,
         ChangeKind::WrapWindow,
         ChangeKind::State,
-        ChangeKind::ServedChars,
         ChangeKind::ServedReset,
         ChangeKind::Key,
         ChangeKind::CharterTold,
@@ -80,7 +78,6 @@ impl ChangeKind {
             ChangeKind::StatedDay => "stated_day",
             ChangeKind::WrapWindow => "wrap_window",
             ChangeKind::State => "state",
-            ChangeKind::ServedChars => "served_chars",
             ChangeKind::ServedReset => "served_reset",
             ChangeKind::Key => "key",
             ChangeKind::CharterTold => "charter_told",
@@ -104,7 +101,7 @@ impl ChangeKind {
             ChangeKind::StatedDay => "stated_day",
             ChangeKind::WrapWindow => "wrap_window",
             ChangeKind::State => "state",
-            ChangeKind::ServedChars | ChangeKind::ServedReset => "served_chars",
+            ChangeKind::ServedReset => "served_chars",
             ChangeKind::Key => "key",
             ChangeKind::CharterTold => "charter_told",
         }
@@ -113,7 +110,7 @@ impl ChangeKind {
     /// **Whether this change is one the search index reads**: the text of an
     /// entry and the focus of a run, and the run coming to be. Only these move
     /// the signal a refresh checks, so a change nothing searches for — a zone, a
-    /// served answer — is recorded and moves nothing.
+    /// reset of what was served — is recorded and moves nothing.
     pub fn moves_the_index(self) -> bool {
         matches!(
             self,
@@ -130,42 +127,67 @@ impl ChangeKind {
 /// entries rather than one field.
 pub const JOURNAL: &str = "journal";
 
-/// **The changes of one field of a run, oldest first, cut to the newest `most`**,
-/// and how many there are. A record an older build appended names no field and
-/// is in no field's account.
+/// **The changes of one field of a run: a part of them, oldest first, and how
+/// many there are.** The part is the newest `most` changes after the newest
+/// `skip`, which a caller has already read. A record an older build appended
+/// names no field and is in no field's account.
 pub fn trace_field(
     field: &str,
     changes: &[SessionChange],
     most: usize,
+    skip: usize,
 ) -> (Vec<SessionChange>, usize) {
-    let mut of_field: Vec<SessionChange> = changes
+    let of_field: Vec<SessionChange> = changes
         .iter()
         .filter(|c| c.changed.is_some_and(|kind| kind.field() == field))
         .cloned()
         .collect();
     let total = of_field.len();
-    if total > most {
-        of_field.drain(..total - most);
-    }
-    (of_field, total)
+    let end = total.saturating_sub(skip);
+    let start = end.saturating_sub(most);
+    (of_field[start..end].to_vec(), total)
 }
 
-/// **What `history: "journal"` on a run answers with**: the wordings of each
-/// entry that was written more than once, entries in the order the run holds
-/// them, cut to the newest `most` entries, and how many entries there are.
+/// **One amended entry in a part of the journal's history**: its id, how many
+/// wordings it has in all, and the wordings of it the part carries, oldest
+/// first.
+pub type EntryPart = (EntryId, usize, Vec<Wording>);
+
+/// **What `history: "journal"` on a run answers with**: a part of the wordings
+/// of the entries written more than once, and how many such wordings there are.
+///
+/// The wordings stand in the run's order: entry by entry as the run holds them,
+/// each entry's oldest first. The part is the newest `most` of them after the
+/// newest `skip`, which a caller has already read, and it comes back grouped by
+/// entry in that same order.
 pub fn trace_journal(
     entries: Vec<(EntryId, Vec<Wording>)>,
     most: usize,
-) -> (Vec<(EntryId, Vec<Wording>)>, usize) {
-    let mut amended: Vec<(EntryId, Vec<Wording>)> = entries
+    skip: usize,
+) -> (Vec<EntryPart>, usize) {
+    let amended: Vec<(EntryId, Vec<Wording>)> = entries
         .into_iter()
         .filter(|(_, wordings)| wordings.len() > 1)
         .collect();
-    let total = amended.len();
-    if total > most {
-        amended.drain(..total - most);
+    let total: usize = amended.iter().map(|(_, wordings)| wordings.len()).sum();
+    let end = total.saturating_sub(skip);
+    let start = end.saturating_sub(most);
+    let mut part = Vec::new();
+    let mut place = 0usize;
+    for (entry, wordings) in amended {
+        let held = wordings.len();
+        let kept: Vec<Wording> = wordings
+            .into_iter()
+            .enumerate()
+            .filter(|(at, _)| (start..end).contains(&(place + at)))
+            .map(|(_, wording)| wording)
+            .collect();
+        place += held;
+        if !kept.is_empty() {
+            part.push((entry, held, kept));
+        }
     }
-    (amended, total)
+    (part, total)
 }
 
 /// **What changed, as the writer has it.** The value is made from this, so a
@@ -190,10 +212,8 @@ pub enum Change<'a> {
     WrapWindow(Option<&'a WrapWindow>),
     /// The run moved to this state.
     State(SessionState),
-    /// This many characters were served.
-    ServedChars(u64),
-    /// What was served was set back to nothing.
-    ServedReset,
+    /// What was served was set back to nothing from this total.
+    ServedReset(u64),
     /// The key changed.
     Key,
     /// The charter was told at this moment.
@@ -213,8 +233,7 @@ impl Change<'_> {
             Change::StatedDay(_) => ChangeKind::StatedDay,
             Change::WrapWindow(_) => ChangeKind::WrapWindow,
             Change::State(_) => ChangeKind::State,
-            Change::ServedChars(_) => ChangeKind::ServedChars,
-            Change::ServedReset => ChangeKind::ServedReset,
+            Change::ServedReset(_) => ChangeKind::ServedReset,
             Change::Key => ChangeKind::Key,
             Change::CharterTold(_) => ChangeKind::CharterTold,
         }
@@ -234,9 +253,9 @@ impl Change<'_> {
                 WrapWindow::Open(_) => "open".to_string(),
             }),
             Change::State(state) => Some(state.as_token().to_string()),
-            Change::ServedChars(chars) => Some(chars.to_string()),
+            Change::ServedReset(total) => Some(total.to_string()),
             Change::CharterTold(at) => Some(at.to_string()),
-            Change::ServedReset | Change::Key => None,
+            Change::Key => None,
         }
     }
 }
@@ -304,16 +323,16 @@ pub struct SessionChange {
     pub written_at: Option<Timestamp>,
 }
 
-/// **The next change record of a run**: the change, numbered one past the
-/// highest of `held_ordinals`, the ordinals of the records the run already has,
-/// and stamped `at`.
+/// **The next change record of a run**: the change, numbered one past
+/// `highest_held`, the highest ordinal of the records the run already has, and
+/// stamped `at`. A run that holds none numbers its first change one.
 pub fn next_change(
-    held_ordinals: impl IntoIterator<Item = usize>,
+    highest_held: Option<usize>,
     change: Change<'_>,
     at: Timestamp,
 ) -> SessionChange {
     SessionChange {
-        ordinal: held_ordinals.into_iter().max().unwrap_or(0) + 1,
+        ordinal: highest_held.unwrap_or(0) + 1,
         changed: Some(change.kind()),
         value: change.value(),
         written_at: Some(at),
@@ -368,14 +387,14 @@ mod tests {
         Timestamp::from_second(1_790_000_000 + second).expect("a valid instant")
     }
 
-    /// **The number is one past the highest held**, whatever order and gaps, and
-    /// one for a run that holds none.
+    /// **The number is one past the highest held**, and one for a run that holds
+    /// none.
     #[test]
     fn a_change_is_numbered_one_past_the_highest_held() {
         let change = Change::Focus("reading");
-        assert_eq!(next_change([], change, at(0)).ordinal, 1);
-        assert_eq!(next_change([1], change, at(0)).ordinal, 2);
-        assert_eq!(next_change([5, 1, 2], change, at(0)).ordinal, 6);
+        assert_eq!(next_change(None, change, at(0)).ordinal, 1);
+        assert_eq!(next_change(Some(1), change, at(0)).ordinal, 2);
+        assert_eq!(next_change(Some(5), change, at(0)).ordinal, 6);
     }
 
     /// **A wording is numbered the same way.**
@@ -397,7 +416,7 @@ mod tests {
         let entry = EntryId("e1".into());
         let code = "ab12cd34".to_string();
         let kept = |change: Change<'_>| {
-            let made = next_change([], change, at(1));
+            let made = next_change(None, change, at(1));
             (made.changed, made.value, made.written_at)
         };
         assert_eq!(
@@ -416,7 +435,7 @@ mod tests {
             kept(Change::State(SessionState::Wrapped)).1,
             Some("wrapped".into())
         );
-        assert_eq!(kept(Change::ServedChars(42)).1, Some("42".into()));
+        assert_eq!(kept(Change::ServedReset(42)).1, Some("42".into()));
         assert_eq!(
             kept(Change::Key),
             (Some(ChangeKind::Key), None, Some(at(1)))
@@ -476,7 +495,6 @@ mod tests {
                 "wrap_window",
                 "state",
                 "served_chars",
-                "served_chars",
                 "key",
                 "charter_told"
             ]
@@ -500,18 +518,22 @@ mod tests {
             made(Some(ChangeKind::Focus), 4),
             made(Some(ChangeKind::Focus), 5),
         ];
-        let (all, total) = trace_field("focus", &changes, 20);
+        let (all, total) = trace_field("focus", &changes, 20, 0);
         assert_eq!(all.iter().map(|c| c.ordinal).collect::<Vec<_>>(), [2, 4, 5]);
         assert_eq!(total, 3);
-        let (newest, total) = trace_field("focus", &changes, 2);
+        let (newest, total) = trace_field("focus", &changes, 2, 0);
         assert_eq!(newest.iter().map(|c| c.ordinal).collect::<Vec<_>>(), [4, 5]);
         assert_eq!(total, 3, "the cut says how many exist");
-        assert_eq!(trace_field("colour", &changes, 20), (Vec::new(), 0));
+        let (older, _) = trace_field("focus", &changes, 2, 2);
+        assert_eq!(older.iter().map(|c| c.ordinal).collect::<Vec<_>>(), [2]);
+        assert_eq!(trace_field("focus", &changes, 2, 9), (Vec::new(), 3));
+        assert_eq!(trace_field("colour", &changes, 20, 0), (Vec::new(), 0));
     }
 
-    /// **The journal's account is the entries written more than once.**
+    /// **The journal's account is the wordings of the entries written more than
+    /// once**, read newest first in parts and grouped by entry.
     #[test]
-    fn the_journals_account_is_the_entries_written_more_than_once() {
+    fn the_journals_account_is_the_wordings_of_the_entries_written_more_than_once() {
         let wording = |text: &str, revision: usize| Wording {
             revision,
             text: text.to_string(),
@@ -526,16 +548,24 @@ mod tests {
             ),
             (EntryId("c".into()), vec![wording("x", 1), wording("y", 2)]),
         ];
-        let (shown, total) = trace_journal(entries.clone(), 20);
-        assert_eq!(
-            shown.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
-            ["b", "c"]
-        );
-        assert_eq!(total, 2);
-        let (newest, total) = trace_journal(entries, 1);
-        assert_eq!(newest.len(), 1);
-        assert_eq!(newest[0].0.as_str(), "c");
-        assert_eq!(total, 2);
+        let texts = |part: &[EntryPart]| {
+            part.iter()
+                .flat_map(|(id, held, wordings)| {
+                    wordings
+                        .iter()
+                        .map(move |w| format!("{}/{held}:{}", id.as_str(), w.text))
+                })
+                .collect::<Vec<_>>()
+        };
+        let (shown, total) = trace_journal(entries.clone(), 20, 0);
+        assert_eq!(texts(&shown), ["b/2:one", "b/2:two", "c/2:x", "c/2:y"]);
+        assert_eq!(total, 4, "the count is of wordings");
+        let (newest, total) = trace_journal(entries.clone(), 3, 0);
+        assert_eq!(texts(&newest), ["b/2:two", "c/2:x", "c/2:y"]);
+        assert_eq!(total, 4);
+        let (older, _) = trace_journal(entries.clone(), 3, 3);
+        assert_eq!(texts(&older), ["b/2:one"], "the skip reads on");
+        assert_eq!(trace_journal(entries, 3, 4).0, Vec::new());
     }
 
     /// **A token round-trips, and only the five the index reads move it.**

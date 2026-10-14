@@ -8434,6 +8434,7 @@ async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
         .len();
 
     sessions_store.add_served(&run.id, 5).await.expect("served");
+    sessions_store.reset_served(&run.id).await.expect("reset");
     sessions_store
         .set_timezone(&run.id, Some("Europe/Madrid"))
         .await

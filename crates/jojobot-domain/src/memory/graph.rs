@@ -1269,8 +1269,8 @@ impl KeyHistory {
 /// **One run's own history on the wire**, as `history` asks for it of a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunHistory {
-    /// The changes of one field, oldest first, the newest window of them, and
-    /// how many there are.
+    /// A part of the changes of one field, oldest first, and how many there
+    /// are.
     Field {
         /// The field asked for, as the caller spelled it.
         field: String,
@@ -1279,25 +1279,23 @@ pub enum RunHistory {
         /// How many changes the field has, whatever came back.
         total: usize,
     },
-    /// The wordings of each entry written more than once, and how many such
-    /// entries there are.
+    /// A part of the wordings of the entries written more than once, and how
+    /// many such wordings there are.
     Journal {
-        /// The entries that came back, each with its wordings oldest first.
-        entries: Vec<(
-            crate::session::EntryId,
-            Vec<crate::session::history::Wording>,
-        )>,
-        /// How many entries were written more than once, whatever came back.
+        /// The entries that came back, each with how many wordings it has and
+        /// the wordings of it in this part, oldest first.
+        entries: Vec<crate::session::history::EntryPart>,
+        /// How many wordings the amended entries have, whatever came back.
         total: usize,
     },
 }
 
 impl RunHistory {
-    /// How many records the window left out.
-    pub fn elided(&self) -> usize {
+    /// How many records the part carries.
+    pub fn shown(&self) -> usize {
         match self {
-            RunHistory::Field { changes, total, .. } => total.saturating_sub(changes.len()),
-            RunHistory::Journal { entries, total } => total.saturating_sub(entries.len()),
+            RunHistory::Field { changes, .. } => changes.len(),
+            RunHistory::Journal { entries, .. } => entries.iter().map(|(_, _, w)| w.len()).sum(),
         }
     }
 }

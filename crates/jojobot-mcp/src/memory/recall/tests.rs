@@ -8871,7 +8871,10 @@ async fn a_runs_history_is_recalled_through_the_history_argument() {
     let journal = traced("journal").await;
     let history = &journal["objects"][0]["history"];
     assert_eq!(history["key"], "journal", "{journal}");
-    assert_eq!(history["count"], 1, "one entry was written more than once");
+    assert_eq!(
+        history["count"], 3,
+        "the three wordings of the one entry written more than once"
+    );
     let wordings = history["entries"][0]["wordings"]
         .as_array()
         .expect("the wordings come back as a list");
@@ -8946,4 +8949,128 @@ async fn a_runs_history_is_recalled_through_the_history_argument() {
         !keyed.to_string().contains(&sid),
         "the key is in the answer: {keyed}"
     );
+}
+
+/// **A run's journal history reads back in parts under the ceiling, and every
+/// wording is reached.** An entry amended until it has sixty wordings of a
+/// thousand characters each is larger than one answer may be. Each part is under
+/// the ceiling, carries the newest wordings not yet read, and names how many
+/// older ones it left out and the offset that reads on. Reading on until nothing
+/// is left out reaches every wording once. Paired with a small entry, which still
+/// comes back whole in one answer with no paging block.
+#[tokio::test]
+async fn a_large_journal_history_reads_back_in_parts_and_a_small_one_whole() {
+    use jojobot_domain::text::ANSWER_CEILING;
+    let jojobot = crate::harness::handler();
+    let sid = writing_as(&jojobot);
+    let wording = |n: usize| format!("wording {n:02} {}", "x".repeat(1_000));
+    let receipt = journal_with_focus(&jojobot, &sid, &wording(1), "amending one beat").await;
+    for n in 2..=60 {
+        amend_newest(&jojobot, &sid, &wording(n)).await;
+    }
+    let handle = format!(
+        "session:{}",
+        receipt["session"].as_str().expect("the run it landed in")
+    );
+    let part = |offset: Option<u32>, history_most: Option<u32>| {
+        let (jojobot, sid, handle) = (&jojobot, sid.clone(), handle.clone());
+        async move {
+            json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        sid: Some(sid),
+                        history: Some("journal".into()),
+                        history_most,
+                        offset,
+                        ..of(&handle)
+                    }))
+                    .await
+                    .expect("recall answers"),
+            )
+        }
+    };
+
+    // Read on from the default part size, which `history_most` cuts, and from a
+    // part size of a hundred, which only the ceiling can cut.
+    for history_most in [None, Some(100)] {
+        let mut revisions: Vec<u64> = Vec::new();
+        let mut offset = None;
+        let mut parts = 0;
+        loop {
+            let answer = part(offset, history_most).await;
+            parts += 1;
+            assert!(parts <= 60, "the parts never end: {answer}");
+            assert!(
+                crate::answer::served_len(&answer) + crate::answer::STATUS_BAR_ROOM
+                    <= ANSWER_CEILING,
+                "part {parts} is over the ceiling: {} characters",
+                crate::answer::served_len(&answer)
+            );
+            let history = &answer["objects"][0]["history"];
+            assert_eq!(
+                history["count"], 60,
+                "the history counts wordings: {history}"
+            );
+            let shown: Vec<u64> = history["entries"]
+                .as_array()
+                .expect("the entries come back as a list")
+                .iter()
+                .flat_map(|entry| entry["wordings"].as_array().expect("wordings").clone())
+                .map(|w| w["revision"].as_u64().expect("a revision"))
+                .collect();
+            assert!(
+                !shown.is_empty(),
+                "part {parts} carries no wording: {history}"
+            );
+            assert_eq!(history["shown"], shown.len(), "{history}");
+            revisions.extend(shown);
+            match history.get("not_shown") {
+                Some(left) => {
+                    let next = left["offset"].as_u64().expect("the offset that reads on");
+                    assert_eq!(
+                        left["count"].as_u64(),
+                        Some(60 - next),
+                        "the part names how many older wordings it left out: {left}"
+                    );
+                    offset = Some(next as u32);
+                }
+                None => break,
+            }
+        }
+        assert!(parts > 1, "sixty thousand characters came back in one part");
+        revisions.sort_unstable();
+        assert_eq!(
+            revisions,
+            (1..=60).collect::<Vec<u64>>(),
+            "every wording once"
+        );
+    }
+
+    // A small entry on a second run comes back whole, with no paging block.
+    let other = jojobot
+        .registry
+        .mint(&EntityId("bot:otto".into()))
+        .expect("a second run of the same bot")
+        .to_string();
+    let small = journal_with_focus(&jojobot, &other, "a short beat", "a small run").await;
+    amend_newest(&jojobot, &other, "a short beat, said again").await;
+    let small_handle = format!(
+        "session:{}",
+        small["session"].as_str().expect("the run it landed in")
+    );
+    let whole = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(other),
+                history: Some("journal".into()),
+                ..of(&small_handle)
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    let history = &whole["objects"][0]["history"];
+    assert_eq!(history["count"], 2, "{whole}");
+    assert_eq!(history["shown"], 2, "{whole}");
+    assert!(history.get("not_shown").is_none(), "{whole}");
+    assert!(whole.get("not_shown").is_none(), "{whole}");
 }

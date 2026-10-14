@@ -199,3 +199,290 @@ async fn an_event_the_image_appends_is_numbered_and_attributed_as_written() {
     assert_eq!(history[1].prior_state, MessageState::Read);
     assert_eq!(history[1].notes.as_deref(), Some("done"));
 }
+
+/// **How the first begin's answer is lost after its commit landed.**
+#[derive(Clone, Copy)]
+enum Lost {
+    /// The caller stops waiting: the call is cancelled.
+    Cancelled,
+    /// The store answers with a failure: the outcome is not acknowledged.
+    Unacknowledged,
+}
+
+/// A session store whose **first begin commits and then loses its answer**, in
+/// one of the two ways [`Lost`] names. Every other call goes to the store.
+struct CommitsThenLoses {
+    inner: Arc<InMemorySessions>,
+    lost: Lost,
+    once: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl jojobot_domain::session::Sessions for CommitsThenLoses {
+    async fn begin(
+        &self,
+        new: jojobot_domain::session::NewSession,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        let begun = self.inner.begin(new).await?;
+        if !self.once.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            match self.lost {
+                Lost::Cancelled => std::future::pending::<()>().await,
+                Lost::Unacknowledged => {
+                    return Err(jojobot_domain::session::SessionError::Store(
+                        "the row committed and the answer did not arrive".into(),
+                    ));
+                }
+            }
+        }
+        Ok(begun)
+    }
+    async fn sessions_of(
+        &self,
+        bot: &jojobot_domain::memory::EntityId,
+    ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
+        self.inner.sessions_of(bot).await
+    }
+    async fn all_sessions(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
+        self.inner.all_sessions().await
+    }
+    async fn read_session(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.read_session(id).await
+    }
+    async fn append(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: jojobot_domain::session::NewEntry,
+    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
+        self.inner.append(id, entry).await
+    }
+    async fn amend_last(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        text: &str,
+    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
+        self.inner.amend_last(id, text).await
+    }
+    async fn amend_beat(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+        text: &str,
+        at: jiff::Timestamp,
+    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
+        self.inner.amend_beat(id, entry, text, at).await
+    }
+    async fn set_focus(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        focus: &str,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.set_focus(id, focus).await
+    }
+    async fn set_timezone(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        timezone: Option<&str>,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.set_timezone(id, timezone).await
+    }
+    async fn set_stated_day(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.set_stated_day(id, day).await
+    }
+    async fn set_wrap_window(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        window: Option<jojobot_domain::session::WrapWindow>,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.set_wrap_window(id, window).await
+    }
+    async fn close(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        to: jojobot_domain::session::SessionState,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.close(id, to).await
+    }
+    async fn add_served(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        chars: u64,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.add_served(id, chars).await
+    }
+    async fn reset_served(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.reset_served(id).await
+    }
+    async fn reopen(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.reopen(id).await
+    }
+    async fn set_charter_told(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.set_charter_told(id, at).await
+    }
+    async fn session_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+    ) -> Result<
+        Vec<jojobot_domain::session::history::SessionChange>,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.session_history(id).await
+    }
+    async fn scan_session_history(
+        &self,
+    ) -> Result<
+        jojobot_domain::session::history::SessionHistories,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.scan_session_history().await
+    }
+    async fn journal_history(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        entry: &jojobot_domain::session::EntryId,
+    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
+    {
+        self.inner.journal_history(id, entry).await
+    }
+    async fn set_key_hash(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        hash: &str,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.set_key_hash(id, hash).await
+    }
+    async fn note_charter_change(
+        &self,
+        bot: &jojobot_domain::memory::EntityId,
+        change: jojobot_domain::session::CharterChange,
+        by_session: Option<&str>,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner
+            .note_charter_change(bot, change, by_session)
+            .await
+    }
+    async fn charter_change_of(
+        &self,
+        bot: &jojobot_domain::memory::EntityId,
+    ) -> Result<Option<jojobot_domain::session::CharterChange>, jojobot_domain::session::SessionError>
+    {
+        self.inner.charter_change_of(bot).await
+    }
+    async fn charter_changes(
+        &self,
+    ) -> Result<
+        Option<
+            std::collections::BTreeMap<
+                jojobot_domain::memory::EntityId,
+                jojobot_domain::session::CharterChange,
+            >,
+        >,
+        jojobot_domain::session::SessionError,
+    > {
+        self.inner.charter_changes().await
+    }
+}
+
+/// Lose the first begin's answer the way `lost` says, retry it with the same
+/// sid through the image, and hand back what the store and the image hold.
+async fn begin_lost_then_retried(
+    lost: Lost,
+) -> (
+    Vec<jojobot_domain::session::history::SessionChange>,
+    Vec<jojobot_domain::session::history::SessionChange>,
+) {
+    use jojobot_domain::session::{NewSession, Sessions, Sid};
+    let store = Arc::new(InMemorySessions::new());
+    let losing = Arc::new(CommitsThenLoses {
+        inner: store.clone(),
+        lost,
+        once: std::sync::atomic::AtomicBool::new(false),
+    });
+    let folded = FoldedSessions::new(losing, store.write_stamp(), Clock::Real);
+    folded.rebuild().await.expect("the image loads");
+    let new = || NewSession {
+        bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+        sid: Sid("s001".into()),
+        focus: "reading the hand-off".into(),
+        started_at: jiff::Timestamp::from_second(1_780_000_000).expect("a valid instant"),
+        timezone: None,
+        started_on: None,
+        id: None,
+        key_hash: None,
+    };
+    match lost {
+        Lost::Cancelled => {
+            let waited =
+                tokio::time::timeout(std::time::Duration::from_millis(50), folded.begin(new()))
+                    .await;
+            assert!(waited.is_err(), "the first begin is cancelled: {waited:?}");
+        }
+        Lost::Unacknowledged => {
+            let failed = folded.begin(new()).await;
+            assert!(failed.is_err(), "the first begin fails: {failed:?}");
+        }
+    }
+    let landed = store
+        .sessions_of(&jojobot_domain::memory::EntityId("bot:gamma".into()))
+        .await
+        .expect("the store answers");
+    assert_eq!(landed.len(), 1, "the first begin committed: {landed:?}");
+
+    let retried = folded
+        .begin(new())
+        .await
+        .expect("the retry hands the run back");
+
+    assert_eq!(retried.id, landed[0].id, "the retry is the same run");
+    let in_store = store
+        .session_history(&retried.id)
+        .await
+        .expect("the store answers");
+    let in_image = folded
+        .session_history(&retried.id)
+        .await
+        .expect("the image answers");
+    (in_store, in_image)
+}
+
+/// **A begin retried after a cancelled or unacknowledged commit records no
+/// second Begin.** The first begin committed in the store and its answer never
+/// reached the image; the retry under the same sid writes nothing in the store.
+/// The image then holds the store's one Begin, at the moment of the commit.
+#[tokio::test]
+async fn a_begin_retried_after_an_uncertain_commit_holds_the_one_begin_the_store_holds() {
+    use jojobot_domain::session::history::{ChangeKind, SessionChange};
+    let begins = |changes: &[SessionChange]| {
+        changes
+            .iter()
+            .filter(|c| c.changed == Some(ChangeKind::Begin))
+            .count()
+    };
+    for lost in [Lost::Cancelled, Lost::Unacknowledged] {
+        let (in_store, in_image) = begin_lost_then_retried(lost).await;
+        assert_eq!(begins(&in_store), 1, "the store holds one Begin");
+        assert_eq!(begins(&in_image), 1, "the image holds one Begin");
+        assert_eq!(
+            in_image, in_store,
+            "the image holds the store's Begin, at the moment of the commit"
+        );
+    }
+}

@@ -122,7 +122,7 @@ impl DoltSessions {
         self.full_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// How many times a write asked the store whether a session row exists
+    /// How many times a call asked the store whether a session row exists
     /// since this store opened. Test-only.
     #[cfg(any(test, feature = "testing"))]
     pub fn existence_checks(&self) -> usize {
@@ -329,10 +329,11 @@ impl DoltSessions {
     }
 
     /// **The row exists, without paying for its chronology.** What
-    /// [`Self::add_served`] needs and [`Self::read_in`] costs more than: a
-    /// session an accounting write may touch does not have to be open, so
-    /// this asks existence alone, the same question a foreign key would ask
-    /// if this table had one to lean on. Never counted against `full_reads`
+    /// [`Self::add_served`] and the history reads need and [`Self::read_in`]
+    /// costs more than: a session an accounting write may touch does not have
+    /// to be open, so this asks existence alone, the same question a foreign
+    /// key would ask if this table had one to lean on. The one site that asks
+    /// it, with the one refusal for a run no row holds (rule 498). Never counted against `full_reads`
     /// or `entries_read` — it reads neither a session row's every column nor
     /// any of its chronology.
     async fn exists(
@@ -407,8 +408,8 @@ impl DoltSessions {
         id: &SessionId,
         change: Change<'_>,
     ) -> Result<(), SessionError> {
-        // **Only the highest, never the list**: a run is served an answer many
-        // times, and a read of every record it holds would grow with them.
+        // **Only the highest, never the list**: a read of every record a run
+        // holds would grow with them.
         let highest: Option<i64> =
             sqlx::query_scalar("SELECT MAX(ordinal) FROM session_write WHERE session = ?")
                 .bind(id.as_str())
@@ -1207,8 +1208,9 @@ impl Sessions for DoltSessions {
         if added.rows_affected() == 0 {
             self.exists(&mut tx, id).await?;
         }
-        self.keep_change(&mut tx, id, Change::ServedChars(chars))
-            .await?;
+        // **No change is recorded here.** An answer is served many times a
+        // run, and a record of each would grow with them: the reset records
+        // the total instead.
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -1216,18 +1218,24 @@ impl Sessions for DoltSessions {
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // Existence only, as `add_served` asks it. A total already at nothing
-        // changes no row, so an update that changed none asks whether the run is
-        // there.
-        let reset = sqlx::query("UPDATE session SET served_chars = 0 WHERE id = ?")
+        // **The total the reset sets back is its record.** Read in the same
+        // transaction, so the record holds what the row held; a run no row
+        // holds is refused.
+        let total: i64 = sqlx::query_scalar("SELECT served_chars FROM session WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(store)?
+            .ok_or_else(|| SessionError::UnknownSession {
+                attempted: id.to_string(),
+            })?;
+        sqlx::query("UPDATE session SET served_chars = 0 WHERE id = ?")
             .bind(id.as_str())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        if reset.rows_affected() == 0 {
-            self.exists(&mut tx, id).await?;
-        }
-        self.keep_change(&mut tx, id, Change::ServedReset).await?;
+        self.keep_change(&mut tx, id, Change::ServedReset(total.max(0) as u64))
+            .await?;
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -1336,22 +1344,17 @@ impl Sessions for DoltSessions {
 
     async fn session_history(&self, id: &SessionId) -> Result<Vec<SessionChange>, SessionError> {
         validate_session_id(id)?;
-        let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
-            .bind(id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(store)?;
-        found.ok_or_else(|| SessionError::UnknownSession {
-            attempted: id.to_string(),
-        })?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        self.exists(&mut tx, id).await?;
         let rows = sqlx::query(
             "SELECT ordinal, written_at, changed, value FROM session_write
              WHERE session = ? ORDER BY ordinal",
         )
         .bind(id.as_str())
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
+        tx.commit().await.map_err(store)?;
         rows.iter().map(change_from_row).collect()
     }
 
@@ -1361,19 +1364,13 @@ impl Sessions for DoltSessions {
         entry: &EntryId,
     ) -> Result<Vec<Wording>, SessionError> {
         validate_session_id(id)?;
-        let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
-            .bind(id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(store)?;
-        found.ok_or_else(|| SessionError::UnknownSession {
-            attempted: id.to_string(),
-        })?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        self.exists(&mut tx, id).await?;
         let held: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM journal_entry WHERE session = ? AND id = ?")
                 .bind(id.as_str())
                 .bind(entry.as_str())
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(store)?;
         held.ok_or_else(|| SessionError::NoEntries {
@@ -1385,9 +1382,10 @@ impl Sessions for DoltSessions {
         )
         .bind(id.as_str())
         .bind(entry.as_str())
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
+        tx.commit().await.map_err(store)?;
         rows.iter().map(wording_from_row).collect()
     }
 

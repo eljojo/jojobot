@@ -94,7 +94,8 @@ impl InMemorySessions {
             changes
                 .iter()
                 .filter(|(held, _)| held == id)
-                .map(|(_, c)| c.ordinal),
+                .map(|(_, c)| c.ordinal)
+                .max(),
             change,
             at,
         );
@@ -443,7 +444,6 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at].served_chars += chars;
-        self.record(id, Change::ServedChars(chars));
         Ok(())
     }
 
@@ -455,8 +455,8 @@ impl Sessions for InMemorySessions {
                 attempted: id.to_string(),
             }
         })?;
-        sessions[at].served_chars = 0;
-        self.record(id, Change::ServedReset);
+        let total = std::mem::take(&mut sessions[at].served_chars);
+        self.record(id, Change::ServedReset(total));
         Ok(())
     }
 
@@ -2409,9 +2409,11 @@ pub mod contract {
         );
     }
 
-    /// **What is served, the key, the charter moment and an abandon and a
-    /// walk-back are each recorded, and the key's hash is in no value.** A resume
-    /// of a run that is already active changes nothing and records nothing.
+    /// **A reset of what is served, the key, the charter moment and an abandon
+    /// and a walk-back are each recorded, and the key's hash is in no value.** An
+    /// answer served adds to the total and records nothing: the reset is one
+    /// record carrying the total it set back. A resume of a run that is already
+    /// active changes nothing and records nothing.
     pub async fn served_key_charter_and_the_ends_of_a_run_are_recorded(store: &dyn Sessions) {
         use super::super::history::ChangeKind as K;
         let name = SessionId("k3m9qz".into());
@@ -2456,8 +2458,6 @@ pub mod contract {
             history.iter().map(|c| c.changed).collect::<Vec<_>>(),
             [
                 K::Begin,
-                K::ServedChars,
-                K::ServedChars,
                 K::ServedReset,
                 K::Key,
                 K::Key,
@@ -2473,9 +2473,7 @@ pub mod contract {
                 .map(|c| c.value.as_deref())
                 .collect::<Vec<_>>()[1..],
             [
-                Some("40"),
-                Some("2"),
-                None,
+                Some("42"),
                 None,
                 None,
                 Some(at(7).to_string().as_str()),
