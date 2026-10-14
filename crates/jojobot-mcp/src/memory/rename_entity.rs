@@ -451,6 +451,7 @@ mod tests {
         let writer = booted(&jojobot, "gamma").await;
         jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "gamma".into(),
                 body: "mail that has to survive the rename".into(),
                 sid: writer.clone(),
@@ -756,6 +757,7 @@ mod tests {
         let other = writing_as(&jojobot);
         jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "sigma".into(),
                 body: "mail sent after the rename".into(),
                 sid: other,
@@ -1307,6 +1309,7 @@ mod tests {
         for body in ["first report", "second report"] {
             jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "otto".into(),
                     body: body.into(),
                     sid: writer.clone(),

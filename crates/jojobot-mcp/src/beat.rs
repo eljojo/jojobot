@@ -522,6 +522,7 @@ mod tests {
         capture_ok(&jojobot, capture_args("alpha", "plays go on tuesdays")).await;
         jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                request_id: None,
                 handle: "person:alpha".into(),
                 name: Some("Alpha, renamed by nobody".into()),
                 aliases: None,
@@ -570,6 +571,7 @@ mod tests {
 
         jojobot
             .retract(Parameters(RetractArgs {
+                request_id: None,
                 address,
                 reason: None,
                 recorded_at: None,
@@ -590,6 +592,7 @@ mod tests {
             .expect("rename ok");
         jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "person:beta".into(),
                 survivor: "person:kappa".into(),
                 reason: None,

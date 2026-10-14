@@ -171,6 +171,7 @@ async fn a_quarantined_message_read_by_id_does_not_say_a_write_was_skipped() {
     jojobot
         .mark_processed(Parameters(
             crate::mailboxes::mark_processed::MarkProcessedArgs {
+                request_id: None,
                 message_id: id.clone(),
                 notes: None,
                 sid: Some(sid.clone()),

@@ -207,3 +207,295 @@ async fn an_id_needs_a_session_and_a_good_shape() {
 
     story.finish().await;
 }
+
+/// A write sent twice under one id leaves one write behind, and the second
+/// answer is the first one's receipt.
+fn is_a_repeat(answer: &Value) {
+    assert_eq!(answer["repeat"], true, "the answer is marked: {answer}");
+}
+
+#[tokio::test]
+async fn an_entity_made_twice_under_one_id_is_made_once() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let make = |id: &str| {
+        json!({
+            "kind": "person", "handle": "lisa", "name": "Lisa",
+            "source": "user-named", "request_id": id,
+        })
+    };
+    let first = s.call("add_entity", make("e1")).await.json();
+    assert!(first.get("repeat").is_none(), "{first}");
+    // Without the id the same call is a near-miss of the thing just made: that is
+    // what the repeat saves a caller from meeting.
+    let again = s.call("add_entity", make("e1")).await.json();
+    is_a_repeat(&again);
+    assert_eq!(
+        without_repeat_marks(again),
+        without_repeat_marks(first),
+        "the first receipt"
+    );
+
+    // A thing made with its first fields commits the thing and its first claim
+    // together; the id covers both.
+    let with_fields = json!({
+        "kind": "person", "handle": "homer", "name": "Homer", "source": "user-named",
+        "sets": { "mood": "content" }, "request_id": "e3",
+    });
+    s.call("add_entity", with_fields.clone()).await;
+    is_a_repeat(&s.call("add_entity", with_fields).await.json());
+    // A rename of the label alone is an edit that sets nothing.
+    let relabel = json!({ "handle": "person:homer", "name": "Homer J", "request_id": "e4" });
+    s.call("update_entity", relabel.clone()).await;
+    is_a_repeat(&s.call("update_entity", relabel).await.json());
+
+    // A bot is made in two parts, so it takes no id.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "bot", "handle": "rho", "name": "Rho",
+            "source": "user-named", "request_id": "e2",
+        }),
+    )
+    .await
+    .says("request_id");
+    // The positive: the same bot without an id is made.
+    s.call(
+        "add_entity",
+        json!({ "kind": "bot", "handle": "rho", "name": "Rho", "source": "user-named" }),
+    )
+    .await;
+
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn an_edit_sent_twice_under_one_id_counts_once() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    // A counter adds every write, so a doubled edit would show as a doubled total.
+    s.call(
+        "declare_type",
+        json!({ "name": "snacking", "fields": [{ "key": "donuts", "folds": "sum" }] }),
+    )
+    .await;
+    let claim = s
+        .event_with("person:milhouse", "ate lunch", json!({}), &[])
+        .await;
+
+    let edit = |id: &str| json!({ "address": claim, "sets": { "donuts": "1" }, "request_id": id });
+    s.call("update_fact", edit("u1")).await;
+    is_a_repeat(&s.call("update_fact", edit("u1")).await.json());
+    s.shape(
+        "what Milhouse holds",
+        json!({ "subject": "person:milhouse" }),
+    )
+    .await
+    .says("\"donuts\":\"1\"");
+
+    // The same on the entity's own edit.
+    let update = |id: &str| json!({ "handle": "person:milhouse", "sets": { "donuts": "1" }, "request_id": id });
+    s.call("update_entity", update("u2")).await;
+    is_a_repeat(&s.call("update_entity", update("u2")).await.json());
+    s.shape(
+        "what Milhouse holds",
+        json!({ "subject": "person:milhouse" }),
+    )
+    .await
+    .says("\"donuts\":\"2\"");
+
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn an_archive_a_merge_and_a_retraction_sent_twice_under_one_id_are_made_once() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:krusty", "Krusty").await;
+    s.add("person:skinner", "Skinner").await;
+    s.add("person:apu", "Apu").await;
+    let claim = s
+        .event_with("person:apu", "runs the store", json!({}), &[])
+        .await;
+
+    // Archive: the second call, without the id, would meet an archived thing.
+    let archive = json!({ "handle": "person:apu", "reason": "filed twice", "request_id": "a1" });
+    s.call("archive_entity", archive.clone()).await;
+    is_a_repeat(&s.call("archive_entity", archive).await.json());
+
+    // Restore: the second call, without the id, would meet a thing not archived.
+    let restore = json!({
+        "handle": "person:apu", "reason": "back again", "restore": true, "request_id": "a2",
+    });
+    s.call("archive_entity", restore.clone()).await;
+    is_a_repeat(&s.call("archive_entity", restore).await.json());
+
+    // Merge: the second call, without the id, would meet a thing already folded.
+    let merge = json!({
+        "duplicate": "person:skinner", "survivor": "person:krusty", "request_id": "m1",
+    });
+    s.call("merge_entities", merge.clone()).await;
+    is_a_repeat(&s.call("merge_entities", merge).await.json());
+
+    // Retract: the second call, without the id, would meet a claim taken back.
+    let retract = json!({ "address": claim, "reason": "mistaken", "request_id": "t1" });
+    s.call("retract", retract.clone()).await;
+    is_a_repeat(&s.call("retract", retract).await.json());
+
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_type_and_a_charter_sent_twice_under_one_id_keep_the_first() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let declare =
+        |key: &str| json!({ "name": "snacking", "fields": [{ "key": key }], "request_id": "d1" });
+    s.call("declare_type", declare("donuts")).await;
+    let again = s.call("declare_type", declare("buns")).await.json();
+    is_a_repeat(&again);
+    assert_eq!(again["arguments_differed"], true, "{again}");
+    // The second declaration was not made: the type still names the first key.
+    s.shape(
+        "the type",
+        json!({ "answers_type": "snacking", "kind": "person" }),
+    )
+    .await
+    .says("donuts");
+
+    let charter =
+        |prose: &str| json!({ "bot": "bot:assistant", "prose": prose, "request_id": "c1" });
+    s.call("set_charter", charter("The first words.")).await;
+    let again = s
+        .call("set_charter", charter("Different words."))
+        .await
+        .json();
+    is_a_repeat(&again);
+    assert_eq!(again["arguments_differed"], true, "{again}");
+    s.shape(
+        "the charter as written",
+        json!({ "subject": "bot:assistant", "prose": true }),
+    )
+    .await
+    .says("The first words.")
+    .never_says("Different words.");
+
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_message_posted_and_retired_twice_under_one_id_is_posted_and_retired_once() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let other = story.as_bot("bot:assistant").await;
+
+    let post = json!({
+        "to": "bot:otto", "subject": "hello", "body": "first words", "request_id": "p1",
+    });
+    let first = other.call("post_message", post.clone()).await.json();
+    assert!(first.get("repeat").is_none(), "{first}");
+    is_a_repeat(&other.call("post_message", post).await.json());
+    // One message reached the box, not two.
+    let counts = s
+        .call("read_mailbox", json!({ "counts_only": true }))
+        .await
+        .json();
+    assert_eq!(counts["counts"]["new"], 1, "{counts}");
+
+    // Setting a message aside twice under one id is one quarantine.
+    other
+        .call(
+            "post_message",
+            json!({ "to": "bot:otto", "subject": "second", "body": "set aside" }),
+        )
+        .await;
+    let delivered = s.call("read_mailbox", json!({})).await.json();
+    let aside = delivered["messages"]
+        .as_array()
+        .and_then(|all| all.iter().find(|m| m["subject"] == "second"))
+        .and_then(|m| m["id"].as_str())
+        .expect("the second message arrived")
+        .to_string();
+    let quarantine = json!({
+        "message_id": aside, "quarantine": "not for me", "request_id": "q1",
+    });
+    s.call("mark_processed", quarantine.clone()).await;
+    is_a_repeat(&s.call("mark_processed", quarantine).await.json());
+
+    // Retire the first one twice under one id with other notes the second time.
+    let id = delivered["messages"]
+        .as_array()
+        .and_then(|all| all.iter().find(|m| m["subject"] == "hello"))
+        .and_then(|m| m["id"].as_str())
+        .expect("the first message arrived")
+        .to_string();
+    let retire = |notes: &str| json!({ "message_id": id, "notes": notes, "request_id": "r9" });
+    s.call("mark_processed", retire("done the first way")).await;
+    let again = s
+        .call("mark_processed", retire("done another way"))
+        .await
+        .json();
+    is_a_repeat(&again);
+    assert_eq!(again["arguments_differed"], true, "{again}");
+    s.call("read_message", json!({ "message_id": id }))
+        .await
+        .says("done the first way")
+        .never_says("done another way");
+
+    story.finish().await;
+}
+
+/// What the run has been charged and told so far: the characters it was handed
+/// and the text of the beat for its captures.
+async fn bookkeeping(story: &Story) -> (u64, Option<String>) {
+    use jojobot_domain::session::Sessions;
+    let runs = story
+        .sessions_store()
+        .all_sessions()
+        .await
+        .expect("the board reads");
+    // The story's own run is the one that has been charged something.
+    let run = runs
+        .iter()
+        .max_by_key(|run| run.served_chars)
+        .expect("the board holds a run");
+    let beat = run
+        .entries
+        .iter()
+        .find(|entry| entry.beat.as_deref() == Some("capture"))
+        .map(|entry| entry.text.clone());
+    (run.served_chars, beat)
+}
+
+#[tokio::test]
+async fn a_repeat_replays_no_beat_and_no_accounting() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.call("capture", capture("wears glasses", "r1")).await;
+    let (served, beat) = bookkeeping(&story).await;
+    assert!(beat.is_some(), "the first capture left its beat");
+
+    is_a_repeat(
+        &s.call("capture", capture("wears glasses", "r1"))
+            .await
+            .json(),
+    );
+    // The repeat was answered and charged nothing: no beat counted, no characters
+    // added to what the run was handed.
+    assert_eq!(
+        bookkeeping(&story).await,
+        (served, beat.clone()),
+        "a repeat replays none of the run's bookkeeping"
+    );
+
+    // The positive the equality rests on: a capture that is not a repeat does move
+    // both.
+    s.call("capture", capture("owns a radio", "r2")).await;
+    let (served_after, beat_after) = bookkeeping(&story).await;
+    assert!(served_after > served, "a new write is charged");
+    assert_ne!(beat_after, beat, "a new write moves the beat's count");
+
+    story.finish().await;
+}

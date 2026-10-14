@@ -3074,6 +3074,7 @@ mod tests {
 
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "otto".into(),
                 prose: "Keeps the schedule.\n\nHard line: never writes to the ledger.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -4678,6 +4679,7 @@ mod tests {
         a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "Holds the plan.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),

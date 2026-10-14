@@ -48,6 +48,16 @@ pub struct PostMessageArgs {
     /// the message later, so a reader can check a claim about your own mail against
     /// what was true when you hit send.
     pub(crate) sid: String,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the message is posted once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
     /// What this message is about, in one line — a title, not a summary.
     /// Optional, and worth giving: it is what a reader sees in a listing and on
     /// a search hit before they open anything. Do NOT also repeat it as the
@@ -327,7 +337,7 @@ impl Jojobot {
                        by id (read_mailbox with new_only: false returns them all). The sender \
                        is the bot behind the `sid` you pass, never one you declare, and a sid \
                        jojobot is not holding comes back status: blocked with nothing \
-                       written. Each argument's own description holds the rest."
+                       written. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn post_message(
         &self,
@@ -484,7 +494,7 @@ impl Jojobot {
         // Declined rather than errored: a reply naming a message jojobot does
         // not hold is a bad reference, and every other bad reference on this
         // surface comes back as the blocked shape.
-        let posted = match self.mailboxes.post_message(new).await {
+        let posted = match jojobot_domain::request::armed(self.mailboxes.post_message(new)).await {
             Ok(posted) => posted,
             Err(e) => return mailbox_declined(e),
         };
@@ -1072,6 +1082,7 @@ mod tests {
         make_box(&jojobot, "epsilon").await;
         let result = jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "otto".into(),
                 sid: as_bot(&jojobot, "epsilon"),
                 subject: None,
@@ -1192,6 +1203,7 @@ mod tests {
         let over = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "otto".into(),
                     sid: as_bot(&jojobot, "epsilon"),
                     subject: None,
@@ -1312,6 +1324,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "the kiln reached temperature".into(),
@@ -1374,6 +1387,7 @@ mod tests {
 
         let result = jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "epsilo".into(),
                 sid: as_bot(&jojobot, "epsilon"),
                 body: "the shipment landed".into(),
@@ -1411,6 +1425,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "inbox".into(),
                     sid: "  ".into(),
                     body: "the shipment landed".into(),
@@ -1448,6 +1463,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: long.clone(),
@@ -1510,6 +1526,7 @@ mod tests {
         let reply = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "the kiln slice is done".into(),
@@ -1542,6 +1559,7 @@ mod tests {
         let dangling = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "answering something nobody said".into(),
@@ -1562,6 +1580,7 @@ mod tests {
         let unlinked = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "answering nothing in particular".into(),
@@ -1596,6 +1615,7 @@ mod tests {
         let refused = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "dev-two".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "reporting in".into(),
@@ -1633,6 +1653,7 @@ mod tests {
         let refused = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "nobody-here".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "reporting in".into(),
@@ -1695,6 +1716,7 @@ mod tests {
         let refused = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "person:ned-flanders".into(),
                     sid: as_bot(&jojobot, "epsilon"),
                     subject: None,
@@ -1734,6 +1756,7 @@ mod tests {
         let refused = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "person:milhouse".into(),
                     sid: as_bot(&jojobot, "epsilon"),
                     subject: None,
@@ -1792,6 +1815,7 @@ mod tests {
         let refused = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "person:milhouse".into(),
                     sid: as_bot(&jojobot, "epsilon"),
                     subject: None,
@@ -1845,6 +1869,7 @@ mod tests {
         owning(&jojobot, "gamma").await;
         let post = || {
             jojobot.post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "bot:gamma".into(),
                 body: "for the operator".into(),
                 in_reply_to: None,
@@ -1888,6 +1913,7 @@ mod tests {
     async fn post_to(jojobot: &Jojobot, to: &str, sid: &str) -> Result<CallToolResult, McpError> {
         jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: to.into(),
                 body: "hello".into(),
                 in_reply_to: None,
@@ -2011,6 +2037,7 @@ mod tests {
         json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: to.into(),
                     sid: as_bot(jojobot, from),
                     subject: None,
@@ -2332,6 +2359,7 @@ mod tests {
         let refused = json_of(
             &jojobot
                 .retract(Parameters(crate::memory::retract::RetractArgs {
+                    request_id: None,
                     address: a.clone(),
                     reason: None,
                     recorded_at: None,
@@ -2355,6 +2383,7 @@ mod tests {
 
         let nonsense = jojobot
             .retract(Parameters(crate::memory::retract::RetractArgs {
+                request_id: None,
                 address: "zzzzzz".into(),
                 reason: None,
                 recorded_at: None,

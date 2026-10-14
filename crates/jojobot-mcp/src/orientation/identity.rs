@@ -1333,6 +1333,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "Holds the plan.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -1411,6 +1412,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "Holds the plan.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -1584,6 +1586,7 @@ mod tests {
         let writer = booted(&jojobot, "gamma").await;
         jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "gamma".into(),
                 body: "mail that has to survive an incomplete rename".into(),
                 sid: writer,

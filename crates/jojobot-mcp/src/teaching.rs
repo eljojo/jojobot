@@ -1595,6 +1595,7 @@ mod tests {
             &jojobot
                 .retract(rmcp::handler::server::wrapper::Parameters(
                     crate::memory::RetractArgs {
+                        request_id: None,
                         address: "person:alpha#f1".into(),
                         reason: Some("never happened".into()),
                         recorded_at: None,
@@ -1711,6 +1712,7 @@ mod tests {
         let retracted = jojobot
             .retract(rmcp::handler::server::wrapper::Parameters(
                 crate::memory::RetractArgs {
+                    request_id: None,
                     address: "person:alpha#f1".into(),
                     reason: Some("never happened".into()),
                     recorded_at: None,
@@ -1739,6 +1741,7 @@ mod tests {
         let merged = jojobot
             .merge_entities(rmcp::handler::server::wrapper::Parameters(
                 crate::memory::merge_entities::MergeArgs {
+                    request_id: None,
                     duplicate: "person:milhouse".into(),
                     survivor: "person:alpha".into(),
                     reason: Some("same person".into()),

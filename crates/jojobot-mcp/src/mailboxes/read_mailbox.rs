@@ -533,6 +533,7 @@ mod tests {
         let processed = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: id.clone(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
@@ -822,6 +823,7 @@ mod tests {
         let held = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "dev".into(),
                     sid: as_bot(&jojobot, "delta"),
                     body: held_body.clone(),
@@ -925,6 +927,7 @@ mod tests {
         let held = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "dev".into(),
                     sid: as_bot(&jojobot, "delta"),
                     body: held_body.clone(),
@@ -998,6 +1001,7 @@ mod tests {
         let processed = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: held_id,
                     notes: None,
                     sid: None,
@@ -1072,6 +1076,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "dev".into(),
                     sid: run_a.clone(),
                     subject: None,
@@ -1341,6 +1346,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "sigma".into(),
                     sid: person,
                     subject: None,
@@ -1373,6 +1379,7 @@ mod tests {
         let sent = send(&jojobot, "dev", "epsilon", "the shipment landed").await;
         jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: sent["id"].as_str().expect("a message id").to_string(),
                 notes: None,
                 sid: None,
@@ -1433,6 +1440,7 @@ mod tests {
         let sent = send(&jojobot, "dev", "epsilon", "a count nobody can trust").await;
         jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: sent["id"].as_str().expect("a message id").to_string(),
                 notes: None,
                 sid: Some(reader.clone()),

@@ -257,6 +257,7 @@ mod tests {
         let processed = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: id,
                     notes: None,
                     sid: None,
@@ -437,6 +438,7 @@ mod tests {
         let id = theirs["id"].as_str().expect("an id").to_string();
         jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: id.clone(),
                 notes: Some("acted on".into()),
                 sid: Some(delta),
@@ -478,6 +480,7 @@ mod tests {
         let id = theirs["id"].as_str().expect("an id").to_string();
         jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: id.clone(),
                 notes: Some("acted on".into()),
                 sid: Some(delta),
@@ -724,6 +727,7 @@ mod tests {
             let retire = json_of(
                 &jojobot
                     .mark_processed(Parameters(MarkProcessedArgs {
+                        request_id: None,
                         message_id: private_id.clone(),
                         notes: Some("handled".into()),
                         sid: Some(reader.clone()),

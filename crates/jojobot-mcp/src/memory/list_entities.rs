@@ -635,6 +635,7 @@ mod tests {
         let landed = json_of(
             &jojobot
                 .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    request_id: None,
                     duplicate: duplicate.into(),
                     survivor: survivor.into(),
                     reason: None,

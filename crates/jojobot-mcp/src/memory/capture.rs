@@ -769,7 +769,7 @@ impl Jojobot {
                        write is read back from the store before it is called a success. \
                        recall the subject to read it back. A claim too big to be read back \
                        whole is refused with nothing written. Each argument's own description \
-                       holds the rest."
+                       holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn capture(
         &self,

@@ -1192,6 +1192,7 @@ async fn a_kind_browse_leaves_out_a_merged_away_entity_and_counts_it() {
     let landed = json_of(
         &jojobot
             .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                request_id: None,
                 duplicate: "person:bart".into(),
                 survivor: "person:milhouse".into(),
                 reason: None,
@@ -1257,6 +1258,7 @@ async fn a_browse_that_holds_something_and_left_something_out_names_the_route() 
     let landed = json_of(
         &jojobot
             .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                request_id: None,
                 duplicate: "person:homer".into(),
                 survivor: "person:milhouse".into(),
                 reason: None,
@@ -1981,6 +1983,7 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
         .expect("add ok");
     jojobot
         .update_entity(Parameters(UpdateEntityArgs {
+            request_id: None,
             handle: "person:teddy".into(),
             name: Some("Theodore".into()),
             aliases: Some(vec!["Ted".into()]),
@@ -1994,6 +1997,7 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
         .expect("update ok");
     jojobot
         .archive_entity(Parameters(ArchiveEntityArgs {
+            request_id: None,
             handle: "person:teddy".into(),
             reason: "entered twice".into(),
             restore: None,
@@ -2003,6 +2007,7 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
         .expect("archive ok");
     jojobot
         .archive_entity(Parameters(ArchiveEntityArgs {
+            request_id: None,
             handle: "person:teddy".into(),
             reason: "it was real".into(),
             restore: Some(true),
@@ -2676,6 +2681,7 @@ async fn a_kind_comes_back_with_each_objects_prose() {
     let charter = "Keeps the roster.\n\nHard line: never writes to the ledger.";
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: charter.into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -2740,6 +2746,7 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
     // the same shape by hand.
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "runs-out".into(),
             fields: vec![FieldArgs {
                 key: attention::RUNS_OUT.into(),
@@ -2874,6 +2881,7 @@ async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
     let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "runs-out".into(),
             fields: vec![FieldArgs {
                 key: attention::RUNS_OUT.into(),
@@ -2965,6 +2973,7 @@ async fn a_narrowed_key_reports_the_set_it_wanted() {
     ensure(&setup, "person:alpha").await;
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "shift".into(),
             fields: vec![FieldArgs {
                 key: "worked".into(),
@@ -3053,6 +3062,7 @@ async fn a_charter_reads_whole_without_booting_as_the_bot_it_belongs_to() {
     let own = "Keeps the household ledger. Never writes to it on a Sunday.";
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "assistant".into(),
             prose: own.into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -3128,6 +3138,7 @@ async fn a_bot_recalled_without_charter_says_so_and_names_the_way_back() {
     make_bot(&jojobot, "gamma").await;
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: "Keeps the kitchen running.".into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -3208,6 +3219,7 @@ async fn asking_for_the_charter_lifts_the_elision() {
     let own = "Keeps the kitchen running.";
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: own.into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -3281,6 +3293,7 @@ async fn a_bot_selecting_view_answers_with_the_small_list_by_default() {
     for bot in ["gamma", "delta"] {
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: bot.into(),
                 prose: expensive.clone(),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -3322,6 +3335,7 @@ async fn a_bot_selecting_view_still_hands_over_a_charter_when_asked() {
     let own = "Keeps the kitchen running.";
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: own.into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -3420,6 +3434,7 @@ async fn a_view_declaring_shows_prose_returns_the_prose_unasked() {
     let own = "Keeps the kitchen running.";
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: own.into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -3479,6 +3494,7 @@ async fn a_view_declaring_shows_charter_returns_the_charter_unasked() {
     let own = "Keeps the kitchen running.";
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: own.into(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -3710,6 +3726,7 @@ async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
     let jojobot = handler();
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "contract-view-answers-marker".into(),
             fields: vec![FieldArgs {
                 key: "flagged".into(),
@@ -3801,6 +3818,7 @@ async fn a_view_naming_a_walk_reaches_the_neighbour_a_bare_selection_cannot() {
     let jojobot = handler();
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "contract-view-walk-pet".into(),
             fields: vec![FieldArgs {
                 key: "owner".into(),
@@ -3925,6 +3943,7 @@ async fn the_shipped_colleagues_view_answers_with_the_small_list_by_default() {
     let expensive = "X".repeat(5_000);
     jojobot
         .set_charter(Parameters(SetCharterArgs {
+            request_id: None,
             bot: "gamma".into(),
             prose: expensive.clone(),
             sid: Some(crate::harness::TEST_SID.into()),
@@ -4483,6 +4502,7 @@ async fn a_type_query_reaches_a_record_written_with_no_label() {
     ensure(&setup, "alpha").await;
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "service".into(),
             fields: vec![FieldArgs {
                 key: "odometer".into(),
@@ -4554,6 +4574,7 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
     }
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "pet".into(),
             fields: vec![
                 FieldArgs {
@@ -6171,6 +6192,7 @@ async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
     let jojobot = handler();
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "trip".into(),
             fields: vec![FieldArgs {
                 key: "leaves_on".into(),
@@ -6379,6 +6401,7 @@ async fn an_archived_loop_drops_out_of_the_owed_read_and_is_counted() {
 
     jojobot
         .archive_entity(Parameters(ArchiveEntityArgs {
+            request_id: None,
             handle: "rhythm:polish".into(),
             reason: "no longer kept".into(),
             restore: None,
@@ -6437,6 +6460,7 @@ async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
     let receipt = json_of(
         &jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "place:ocean-avenue".into(),
                 survivor: "place:moes-tavern".into(),
                 reason: None,
@@ -7431,6 +7455,7 @@ async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
     let sid = writing_as(&setup);
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
             name: "loud".into(),
             fields: vec![FieldArgs {
                 key: "volume".into(),
@@ -7803,6 +7828,7 @@ async fn an_archived_dependency_blocks_and_is_named() {
     assert_eq!(listed(&ready_view(&jojobot, None).await), ["work:phi"]);
     jojobot
         .archive_entity(Parameters(ArchiveEntityArgs {
+            request_id: None,
             handle: "work:sigma".into(),
             reason: "no longer tracked".into(),
             restore: None,

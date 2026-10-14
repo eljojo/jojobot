@@ -304,6 +304,16 @@ pub struct UpdateFactArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the edit is made once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Edit one addressed fact in place — fix the source, never an addendum.
@@ -749,37 +759,52 @@ impl Jojobot {
                     .is_some_and(|fact| fact.fields.get("starred").is_some_and(|v| v == "true")),
                 Err(_) => false,
             };
+        // **Moving a document section commits in several parts**, one write for the
+        // section and one for each of its chunks, so an id sent with it could be
+        // spent by the first and the rest never move.
+        if args.request_id.is_some() && move_plan.is_some() {
+            return Ok(crate::caller::handle_declined(
+                "update_fact",
+                "Moving a document section takes no request_id: it commits in several \
+                 parts. Nothing was written. Send the call without request_id.",
+            ));
+        }
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (written, fold_behind) =
-            match self.memory.update_fact(&address, patch, &caller.bot).await {
-                Ok(written) => (written, None),
-                Err(MemoryError::FoldBehind {
-                    landed: Landed::Fact(fact),
-                    behind,
-                    ..
-                }) => (Guarded::Written(*fact), Some(behind)),
-                // **A find/replace whose caller sent no revision was refused on the
-                // revision this call read**, so the refusal says the text changed
-                // under the edit and does not talk about a revision the caller
-                // never named.
-                Err(MemoryError::StaleRevision {
-                    address, current, ..
-                }) if revision_read.is_some() && args.expected_revision.is_none() => {
-                    return memory_declined(
-                        "update_fact",
-                        MemoryError::TextChangedWhileEditing {
-                            address,
-                            field: text_edit
-                                .as_ref()
-                                .map_or("text", |edit| edit.field.as_str())
-                                .to_string(),
-                            current,
-                        },
-                    );
-                }
-                Err(e) => return memory_declined("update_fact", e),
-            };
+        let (written, fold_behind) = match jojobot_domain::request::armed(self.memory.update_fact(
+            &address,
+            patch,
+            &caller.bot,
+        ))
+        .await
+        {
+            Ok(written) => (written, None),
+            Err(MemoryError::FoldBehind {
+                landed: Landed::Fact(fact),
+                behind,
+                ..
+            }) => (Guarded::Written(*fact), Some(behind)),
+            // **A find/replace whose caller sent no revision was refused on the
+            // revision this call read**, so the refusal says the text changed
+            // under the edit and does not talk about a revision the caller
+            // never named.
+            Err(MemoryError::StaleRevision {
+                address, current, ..
+            }) if revision_read.is_some() && args.expected_revision.is_none() => {
+                return memory_declined(
+                    "update_fact",
+                    MemoryError::TextChangedWhileEditing {
+                        address,
+                        field: text_edit
+                            .as_ref()
+                            .map_or("text", |edit| edit.field.as_str())
+                            .to_string(),
+                        current,
+                    },
+                );
+            }
+            Err(e) => return memory_declined("update_fact", e),
+        };
         match written {
             Guarded::Written(fact) => {
                 // **The chunks of a moved section follow it.** One write each, and a

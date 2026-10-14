@@ -29,6 +29,16 @@ pub struct MarkProcessedArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the message is retired once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
     /// **Quarantine this message instead of retiring it — a decision, not
     /// damage.** Give the reason here and the message becomes unreadable from
     /// every future delivery, exactly like storage damage, except the refusal
@@ -66,7 +76,7 @@ impl Jojobot {
                        bot reads. TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a \
                        decision, not damage — pass `quarantine` with your reason and leave \
                        `notes` unset; there is no verb that lifts a quarantine. Each \
-                       argument's own description holds the rest."
+                       argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn mark_processed(
         &self,
@@ -141,10 +151,10 @@ impl Jojobot {
                 Ok(mine) => mine,
                 Err(refused) => return Ok(refused),
             };
-            return match self
-                .mailboxes
-                .quarantine(&id, &mine.name, reason, acting)
-                .await
+            return match jojobot_domain::request::armed(
+                self.mailboxes.quarantine(&id, &mine.name, reason, acting),
+            )
+            .await
             {
                 Ok(quarantined) => {
                     self.beat("quarantine", quarantined.id.as_str(), args.sid.as_deref())
@@ -160,10 +170,12 @@ impl Jojobot {
             .as_deref()
             .map(str::trim)
             .filter(|n| !n.is_empty());
-        match self
-            .mailboxes
-            .mark_processed(&id, args.notes.as_deref(), acting)
-            .await
+        match jojobot_domain::request::armed(self.mailboxes.mark_processed(
+            &id,
+            args.notes.as_deref(),
+            acting,
+        ))
+        .await
         {
             Ok(processed) => {
                 self.beat("mark_processed", processed.id.as_str(), args.sid.as_deref())
@@ -271,6 +283,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: posted["id"].as_str().expect("an id").to_string(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
@@ -323,6 +336,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: id.clone(),
                     notes: Some("filed".into()),
                     sid: None,
@@ -382,6 +396,7 @@ mod tests {
         let retired = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: id.clone(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
@@ -409,6 +424,7 @@ mod tests {
         let bare = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: second["id"].as_str().expect("an id").to_string(),
                     notes: None,
                     sid: None,
@@ -442,6 +458,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: id.clone(),
                     notes: Some(long.clone()),
                     sid: None,
@@ -487,6 +504,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: id,
                     notes: Some(long),
                     sid: None,
@@ -537,6 +555,7 @@ mod tests {
                 json_of(
                     &jojobot
                         .mark_processed(Parameters(MarkProcessedArgs {
+                            request_id: None,
                             message_id: id,
                             notes,
                             sid: None,
@@ -577,6 +596,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: posted["id"].as_str().expect("an id").to_string(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
@@ -597,6 +617,7 @@ mod tests {
         let jojobot = mailbox_handler();
         let result = jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: "999999".into(),
                 notes: None,
                 sid: None,
@@ -636,6 +657,7 @@ mod tests {
 
         let result = jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: "4212".into(),
                 notes: Some("filed".into()),
                 sid: None,
@@ -681,6 +703,7 @@ mod tests {
         let unknown = blocked(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: "999999".into(),
                     notes: None,
                     sid: None,
@@ -729,6 +752,7 @@ mod tests {
         let receipt = json_of(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: target["id"].as_str().expect("an id").to_string(),
                     notes: None,
                     sid: Some(sid.clone()),
@@ -816,6 +840,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .mark_processed(Parameters(MarkProcessedArgs {
+                    request_id: None,
                     message_id: theirs["id"].as_str().expect("an id").to_string(),
                     notes: None,
                     sid: Some(mine),
@@ -878,6 +903,7 @@ mod tests {
                 let refused = json_of(
                     &jojobot
                         .mark_processed(Parameters(MarkProcessedArgs {
+                            request_id: None,
                             message_id: id.clone(),
                             notes: notes.map(str::to_string),
                             sid: Some(sid.clone()),
@@ -928,6 +954,7 @@ mod tests {
             json_of(
                 &jojobot
                     .mark_processed(Parameters(MarkProcessedArgs {
+                        request_id: None,
                         message_id: id.clone(),
                         notes: Some("handled".into()),
                         sid: Some(other.clone()),

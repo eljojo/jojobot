@@ -1296,6 +1296,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "somewhere".into(),
                     body: "something to retire later".into(),
                     sid: booted(&jojobot, "gamma").await,
@@ -1335,6 +1336,7 @@ mod tests {
                         // that opens boxes now, and a person would leave the
                         // mail world untouched however broken the refusal was.
                         .add_entity(Parameters(AddEntityArgs {
+                            request_id: None,
                             kind: "bot".into(),
                             handle: "delta".into(),
                             name: "Delta".into(),
@@ -1356,6 +1358,7 @@ mod tests {
                 blocked(
                     &jojobot
                         .update_entity(Parameters(UpdateEntityArgs {
+                            request_id: None,
                             handle: "person:alpha".into(),
                             name: Some("Alpha".into()),
                             aliases: None,
@@ -1386,6 +1389,7 @@ mod tests {
                 blocked(
                     &jojobot
                         .set_charter(Parameters(SetCharterArgs {
+                            request_id: None,
                             bot: "gamma".into(),
                             prose: "a charter nobody asked for".into(),
                             sid: Some(dead.clone()),
@@ -1399,6 +1403,7 @@ mod tests {
                 blocked(
                     &jojobot
                         .mark_processed(Parameters(MarkProcessedArgs {
+                            request_id: None,
                             message_id: message.clone(),
                             notes: None,
                             sid: Some(dead.clone()),

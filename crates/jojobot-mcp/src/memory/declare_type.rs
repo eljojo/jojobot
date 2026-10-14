@@ -145,6 +145,16 @@ pub struct DeclareTypeArgs {
     /// every call — it is what tells jojobot which bot is asking.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the type is declared once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Declare a type: a name and the keys a thing of it carries.
@@ -175,7 +185,7 @@ impl Jojobot {
                        caller cannot extend, shrink or replace a type the software owns — \
                        declare a name of your own instead. Every type you declare is yours. \
                        The answer names every type that exists, by name only, so you can see \
-                       what is there without asking a second time."
+                       what is there without asking a second time. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn declare_type(
         &self,
@@ -231,13 +241,11 @@ impl Jojobot {
             });
         }
 
-        let declared = match self
-            .memory
-            .declare_type(
-                DeclaredType::new(&args.name, fields),
-                caller.as_ref().map(|caller| caller.sid.as_str()),
-            )
-            .await
+        let declared = match jojobot_domain::request::armed(self.memory.declare_type(
+            DeclaredType::new(&args.name, fields),
+            caller.as_ref().map(|caller| caller.sid.as_str()),
+        ))
+        .await
         {
             Ok(declared) => declared,
             Err(e) => return memory_declined("declare_type", e),
@@ -326,6 +334,7 @@ mod tests {
 
     fn declare_args(name: &str, keys: &[&str]) -> DeclareTypeArgs {
         DeclareTypeArgs {
+            request_id: None,
             name: name.to_string(),
             fields: keys
                 .iter()
@@ -674,6 +683,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    request_id: None,
                     name: "stay".to_string(),
                     fields: vec![
                         FieldArgs {
@@ -732,6 +742,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    request_id: None,
                     name: "errand".to_string(),
                     fields: vec![
                         FieldArgs {
@@ -790,6 +801,7 @@ mod tests {
         let declaring = |values: Vec<&str>| {
             let values: Vec<String> = values.into_iter().map(str::to_string).collect();
             jojobot.declare_type(Parameters(DeclareTypeArgs {
+                request_id: None,
                 name: "errand".to_string(),
                 fields: vec![FieldArgs {
                     key: "stage".to_string(),
@@ -841,6 +853,7 @@ mod tests {
             let one_of = (!values.is_empty())
                 .then(|| values.into_iter().map(str::to_string).collect::<Vec<_>>());
             jojobot.declare_type(Parameters(DeclareTypeArgs {
+                request_id: None,
                 name: "snacking".to_string(),
                 fields: vec![FieldArgs {
                     key: "donuts".to_string(),
@@ -904,6 +917,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    request_id: None,
                     name: "errand".to_string(),
                     fields: vec![
                         FieldArgs {
@@ -968,6 +982,7 @@ mod tests {
             .collect();
         jojobot
             .declare_type(Parameters(DeclareTypeArgs {
+                request_id: None,
                 name: "errand".to_string(),
                 fields: sent_back,
                 sid: Some(TEST_SID.to_string()),
@@ -1001,6 +1016,7 @@ mod tests {
         let declaring = |holds: &str| {
             let holds = holds.to_string();
             jojobot.declare_type(Parameters(DeclareTypeArgs {
+                request_id: None,
                 name: "stay".to_string(),
                 fields: vec![FieldArgs {
                     key: "venue".to_string(),

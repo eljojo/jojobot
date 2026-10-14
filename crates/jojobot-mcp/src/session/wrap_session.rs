@@ -1373,6 +1373,7 @@ mod tests {
             json_of(
                 &jojobot
                     .archive_entity(Parameters(ArchiveEntityArgs {
+                        request_id: None,
                         handle: "bot:gamma".into(),
                         reason: "test".into(),
                         restore: None,
@@ -1387,6 +1388,7 @@ mod tests {
             json_of(
                 &jojobot
                     .merge_entities(Parameters(MergeArgs {
+                        request_id: None,
                         duplicate: "bot:gamma".into(),
                         survivor: "bot:gamma".into(),
                         reason: None,
@@ -1418,6 +1420,7 @@ mod tests {
             json_of(
                 &jojobot
                     .retract(Parameters(RetractArgs {
+                        request_id: None,
                         address: "bot:gamma#f1".into(),
                         reason: None,
                         recorded_at: None,
@@ -1432,6 +1435,7 @@ mod tests {
             json_of(
                 &jojobot
                     .update_entity(Parameters(UpdateEntityArgs {
+                        request_id: None,
                         handle: "bot:gamma".into(),
                         name: None,
                         aliases: None,
@@ -1450,6 +1454,7 @@ mod tests {
             json_of(
                 &jojobot
                     .set_charter(Parameters(SetCharterArgs {
+                        request_id: None,
                         bot: "bot:gamma".into(),
                         prose: "a new charter".into(),
                         sid: Some(sid.clone()),
@@ -1463,6 +1468,7 @@ mod tests {
             json_of(
                 &jojobot
                     .post_message(Parameters(PostMessageArgs {
+                        request_id: None,
                         to: "gamma".into(),
                         body: "hi".into(),
                         sid: sid.clone(),
@@ -1479,6 +1485,7 @@ mod tests {
             json_of(
                 &jojobot
                     .mark_processed(Parameters(MarkProcessedArgs {
+                        request_id: None,
                         message_id: "whatever".into(),
                         notes: None,
                         sid: Some(sid.clone()),
@@ -1493,6 +1500,7 @@ mod tests {
             json_of(
                 &jojobot
                     .declare_type(Parameters(DeclareTypeArgs {
+                        request_id: None,
                         name: "whatever".into(),
                         fields: Vec::new(),
                         sid: Some(sid.clone()),

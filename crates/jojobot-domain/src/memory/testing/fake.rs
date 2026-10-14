@@ -442,6 +442,39 @@ impl InMemoryMemory {
         self
     }
 
+    /// **Spend the id of the call in flight**, when it carries one and this write
+    /// is the verb's own: the write that finds the id already spent is refused and
+    /// stores nothing. Called under the lock the write is made under, just before
+    /// it changes anything.
+    fn spend_request(&self, landed: impl FnOnce() -> String) -> Result<(), MemoryError> {
+        self.spend_claim(crate::request::take(), landed)
+    }
+
+    /// [`Self::spend_request`] for a claim taken earlier, by a write made of
+    /// several steps that spends once, after the last one.
+    fn spend_claim(
+        &self,
+        claim: Option<crate::request::Reservation>,
+        landed: impl FnOnce() -> String,
+    ) -> Result<(), MemoryError> {
+        let Some(claim) = claim else {
+            return Ok(());
+        };
+        match &self.requests {
+            Some(ledger) => {
+                if ledger.spend(claim, landed()) {
+                    Ok(())
+                } else {
+                    Err(MemoryError::Conflict)
+                }
+            }
+            None => {
+                claim.failed();
+                Ok(())
+            }
+        }
+    }
+
     /// **This store with own fields reaching their thing.** See the field.
     pub fn with_own_fields_reaching(mut self) -> Self {
         self.own_fields_reach = true;
@@ -1930,6 +1963,7 @@ impl Memory for InMemoryMemory {
         if let Some(parent) = &entity.parent {
             stored.parent = Some(self.storage_key(parent).unwrap_or_else(|| parent.clone()));
         }
+        self.spend_request(|| format!("{{\"handle\":\"{}\"}}", entity.id))?;
         self.entities
             .lock()
             .expect("fake mutex poisoned")
@@ -1958,6 +1992,9 @@ impl Memory for InMemoryMemory {
                 first.subject, new.id
             )));
         }
+        // **One spend for the act**, after its last step: the inner writes take
+        // nothing because this has taken the claim.
+        let claim = crate::request::take();
         let id = new.id.clone();
         let entity = match self.add_entity(new).await? {
             Guarded::Written(entity) => entity,
@@ -1979,7 +2016,20 @@ impl Memory for InMemoryMemory {
             self.badges.lock().expect("fake mutex poisoned").remove(&id);
         };
         match self.capture(first).await {
-            Ok(Guarded::Written(fact)) => Ok(Guarded::Written((entity, fact))),
+            Ok(Guarded::Written(fact)) => {
+                if let Err(e) = self.spend_claim(claim, || {
+                    format!(
+                        "{{\"handle\":\"{}\",\"address\":\"{}\"}}",
+                        entity.id,
+                        fact.address()
+                    )
+                }) {
+                    take_back();
+                    // The claim was written above and is taken back with the entity.
+                    return Err(e);
+                }
+                Ok(Guarded::Written((entity, fact)))
+            }
             Ok(Guarded::Blocked {
                 attempted,
                 candidates,
@@ -2014,6 +2064,8 @@ impl Memory for InMemoryMemory {
                 claim.subject
             )));
         }
+        // **One spend for the act**, after its last step.
+        let request = crate::request::take();
         let before = self
             .entities
             .lock()
@@ -2042,7 +2094,19 @@ impl Memory for InMemoryMemory {
             }
         };
         match self.capture(claim).await {
-            Ok(Guarded::Written(fact)) => Ok(Guarded::Written((entity, fact))),
+            Ok(Guarded::Written(fact)) => {
+                if let Err(e) = self.spend_claim(request, || {
+                    format!(
+                        "{{\"handle\":\"{}\",\"address\":\"{}\"}}",
+                        entity.id,
+                        fact.address()
+                    )
+                }) {
+                    take_back();
+                    return Err(e);
+                }
+                Ok(Guarded::Written((entity, fact)))
+            }
             Ok(Guarded::Blocked {
                 attempted,
                 candidates,
@@ -2138,7 +2202,12 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
+        let before = entity.clone();
         apply_entity_patch(entity, &patch)?;
+        if let Err(e) = self.spend_request(|| format!("{{\"handle\":\"{handle}\"}}")) {
+            *entity = before;
+            return Err(e);
+        }
         self.touched(entity, session.as_deref());
         // **Served under the handle, stored under the badge** — `parent`
         // names a different row and never moved under this edit, so what it
@@ -2193,6 +2262,7 @@ impl Memory for InMemoryMemory {
                 attempted: id.to_string(),
             });
         }
+        self.spend_request(|| format!("{{\"handle\":\"{id}\"}}"))?;
         entity.archived = Some(Archived {
             reason: reason.trim().to_string(),
             at: self.clock().now(),
@@ -2231,11 +2301,13 @@ impl Memory for InMemoryMemory {
                 into: into.to_string(),
             });
         }
-        let Some(was) = entity.archived.take() else {
+        if entity.archived.is_none() {
             return Err(MemoryError::NotArchived {
                 attempted: id.to_string(),
             });
-        };
+        }
+        self.spend_request(|| format!("{{\"handle\":\"{id}\"}}"))?;
+        let was = entity.archived.take().expect("checked just above");
         self.touched(entity, session);
         Ok((entity.clone(), was))
     }
@@ -2761,20 +2833,12 @@ impl Memory for InMemoryMemory {
         // **The write spends the id of the call that carries one**, under the
         // lock the write is made under, so a second call with the same id finds
         // it spent and stores nothing.
-        if let Some(claim) = crate::request::take() {
-            match &self.requests {
-                Some(ledger) => {
-                    let landed = format!(
-                        "{{\"address\":\"{}\"}}",
-                        FactAddress::new(subject_entity.id.clone(), stored.id.clone())
-                    );
-                    if !ledger.spend(claim, landed) {
-                        return Err(MemoryError::Conflict);
-                    }
-                }
-                None => claim.failed(),
-            }
-        }
+        self.spend_request(|| {
+            format!(
+                "{{\"address\":\"{}\"}}",
+                FactAddress::new(subject_entity.id.clone(), stored.id.clone())
+            )
+        })?;
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
         self.push_stored(Fact {
@@ -3618,6 +3682,7 @@ impl Memory for InMemoryMemory {
             }
         }
         let id = fact.id.clone();
+        self.spend_request(|| format!("{{\"address\":\"{}\"}}", address))?;
         self.rewrite_stored(
             &FactAddress::new(home.clone(), id.clone()),
             Fact {
@@ -3871,6 +3936,7 @@ impl Memory for InMemoryMemory {
             inserted_at: Some(self.clock().now()),
             stale_after: None,
         };
+        self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
         self.push_stored(Fact {
             fields: Default::default(),
             ..record.clone()
@@ -4017,6 +4083,7 @@ impl Memory for InMemoryMemory {
         ) {
             return Err(err);
         }
+        self.spend_request(|| format!("{{\"address\":\"{address}\"}}"))?;
         self.rewrite_stored(
             &FactAddress::new(key.clone(), address.local.clone()),
             Fact {
@@ -4073,6 +4140,7 @@ impl Memory for InMemoryMemory {
         // Normalized here as the real store normalizes it, so the fake cannot
         // preserve whitespace a markdown round-trip would drop.
         let stored = normalize_prose(prose);
+        self.spend_request(|| format!("{{\"handle\":\"{entity}\"}}"))?;
         self.prose
             .lock()
             .expect("fake mutex poisoned")
@@ -4198,6 +4266,7 @@ impl Memory for InMemoryMemory {
         }
         // Replaced whole, the way the real store replaces the rows sharing the
         // name: a type is the keys it names now.
+        self.spend_request(|| format!("{{\"name\":\"{}\"}}", declared.name))?;
         held.retain(|t| t.name != declared.name);
         held.push(declared.clone());
         if declared.origin == crate::memory::types::Origin::Declared {

@@ -49,6 +49,16 @@ pub struct UpdateEntityArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the edit is made once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// **A deliberate, visible act**: this verb's own refusal is allowed to
@@ -85,7 +95,7 @@ impl Jojobot {
                        on its claim, so it is not set here: update_fact on the rule's address \
                        with fields {starred: \"true\"} or {starred: \"false\"} stars or unstars it. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
-                       be read back whole in one answer are refused with nothing written."
+                       be read back whole in one answer are refused with nothing written. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn update_entity(
         &self,
@@ -138,7 +148,9 @@ impl Jojobot {
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let written = match sets {
-            None => match self.memory.update_entity(&handle, patch).await {
+            None => match jojobot_domain::request::armed(self.memory.update_entity(&handle, patch))
+                .await
+            {
                 Ok(written) => written,
                 Err(e) => return memory_declined("update_entity", e),
             },
@@ -224,10 +236,10 @@ impl Jojobot {
                 {
                     return memory_declined("update_entity", refused);
                 }
-                match self
-                    .memory
-                    .update_entity_with_claim(&handle, patch, first)
-                    .await
+                match jojobot_domain::request::armed(
+                    self.memory.update_entity_with_claim(&handle, patch, first),
+                )
+                .await
                 {
                     Ok(Guarded::Written((entity, fact))) => {
                         claim = Some(fact);
@@ -347,6 +359,7 @@ mod tests {
         let sid = writing_as(&jojobot);
         ensure(&jojobot, "person:alpha").await;
         let rename = |handle: &str, name: &str| UpdateEntityArgs {
+            request_id: None,
             handle: handle.into(),
             name: Some(name.into()),
             aliases: None,
@@ -396,6 +409,7 @@ mod tests {
             .expect("add ok");
         let updated = jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                request_id: None,
                 handle: "thing:red-bike".into(),
                 name: Some("Red Bike (the gravel one)".into()),
                 aliases: None,
@@ -432,6 +446,7 @@ mod tests {
             .expect("add ok");
 
         let rename = |override_token: Option<String>| UpdateEntityArgs {
+            request_id: None,
             handle: "person:zenith".into(),
             name: Some("Alpha".into()),
             aliases: None,
@@ -525,6 +540,7 @@ mod tests {
 
         let result = jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                request_id: None,
                 handle: "person:zenith".into(),
                 name: None,
                 aliases: Some(vec!["Homer Simpson".into()]),
@@ -593,6 +609,7 @@ mod tests {
         assert_eq!(added["alternateName"][1], "H.");
 
         let patch = |aliases: Vec<String>| UpdateEntityArgs {
+            request_id: None,
             handle: "person:homer-simpson".into(),
             name: None,
             aliases: Some(aliases),
@@ -654,6 +671,7 @@ mod tests {
             .expect("add ok");
         let err = jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                request_id: None,
                 handle: "thing:red-bikee".into(),
                 name: Some("nope".into()),
                 aliases: None,
@@ -675,6 +693,7 @@ mod tests {
     /// The call a caller sends to edit a record: only the pieces it names.
     fn edit(handle: &str) -> UpdateEntityArgs {
         UpdateEntityArgs {
+            request_id: None,
             handle: handle.into(),
             name: None,
             aliases: None,

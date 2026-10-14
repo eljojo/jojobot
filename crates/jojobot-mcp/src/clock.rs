@@ -96,6 +96,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
                     to: "gamma".into(),
                     sid: sid.clone(),
                     body: "the kiln reached temperature".into(),

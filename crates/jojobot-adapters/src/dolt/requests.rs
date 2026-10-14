@@ -173,3 +173,17 @@ pub(crate) async fn claim(
         reservation: Some(reservation),
     })
 }
+
+/// **Commit the transaction that stores a write, with the id's row in it** when
+/// the call carries an id. This is the whole of what a covered write does at its
+/// commit point.
+pub(crate) async fn commit(
+    mut tx: Transaction<'_, MySql>,
+    clock: &Clock,
+    landed: impl FnOnce() -> String,
+) -> Result<(), sqlx::Error> {
+    let claim = claim(&mut tx, clock, landed).await?;
+    tx.commit().await?;
+    claim.committed();
+    Ok(())
+}

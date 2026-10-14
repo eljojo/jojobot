@@ -202,6 +202,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
 
 pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
     UpdateFactArgs {
+        request_id: None,
         address: address.into(),
         fields: None,
         sets: None,
@@ -244,6 +245,7 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
     let kind = id.kind().expect("test handles are well-formed");
     jojobot
         .add_entity(Parameters(AddEntityArgs {
+            request_id: None,
             kind: kind.as_token().into(),
             handle: id.slug().into(),
             name: id.slug().into(),
@@ -327,6 +329,7 @@ pub(crate) fn address_of(fact: &serde_json::Value) -> String {
 
 pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
     AddEntityArgs {
+        request_id: None,
         kind: kind.into(),
         handle: handle.into(),
         name: name.into(),

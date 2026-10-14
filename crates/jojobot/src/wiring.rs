@@ -676,8 +676,10 @@ pub async fn boot_store_pushing(
     // projection so a bot created this session is an owner this session.
     let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.clone()));
     let bare_mail_store = match pushing {
-        true => DoltMailboxes::open(store.pool().clone(), owners).pushing(),
-        false => DoltMailboxes::open(store.pool().clone(), owners),
+        true => DoltMailboxes::open(store.pool().clone(), owners)
+            .pushing()
+            .on_clock(clock),
+        false => DoltMailboxes::open(store.pool().clone(), owners).on_clock(clock),
     };
     let bare_mail_store = Arc::new(bare_mail_store);
     let outbox: Arc<dyn jojobot_domain::push::Outbox> = bare_mail_store.clone();

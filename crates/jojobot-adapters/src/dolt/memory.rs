@@ -4590,8 +4590,12 @@ impl Memory for DoltMemory {
         validate_new_entity(&new)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let created = self.create_in(&mut tx, new).await?;
-        if matches!(created, Guarded::Written(_)) {
-            tx.commit().await.map_err(store)?;
+        if let Guarded::Written(entity) = &created {
+            super::requests::commit(tx, &self.clock, || {
+                serde_json::json!({ "handle": entity.id.to_string() }).to_string()
+            })
+            .await
+            .map_err(store)?;
         }
         Ok(created)
     }
@@ -4626,7 +4630,15 @@ impl Memory for DoltMemory {
         };
         match self.capture_in(&mut tx, first).await? {
             Guarded::Written(fact) => {
-                tx.commit().await.map_err(store)?;
+                super::requests::commit(tx, &self.clock, || {
+                    serde_json::json!({
+                        "handle": entity.id.to_string(),
+                        "address": fact.address().to_string(),
+                    })
+                    .to_string()
+                })
+                .await
+                .map_err(store)?;
                 Ok(Guarded::Written((entity, fact)))
             }
             Guarded::Blocked {
@@ -4664,8 +4676,12 @@ impl Memory for DoltMemory {
         validate_write_subject(handle)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let edited = self.update_entity_in(&mut tx, handle, patch).await?;
-        if matches!(edited, Guarded::Written(_)) {
-            tx.commit().await.map_err(store)?;
+        if let Guarded::Written(entity) = &edited {
+            super::requests::commit(tx, &self.clock, || {
+                serde_json::json!({ "handle": entity.id.to_string() }).to_string()
+            })
+            .await
+            .map_err(store)?;
         }
         Ok(edited)
     }
@@ -4716,7 +4732,15 @@ impl Memory for DoltMemory {
         };
         match self.capture_in(&mut tx, claim).await? {
             Guarded::Written(fact) => {
-                tx.commit().await.map_err(store)?;
+                super::requests::commit(tx, &self.clock, || {
+                    serde_json::json!({
+                        "handle": entity.id.to_string(),
+                        "address": fact.address().to_string(),
+                    })
+                    .to_string()
+                })
+                .await
+                .map_err(store)?;
                 Ok(Guarded::Written((entity, fact)))
             }
             Guarded::Blocked {
@@ -4787,7 +4811,11 @@ impl Memory for DoltMemory {
             entity.clone()
         };
         write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "handle": id.to_string() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(entity)
     }
 
@@ -4839,7 +4867,11 @@ impl Memory for DoltMemory {
             entity.clone()
         };
         write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "handle": id.to_string() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok((entity, was))
     }
 
@@ -5063,13 +5095,11 @@ impl Memory for DoltMemory {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let written = self.capture_in(&mut tx, fact).await?;
         if let Guarded::Written(stored) = &written {
-            let claim = super::requests::claim(&mut tx, &self.clock, || {
+            super::requests::commit(tx, &self.clock, || {
                 serde_json::json!({ "address": stored.address().to_string() }).to_string()
             })
             .await
             .map_err(store)?;
-            tx.commit().await.map_err(store)?;
-            claim.committed();
         }
         Ok(written)
     }
@@ -5933,6 +5963,8 @@ impl Memory for DoltMemory {
             // moment as a change although no claim write was added. Filed under
             // the handle, as every other `entity_write` row is.
             append_entity_write(&mut tx, &handle, &self.clock, patch.session.as_deref()).await?;
+            // **Not an id's write**: a renewal overwrites a moment and is its own
+            // repeat, so it spends no request id.
             tx.commit().await.map_err(store)?;
             let mut fields = fact.fields.clone();
             fields.insert(
@@ -6276,7 +6308,11 @@ impl Memory for DoltMemory {
         for object in &fact.refs {
             served_refs.push(self.current_handle(&mut tx, object).await?);
         }
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "address": address.to_string() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Guarded::Written(Fact {
             fields,
             sets,
@@ -6554,7 +6590,15 @@ impl Memory for DoltMemory {
             subject: survivor_handle,
             ..record
         };
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({
+                "folded": folded.to_string(),
+                "survivor": survivor.to_string(),
+            })
+            .to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Merge {
             survivor: survived,
             folded: folded.clone(),
@@ -6697,7 +6741,11 @@ impl Memory for DoltMemory {
             subject: handle,
             ..record
         };
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "address": address.to_string() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Retraction {
             retracted: served_retracted,
             record: served_record,
@@ -6930,7 +6978,11 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
         append_entity_write(&mut tx, entity, &self.clock, session).await?;
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "handle": entity.to_string() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(stored)
     }
 
@@ -7220,7 +7272,11 @@ impl Memory for DoltMemory {
             )
             .await?;
         }
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "name": declared.name.clone() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(declared)
     }
 

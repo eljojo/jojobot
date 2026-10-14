@@ -138,6 +138,16 @@ pub struct AddEntityArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the entity is made once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// **A deliberate, visible act**: this verb's own refusal is allowed to
@@ -251,7 +261,7 @@ impl Jojobot {
                        lifts the one refusal that minted it and no other. An exact handle \
                        collision can never be forced — a handle has exactly one owner. A creation whose aliases, or whose `sets` as a first claim, could not \
                        be read back whole in one answer is refused and nothing is made: send \
-                       fewer or shorter aliases, or move the long text onto a claim."
+                       fewer or shorter aliases, or move the long text onto a claim. A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn add_entity(
         &self,
@@ -271,6 +281,15 @@ impl Jojobot {
         // kind, ahead of everything the call carries.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&creating) {
             return memory_declined("add_entity", refused);
+        }
+        // **Making a bot commits in two parts**, the bot and then its box, so an id
+        // sent with it could be spent by the first and the box never opened.
+        if args.request_id.is_some() && creating.kind() == Some(EntityKind::BOT) {
+            return Ok(crate::caller::handle_declined(
+                "add_entity",
+                "Making a bot takes no request_id: it commits in two parts, the bot and then \
+                 its mailbox. Nothing was written. Send the call without request_id.",
+            ));
         }
         // **A new bot grows every other bot's snapshot**, which is a write that
         // is never refused: a colleague is not a mistake. What it can do is
@@ -342,7 +361,7 @@ impl Jojobot {
                 {
                     return memory_declined("add_entity", refused);
                 }
-                match self.memory.add_entity(new).await {
+                match jojobot_domain::request::armed(self.memory.add_entity(new)).await {
                     Ok(added) => (added, None),
                     Err(e) => return memory_declined("add_entity", e),
                 }
@@ -452,7 +471,11 @@ impl Jojobot {
                 {
                     return memory_declined("add_entity", refused);
                 }
-                match self.memory.add_entity_with_first_claim(new, first).await {
+                match jojobot_domain::request::armed(
+                    self.memory.add_entity_with_first_claim(new, first),
+                )
+                .await
+                {
                     Ok(Guarded::Written((entity, fact))) => (Guarded::Written(entity), Some(fact)),
                     Ok(Guarded::Blocked {
                         attempted,
@@ -1633,6 +1656,7 @@ mod tests {
         let landed = json_of(
             &jojobot
                 .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    request_id: None,
                     duplicate: duplicate.into(),
                     survivor: survivor.into(),
                     reason: None,

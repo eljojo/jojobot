@@ -37,6 +37,16 @@ pub struct MergeArgs {
     /// **Your session id**, exactly as the boot door returned it.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the two are merged once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Merge one thing into another, and record that it happened.
@@ -68,7 +78,7 @@ impl Jojobot {
                        your own bot of a duplicate carrying thought_capacity or \
                        thought_body_cap; a thought room that would go over capacity, or a \
                        thought over its body cap; or a result that could not be read back \
-                       whole in one answer. Each argument's own description holds the rest."
+                       whole in one answer. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn merge_entities(
         &self,
@@ -115,17 +125,15 @@ impl Jojobot {
         // the same bot could write a ceiling into.
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (done, fold_behind) = match self
-            .memory
-            .merge(
-                &duplicate,
-                &survivor,
-                args.reason.as_deref(),
-                date,
-                &caller.bot,
-                Some(caller.sid.as_str()),
-            )
-            .await
+        let (done, fold_behind) = match jojobot_domain::request::armed(self.memory.merge(
+            &duplicate,
+            &survivor,
+            args.reason.as_deref(),
+            date,
+            &caller.bot,
+            Some(caller.sid.as_str()),
+        ))
+        .await
         {
             Ok(done) => (done, None),
             Err(MemoryError::FoldBehind {
@@ -202,6 +210,7 @@ mod tests {
 
         let result = jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "person:milhouse".into(),
                 survivor: "person:milhouse".into(),
                 reason: None,
@@ -237,6 +246,7 @@ mod tests {
         }
         jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "person:milhouse".into(),
                 survivor: "person:alpha".into(),
                 reason: None,
@@ -252,6 +262,7 @@ mod tests {
         // The forwarding handle named again, as the duplicate.
         let result = jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "person:milhouse".into(),
                 survivor: "person:bart".into(),
                 reason: None,
@@ -273,6 +284,7 @@ mod tests {
         // The forwarding handle named again, as the survivor.
         let as_survivor = jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "person:bart".into(),
                 survivor: "person:milhouse".into(),
                 reason: None,
@@ -325,6 +337,7 @@ mod tests {
         .await;
         assert_ne!(landed["status"], "blocked", "{landed}");
         let merge = |duplicate: &str, survivor: &str| MergeArgs {
+            request_id: None,
             duplicate: duplicate.into(),
             survivor: survivor.into(),
             reason: None,
@@ -461,6 +474,7 @@ mod tests {
         let jojobot = handler();
         let sid = writing_as(&jojobot);
         let merge = |duplicate: &str, survivor: &str| MergeArgs {
+            request_id: None,
             duplicate: duplicate.into(),
             survivor: survivor.into(),
             reason: None,
@@ -640,6 +654,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .merge_entities(Parameters(MergeArgs {
+                    request_id: None,
                     duplicate: "thing:jukebox".into(),
                     survivor: "bot:milhouse".into(),
                     reason: None,
@@ -709,6 +724,7 @@ mod tests {
         )
         .await;
         let merge = || MergeArgs {
+            request_id: None,
             duplicate: "thing:jukebox".into(),
             survivor: "bot:milhouse".into(),
             reason: None,
@@ -787,6 +803,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .merge_entities(Parameters(MergeArgs {
+                    request_id: None,
                     duplicate: "person:bart".into(),
                     survivor: "person:milhouse".into(),
                     reason: None,
@@ -841,6 +858,7 @@ mod tests {
         ) -> Result<CallToolResult, McpError> {
             jojobot
                 .merge_entities(Parameters(MergeArgs {
+                    request_id: None,
                     duplicate: duplicate.into(),
                     survivor: "bot:otto".into(),
                     reason: None,

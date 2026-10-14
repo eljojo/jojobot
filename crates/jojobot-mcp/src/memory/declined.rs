@@ -2522,6 +2522,7 @@ pub(crate) mod tests {
             .expect("a supplied record's rename is an answer");
         let archived = jojobot
             .archive_entity(Parameters(ArchiveEntityArgs {
+                request_id: None,
                 handle: "view:loops".into(),
                 reason: "a test".into(),
                 restore: None,
@@ -2531,6 +2532,7 @@ pub(crate) mod tests {
             .expect("a supplied record's archive is an answer");
         let folded_away = jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "view:loops".into(),
                 survivor: "view:colleagues".into(),
                 reason: None,
@@ -2541,6 +2543,7 @@ pub(crate) mod tests {
             .expect("a supplied record folded away is an answer");
         let survivor = jojobot
             .merge_entities(Parameters(MergeArgs {
+                request_id: None,
                 duplicate: "view:colleagues".into(),
                 survivor: "view:loops".into(),
                 reason: None,

@@ -30,6 +30,16 @@ pub struct SetCharterArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the charter is written once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Write a bot's charter — the prose layer of its own page.
@@ -64,7 +74,7 @@ impl Jojobot {
                        does, and a bot with no manager is adopted by the manager named or by \
                        a bot above that manager. The refusal names who may. Who reports to a bot is the other \
                        direction, a second call: recall that bot with follow, relation \
-                       reports_to, direction in."
+                       reports_to, direction in. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn set_charter(
         &self,
@@ -86,10 +96,12 @@ impl Jojobot {
         {
             return memory_declined("set_charter", refused);
         }
-        let stored = match self
-            .memory
-            .set_prose(&bot, &args.prose, Some(caller.sid.as_str()))
-            .await
+        let stored = match jojobot_domain::request::armed(self.memory.set_prose(
+            &bot,
+            &args.prose,
+            Some(caller.sid.as_str()),
+        ))
+        .await
         {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
@@ -179,6 +191,7 @@ mod tests {
         let written = json_of(
             &jojobot
                 .set_charter(Parameters(SetCharterArgs {
+                    request_id: None,
                     bot: "gamma".into(),
                     prose: "  Holds the plan. Does not implement.  ".into(),
                     sid: Some(crate::harness::TEST_SID.into()),
@@ -258,6 +271,7 @@ mod tests {
         let missed = blocked(
             &jojobot
                 .set_charter(Parameters(SetCharterArgs {
+                    request_id: None,
                     bot: "nobody".into(),
                     prose: "a charter for nobody".into(),
                     sid: Some(crate::harness::TEST_SID.into()),

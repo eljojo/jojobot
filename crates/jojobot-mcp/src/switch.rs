@@ -393,6 +393,7 @@ async fn retracting_a_record_takes_back_what_it_set_and_names_the_keys_that_left
     let receipt = json_of(
         &jojobot
             .retract(Parameters(RetractArgs {
+                request_id: None,
                 address,
                 reason: Some("measured the wrong shelf".into()),
                 recorded_at: None,

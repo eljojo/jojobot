@@ -41,6 +41,10 @@ pub struct InMemoryMailboxes {
     boxes: Mutex<Vec<MailboxName>>,
     messages: Mutex<Vec<Message>>,
     next_id: Mutex<u64>,
+    /// **The ledger of spent request ids this store spends into**, in the same
+    /// step as the write, as the real store's table is written in the write's
+    /// transaction. Set once by [`InMemoryMailboxes::attach_requests`].
+    requests: Mutex<Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>>,
     quarantined: Mutex<Vec<(MailboxName, MessageId, String)>>,
     /// **Which of `quarantined`'s ids were quarantined ON PURPOSE**, and by
     /// whom — a subset, looked up by id, that turns the shared hiding list
@@ -78,6 +82,35 @@ fn read_as_stored(messages: &[Message], message: &Message) -> Message {
 }
 
 impl InMemoryMailboxes {
+    /// **Spend request ids into `ledger` from now on.** See the field.
+    pub fn attach_requests(
+        &self,
+        ledger: std::sync::Arc<crate::request::testing::InMemoryRequests>,
+    ) {
+        *self.requests.lock().expect("requests lock") = Some(ledger);
+    }
+
+    /// **Spend the id of the call in flight**, when it carries one and this write
+    /// is the verb's own. A write that finds the id already spent stores nothing.
+    fn spend_request(&self, landed: impl FnOnce() -> String) -> Result<(), MailboxError> {
+        let Some(claim) = crate::request::take() else {
+            return Ok(());
+        };
+        match self.requests.lock().expect("requests lock").as_ref() {
+            Some(ledger) => {
+                if ledger.spend(claim, landed()) {
+                    Ok(())
+                } else {
+                    Err(MailboxError::Conflict)
+                }
+            }
+            None => {
+                claim.failed();
+                Ok(())
+            }
+        }
+    }
+
     /// An empty store that already resolves the owners [`contract::OWNERS`]
     /// names.
     ///
@@ -522,6 +555,7 @@ impl Mailboxes for InMemoryMailboxes {
             superseded_by: None,
             supersedes: message.supersedes,
         };
+        self.spend_request(|| format!("{{\"id\":\"{}\"}}", stored.id))?;
         self.messages
             .lock()
             .expect("message lock")
@@ -722,6 +756,7 @@ impl Mailboxes for InMemoryMailboxes {
             }
         })?;
         let prior = message.state;
+        self.spend_request(|| format!("{{\"id\":\"{id}\"}}"))?;
         message.state = MessageState::Processed;
         let given = normalize_notes(notes);
         if let Some(notes) = &given {
@@ -765,6 +800,7 @@ impl Mailboxes for InMemoryMailboxes {
         drop(messages);
         let reason = reason.trim().to_string();
         let at = acting.at;
+        self.spend_request(|| format!("{{\"id\":\"{id}\"}}"))?;
         self.keep_event(
             id,
             Change::new(MessageEventKind::Quarantined, acting, by, prior).with_reason(&reason),

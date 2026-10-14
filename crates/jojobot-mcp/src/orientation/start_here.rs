@@ -712,6 +712,7 @@ mod tests {
         let jojobot = handler();
         jojobot
             .add_entity(Parameters(AddEntityArgs {
+                request_id: None,
                 kind: "person".into(),
                 handle: "milhouse".into(),
                 name: "Milhouse".into(),

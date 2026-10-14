@@ -29,6 +29,16 @@ pub struct ArchiveEntityArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the entity is archived or restored once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Archive an entity: out of every default read, reachable by handle.
@@ -58,7 +68,7 @@ impl Jojobot {
                        Archiving something already archived comes back blocked, saying the \
                        entity is already in the state you asked for — that answer means jojobot \
                        holds what you wanted, not that nothing happened. Restoring something that is not archived says the same. A handle that names \
-                       nothing comes back blocked with the nearest handles."
+                       nothing comes back blocked with the nearest handles. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn archive_entity(
         &self,
@@ -85,10 +95,12 @@ impl Jojobot {
         if args.restore.unwrap_or(false) {
             return self.restore(&handle, &args, caller.sid.as_str()).await;
         }
-        let entity = match self
-            .memory
-            .archive_entity(&handle, &args.reason, Some(caller.sid.as_str()))
-            .await
+        let entity = match jojobot_domain::request::armed(self.memory.archive_entity(
+            &handle,
+            &args.reason,
+            Some(caller.sid.as_str()),
+        ))
+        .await
         {
             Ok(entity) => entity,
             Err(e) => return memory_declined("archive_entity", e),
@@ -124,10 +136,13 @@ impl Jojobot {
         args: &ArchiveEntityArgs,
         session: &str,
     ) -> Result<CallToolResult, McpError> {
-        let (entity, was) = match self.memory.restore_entity(handle, Some(session)).await {
-            Ok(restored) => restored,
-            Err(e) => return memory_declined("archive_entity", e),
-        };
+        let (entity, was) =
+            match jojobot_domain::request::armed(self.memory.restore_entity(handle, Some(session)))
+                .await
+            {
+                Ok(restored) => restored,
+                Err(e) => return memory_declined("archive_entity", e),
+            };
         let day = self.dated(None, args.sid.as_deref()).await?;
         // **The same frame as `day`**: the run's zone, else the instance's. The
         // restore day and the archive day sit in one sentence of one claim.
@@ -181,6 +196,7 @@ mod tests {
 
     fn archive(handle: &str, reason: &str, sid: &str) -> ArchiveEntityArgs {
         ArchiveEntityArgs {
+            request_id: None,
             handle: handle.into(),
             reason: reason.into(),
             restore: None,

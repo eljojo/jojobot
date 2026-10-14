@@ -3882,6 +3882,7 @@ mod a_write_needs_an_identity {
         refused(
             &jojobot
                 .update_entity(Parameters(UpdateEntityArgs {
+                    request_id: None,
                     handle: "place:springfield".into(),
                     name: Some("Springfield Renamed".into()),
                     aliases: None,
@@ -3898,6 +3899,7 @@ mod a_write_needs_an_identity {
         refused(
             &jojobot
                 .retract(Parameters(RetractArgs {
+                    request_id: None,
                     address: second_address.clone(),
                     reason: None,
                     sid: None,
@@ -3910,6 +3912,7 @@ mod a_write_needs_an_identity {
         refused(
             &jojobot
                 .set_charter(Parameters(SetCharterArgs {
+                    request_id: None,
                     bot: "bot:otto".into(),
                     prose: "a charter".into(),
                     sid: None,
@@ -4097,6 +4100,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     let refused = blocked(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "dev".into(),
                 body: "the shipment landed".into(),
                 subject: Some("what `post_message` does with a title".into()),
@@ -4121,6 +4125,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     let too_long = blocked(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "dev".into(),
                 body: "the shipment landed".into(),
                 subject: Some("w".repeat(200)),
@@ -4144,6 +4149,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     let posted = json_of(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "dev".into(),
                 body: "the shipment landed".into(),
                 subject: Some("what post_message does with a title".into()),

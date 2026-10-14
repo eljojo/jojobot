@@ -1464,6 +1464,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "Small charter.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -1777,6 +1778,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "x".repeat(13_000),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -2201,6 +2203,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "Small charter.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -2605,6 +2608,7 @@ mod tests {
         };
         jojobot
             .declare_type(Parameters(DeclareTypeArgs {
+                request_id: None,
                 name: "own-vocab-test".into(),
                 fields: vec![field()],
                 sid: Some(writing_as(&jojobot)),
@@ -2630,6 +2634,7 @@ mod tests {
         let declared = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    request_id: None,
                     name: "own-vocab-test".into(),
                     fields: vec![field()],
                     sid: Some(writing_as(&jojobot)),
@@ -2950,6 +2955,7 @@ mod tests {
         let landed = json_of(
             &jojobot
                 .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    request_id: None,
                     duplicate: "bot:delta".into(),
                     survivor: "bot:gamma".into(),
                     reason: None,
@@ -3387,6 +3393,7 @@ mod tests {
         make_bot(&healthy, "gamma").await;
         healthy
             .set_charter(Parameters(SetCharterArgs {
+                request_id: None,
                 bot: "gamma".into(),
                 prose: "Holds the plan.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),

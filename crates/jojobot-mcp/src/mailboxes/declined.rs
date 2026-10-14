@@ -398,6 +398,7 @@ pub(crate) mod tests {
         // A body the record cannot carry — refused inside the domain's write.
         let empty_body = jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "inbox".into(),
                 sid: sid.clone(),
                 body: "   ".into(),
@@ -412,6 +413,7 @@ pub(crate) mod tests {
         // so it is not the resemblance gate answering.
         let bad_name = jojobot
             .post_message(Parameters(PostMessageArgs {
+                request_id: None,
                 to: "In Box!".into(),
                 sid: sid.clone(),
                 body: "the shipment landed".into(),
@@ -425,6 +427,7 @@ pub(crate) mod tests {
         // An id that is no id.
         let bad_id = jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
                 message_id: "not an id!".into(),
                 notes: None,
                 sid: Some(sid),

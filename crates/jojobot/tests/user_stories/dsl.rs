@@ -307,12 +307,13 @@ impl jojobot_domain::memory::Memory for Blindable {
 /// restart serves over it. Held by a weak reference, so a store that is gone
 /// takes its entry with it, and an address a later store reuses is never matched
 /// to an earlier one's ledger.
-static LEDGERS: std::sync::Mutex<
-    Vec<(
-        std::sync::Weak<dyn jojobot_domain::memory::Memory>,
-        Arc<InMemoryRequests>,
-    )>,
-> = std::sync::Mutex::new(Vec::new());
+static LEDGERS: std::sync::Mutex<Vec<WiredLedger>> = std::sync::Mutex::new(Vec::new());
+
+/// A wired store, held weakly, and the ledger it spends into.
+type WiredLedger = (
+    std::sync::Weak<dyn jojobot_domain::memory::Memory>,
+    Arc<InMemoryRequests>,
+);
 
 /// The ledger `store` spends into. A store that was not wired here (a
 /// stand-in that can go away, say) spends into none, and its server gets an
@@ -756,6 +757,7 @@ impl Story {
         let addr = listener.local_addr().unwrap();
         let store_for_restart = store.clone();
         let requests = ledger_of(&store);
+        mail_store.attach_requests(requests.clone());
         // **Wrapped in the same two-stage decorator assembly `main.rs`
         // calls** — `jojobot::wiring`'s own doc says why it is two stages
         // and not one. A fixture that indexed the bare stores would serve a

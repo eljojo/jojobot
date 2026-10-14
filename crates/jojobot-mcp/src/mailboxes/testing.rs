@@ -94,6 +94,7 @@ pub(crate) async fn send_titled(
 ) -> serde_json::Value {
     let result = jojobot
         .post_message(Parameters(PostMessageArgs {
+            request_id: None,
             to: mailbox.into(),
             sid: as_bot(jojobot, sender),
             subject: subject.map(str::to_string),

@@ -32,6 +32,16 @@ pub struct RetractArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 characters. Send the
+    /// same call again with the same `request_id` after an answer was lost: if
+    /// the first call wrote, you get its receipt back marked `repeat` and nothing
+    /// is written a second time, so the claim is taken back once. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 impl Jojobot {
@@ -86,7 +96,7 @@ impl Jojobot {
                        what it takes back. Retracting a record that is already archived is \
                        refused too, and says so, because the state you asked for is the state \
                        jojobot holds. An address that names no record is refused with the \
-                       addresses that do exist."
+                       addresses that do exist. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn retract(
         &self,
@@ -158,16 +168,14 @@ impl Jojobot {
 
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (taken_back, fold_behind) = match self
-            .memory
-            .retract(
-                &address,
-                args.reason.as_deref(),
-                date,
-                &caller.bot,
-                Some(caller.sid.as_str()),
-            )
-            .await
+        let (taken_back, fold_behind) = match jojobot_domain::request::armed(self.memory.retract(
+            &address,
+            args.reason.as_deref(),
+            date,
+            &caller.bot,
+            Some(caller.sid.as_str()),
+        ))
+        .await
         {
             Ok(taken_back) => (taken_back, None),
             Err(MemoryError::FoldBehind {
@@ -301,6 +309,7 @@ mod tests {
         let withdrawn = capture_ok(&jojobot, attending("person:beta", "was at the party")).await;
         jojobot
             .retract(Parameters(RetractArgs {
+                request_id: None,
                 address: address_of(&withdrawn),
                 reason: Some("was somewhere else that day".into()),
                 sid: Some(sid.clone()),
@@ -365,6 +374,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .retract(Parameters(RetractArgs {
+                    request_id: None,
                     address: address.clone(),
                     reason: Some("he was never there".into()),
                     sid: Some(sid.clone()),
@@ -408,6 +418,7 @@ mod tests {
         let rested_on = json_of(
             &jojobot
                 .retract(Parameters(RetractArgs {
+                    request_id: None,
                     address: address_of(&source),
                     reason: Some("the ferry moved back".into()),
                     sid: Some(sid.clone()),
@@ -498,6 +509,7 @@ mod tests {
 
         let taken_back = jojobot
             .retract(Parameters(RetractArgs {
+                request_id: None,
                 address: address_of(&source),
                 reason: Some("the ferry moved back".into()),
                 sid: Some(sid.clone()),
@@ -521,6 +533,7 @@ mod tests {
         // rather than leaving the caller to infer it from a missing key.
         let alone = jojobot
             .retract(Parameters(RetractArgs {
+                request_id: None,
                 address: address_of(&unrelated),
                 reason: Some("it reopened".into()),
                 sid: Some(sid),
@@ -545,6 +558,7 @@ mod tests {
 
     fn retract_args(address: &str, reason: &str) -> RetractArgs {
         RetractArgs {
+            request_id: None,
             address: address.to_string(),
             reason: Some(reason.to_string()),
             recorded_at: None,

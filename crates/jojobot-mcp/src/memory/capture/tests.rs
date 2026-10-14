@@ -1891,6 +1891,7 @@ async fn citing_an_archived_source_is_allowed_and_named_on_the_receipt() {
 
     jojobot
         .retract(Parameters(crate::memory::retract::RetractArgs {
+            request_id: None,
             address: address.clone(),
             reason: Some("misread the notice".into()),
             recorded_at: None,

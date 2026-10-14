@@ -61,6 +61,9 @@ pub struct DoltMailboxes {
     /// would both write one, and the table has nothing that stops the second.
     /// This process is the only writer, so one gate settles it.
     replacing: Arc<tokio::sync::Mutex<()>>,
+    /// **The clock the request ids of its writes are stamped with**: the one the
+    /// instance runs on, so a stated day stays the stated day.
+    clock: jojobot_domain::clock::Clock,
     /// What the board reads have loaded so far, so a case can say which rows a
     /// verb asked the store for.
     #[cfg(test)]
@@ -89,9 +92,18 @@ impl DoltMailboxes {
             draw: ids::drawing(),
             pushing: false,
             replacing: Arc::default(),
+            clock: jojobot_domain::clock::Clock::default(),
             #[cfg(test)]
             loaded: Arc::default(),
         }
+    }
+
+    /// **The store, told which clock it stamps request ids with.** The real one
+    /// unless an operator states a day.
+    #[must_use]
+    pub fn on_clock(mut self, clock: jojobot_domain::clock::Clock) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// **Write a push for every message that lands in a person's box**, in the
@@ -210,6 +222,7 @@ impl DoltMailboxes {
             draw,
             pushing: false,
             replacing: Arc::default(),
+            clock: jojobot_domain::clock::Clock::default(),
             loaded: Arc::default(),
         }
     }
@@ -1208,7 +1221,11 @@ impl Mailboxes for DoltMailboxes {
                 .map_err(store)?;
             }
         }
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "id": stored.id.as_str() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Guarded::Written(stored))
     }
 
@@ -1440,7 +1457,11 @@ impl Mailboxes for DoltMailboxes {
             notes,
             ..message.clone()
         };
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "id": id.as_str() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(message)
     }
 
@@ -1491,7 +1512,11 @@ impl Mailboxes for DoltMailboxes {
                 .with_reason(&reason),
         )
         .await?;
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "id": id.as_str() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Quarantined {
             id: id.clone(),
             mailbox,
