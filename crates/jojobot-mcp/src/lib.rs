@@ -53,6 +53,16 @@ pub fn provisions() -> jojobot_domain::memory::owned::Provisions {
     supplied.extend(views::provisions());
     supplied
 }
+
+/// **Handles an earlier build supplied as records and this one does not.** A
+/// boot records what its build supplies, so the next build finds a dropped
+/// handle there and gives it a row (rule 508). A store that skips the builds in
+/// between never recorded it, so the release that stops supplying a handle adds
+/// it here. No release has dropped one yet.
+pub fn retired_handles() -> Vec<jojobot_domain::memory::EntityId> {
+    Vec::new()
+}
+
 pub mod seed;
 mod seen;
 pub mod session;

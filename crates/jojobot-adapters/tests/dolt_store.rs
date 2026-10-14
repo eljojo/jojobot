@@ -9156,14 +9156,35 @@ async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
     )
     .await;
 
+    // **Only a handle a build once supplied is the build's to adopt.** The build
+    // that wrote on `retired` recorded it at its boot. A handle an earlier build
+    // supplied before the record existed comes in through the build's own list,
+    // and so does a handle of a kind this build does not declare. A colon key
+    // nobody supplied, such as a row removed by hand, is on neither.
+    let listed = EntityId("view:contract-listed".into());
+    let never_supplied = EntityId("view:contract-never".into());
+    file_a_claim_under(&pool, listed.as_str(), "under a handle on the list", "z").await;
+    file_a_claim_under(
+        &pool,
+        never_supplied.as_str(),
+        "under a handle nobody supplied",
+        "w",
+    )
+    .await;
+    writer
+        .record_supplied_handles(&[listed.clone(), EntityId("zzzz:contract-nokind".into())])
+        .await
+        .expect("the supplied handles are recorded");
+
     let report = memory_store
         .adopt_handles_without_a_row()
         .await
         .expect("the pass runs");
     assert_eq!(
         report.adopted,
-        vec![retired.clone()],
-        "only the handle whose writes outlived its record is adopted"
+        vec![listed.clone(), retired.clone()],
+        "only a handle a build once supplied is adopted, whether it recorded the handle itself \
+         or listed it"
     );
     assert_eq!(
         report.left,
@@ -9243,7 +9264,7 @@ async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
     );
     let rows_made: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM entity WHERE id IN \
-         ('thing:contract-formerly', 'zzzz:contract-nokind', 'bare0k')",
+         ('thing:contract-formerly', 'zzzz:contract-nokind', 'bare0k', 'view:contract-never')",
     )
     .fetch_one(&pool)
     .await
@@ -9327,6 +9348,12 @@ async fn dolt_walk_reaches_a_handle_adopted_after_the_build_stopped_supplying_it
         .written()
         .expect("an edge at a supplied record lands");
 
+    // The deployed build's boot recorded what it supplied.
+    writer
+        .record_supplied_handles(&[])
+        .await
+        .expect("the supplied handles are recorded");
+
     // What the deployed build left below the surface: the edge holds the
     // handle's own text, since the view had no badge to point at.
     let filed: Vec<String> =
@@ -9395,6 +9422,23 @@ async fn walked_to(
     from: &EntityId,
     expected: &EntityId,
 ) -> jojobot_domain::memory::graph::Object {
+    walked_along(
+        store,
+        from,
+        jojobot_domain::memory::graph::Follow::hop(),
+        expected,
+    )
+    .await
+}
+
+/// The object one `follow` out of `from` whose handle is `expected`, or a panic
+/// that prints the walk.
+async fn walked_along(
+    store: &DoltMemory,
+    from: &EntityId,
+    follow: jojobot_domain::memory::graph::Follow,
+    expected: &EntityId,
+) -> jojobot_domain::memory::graph::Object {
     use jojobot_domain::memory::graph;
     let walked = graph::walk(
         store,
@@ -9409,7 +9453,7 @@ async fn walked_to(
                 prose: false,
                 stood_for: false,
             },
-            follow: Some(graph::Follow::hop()),
+            follow: Some(follow),
             history: None,
         },
     )
@@ -9421,4 +9465,267 @@ async fn walked_to(
         .and_then(|root| root.connected.iter().find(|c| c.entity.id == *expected))
         .cloned()
         .unwrap_or_else(|| panic!("the walk from {from} does not reach {expected}: {walked:?}"))
+}
+
+/// **Everything that names a handle the build stopped supplying follows the
+/// row the boot gave it.** The deployed build filed the handle's own text in
+/// every column that names a thing, because a supplied record has no badge:
+/// the field links the thing's own writes hold, the links another thing's
+/// field value draws at it, the value itself, and the marks that tie its claims
+/// to others. The adoption moves all of them onto the badge, so a rename of
+/// the adopted row strands none.
+///
+/// **Each read discriminates**: it runs after the rename, when the handle's
+/// text names nothing, and walks both ways along both keys.
+#[tokio::test]
+async fn dolt_adoption_moves_every_column_that_names_the_handle() {
+    use jojobot_domain::memory::graph::{Direction, Follow};
+    let scratch = Scratch::new("adopt-columns");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "adoptcolumns")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let outlived = EntityId("view:contract-lapsed".into());
+    let drawing = EntityId("thing:contract-tethered".into());
+    let caller = EntityId("bot:sigma".into());
+
+    // The deployed build: it supplies the view, and the operator's writes land
+    // through the real writer.
+    let writer = DoltMemory::open(pool.clone())
+        .knowing(Provisions::new(vec![supplied_view(&outlived, "Outlived")]));
+    writer
+        .add_entity(NewEntity::new(
+            drawing.clone(),
+            "Drawing",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let mut own = NewFact::about(outlived.clone(), "written while shipped", date(2026, 10, 8));
+    own.fields.insert("holds".into(), drawing.to_string());
+    own.sets.insert("holds".into());
+    let on_the_view = writer
+        .capture(memory::state(own))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a write on a supplied record lands");
+    let mut naming = NewFact::about(drawing.clone(), "watches the view", date(2026, 10, 8));
+    naming.fields.insert("watches".into(), outlived.to_string());
+    naming.sets.insert("watches".into());
+    let on_the_drawing = writer
+        .capture(memory::state(naming))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a field naming a supplied record lands");
+    // Marks both ways: a claim on the drawing that stands for the view's claim,
+    // and a claim on the view that stands for the drawing's.
+    let other_on_the_view = writer
+        .capture(memory::state(NewFact::about(
+            outlived.clone(),
+            "a second claim on the view",
+            date(2026, 10, 8),
+        )))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("lands");
+    let plain_on_the_drawing = writer
+        .capture(memory::state(NewFact::about(
+            drawing.clone(),
+            "a plain claim on the drawing",
+            date(2026, 10, 8),
+        )))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("lands");
+    for (claim, stands_for) in [
+        (&on_the_drawing, on_the_view.address()),
+        (&other_on_the_view, plain_on_the_drawing.address()),
+    ] {
+        writer
+            .update_fact(
+                &claim.address(),
+                FactPatch {
+                    stands_for: Some(vec![stands_for]),
+                    ..Default::default()
+                },
+                &caller,
+            )
+            .await
+            .expect("update_fact ok")
+            .written()
+            .expect("a mark at claims that exist is not blocked");
+    }
+
+    // The deployed build's boot recorded what it supplied.
+    writer
+        .record_supplied_handles(&[])
+        .await
+        .expect("the supplied handles are recorded");
+
+    // The shape the deployed build left: the handle's own text in each column.
+    let filed_under_the_text: i64 = {
+        let mut total = 0;
+        for (table, column) in [
+            ("field_link", "entity"),
+            ("field_link", "target"),
+            ("fact_stands_for", "fact_home"),
+            ("fact_stands_for", "source_home"),
+        ] {
+            let held: i64 =
+                sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
+                    .bind(outlived.as_str())
+                    .fetch_one(&pool)
+                    .await
+                    .expect("counted");
+            assert!(
+                held > 0,
+                "the fixture holds no {table}.{column} under the handle's text"
+            );
+            total += held;
+        }
+        total
+    };
+    assert!(filed_under_the_text >= 4);
+
+    // The new build supplies nothing at that handle. The passes run in the
+    // order wiring.rs runs them.
+    let upgraded = DoltMemory::open(pool.clone());
+    let report = upgraded
+        .adopt_handles_without_a_row()
+        .await
+        .expect("the adoption runs");
+    assert_eq!(report.adopted, vec![outlived.clone()]);
+    upgraded
+        .resolve_stale_pointer_columns()
+        .await
+        .expect("the pointer rewrite runs");
+
+    // **Renamed, so the handle's text is free.**
+    let succeeded = EntityId("view:contract-expired".into());
+    upgraded
+        .rename_entity(
+            &outlived,
+            &succeeded,
+            None,
+            date(2026, 10, 9),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("rename_entity ok")
+        .written()
+        .expect("nothing collides with it");
+
+    // **And the freed name taken by a new thing**, which no pointer follows
+    // unless it holds the badge.
+    let newcomer = NewEntity::new(outlived.clone(), "Newcomer", "contract-fixture");
+    // The renamed row still wears the slug as its name, so the screen asks for
+    // the token it mints; the token is read from the refusal, not made up.
+    let jojobot_domain::memory::Guarded::Blocked {
+        attempted,
+        candidates,
+    } = upgraded.add_entity(newcomer.clone()).await.expect("add ok")
+    else {
+        panic!("the freed name was expected to meet the screen");
+    };
+    upgraded
+        .add_entity(NewEntity {
+            override_token: Some(jojobot_domain::memory::guard::override_token(
+                &attempted,
+                &candidates,
+            )),
+            override_reason: Some("a different thing that took the freed name".to_string()),
+            ..newcomer
+        })
+        .await
+        .expect("add ok")
+        .written()
+        .expect("a name a rename freed can be taken");
+
+    let toward = |direction: Direction| Follow {
+        direction: Some(direction),
+        ..Follow::hop()
+    };
+    // A field value elsewhere naming it (`watches`): out from the drawing, and in
+    // at the adopted thing.
+    walked_along(&upgraded, &drawing, toward(Direction::Out), &succeeded).await;
+    walked_along(&upgraded, &succeeded, toward(Direction::In), &drawing).await;
+    // Its own links (`holds`): out from the adopted thing, and in at the drawing.
+    walked_along(&upgraded, &succeeded, toward(Direction::Out), &drawing).await;
+    walked_along(&upgraded, &drawing, toward(Direction::In), &succeeded).await;
+    assert_eq!(
+        upgraded
+            .fields(&drawing)
+            .await
+            .expect("fields read")
+            .get("watches")
+            .map(String::as_str),
+        Some(succeeded.as_str()),
+        "the field naming the adopted thing serves the handle it wears now"
+    );
+
+    // Its stands_for marks, read back from both ends.
+    let claims_on_the_drawing = upgraded.recall(&drawing).await.expect("recall reads");
+    let drawn = claims_on_the_drawing
+        .iter()
+        .find(|fact| fact.content.contains("watches the view"))
+        .expect("the claim is there");
+    assert_eq!(
+        drawn.stands_for,
+        vec![FactAddress::new(succeeded.clone(), on_the_view.id.clone())],
+        "a mark at a claim of the adopted thing serves its handle now"
+    );
+    let claims_on_the_view = upgraded.recall(&succeeded).await.expect("recall reads");
+    let second = claims_on_the_view
+        .iter()
+        .find(|fact| fact.content.contains("a second claim"))
+        .expect("the claim is there");
+    assert_eq!(
+        second.stands_for,
+        vec![plain_on_the_drawing.address()],
+        "a mark held by a claim of the adopted thing reads back"
+    );
+
+    // Who points at the drawing: the adopted thing's own claim, found through
+    // its link rows, and not the newcomer that took the freed name.
+    let pointing: Vec<String> = upgraded
+        .referring_to(&drawing)
+        .await
+        .expect("a store answers who points here")
+        .iter()
+        .map(|fact| fact.address().to_string())
+        .collect();
+    assert!(
+        pointing.contains(&format!("{succeeded}#{}", on_the_view.id)),
+        "the adopted thing's own field link is lost: {pointing:?}"
+    );
+
+    // The substrate: no column holds the text any more.
+    for (table, column) in [
+        ("field_link", "entity"),
+        ("field_link", "target"),
+        ("fact_stands_for", "fact_home"),
+        ("fact_stands_for", "source_home"),
+    ] {
+        let held: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
+                .bind(outlived.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("counted");
+        assert_eq!(held, 0, "{table}.{column} still holds the handle's text");
+    }
+
+    store.stop().await;
 }

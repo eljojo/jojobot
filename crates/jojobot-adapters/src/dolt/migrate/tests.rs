@@ -132,6 +132,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0090_session_key_hash_index",
     "0091_fact_receipt",
     "0092_fact_write_receipt",
+    "0093_supplied_handle",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

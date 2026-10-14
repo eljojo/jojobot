@@ -126,6 +126,26 @@ const FIELD_LOWERING_PASS: &str = "field value lowering";
 /// **The name the rewrite of reference-typed field values is marked under.**
 const REFERENCE_LOWERING_PASS: &str = "reference field lowering";
 
+/// **Every column that holds a thing's storage key**: the badge it wears, or
+/// the handle's own text for a thing with no row. A thing the build supplies
+/// has no badge, so a write on it files the handle, and the adoption of a
+/// handle the build stopped supplying moves these onto the badge. A column
+/// that names a DIFFERENT thing (an edge's object, a ref, a parent) is not
+/// here: `resolve_stale_pointer_columns` rewrites those.
+const HANDLE_KEYED_COLUMNS: &[(&str, &str)] = &[
+    ("fact", "entity"),
+    ("fact", "derived_from"),
+    ("field_write", "entity"),
+    ("fact_write", "entity"),
+    ("fact_write", "derived_from"),
+    ("fact_event_metadata", "fact_home"),
+    ("fact_event_ref", "fact_home"),
+    ("entity_alias", "entity"),
+    ("field_link", "entity"),
+    ("fact_stands_for", "fact_home"),
+    ("fact_stands_for", "source_home"),
+];
+
 /// Memory kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -331,12 +351,11 @@ impl DoltMemory {
     /// a thing from its own nicknames — and from every search hit that came
     /// through one — the moment the row moved.
     ///
-    /// **`fact_stands_for` is not in this list.** It is a new table, born
-    /// badge-keyed from its first row: the write path resolves a mark's
-    /// addresses to badges before anything lands, exactly as `fact.entity`
-    /// and `fact.derived_from` now do, so there are no legacy handle-keyed
-    /// rows under it for a backfill to find. This list is for what predates
-    /// a column's own badge-awareness, never for what was born with it.
+    /// **`field_link` and `fact_stands_for` are in this list.** Both were
+    /// born badge-keyed: the write path resolves an address to a badge before
+    /// anything lands. A home the build supplies has no badge to resolve to,
+    /// so a write on it files the handle's own text, and the adoption of a
+    /// handle the build stopped supplying has to move those rows too.
     /// `fact_event_ref.entity`, `entity.parent` and `edge_object` are
     /// badge-keyed too (rule 268), but not by this call: they name a
     /// DIFFERENT entity rather than the row's own, and [`Self::
@@ -365,33 +384,47 @@ impl DoltMemory {
         Ok(rekeyed)
     }
 
-    /// **Every badge-keyed column of a thing's own writes, moved from the
-    /// handle they were filed under onto the badge it wears.** The one list, so
-    /// the backfill of rows written before badges and the adoption of a handle
-    /// whose writes outlived its record cannot drift apart about which columns
-    /// hold a storage key.
+    /// **Every column that holds a thing's storage key, moved from the handle
+    /// it was filed under onto the badge the thing wears.** The one list
+    /// ([`HANDLE_KEYED_COLUMNS`]), so the backfill of rows written before
+    /// badges, its completion gate and the adoption of a handle whose writes
+    /// outlived its record cannot drift apart about which columns hold a
+    /// storage key.
     async fn rekey_to_badge(
         tx: &mut Transaction<'_, MySql>,
         handle: &str,
         badge: &str,
     ) -> Result<(), MemoryError> {
-        for statement in [
-            "UPDATE fact SET entity = ? WHERE entity = ?",
-            "UPDATE fact SET derived_from = ? WHERE derived_from = ?",
-            "UPDATE field_write SET entity = ? WHERE entity = ?",
-            "UPDATE fact_write SET entity = ? WHERE entity = ?",
-            "UPDATE fact_write SET derived_from = ? WHERE derived_from = ?",
-            "UPDATE fact_event_metadata SET fact_home = ? WHERE fact_home = ?",
-            "UPDATE fact_event_ref SET fact_home = ? WHERE fact_home = ?",
-            "UPDATE entity_alias SET entity = ? WHERE entity = ?",
-        ] {
-            sqlx::query(statement)
-                .bind(badge)
-                .bind(handle)
-                .execute(&mut **tx)
-                .await
-                .map_err(store)?;
+        for (table, column) in HANDLE_KEYED_COLUMNS {
+            sqlx::query(&format!(
+                "UPDATE {table} SET {column} = ? WHERE {column} = ?"
+            ))
+            .bind(badge)
+            .bind(handle)
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
         }
+        Ok(())
+    }
+
+    /// **Every place a handle is written, moved onto the badge the thing wears
+    /// now**: the columns of [`HANDLE_KEYED_COLUMNS`], and the field values
+    /// elsewhere that name it, with the link rows beside them. The one function
+    /// the adoption of a handle calls, so no column that names the handle is
+    /// left on its text (rule 498).
+    ///
+    /// Edges, refs and parents at the handle are not here: they are the
+    /// pointer columns [`Self::resolve_stale_pointer_columns`] rewrites, and
+    /// the boot runs that after the adoption.
+    async fn rekey_adopted(
+        tx: &mut Transaction<'_, MySql>,
+        handle: &str,
+        badge: &str,
+    ) -> Result<(), MemoryError> {
+        Self::rekey_to_badge(tx, handle, badge).await?;
+        let declared = Self::types_in(tx).await?;
+        Self::repoint_field_links(tx, &declared, handle, badge).await?;
         Ok(())
     }
 
@@ -408,16 +441,7 @@ impl DoltMemory {
         if handle == badge {
             return Ok(false);
         }
-        for (table, column) in [
-            ("fact", "entity"),
-            ("fact", "derived_from"),
-            ("field_write", "entity"),
-            ("fact_write", "entity"),
-            ("fact_write", "derived_from"),
-            ("fact_event_metadata", "fact_home"),
-            ("fact_event_ref", "fact_home"),
-            ("entity_alias", "entity"),
-        ] {
+        for (table, column) in HANDLE_KEYED_COLUMNS {
             let hit: Option<i64> =
                 sqlx::query_scalar(&format!("SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"))
                     .bind(handle)

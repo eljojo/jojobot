@@ -516,6 +516,20 @@ pub async fn boot_store_pushing(
     // build supplies**, so a handle still supplied is left alone. Every boot, and
     // cheap when there is nothing to do: a build can stop supplying a handle at
     // any release.
+    // **Only a handle a build once supplied is adopted**, so this build records
+    // what it supplies, and what earlier builds supplied before the record
+    // existed, before the pass reads the record.
+    if let Err(e) = linking
+        .record_supplied_handles(&jojobot_mcp::retired_handles())
+        .await
+    {
+        tracing::error!(
+            error = %e,
+            "SUPPLIED HANDLES NOT RECORDED — a handle this build stops supplying later will not \
+             be given a row, and what the operator wrote on it will not be reachable. A restart \
+             once the store is reachable records them."
+        );
+    }
     match linking.adopt_handles_without_a_row().await {
         Ok(report) => {
             for handle in &report.adopted {

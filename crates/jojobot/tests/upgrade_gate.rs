@@ -5733,8 +5733,26 @@ async fn a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_
     drop(scratch);
 }
 
+/// **What an earlier boot of a build that supplied `handle` left in the store**:
+/// the record of supplied handles holds it. A store restored from before the
+/// record existed has no table yet, so the schema runs first, as the boot's own
+/// run would.
+async fn record_as_supplied(pool: &sqlx::MySqlPool, handle: &str) {
+    jojobot_adapters::dolt::migrate::run(pool)
+        .await
+        .expect("the schema runs");
+    sqlx::query("INSERT INTO supplied_handle (handle) VALUES (?)")
+        .bind(handle)
+        .execute(pool)
+        .await
+        .expect("the handle is recorded");
+}
+
 /// A handle some earlier build supplied and this one does not.
 const RETIRED_HANDLE: &str = "view:upgrade-fixture-retired";
+/// A colon key with writes under it that no build ever supplied, such as a row
+/// removed by hand.
+const HAND_REMOVED_HANDLE: &str = "view:upgrade-fixture-hand-removed";
 
 /// **What the operator wrote on a handle the build stopped supplying reads back
 /// as an ordinary stored thing.** The writes sit filed under the handle's own
@@ -5760,12 +5778,21 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
         ("answer", "kept"),
     )
     .await;
+    record_as_supplied(store.pool(), RETIRED_HANDLE).await;
     // The pair: an overlay on a handle the build still supplies, filed the same way.
     plant_a_claim_filed_under(
         store.pool(),
         SHIPPED_HANDLE_WITHOUT_ONE,
         "a claim on a view the build still supplies",
         ("answer", "still on top"),
+    )
+    .await;
+    // The second pair: writes under a handle no build supplied.
+    plant_a_claim_filed_under(
+        store.pool(),
+        HAND_REMOVED_HANDLE,
+        "a claim under a handle nobody supplied",
+        ("answer", "left"),
     )
     .await;
     store.stop().await;
@@ -5805,6 +5832,10 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
     assert!(
         log_lines_naming(&first, SHIPPED_HANDLE_WITHOUT_ONE).is_empty(),
         "recorded at {git_ref}: a handle still supplied is not named"
+    );
+    assert!(
+        log_lines_naming(&first, HAND_REMOVED_HANDLE).is_empty(),
+        "recorded at {git_ref}: a handle no build supplied is not named"
     );
     // The recording itself holds no handle to adopt: the one line that names a
     // handle is the planted one's.
@@ -5860,6 +5891,28 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
         rows_at_the_supplied_handle, 0,
         "recorded at {git_ref}: a handle the build supplies is given no row"
     );
+    let rows_at_the_hand_removed_handle: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM entity WHERE id = ?")
+            .bind(HAND_REMOVED_HANDLE)
+            .fetch_one(store.pool())
+            .await
+            .expect("counted");
+    assert_eq!(
+        rows_at_the_hand_removed_handle, 0,
+        "recorded at {git_ref}: a handle no build supplied is given no row"
+    );
+    // The boot recorded what the build supplies, so a later build that stops
+    // supplying one finds it there.
+    let recorded: Vec<String> = sqlx::query_scalar("SELECT handle FROM supplied_handle")
+        .fetch_all(store.pool())
+        .await
+        .expect("the record reads");
+    for shipped in [SHIPPED_HANDLE_WITH_A_ROW, SHIPPED_HANDLE_WITHOUT_ONE] {
+        assert!(
+            recorded.iter().any(|handle| handle == shipped),
+            "recorded at {git_ref}: the boot did not record {shipped}: {recorded:?}"
+        );
+    }
     store.stop().await;
 
     let second = boot_current(&state_dir, store_port, &git_ref).await;
@@ -5880,15 +5933,17 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
 /// A stored thing that draws an edge at the retired handle.
 const DRAWING_HANDLE: &str = "thing:upgrade-fixture-drawing";
 
-/// **An edge at a handle the build stopped supplying follows the handle's new
-/// row.** While the build supplied the handle, a claim on another thing drew an
-/// edge at it and filed the handle's own text, because a supplied record has no
-/// badge. The first boot gives the handle a row and then rewrites that edge onto
-/// the row's badge, so the edge no longer rests on a name that a rename frees.
-/// A walk out of the drawing thing reaches the adopted thing, and the stored
-/// edge holds the badge.
+/// **Everything that names a handle the build stopped supplying follows the
+/// handle's new row.** While the build supplied the handle, another thing's
+/// claims drew an edge at it, a field value named it, and marks tied claims to
+/// its claims, all filed under the handle's own text because a supplied record
+/// has no badge. The first boot gives the handle a row and moves each of those
+/// onto the row's badge, so none rests on a name that a rename frees. A walk
+/// out of the drawing thing reaches the adopted thing, the field serves its
+/// handle, and the stored columns hold the badge. The gate also fails the
+/// case if the adopting boot logs a warning or an error.
 #[tokio::test]
-async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it() {
+async fn everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it() {
     let Restored {
         scratch,
         state_dir,
@@ -5897,6 +5952,7 @@ async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boo
         ..
     } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "retired-edge").await;
     let mut store = open_the_store(&state_dir, store_port).await;
+    record_as_supplied(store.pool(), RETIRED_HANDLE).await;
     plant_a_claim_filed_under(
         store.pool(),
         RETIRED_HANDLE,
@@ -5931,6 +5987,30 @@ async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boo
         .await
         .expect("the edge lands");
     }
+    // The other columns that name the handle, as the deployed build filed them:
+    // a field on the drawing thing naming the retired view (value behind the
+    // stored-handle mark, and its link row), a field on the retired view naming
+    // the drawing thing (and its link row, keyed by the view's own text), and a
+    // mark that ties a claim of each to a claim of the other.
+    for statement in [
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+         VALUES ('drwrow', 'watches', 1, '@#view:upgrade-fixture-retired', 'f1',
+                 '2026-10-08T14:02:10Z', 'sets')",
+        "INSERT INTO field_link (entity, `key`, ordinal, target)
+         VALUES ('drwrow', 'watches', 1, 'view:upgrade-fixture-retired')",
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+         VALUES ('view:upgrade-fixture-retired', 'holds', 1, '@#drwrow', 'f1',
+                 '2026-10-08T14:02:10Z', 'sets')",
+        "INSERT INTO field_link (entity, `key`, ordinal, target)
+         VALUES ('view:upgrade-fixture-retired', 'holds', 1, 'drwrow')",
+        "INSERT INTO fact_stands_for (fact_home, fact_id, ordinal, source_home, source_id)
+         VALUES ('drwrow', 'f1', 1, 'view:upgrade-fixture-retired', 'f1')",
+    ] {
+        sqlx::query(statement)
+            .execute(store.pool())
+            .await
+            .expect("the column lands");
+    }
     store.stop().await;
 
     let first = boot_current(&state_dir, store_port, &git_ref).await;
@@ -5953,6 +6033,10 @@ async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boo
         reached["fields"]["answer"], "kept",
         "recorded at {git_ref}: the adopted thing carries the write: {reached}"
     );
+    assert_eq!(
+        walked["objects"][0]["fields"]["watches"], RETIRED_HANDLE,
+        "recorded at {git_ref}: the field naming the adopted thing serves its handle: {walked}"
+    );
     first.stop().await;
 
     let mut store = open_the_store(&state_dir, store_port).await;
@@ -5968,6 +6052,33 @@ async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boo
     assert_eq!(
         edge, badge,
         "recorded at {git_ref}: the edge still holds the handle's text, not the badge"
+    );
+    for (table, column) in [
+        ("field_link", "entity"),
+        ("field_link", "target"),
+        ("fact_stands_for", "source_home"),
+    ] {
+        let held: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
+                .bind(RETIRED_HANDLE)
+                .fetch_one(store.pool())
+                .await
+                .expect("counted");
+        assert_eq!(
+            held, 0,
+            "recorded at {git_ref}: {table}.{column} still holds the handle's text"
+        );
+    }
+    let value: String = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE entity = 'drwrow' AND `key` = 'watches'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("the field value reads");
+    assert_eq!(
+        value,
+        format!("@#{badge}"),
+        "recorded at {git_ref}: the field value still holds the handle's text"
     );
     store.stop().await;
     drop(scratch);

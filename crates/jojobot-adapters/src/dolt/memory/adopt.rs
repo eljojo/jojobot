@@ -37,6 +37,27 @@ pub struct AdoptionReport {
 }
 
 impl DoltMemory {
+    /// **Record the handles this build supplies as records, and the handles the
+    /// build lists as supplied by an earlier build**, in `supplied_handle`. Every
+    /// boot calls it before the adoption below, and a row is never removed: a
+    /// handle a later build stops supplying has to stay listed, because that is
+    /// what makes its writes adoptable.
+    pub async fn record_supplied_handles(&self, retired: &[EntityId]) -> Result<(), MemoryError> {
+        let supplied = self
+            .supplied
+            .records()
+            .map(|(entity, _)| entity.id.as_str());
+        let listed = retired.iter().map(EntityId::as_str);
+        for handle in supplied.chain(listed) {
+            sqlx::query("INSERT IGNORE INTO supplied_handle (handle) VALUES (?)")
+                .bind(handle)
+                .execute(&self.pool)
+                .await
+                .map_err(store)?;
+        }
+        Ok(())
+    }
+
     /// **Give a row to every handle that has writes filed under its text, no row,
     /// and no record the build supplies.** Idempotent: a second call finds none.
     ///
@@ -51,6 +72,7 @@ impl DoltMemory {
              WHERE entity LIKE '%:%'
                AND entity NOT IN (SELECT id FROM entity)
                AND entity NOT IN (SELECT former_handle FROM entity_former_handle)
+               AND entity IN (SELECT handle FROM supplied_handle)
              ORDER BY entity",
         )
         .fetch_all(&self.pool)
@@ -86,7 +108,7 @@ impl DoltMemory {
             };
             let mut tx = self.pool.begin().await.map_err(store)?;
             let badge = write_entity(&mut tx, &self.draw, &entity, &self.clock, None).await?;
-            Self::rekey_to_badge(&mut tx, id.as_str(), &badge).await?;
+            Self::rekey_adopted(&mut tx, id.as_str(), &badge).await?;
             tx.commit().await.map_err(store)?;
             report.adopted.push(id);
         }
