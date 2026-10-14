@@ -2652,7 +2652,7 @@ async fn a_records_trace_matches_the_writes_the_run_made(
 /// without a stack of separate notes — never the word "fold" or a mark's
 /// name.
 const LONGBOARD: &str = "thing:longboard";
-const LATER_DECEMBER: &str = "Phase 15";
+const LATER_DECEMBER: &str = "Phase 16";
 
 /// Every fact `recall` currently reports for the longboard.
 async fn longboards_facts(seen: &Observed<'_>) -> Vec<Value> {

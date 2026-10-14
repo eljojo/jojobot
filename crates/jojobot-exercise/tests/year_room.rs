@@ -57,9 +57,21 @@ const LATE_NOVEMBER: [usize; 2] = [28, 29];
 /// room's own design.
 const DECEMBER: [usize; 3] = [30, 31, 32];
 
-/// How many locks the year carries.
+/// **The sixteen locks of later December, addressed by what each is about**
+/// (the order the cases below name them in) and not by where the document
+/// writes them. Three entries carry them, grouped by the entry that asks:
+/// the lock and the council's question at 33 to 37, the longboard and the
+/// words at 38 to 46, the distance and what is owed at 47 and 48.
+///
+/// By role: 0 the old wording under `was`, 1 the record's trace, 2 the fold
+/// appears, 3 its five repairs stay named, 4 it invents no date, 5 the board
+/// lock is rewritten in place, 6 a plain read serves the fold short, 7 the
+/// sources are reachable by name, 8 the distance sums, 9 the inspection's
+/// hedge stays open, 10 the wheels job reads as the operator's word, 11 the
+/// longboard control, 12 the skate tool, 13 the board lock's own job, 14 what
+/// is owed, 15 the corrections name what they replace.
 const LATE_DECEMBER: [usize; 16] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+    35, 36, 38, 39, 40, 33, 41, 42, 47, 37, 43, 44, 45, 34, 48, 46,
 ];
 
 const LOCKS: usize = 49;
@@ -1637,10 +1649,6 @@ async fn board_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> S
     address
 }
 
-async fn later_december(room: &Surface, sid: &str) {
-    later_december_naming(room, sid, true).await;
-}
-
 /// **A job off the vocabulary, corrected by the product's route**: the earlier
 /// job is archived and the corrected one is captured. `names_the_source` is
 /// whether the correction says which job it replaces, with `derived_from`; the
@@ -1696,7 +1704,9 @@ async fn off_vocabulary_job(room: &Surface, subject: &str, needle: &str) -> Opti
 /// declares them.
 const OPERATORS_WORDS: [&str; 3] = ["invoiced", "paid", "waived"];
 
-async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool) {
+/// **The first later December sitting**: the lock bought and corrected in the
+/// same breath, and the old wording put under `was`.
+async fn later_december_the_lock(room: &Surface, sid: &str) {
     let address = board_lock_corrected_in_the_same_breath(room, sid).await;
     let trace = room
         .call(
@@ -1721,9 +1731,8 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
     // **The control this rests on, filed under the operator's own word in
     // the same breath the board lock is created.** No separate sitting to
     // hold it: the board lock exists only from this entry on, so what
-    // "filed correctly from the start" means here is that this sitting,
-    // with two other wrong words to fix in the same breath, does not
-    // touch this one.
+    // "filed correctly from the start" means here is that this sitting
+    // does not touch this one.
     did(
         room,
         sid,
@@ -1732,6 +1741,15 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
                "provenance": "testimony", "sets": {"cost": "15", "settled": "waived"}}),
     )
     .await;
+}
+
+/// **The second later December sitting**: the jobs filed under words the
+/// operator does not use put right, and the longboard's pile folded.
+async fn later_december_the_longboard_and_the_words(
+    room: &Surface,
+    sid: &str,
+    names_the_source: bool,
+) {
     // **The one job off the vocabulary January declared, put right — if
     // late November's own job is there to find.** Several cases drive a
     // partial year that skips late November for reasons of their own; this
@@ -1770,6 +1788,12 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
         )
         .await;
     }
+    fold_the_longboards_pile(room, sid).await;
+}
+
+/// **The third later December sitting**: what is actually invoiced, summed and
+/// put under `owed`.
+async fn later_december_the_totals(room: &Surface, sid: &str) {
     // **THE SELECTIVE SUM — filter by the declared word, then add.** Reads
     // every job this sitting can reach and totals the ones marked invoiced,
     // never the unconditional fold `km` uses a few lines above and never a
@@ -1783,7 +1807,6 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
                "provenance": "inference", "sets": {"owed": owed.to_string()}}),
     )
     .await;
-    fold_the_longboards_pile(room, sid).await;
 }
 
 /// **THE SELECTIVE SUM, done properly.** Every job-bearing thing the year
@@ -2198,11 +2221,13 @@ const JUNE_AT: usize = 5;
 /// would turn two locks red at once and no case could say which wrong it
 /// measured.
 ///
-/// ⚠️ **The year holds fifteen sittings, so 15 and above address none of
+/// ⚠️ **The year holds seventeen sittings, so 17 and above address none of
 /// them.** They name variants rather than phases, which is why they are
 /// constants with this paragraph beside them rather than numbers in a call.
-const JUNE_IN_WORDS: usize = 15;
-const JUNE_WITHOUT_THE_EVENT: usize = 16;
+/// The first two sit at the top of the list, past every other variant, because
+/// the two sittings later December gained took the indices they held.
+const JUNE_IN_WORDS: usize = 52;
+const JUNE_WITHOUT_THE_EVENT: usize = 53;
 const JUNE_POINTING_AT_ONE_KIND: usize = 17;
 
 /// What June's claim says under each of them. **The first one named wins**, so
@@ -2241,7 +2266,7 @@ const OCTOBER_AT: usize = 9;
 const OCTOBER_ALSO_CLEARS_THE_DAY: usize = 28;
 
 /// **October's other guilt, named by an index no sitting has**, for the same
-/// reason June's variants are — the year holds fifteen sittings, so 19
+/// reason June's variants are — the year holds seventeen sittings, so 19
 /// addresses none of them. Index 9 already carries a different wrong (the
 /// note filed on the event rather than the place); this is a second, about
 /// the skate tool's two accounts rather than the inspection's location, and the two
@@ -2296,7 +2321,14 @@ const OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING: usize = 24;
 const OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING: usize = 49;
 
 /// Where later December sits in the year, named for the reason `JUNE_AT` is.
+/// **It is three sittings**: the lock and the council's question at this
+/// index, the longboard and the words one after it, the distance and what is
+/// owed the one after that.
 const LATE_DECEMBER_AT: usize = 14;
+
+/// The later December sitting that puts the jobs right, which is where the
+/// wrong play below does its harm.
+const LATE_DECEMBER_WORDS_AT: usize = 15;
 
 /// **Later December's guilt, named the same way.** Both jobs filed under a word
 /// the operator does not use are archived and put right, as the product asks, and
@@ -2313,7 +2345,7 @@ const LATE_NOVEMBER_AT: usize = 12;
 const LATE_NOVEMBER_FILES_THE_JOBS_UNDER_THE_OPERATORS_WORD: usize = 51;
 
 /// **Late November's other guilt, named by an index no sitting has**, for the
-/// same reason June's variants are — the year holds fifteen sittings, so 18
+/// same reason June's variants are — the year holds seventeen sittings, so 18
 /// addresses none of them.
 ///
 /// This is the failure the room's own document reads out at Phase 13: a
@@ -2325,7 +2357,7 @@ const LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP: usize = 18;
 /// **The sittings that record something**, named rather than counted: the two
 /// a person reads write nothing by design, and one of them sits between the
 /// sittings that do, so a range cannot say it.
-const WORKED: [usize; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14];
+const WORKED: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16];
 
 /// **The year worked sitting by sitting, taking the readings a run takes.**
 ///
@@ -2378,7 +2410,7 @@ async fn work_the_year(
             at == OCTOBER_AT && guilty.contains(&OCTOBER_ALSO_CLEARS_THE_DAY);
         let late_november_files_right_variant = at == LATE_NOVEMBER_AT
             && guilty.contains(&LATE_NOVEMBER_FILES_THE_JOBS_UNDER_THE_OPERATORS_WORD);
-        let late_december_without_a_source_variant = at == LATE_DECEMBER_AT
+        let late_december_without_a_source_variant = at == LATE_DECEMBER_WORDS_AT
             && guilty.contains(&LATE_DECEMBER_CORRECTS_THE_JOBS_AND_NAMES_NO_SOURCE);
         let october_archives_without_a_source_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING);
@@ -2460,7 +2492,7 @@ async fn work_the_year(
             )
             .await;
         } else if late_december_without_a_source_variant {
-            later_december_naming(room, sid, false).await;
+            later_december_the_longboard_and_the_words(room, sid, false).await;
         } else if october_archives_without_a_source_variant {
             october_archives_the_account_and_names_nothing(room, sid).await;
         } else if september_prose_variant {
@@ -2496,7 +2528,9 @@ async fn work_the_year(
                 10 => late_october(room, sid).await,
                 12 => late_november(room, sid).await,
                 13 => december(room, sid).await,
-                14 => later_december(room, sid).await,
+                14 => later_december_the_lock(room, sid).await,
+                15 => later_december_the_longboard_and_the_words(room, sid, true).await,
+                16 => later_december_the_totals(room, sid).await,
                 // The one sitting a person reads asks a question and
                 // records nothing, which is what it is for.
                 _ => {}
@@ -2509,18 +2543,18 @@ async fn work_the_year(
 
 // ────────────────────────────── the cases ──────────────────────────────
 
-/// **Fifteen sittings, every one cold, every one claiming its day.**
+/// **Seventeen sittings, every one cold, every one claiming its day.**
 ///
 /// The day is what the whole fiction rests on: jojobot reads no clock, so a
 /// sitting that names no day is stamped with the day the run happened and the
 /// year is fiction only in the prose.
 #[test]
-fn the_year_is_fifteen_cold_sittings_and_every_one_claims_its_day() {
+fn the_year_is_seventeen_cold_sittings_and_every_one_claims_its_day() {
     let year = room_document();
     assert_eq!(
         year.phases.len(),
-        15,
-        "the year carries one extra sitting, in October: {:?}",
+        17,
+        "the year carries one extra sitting, in October, and later December is three: {:?}",
         year.phases.iter().map(|p| &p.name).collect::<Vec<_>>(),
     );
     let mut days: Vec<&str> = Vec::new();
@@ -2888,7 +2922,7 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
     // comes out, so asserting it first masks the assertion underneath — the
     // case stops before saying which sitting failed and why.
     assert_eq!(
-        asked, 14,
+        asked, 16,
         "the year generates one assertion per dated sitting, less the one a person reads — and \
          this asked about {asked}",
     );
@@ -3400,7 +3434,7 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     )
     .await;
     // **A sitting after the year's last**, which is what makes it a later one.
-    let later = sitting(&surface, "2026-12-22").await;
+    let later = sitting(&surface, "2026-12-28").await;
     did(
         &surface,
         &later,
@@ -3474,7 +3508,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
     let boundaries = worked_the_year(&surface).await;
     let inspection = handle_of_kind(&surface, "event").await;
     // **A sitting after the year's last**, which is what makes it a later one.
-    let later = sitting(&surface, "2026-12-22").await;
+    let later = sitting(&surface, "2026-12-28").await;
     did(
         &surface,
         &later,
@@ -4986,7 +5020,19 @@ async fn september_is_graded_and_a_sitting_in_the_wrong_day_still_fails() {
     );
 }
 
-/// **The whole year, worked without its last sitting**, so a case can play
+/// **The readings a case takes after it played later December in one sitting
+/// of its own.** Later December is three sittings in the document, and the
+/// fold lock reads the window of the second, which is between the reading before
+/// the third and the one before it. Both readings, and the end, are taken after
+/// the play, so every window the locks ask about sees the writes.
+async fn close_the_custom_december(room: &Surface, boundaries: &mut [Boundary]) {
+    let named = boundary_names(&room_document());
+    let last = boundaries.len() - 1;
+    boundaries[last - 1] = boundary(room, &named[last - 1]).await;
+    boundaries[last] = boundary(room, "the end").await;
+}
+
+/// **The whole year, worked without its last sittings**, so a case can play
 /// its own version of December and take a boundary right after it — the same
 /// technique `a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not`
 /// uses for the council's own trace lock.
@@ -5061,8 +5107,7 @@ async fn the_longboard_fold_lock_reddens_when_december_never_folds_anything() {
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
     later_december_never_folds_the_longboard(&surface, &sid).await;
-    *boundaries.last_mut().expect("the year has a last boundary") =
-        boundary(&surface, "the end").await;
+    close_the_custom_december(&surface, &mut boundaries).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[LATE_DECEMBER[2]].held,
@@ -5086,8 +5131,7 @@ async fn the_longboards_sources_lock_reddens_when_a_fold_destroys_one_of_them() 
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
     later_december_folds_but_loses_a_source(&surface, &sid).await;
-    *boundaries.last_mut().expect("the year has a last boundary") =
-        boundary(&surface, "the end").await;
+    close_the_custom_december(&surface, &mut boundaries).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[2]].held,
@@ -5121,8 +5165,7 @@ async fn the_longboards_fabrication_lock_reddens_when_the_fold_invents_a_date() 
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
     later_december_folds_with_an_invented_date(&surface, &sid).await;
-    *boundaries.last_mut().expect("the year has a last boundary") =
-        boundary(&surface, "the end").await;
+    close_the_custom_december(&surface, &mut boundaries).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[2]].held,
@@ -5160,8 +5203,7 @@ async fn the_fabrication_lock_reddens_on_an_invented_date_in_the_folds_own_prose
         work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let sid = sitting(&surface, "2026-12-20").await;
     later_december_folds_with_an_invented_date_in_prose(&surface, &sid).await;
-    *boundaries.last_mut().expect("the year has a last boundary") =
-        boundary(&surface, "the end").await;
+    close_the_custom_december(&surface, &mut boundaries).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[2]].held,
@@ -5196,8 +5238,7 @@ async fn the_fabrication_lock_does_not_convict_a_fold_for_naming_its_own_write_d
     let sid = sitting(&surface, "2026-12-20").await;
     later_december_never_folds_the_longboard(&surface, &sid).await;
     fold_the_longboards_pile_naming_its_own_day(&surface, &sid).await;
-    *boundaries.last_mut().expect("the year has a last boundary") =
-        boundary(&surface, "the end").await;
+    close_the_custom_december(&surface, &mut boundaries).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[4]].held,
@@ -5218,8 +5259,7 @@ async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs
     let sid = sitting(&surface, "2026-12-20").await;
     later_december_never_folds_the_longboard(&surface, &sid).await;
     fold_the_longboards_pile_missing_a_same_day_sibling(&surface, &sid).await;
-    *boundaries.last_mut().expect("the year has a last boundary") =
-        boundary(&surface, "the end").await;
+    close_the_custom_december(&surface, &mut boundaries).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[LATE_DECEMBER[3]].held,
@@ -5322,7 +5362,7 @@ async fn an_in_place_correction_of_an_earlier_sittings_testimony_ends_the_year_a
     let (_room, surface) = furnished().await;
     let _ = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let wrong_word = address_of(&surface, "thing:skateboard", "serviced the wheels").await;
-    let phase = room_document().phases[LATE_DECEMBER_AT].clone();
+    let phase = room_document().phases[LATE_DECEMBER_WORDS_AT].clone();
     let sid = sitting(&surface, phase.day.as_deref().expect("a day")).await;
     let surface = std::sync::Arc::new(surface);
     let task = tokio::spawn({

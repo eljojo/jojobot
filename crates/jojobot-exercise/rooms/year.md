@@ -1,10 +1,10 @@
 # The year
 
-**Server day: 2026-12-23.**
+**Server day: 2026-12-26.**
 The room's server acts out this day on every run, paid or not, so a stamp it writes
 never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
 
-**Fifteen sittings inside one year, none of them remembering the one before.**
+**Seventeen sittings inside one year, none of them remembering the one before.**
 The operator uses jojobot for a year and the year takes minutes on the clock.
 
 Every other room asks whether one thing works. This one asks whether a year of
@@ -823,9 +823,29 @@ say     December: the walk back from the loop's own cadence does not reach the o
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 December 2026. The record says the council does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the longboard — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the skateboard — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. Fifteen dollars, and they waived the fitting charge since I am in there so often. And how far have I skated the skateboard this year altogether? Put the number where I can find it without doing the sum myself, and while you are at it, add up whatever is actually invoiced this year — not paid, not waived — and put that total under owed on the skateboard too. One more thing — some of the payments for the skateboard or the longboard are sitting there with words I don't actually use. Put those right.
+> start jojobot as assistant — it is 20 December 2026. I finally bought a lock for the skateboard — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. Fifteen dollars, and they waived the fitting charge since I am in there so often. And the record says the council does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again.
 
 ```locks
+# 🚨 **THE REWRITE ITSELF, WALKED AS A RELATION RATHER THAN READ FROM THE
+# "WAS" ANSWER ABOVE.** That lock only needs the old wording to be reachable
+# somehow — a sitting that answers by guessing a plausible history could pass
+# it without the record ever actually having been rewritten. This asks
+# whether the correction really landed as ONE record with more than one
+# write, active, rather than a retraction beside a fresh claim wearing a
+# rewrite's shape from a distance.
+check   the_board_locks_mistake_is_rewritten_in_place
+say     later December: the board lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite
+
+# **The control this rests on, filed under a word neither control above
+# already uses.** This sitting creates the board lock and its job in the
+# same breath, so what is locked is whether the sitting — busy fixing two
+# other jobs at the same time — still leaves the one it filed correctly
+# exactly as it wrote it.
+recall {"subject": "thing:board-lock"}
+carries "cost":"15"
+carries "settled":"waived"
+say     later December: the board lock's own job does not read as waived, so either it was never filed under the operator's own word or this sitting repainted it while fixing the others
+
 # 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
 # TRACE.** The board lock is caught wrong and corrected in the SAME breath, a
 # sitting up in this same entry — not the council's Tuesday claim, which March
@@ -894,6 +914,37 @@ say     later December: what the board lock's claim used to say is not on the re
 check   a_records_trace_matches_the_writes_the_run_made
 say     later December: a record's trace does not agree with what the run actually wrote to it, so the history read is inventing or losing a write and a reader is told jojobot changed its mind about something it never did
 
+# 🚨 **THE HEDGE FROM JANUARY, STILL OPEN.** The brief's own words about the
+# inspection were a plan rather than a fact — "I mean to be there" — and nothing
+# in the year ever settles it: nobody asks whether the operator personally
+# made it, and no sitting confirms the plan came true. A claim recorded that
+# way stays open until the operator settles it, never on its own and never
+# because time passed. This is the read nobody in the year has needed until
+# now, and it is the one this whole block is themed around — whether the
+# record still says what it always said.
+#
+# ⚠️ **The one lock in the year that names the inspection's handle.** January
+# invents it, and this lock reads `event:gorge-safety-inspection`, the name the
+# brief's words most naturally make; October gives the event a new name, and a
+# handle it wore before keeps answering. A run whose January filed the event
+# under another handle fails here for the name and not for the claim, and the
+# other locks in the year reach the event by kind and edge to avoid exactly that.
+recall {"subject": "event:gorge-safety-inspection", "facts": true}
+carries "standing":"open"
+say     later December: the inspection's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so
+```
+
+## Phase 16 — two days on, the longboard and the words
+
+**Session: fresh.** **Day: 2026-12-22.**
+
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody will answer you, but your answer is being read. You must answer.
+>
+> start jojobot as assistant — it is 22 December 2026. I am about to sell the longboard — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. And some of the payments for the skateboard or the longboard are sitting there with words I don't actually use. Put those right.
+
+```locks
 # 🚨 **THE LONGBOARD'S YEAR, AND NOTHING ABOVE TOLD THIS SITTING WHAT TO DO ABOUT
 # IT.** Five small repairs are scattered across the year on `thing:longboard`,
 # each planted beside that sitting's other business and none of them beside a
@@ -919,25 +970,13 @@ say     later December: the fold either lost one of the longboard's five repairs
 check   the_longboards_fold_invents_no_date_the_repairs_never_gave
 say     later December: the folded record states a date that appears in none of the five repairs it is supposed to be drawn from, which is the fabrication this mark exists to prevent
 
-# 🚨 **THE REWRITE ITSELF, WALKED AS A RELATION RATHER THAN READ FROM THE
-# "WAS" ANSWER ABOVE.** That lock only needs the old wording to be reachable
-# somehow — a sitting that answers by guessing a plausible history could pass
-# it without the record ever actually having been rewritten. This asks
-# whether the correction really landed as ONE record with more than one
-# write, active, rather than a retraction beside a fresh claim wearing a
-# rewrite's shape from a distance. Placed last rather than beside the "was"
-# lock so that adding it moves no lock the year's test pins by its position.
-check   the_board_locks_mistake_is_rewritten_in_place
-say     later December: the board lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite
-
 # 🚨 **THE FOLD MEASURED THE WAY AN AGENT ACTUALLY MEETS IT: A PLAIN READ,
 # NO `stood_for`.** Every lock above this one that reads the longboard asks for
 # `stood_for: true`, because that is verification code and it wants the
 # whole record. Nothing until now has ever asked for the longboard's records the
 # way a session with no reason to know the flag exists actually would — so
 # nothing has ever proven the fold is served SHORT rather than merely
-# STORED. Placed last, after the board lock's own check, for the same reason
-# that one is: adding it here moves no lock the year's test pins by its position.
+# STORED.
 #
 # ⚠️ **Both assertions in the same lock, because a `lacks`-only lock passes
 # on an answer that came back empty.** The elision note — `"stood_for":`,
@@ -957,44 +996,6 @@ say     later December: a plain read of the longboard — no stood_for — still
 recall {"subject": "thing:longboard", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-07-05"
 say     later December: the longboard's own sources are not reachable even by name, so the lock above proves nothing about elision — only that nothing here works
-
-# 🚨 **THE YEAR'S KILOMETRES, SUMMED — JOJOBOT'S OWN ARITHMETIC, NEVER THE
-# SITTING'S.** June says the skateboard has done around 800 kilometres since the
-# spring; late November says another 600 since then. Two sittings, seven
-# months apart, each recording its own figure under the same key — and
-# nothing in either entry says the two add up to anything. That is this
-# sitting's own question, asked in the operator's own words, and it is
-# answerable only if the key the earlier sittings wrote is one jojobot
-# folds by summing rather than by keeping the newest. A key nobody
-# declared a counter reads back 600 here — June's own figure overwritten
-# rather than joined — which is the wrong answer a plain value gives.
-#
-# Placed last, for the reason every other lock in this block already is:
-# adding it here moves no lock the year's test pins by its position.
-recall {"subject": "thing:skateboard"}
-carries "km":"1400"
-say     later December: the skateboard's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it
-
-# 🚨 **THE HEDGE FROM JANUARY, STILL OPEN.** The brief's own words about the
-# inspection were a plan rather than a fact — "I mean to be there" — and nothing
-# in the year ever settles it: nobody asks whether the operator personally
-# made it, and no sitting confirms the plan came true. A claim recorded that
-# way stays open until the operator settles it, never on its own and never
-# because time passed. This is the read nobody in the year has needed until
-# now, and it is the one this whole block is themed around — whether the
-# record still says what it always said.
-#
-# Placed last, for the reason every lock in this block already is.
-#
-# ⚠️ **The one lock in the year that names the inspection's handle.** January
-# invents it, and this lock reads `event:gorge-safety-inspection`, the name the
-# brief's words most naturally make; October gives the event a new name, and a
-# handle it wore before keeps answering. A run whose January filed the event
-# under another handle fails here for the name and not for the claim, and the
-# other locks in the year reach the event by kind and edge to avoid exactly that.
-recall {"subject": "event:gorge-safety-inspection", "facts": true}
-carries "standing":"open"
-say     later December: the inspection's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so
 
 # 🚨 **THE WORD JANUARY DECLARED, NOT A WORD THAT LOOKS RIGHT.** "sent" is a
 # perfectly reasonable status word on its own — nothing about it looks
@@ -1042,25 +1043,6 @@ carries "cost":"20"
 carries "settled":"invoiced"
 say     later December: the skate tool's job does not read as fixed to the operator's own word, so the fold-in's second off-vocabulary word was never caught
 
-# **The control this rests on, filed under a word neither control above
-# already uses.** This sitting creates the board lock and its job in the
-# same breath, so what is locked is whether the sitting — busy fixing two
-# other jobs at the same time — still leaves the one it filed correctly
-# exactly as it wrote it.
-recall {"subject": "thing:board-lock"}
-carries "cost":"15"
-carries "settled":"waived"
-say     later December: the board lock's own job does not read as waived, so either it was never filed under the operator's own word or this sitting repainted it while fixing the others
-
-# 🚨 **THE SELECTIVE SUM — filter by the declared word, then add.** A
-# different capability from the unconditional sum a few lines up, which
-# joins every write on one key regardless of what it says. Only the jobs
-# marked invoiced total sixty five; every other route — all four jobs, or
-# every job that is not waived — gives a different number.
-recall {"subject": "thing:skateboard"}
-carries "owed":"65"
-say     later December: the skateboard does not carry what is actually invoiced across the year's jobs, so either the sitting did not select on the operator's own word or it summed something other than what the record says
-
 # 🚨 **THE ROUTE, NOT ONLY THE WORDS.** Late November filed two jobs under words
 # the operator does not use, in a sitting that has since ended. Words an earlier
 # sitting wrote are not rewritten in place, so putting them right is two moves:
@@ -1081,6 +1063,41 @@ say     later December: the skateboard does not carry what is actually invoiced 
 # cost, never by the words a sitting chose for them.
 check   late_decembers_corrections_name_the_jobs_they_replace
 say     later December: the corrected jobs do not name the jobs they replace, so a reader finds the operator's own word on them and cannot follow it back to what was filed, whether a job still stands under its wrong word or was archived and put right with nothing naming it
+```
+
+## Phase 17 — two days after that, the distance and what is owed
+
+**Session: fresh.** **Day: 2026-12-24.**
+
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody will answer you, but your answer is being read. You must answer.
+>
+> start jojobot as assistant — it is 24 December 2026. How far have I skated the skateboard this year altogether? Put the number where I can find it without doing the sum myself, and while you are at it, add up whatever is actually invoiced this year — not paid, not waived — and put that total under owed on the skateboard too.
+
+```locks
+# 🚨 **THE YEAR'S KILOMETRES, SUMMED — JOJOBOT'S OWN ARITHMETIC, NEVER THE
+# SITTING'S.** June says the skateboard has done around 800 kilometres since the
+# spring; late November says another 600 since then. Two sittings, seven
+# months apart, each recording its own figure under the same key — and
+# nothing in either entry says the two add up to anything. That is this
+# sitting's own question, asked in the operator's own words, and it is
+# answerable only if the key the earlier sittings wrote is one jojobot
+# folds by summing rather than by keeping the newest. A key nobody
+# declared a counter reads back 600 here — June's own figure overwritten
+# rather than joined — which is the wrong answer a plain value gives.
+recall {"subject": "thing:skateboard"}
+carries "km":"1400"
+say     later December: the skateboard's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it
+
+# 🚨 **THE SELECTIVE SUM — filter by the declared word, then add.** A
+# different capability from the unconditional sum a few lines up, which
+# joins every write on one key regardless of what it says. Only the jobs
+# marked invoiced total sixty five; every other route — all four jobs, or
+# every job that is not waived — gives a different number.
+recall {"subject": "thing:skateboard"}
+carries "owed":"65"
+say     later December: the skateboard does not carry what is actually invoiced across the year's jobs, so either the sitting did not select on the operator's own word or it summed something other than what the record says
 ```
 
 ## What this room cannot measure
