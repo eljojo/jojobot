@@ -58,6 +58,20 @@ pub(crate) fn live_sections(facts: &[Fact]) -> Vec<Held<'_>> {
     held
 }
 
+/// **The markdown of one live section**, joined from its parts. This is the one
+/// join of a section's text: `read_document` pages over it and the web page
+/// concatenates it, so the two cannot disagree about what a document says.
+pub(crate) fn section_text(held: &Held<'_>) -> String {
+    document::join(std::slice::from_ref(&held.section))
+}
+
+/// **A document's whole live text**, as `read_document` returns it when it
+/// fits in one answer: the live sections in reading order, each joined by
+/// [`section_text`]. For a reader that is not a verb, such as the web page.
+pub fn live_text(facts: &[Fact]) -> String {
+    live_sections(facts).iter().map(section_text).collect()
+}
+
 fn facts_continue(fact: &Fact) -> bool {
     fact.fields
         .get(document::CONTINUES)

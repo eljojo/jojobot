@@ -20,7 +20,7 @@ pub mod claim_room;
 pub(crate) mod clauses;
 pub mod declare_type;
 pub mod declined;
-pub(crate) mod documents;
+pub mod documents;
 pub mod due;
 pub mod list_entities;
 pub mod merge_entities;

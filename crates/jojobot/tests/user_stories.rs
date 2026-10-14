@@ -85,6 +85,9 @@ mod curveball;
 mod dead_handle;
 #[path = "user_stories/degraded.rs"]
 mod degraded;
+/// A document's page reads as the document, and what a section holds is never markup.
+#[path = "user_stories/document_page.rs"]
+mod document_page;
 /// One thing filed twice, put back together — and what a repair costs.
 /// A markdown file held by section, put whole and read back whole.
 #[path = "user_stories/documents.rs"]

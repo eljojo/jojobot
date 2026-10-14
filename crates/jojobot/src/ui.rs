@@ -17,6 +17,7 @@
 //! configured, and it cannot be configured without an issuer
 //! ([`crate::config`]).
 
+pub mod document;
 pub mod login;
 pub mod mail;
 pub mod pages;

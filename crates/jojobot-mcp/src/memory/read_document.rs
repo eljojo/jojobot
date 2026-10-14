@@ -3,7 +3,7 @@
 //! One verb, one file: its arguments, the description a caller reads,
 //! and an entrypoint that chains the systems below it.
 
-use super::documents::live_sections;
+use super::documents::{live_sections, section_text};
 use super::*;
 use jojobot_domain::memory::document;
 use jojobot_domain::text::ANSWER_CEILING;
@@ -158,7 +158,7 @@ impl Jojobot {
         let mut page = String::new();
         let mut taken = 0;
         for held in &live[offset..] {
-            let text = document::join(std::slice::from_ref(&held.section));
+            let text = section_text(held);
             // Counted as the JSON string it rides in, with its escapes.
             let cost = serde_json::Value::from(text.as_str())
                 .to_string()

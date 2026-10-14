@@ -241,6 +241,16 @@ pub async fn node(
         trail(&handles)
     );
     body.push_str(&about(entity));
+    // **A document's page shows the document**, above everything that is the
+    // record-level view of it. The text is the one `read_document` serves.
+    if entity.kind == EntityKind::DOCUMENT {
+        body.push_str(&crate::ui::document::block(
+            &entity.name,
+            held.get("one_liner").map(String::as_str),
+            &jojobot_mcp::memory::documents::live_text(&facts),
+            &by_id,
+        ));
+    }
     body.push_str(&fields_section(&held, &ages, &entity.id, &canonical));
     // **A view is a question, so its page answers it.** It sits under the
     // definition rather than over it: a reader has to see which question they
@@ -1223,7 +1233,7 @@ fn line_breaks(escaped: &str) -> String {
 /// an anchor. **The two shapes that cannot be followed stay exactly as
 /// served, never as a dead link**: `mention::followable` is the one place
 /// that tells them apart, so this never has to.
-fn linkify(text: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
+pub(crate) fn linkify(text: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
     linkify_spans(text, mention::followable(text), by_id)
 }
 

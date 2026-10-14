@@ -40,6 +40,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 # The request log wraps a response's body to see when it ends or is dropped.
 http-body = "1"
+# A document's page is its markdown rendered as HTML. A CommonMark event stream
+# is what lets the page decide each event, so raw HTML, images and link targets
+# are rewritten before anything is written out. Only the HTML writer is used.
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
