@@ -53,10 +53,8 @@ use jojobot_domain::memory::{
 ///
 /// Every write verb forwards to the store underneath, then brings the image up
 /// to date. Once the image is filled, every read that reads stored rows is
-/// answered from it, with ONE exception: `entity_history`, the versions of an
-/// entity's own row, which the image does not hold and which goes to the store.
-/// Two reads forward to the layer beneath and read no row at all:
-/// `composed_prose` and `echoed_defaults` join and compare what the build
+/// answered from it. Two reads forward to the layer beneath and read no row at
+/// all: `composed_prose` and `echoed_defaults` join and compare what the build
 /// supplies. Before the first fill, and after a refresh that failed, every read
 /// goes to the store.
 pub struct Folded {
@@ -442,15 +440,20 @@ impl Memory for Folded {
         }
     }
 
-    /// **Straight through, and a read of stored rows: the one the image does not
-    /// answer.** The image holds the fields and the claims; the versions of an
-    /// entity's own row are the store's record, every version under every handle
-    /// the thing wore, and the image keeps no copy of them.
+    /// **Answered from the image**, which holds every version of each thing's own
+    /// row beside its claims, read when the document is filled and again after
+    /// each write that refreshes it. A thing whose versions the store could not
+    /// answer at the fill is read where it is stored, as is every read before the
+    /// first fill.
     async fn entity_history(
         &self,
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
-        self.inner.entity_history(entity).await
+        match self.held(|image| image.entity_history(entity)) {
+            Some(Ok(Some(versions))) => Ok(versions),
+            Some(Err(unknown)) => Err(unknown),
+            Some(Ok(None)) | None => self.inner.entity_history(entity).await,
+        }
     }
 
     async fn keys_kept_off_the_thing(

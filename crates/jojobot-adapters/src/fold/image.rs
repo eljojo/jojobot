@@ -20,8 +20,8 @@ use jojobot_domain::memory::numbered::{
     NUMBERS_BY, derived_formers, nearest_numbers, numbered_handle,
 };
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FieldAges, FieldBacking,
-    FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fields,
+    ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, Fact, FactAddress, FactId, FieldAges,
+    FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fields,
     search::DocScan,
     types::{DeclaredType, Origin},
 };
@@ -54,6 +54,13 @@ pub(super) struct Doc {
     /// chain could not be read is absent here, and a read of it goes to the
     /// store, which answers as it can.
     pub unmapped_histories: HashMap<FactAddress, Vec<ClaimWrite>>,
+    /// **Every version of the thing's own row**, the store's `entity_history`:
+    /// the name, aliases, prose and archive state it held before each change, the
+    /// session that made it, and the versions of every thing folded into it.
+    /// Read when the document is filled and read again with it, so a write to the
+    /// thing keeps it current as a claim write keeps the claims. `None` when the
+    /// store could not answer at the fill, and a read of it goes to the store.
+    pub entity_versions: Option<Vec<EntityVersion>>,
 }
 
 impl Doc {
@@ -69,6 +76,7 @@ impl Doc {
         let histories = inner.claim_histories(&handle).await?;
         let backing = inner.backing(&handle).await?;
         let trails = inner.key_trails(&handle).await?;
+        let entity_versions = inner.entity_history(&handle).await.ok();
         let mut unmapped_histories = HashMap::new();
         for claim in &scan.unmapped {
             if let Ok(chain) = inner.claim_history(&claim.address).await {
@@ -84,6 +92,7 @@ impl Doc {
             backing,
             trails,
             unmapped_histories,
+            entity_versions,
         })
     }
 
@@ -450,6 +459,17 @@ impl Image {
             }
         }
         Ok(writers)
+    }
+
+    /// `entity_history`: the versions of one thing's own row as they were read
+    /// when its document was filled, or the miss the store gives for a handle
+    /// that names nothing. `Ok(None)` is a thing whose versions could not be read
+    /// then.
+    pub fn entity_history(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Option<Vec<EntityVersion>>, MemoryError> {
+        Ok(self.doc(entity)?.entity_versions.clone())
     }
 
     /// `claim_history`: the writes of one claim, or the miss the store gives —

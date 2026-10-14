@@ -3245,7 +3245,9 @@ impl Memory for InMemoryMemory {
         entity: &EntityId,
     ) -> Result<Vec<super::super::EntityVersion>, MemoryError> {
         let index = self.index();
-        let Some(row) = index.iter().find(|e| &e.id == entity) else {
+        // **The thing is found as every read finds it**, by the handle it wears
+        // or one it wore; the real store resolves a former handle the same way.
+        let Some(row) = super::resolve_handle(entity, &index, &self.former()) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: self.nearest_for(entity, &index),

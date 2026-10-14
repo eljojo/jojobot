@@ -219,6 +219,14 @@ impl Probe<'_> {
             .await;
             self.check(
                 when,
+                "entity_history",
+                s,
+                f.entity_history(h),
+                d.entity_history(h),
+            )
+            .await;
+            self.check(
+                when,
                 "composed_prose",
                 s,
                 f.composed_prose(h, "own words"),
@@ -701,6 +709,22 @@ pub async fn walk_every_kind_of_write(p: &Probe<'_>) {
     .written()
     .expect("rename blocked");
     p.agree("after the thread is renamed").await;
+
+    // A version names its parent by the handle the parent wears NOW, so renaming
+    // a parent changes what its children's versions read as.
+    w.rename_entity(
+        &id("thing:delta"),
+        &id("thing:the-mailbox"),
+        None,
+        date(2026, 9, 11),
+        jojobot_domain::memory::Override::none(),
+        Some("fold-battery"),
+    )
+    .await
+    .expect("rename the parent")
+    .written()
+    .expect("rename blocked");
+    p.agree("after a parent is renamed").await;
 }
 
 /// A thought: a claim on a bot drawing a `connection` edge at a thread.

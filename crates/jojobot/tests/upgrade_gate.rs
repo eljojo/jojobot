@@ -4908,6 +4908,170 @@ async fn deploy_4_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row()
     .await;
 }
 
+/// **A thing an older build wrote versions of before the snapshot columns existed
+/// is served its whole history by the booted binary, and a new write is appended
+/// to it.** The recorded store has no snapshot column at all, so the handle with
+/// the most old rows is found first and the binary boots and migrates. It then
+/// serves that handle's history, the versions that hold nothing but a moment
+/// still marked as such, and a thing made and renamed afterwards has its two
+/// versions, newest last. With the binary stopped, the store's own answer for the
+/// handle is read and must be the one the binary served. The binary answers from
+/// the image it filled at boot, so an answer that agrees with the store's and
+/// grows with each write is the image filled and kept current.
+async fn old_entity_versions_are_served_and_a_new_write_is_appended(
+    fixture_dir: &str,
+    label: &str,
+) {
+    use jojobot_domain::memory::Memory;
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (handle, old_rows): (String, i64) = sqlx::query_as(
+        "SELECT entity, COUNT(*) AS n FROM entity_write GROUP BY entity ORDER BY n DESC, entity LIMIT 1",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap_or_else(|e| panic!("recorded at {git_ref}: the recording holds no entity_write row: {e}"));
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let boot: serde_json::Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    )
+    .expect("the boot answers in JSON");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
+        .to_string();
+    let history_of = |handle: String| {
+        let surface = &surface;
+        async move {
+            let answered: serde_json::Value = serde_json::from_str(
+                &surface
+                    .call(
+                        "recall",
+                        json!({"history_record": handle, "history_most": 100}),
+                    )
+                    .await,
+            )
+            .expect("the history answers in JSON");
+            answered["objects"][0]["entity_history"].clone()
+        }
+    };
+
+    let served = history_of(handle.clone()).await;
+    let served_versions = served["versions"].as_array().unwrap_or_else(|| {
+        panic!("recorded at {git_ref}: {handle} is served no versions: {served}")
+    });
+    let served_len = served_versions.len();
+    let served_unkept = served_versions
+        .iter()
+        .filter(|v| v.get("name").is_none())
+        .count();
+    assert!(
+        served_len as i64 >= old_rows && served_unkept as i64 >= old_rows,
+        "recorded at {git_ref}: {handle} had {old_rows} versions an older build wrote, and the booted \
+         binary serves {served_len} of which {served_unkept} hold no snapshot: {served}"
+    );
+    assert!(
+        served["values_not_kept"].is_string(),
+        "recorded at {git_ref}: the versions with no snapshot are not marked as such: {served}"
+    );
+
+    let made = surface
+        .call(
+            "add_entity",
+            json!({"kind": "thing", "handle": "omega", "name": "A snapshot",
+                   "source": "user-named", "sid": sid}),
+        )
+        .await;
+    assert!(
+        !made.contains("\"status\":\"blocked\""),
+        "recorded at {git_ref}: making a thing: {made}"
+    );
+    let first = history_of("thing:omega".to_string()).await;
+    assert_eq!(
+        first["count"], 1,
+        "recorded at {git_ref}: a new thing has its one version: {first}"
+    );
+    let renamed = surface
+        .call(
+            "update_entity",
+            json!({"handle": "thing:omega", "name": "A later name", "sid": sid}),
+        )
+        .await;
+    assert!(
+        !renamed.contains("\"status\":\"blocked\""),
+        "recorded at {git_ref}: renaming a thing: {renamed}"
+    );
+    let then = history_of("thing:omega".to_string()).await;
+    assert_eq!(
+        then["count"], 2,
+        "recorded at {git_ref}: the write is appended: {then}"
+    );
+    assert_eq!(
+        then["versions"][1]["name"], "A later name",
+        "recorded at {git_ref}: the newest version is last: {then}"
+    );
+    assert_eq!(
+        history_of(handle.clone()).await["versions"]
+            .as_array()
+            .map(Vec::len),
+        Some(served_len),
+        "recorded at {git_ref}: another thing's writes leave {handle}'s versions as they were"
+    );
+    surface.finish().await;
+    booted.stop().await;
+
+    // The store's own answer, with the binary stopped: the one the image served.
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let oracle = jojobot_adapters::dolt::memory::DoltMemory::open(store.pool().clone())
+        .entity_history(&jojobot_domain::memory::EntityId(handle.clone()))
+        .await
+        .unwrap_or_else(|e| panic!("recorded at {git_ref}: the store reads {handle}: {e}"));
+    store.stop().await;
+    drop(scratch);
+    assert_eq!(
+        (served_len, served_unkept),
+        (
+            oracle.len(),
+            oracle.iter().filter(|v| v.snapshot.is_none()).count()
+        ),
+        "recorded at {git_ref}: the booted binary serves {handle} what the store holds"
+    );
+}
+
+#[tokio::test]
+async fn deploy_3_old_entity_versions_are_served_and_a_new_write_is_appended() {
+    old_entity_versions_are_served_and_a_new_write_is_appended(
+        DEPLOY_3_FIXTURE_DIR,
+        "entity-versions-3",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn deploy_4_old_entity_versions_are_served_and_a_new_write_is_appended() {
+    old_entity_versions_are_served_and_a_new_write_is_appended(
+        DEPLOY_4_FIXTURE_DIR,
+        "entity-versions-4",
+    )
+    .await;
+}
+
 /// **A `session_write` row an older build appended reads as NULL in the three
 /// columns that keep what changed, and the first writes the current binary makes
 /// keep all three.** The old rows are counted before the binary touches the
