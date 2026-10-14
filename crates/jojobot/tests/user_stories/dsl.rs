@@ -68,6 +68,9 @@ const UI_CLIENT: &str = "jojobot-ui";
 pub struct Blindable {
     inner: Arc<InMemoryMemory>,
     blind: std::sync::atomic::AtomicBool,
+    /// Writes read back with no moment, as writes the store kept before it
+    /// stamped them do.
+    unstamped: std::sync::atomic::AtomicBool,
 }
 
 impl Blindable {
@@ -75,7 +78,14 @@ impl Blindable {
         Blindable {
             inner: Arc::new(InMemoryMemory::booted()),
             blind: std::sync::atomic::AtomicBool::new(false),
+            unstamped: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// From now on every write reads back with no moment of its own.
+    pub fn forgets_when_its_writes_happened(&self) {
+        self.unstamped
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// The store stops answering the read that fills the index.
@@ -243,14 +253,26 @@ impl jojobot_domain::memory::Memory for Blindable {
         &self,
         entity: &jojobot_domain::memory::EntityId,
     ) -> Result<jojobot_domain::memory::KeyTrails, jojobot_domain::memory::MemoryError> {
-        self.inner.key_trails(entity).await
+        let mut trails = self.inner.key_trails(entity).await?;
+        if self.unstamped.load(std::sync::atomic::Ordering::Acquire) {
+            for write in &mut trails.record_writes {
+                write.written_at = None;
+            }
+        }
+        Ok(trails)
     }
 
     async fn claim_history(
         &self,
         address: &jojobot_domain::memory::FactAddress,
     ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, jojobot_domain::memory::MemoryError> {
-        self.inner.claim_history(address).await
+        let mut writes = self.inner.claim_history(address).await?;
+        if self.unstamped.load(std::sync::atomic::Ordering::Acquire) {
+            for write in &mut writes {
+                write.written_at = None;
+            }
+        }
+        Ok(writes)
     }
 
     async fn fields(

@@ -590,6 +590,61 @@ async fn a_section_moved_later_reads_in_its_old_place_as_of_the_earlier_day() {
         then["markdown"], MANUAL,
         "as of September the closing is still last: {then}"
     );
+    // The pair: as of a day after the move the section is in its new place.
+    let after = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": OCTOBER}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        after["markdown"], today["markdown"],
+        "as of the day of the move the closing has moved: {after}"
+    );
+}
+
+/// **A section that rests on a write the store kept before it stamped its
+/// writes is named, never vouched for.** The pair is the read before the
+/// stamps are lost, which names nothing.
+#[tokio::test]
+async fn a_section_resting_on_an_unstamped_write_is_named_as_one_the_read_could_not_place() {
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+
+    let stamped = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": "2999-12-31"}),
+        )
+        .await
+        .json();
+    assert_eq!(stamped["markdown"], MANUAL, "{stamped}");
+    assert!(
+        stamped["as_of"].get("unplaced").is_none(),
+        "a section with a moment of its own is placed: {stamped}"
+    );
+
+    store.forgets_when_its_writes_happened();
+    let unstamped = session
+        .call(
+            "read_document",
+            json!({"document": "document:homer", "as_of": "2999-12-31"}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        unstamped["as_of"]["unplaced"].as_array().map(Vec::len),
+        Some(3),
+        "all three sections rest on a write with no moment: {unstamped}"
+    );
 }
 
 // --- a document restored to a day --------------------------------------------

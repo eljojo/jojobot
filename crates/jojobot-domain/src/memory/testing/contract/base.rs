@@ -18335,6 +18335,11 @@ pub async fn a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment<M: 
         "both writes of the own field are here, oldest first: {:?}",
         trails.record_writes
     );
+    assert_eq!(
+        own.iter().map(|write| write.ordinal).collect::<Vec<_>>(),
+        vec![1, 2],
+        "each write has its place among the writes of the key, from one: {own:?}"
+    );
     assert!(
         own.iter().all(|write| write.fact == claim.id),
         "each write names the record that carried it: {own:?}"
