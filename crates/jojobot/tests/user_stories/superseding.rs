@@ -215,3 +215,87 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
     s.wrap("corrected two messages").await;
     story.finish().await;
 }
+
+/// "I corrected a message, and the reader set my correction aside. Is the first
+/// one lost?" A replacement that was set aside is not a replacement: nobody can
+/// act on it, so the message it replaced is handed over as an ordinary one, and
+/// the correction stays set aside.
+///
+/// **The positive is the correction landing**, in the box beside it: with the
+/// replacement left in place the original is withheld, and with it set aside the
+/// original arrives. The two halves are read from the same box, one after the
+/// other.
+#[tokio::test]
+async fn a_message_whose_replacement_was_set_aside_is_still_handed_over() {
+    let story = Story::begin("bot:otto").await;
+    let setup = story.session().await;
+    setup.add("bot:gamma", "Gamma").await;
+    setup.wrap("stood gamma up").await;
+
+    let s = story.as_bot("bot:otto").await;
+    let wrong = s
+        .post("gamma", "Deploy day", "The deploy is on friday.")
+        .await;
+    let right = s
+        .call(
+            "post_message",
+            json!({
+                "to": "gamma",
+                "subject": "Deploy day, corrected",
+                "body": "The deploy is on monday.",
+                "supersedes": &wrong,
+            }),
+        )
+        .await
+        .field("id");
+
+    // ── with the correction in place, the original is withheld ──────────────
+    let g = story.as_bot("bot:gamma").await;
+    let polled = g.call("read_mailbox", json!({"counts_only": true})).await;
+    assert_eq!(polled.json()["counts"]["new"], 1, "{}", polled.raw());
+    assert_eq!(polled.json()["counts"]["superseded"], 1, "{}", polled.raw());
+
+    // ── the reader sets the correction aside ────────────────────────────────
+    g.call(
+        "mark_processed",
+        json!({"message_id": &right, "quarantine": "the sender meant a different box"}),
+    )
+    .await
+    .says("\"state\":\"quarantined\"");
+
+    // ── the original is owed again, and the correction stays set aside ──────
+    let after = g.call("read_mailbox", json!({"counts_only": true})).await;
+    assert_eq!(after.json()["counts"]["new"], 1, "{}", after.raw());
+    assert_eq!(
+        after.json()["counts"]["superseded"],
+        0,
+        "the original is counted as replaced by a message nobody can read: {}",
+        after.raw()
+    );
+    assert_eq!(
+        after.json()["quarantined"]["count"],
+        1,
+        "the correction is still set aside: {}",
+        after.raw()
+    );
+    let delivery = g.drain().await;
+    delivery.says("The deploy is on friday.");
+    delivery.never_says("The deploy is on monday.");
+    let delivered = delivery.json();
+    assert_eq!(delivered["count"], 1, "{delivered}");
+    assert_eq!(
+        delivered["messages"][0]["id"],
+        wrong.as_str(),
+        "{delivered}"
+    );
+    assert!(delivered.get("superseded").is_none(), "{delivered}");
+
+    // The original no longer says it was replaced.
+    let read = g
+        .call("read_message", json!({"message_id": &wrong}))
+        .await
+        .json();
+    assert!(read.get("superseded_by").is_none(), "{read}");
+
+    story.finish().await;
+}
