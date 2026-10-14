@@ -267,7 +267,7 @@ impl IndexedMemory {
     }
 
     /// **The documents whose stored text names `folded`** by a field value, an
-    /// edge, a reference, a parent or a mention in prose or in a claim's content —
+    /// edge, a reference, a parent or a mention in prose or in a claim's content or details —
     /// the places a fold or a rename rewrites. Read from the
     /// scan the index is current under, so it costs no statement, and read
     /// before the fold, because after it the text names the survivor.
@@ -293,9 +293,13 @@ impl IndexedMemory {
                             .as_ref()
                             .is_some_and(|edge| &edge.object == folded)
                             || fact.refs.contains(folded)
-                            // **A mention in a claim's content** reads as the
+                            // **A mention in a claim's content or details** reads as the
                             // handle the thing wears, as one in prose does.
                             || fact.content.contains(folded.as_str())
+                            || fact
+                                .details
+                                .as_deref()
+                                .is_some_and(|details| details.contains(folded.as_str()))
                             || fact.fields.values().any(names)
                     });
                 holds.then(|| entity.id.clone())

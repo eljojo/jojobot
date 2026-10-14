@@ -790,3 +790,50 @@ async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_o
         .await;
     story.finish().await;
 }
+
+/// **Search follows a rename into a claim whose only mention of the renamed thing
+/// is in its details**, on a thing that has no other mention of it. The holder of
+/// the mention is re-read like any other, so the claim is found by the handle the
+/// thing wears now and no longer by the one it left.
+///
+/// **Paired**: before the rename the old slug finds the claim, so the negative
+/// afterwards is a claim that moved and not one the query never reached.
+#[tokio::test]
+async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_its_details() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("place:shelbyvile", "Shelbyville").await;
+    s.add("person:homer", "Homer").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:homer",
+            "content": "keeps a tackle box",
+            "details": "left it on the docks of @place:shelbyvile last autumn",
+            "provenance": "testimony",
+        }),
+    )
+    .await;
+
+    s.call("search", json!({"query": "shelbyvile"}))
+        .await
+        .says("tackle");
+
+    s.call(
+        "rename_entity",
+        json!({"handle": "place:shelbyvile", "to": "place:shelbyville"}),
+    )
+    .await;
+
+    s.call("search", json!({"query": "shelbyville"}))
+        .await
+        .says("tackle");
+    s.call("search", json!({"query": "shelbyvile"}))
+        .await
+        .never_says("tackle");
+
+    s.wrap("renamed a place and searched for a claim that names it in its details")
+        .await;
+    story.finish().await;
+}
