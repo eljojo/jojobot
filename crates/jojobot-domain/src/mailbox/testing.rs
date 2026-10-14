@@ -16,6 +16,7 @@ use jiff::Timestamp;
 
 use crate::memory::{EntityId, guard as memory_guard};
 
+use super::event::{Change, next_event};
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageEvent, MessageEventKind, MessageId, MessageState, NOTES_BUDGET, NewMessage, Quarantined,
@@ -209,12 +210,17 @@ impl InMemoryMailboxes {
         MessageId(next.to_string())
     }
 
-    /// **Keep one change of state**, numbered among the message's own, so a
-    /// history reads in the order the changes happened. The number on `event` is
-    /// replaced.
-    fn keep_event(&self, id: &MessageId, mut event: MessageEvent) {
+    /// **Keep one change of state**, made by [`next_event`] and numbered among the
+    /// message's own, so a history reads in the order the changes happened.
+    fn keep_event(&self, id: &MessageId, change: Change<'_>) {
         let mut events = self.events.lock().expect("event lock");
-        event.ordinal = events.iter().filter(|(held, _)| held == id).count() + 1;
+        let event = next_event(
+            events
+                .iter()
+                .filter(|(held, _)| held == id)
+                .map(|(_, event)| event.ordinal),
+            change,
+        );
         events.push((id.clone(), event));
     }
 
@@ -606,16 +612,7 @@ impl Mailboxes for InMemoryMailboxes {
         for id in &moved_to_read {
             self.keep_event(
                 id,
-                MessageEvent {
-                    ordinal: 0,
-                    kind: MessageEventKind::Read,
-                    at: acting.at,
-                    by_session: acting.session.map(str::to_string),
-                    by_box: Some(name.clone()),
-                    prior_state: MessageState::New,
-                    notes: None,
-                    reason: None,
-                },
+                Change::new(MessageEventKind::Read, acting, name, MessageState::New),
             );
         }
         // Oldest **by the instant the sender declared**, not by the order this
@@ -693,16 +690,12 @@ impl Mailboxes for InMemoryMailboxes {
             message.taken_by = Some(TakenBy::Reading);
             self.keep_event(
                 id,
-                MessageEvent {
-                    ordinal: 0,
-                    kind: MessageEventKind::Read,
-                    at: acting.at,
-                    by_session: acting.session.map(str::to_string),
-                    by_box: Some(message.mailbox.clone()),
-                    prior_state: MessageState::New,
-                    notes: None,
-                    reason: None,
-                },
+                Change::new(
+                    MessageEventKind::Read,
+                    acting,
+                    &message.mailbox,
+                    MessageState::New,
+                ),
             );
         }
         let message = message.clone();
@@ -736,16 +729,8 @@ impl Mailboxes for InMemoryMailboxes {
         }
         self.keep_event(
             id,
-            MessageEvent {
-                ordinal: 0,
-                kind: MessageEventKind::Processed,
-                at: acting.at,
-                by_session: acting.session.map(str::to_string),
-                by_box: Some(message.mailbox.clone()),
-                prior_state: prior,
-                notes: given,
-                reason: None,
-            },
+            Change::new(MessageEventKind::Processed, acting, &message.mailbox, prior)
+                .with_notes(notes),
         );
         let message = message.clone();
         Ok(read_as_stored(&messages, &message))
@@ -782,16 +767,7 @@ impl Mailboxes for InMemoryMailboxes {
         let at = acting.at;
         self.keep_event(
             id,
-            MessageEvent {
-                ordinal: 0,
-                kind: MessageEventKind::Quarantined,
-                at: acting.at,
-                by_session: acting.session.map(str::to_string),
-                by_box: Some(by.clone()),
-                prior_state: prior,
-                notes: None,
-                reason: Some(reason.clone()),
-            },
+            Change::new(MessageEventKind::Quarantined, acting, by, prior).with_reason(&reason),
         );
         self.quarantined.lock().expect("quarantine lock").push((
             mailbox.clone(),

@@ -28,8 +28,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use jiff::Timestamp;
+use jojobot_domain::mailbox::event::{Change, next_event};
 use jojobot_domain::mailbox::{
-    Acting, Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
+    Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageEvent, MessageEventKind, MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup,
     QUARANTINE_STATE_TOKEN, Quarantined, StateCounts, SupersedeRefusal, Superseded, TakenBy, guard,
     normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
@@ -683,27 +684,27 @@ impl DoltMailboxes {
 /// written that way: a state with no account of how it came about, or the
 /// reverse, is a record that says two things.
 ///
-/// The number is the next for the message, asked optionally and counted from
-/// zero: this store answers an aggregate over no row with no row. The number on
-/// `event` is replaced.
+/// The event is made by [`next_event`] from the ordinals the message holds, so
+/// this store decides nothing about how an event is numbered or worded.
 async fn append_message_event(
     tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     id: &MessageId,
-    event: &MessageEvent,
+    change: Change<'_>,
 ) -> Result<(), MailboxError> {
-    let highest: Option<Option<i64>> =
-        sqlx::query_scalar("SELECT MAX(ordinal) FROM message_event WHERE message_id = ?")
+    let held: Vec<i32> =
+        sqlx::query_scalar("SELECT ordinal FROM message_event WHERE message_id = ?")
             .bind(id.as_str())
-            .fetch_optional(&mut **tx)
+            .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
+    let event = next_event(held.into_iter().map(|n| n.max(0) as usize), change);
     sqlx::query(
         "INSERT INTO message_event
            (message_id, ordinal, kind, at, by_session, by_box, prior_state, notes, reason)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.as_str())
-    .bind(highest.flatten().unwrap_or(0) + 1)
+    .bind(event.ordinal as i64)
     .bind(event.kind.as_token())
     .bind(event.at.to_string())
     .bind(event.by_session.as_deref())
@@ -715,26 +716,6 @@ async fn append_message_event(
     .await
     .map_err(store)?;
     Ok(())
-}
-
-/// The event a change of `kind` made at `acting` through `by_box` leaves, before
-/// it is numbered.
-fn event(
-    kind: MessageEventKind,
-    acting: Acting<'_>,
-    by_box: &MailboxName,
-    prior_state: MessageState,
-) -> MessageEvent {
-    MessageEvent {
-        ordinal: 0,
-        kind,
-        at: acting.at,
-        by_session: acting.session.map(str::to_string),
-        by_box: Some(by_box.clone()),
-        prior_state,
-        notes: None,
-        reason: None,
-    }
 }
 
 /// One stored message event, as the domain's record. A cell this build cannot
@@ -1226,7 +1207,7 @@ impl Mailboxes for DoltMailboxes {
                 append_message_event(
                     &mut tx,
                     &message.id,
-                    &event(MessageEventKind::Read, acting, name, MessageState::New),
+                    Change::new(MessageEventKind::Read, acting, name, MessageState::New),
                 )
                 .await?;
             }
@@ -1320,7 +1301,7 @@ impl Mailboxes for DoltMailboxes {
             append_message_event(
                 &mut tx,
                 id,
-                &event(
+                Change::new(
                     MessageEventKind::Read,
                     acting,
                     &message.mailbox,
@@ -1358,6 +1339,8 @@ impl Mailboxes for DoltMailboxes {
     ) -> Result<Message, MailboxError> {
         validate_message_id(id)?;
         validate_notes(notes)?;
+        // What the call sent, before `notes` below holds what the message keeps.
+        let sent = notes;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Message(id)).await?;
         let card =
@@ -1381,15 +1364,13 @@ impl Mailboxes for DoltMailboxes {
         append_message_event(
             &mut tx,
             id,
-            &MessageEvent {
-                notes: given,
-                ..event(
-                    MessageEventKind::Processed,
-                    acting,
-                    &message.mailbox,
-                    message.state,
-                )
-            },
+            Change::new(
+                MessageEventKind::Processed,
+                acting,
+                &message.mailbox,
+                message.state,
+            )
+            .with_notes(sent),
         )
         .await?;
         let message = Message {
@@ -1444,10 +1425,8 @@ impl Mailboxes for DoltMailboxes {
         append_message_event(
             &mut tx,
             id,
-            &MessageEvent {
-                reason: Some(reason.clone()),
-                ..event(MessageEventKind::Quarantined, acting, by, message.state)
-            },
+            Change::new(MessageEventKind::Quarantined, acting, by, message.state)
+                .with_reason(&reason),
         )
         .await?;
         tx.commit().await.map_err(store)?;

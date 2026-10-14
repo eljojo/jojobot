@@ -464,6 +464,10 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
         vec![MessageEventKind::Read, MessageEventKind::Quarantined]
     );
     assert_eq!(kinds(2), vec![MessageEventKind::Read]);
+    let ordinals = |n: usize| -> Vec<usize> { asked[n].1.iter().map(|e| e.ordinal).collect() };
+    assert_eq!(ordinals(0), vec![1, 2]);
+    assert_eq!(ordinals(1), vec![1, 2]);
+    assert_eq!(ordinals(2), vec![1]);
     assert_eq!(asked[0].1[1].notes.as_deref(), Some("done"));
     assert_eq!(asked[0].1[1].by_session.as_deref(), Some("run2"));
     assert_eq!(asked[0].1[1].prior_state, MessageState::Read);

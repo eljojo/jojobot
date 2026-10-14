@@ -31,10 +31,11 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
+use jojobot_domain::mailbox::event::{Change, next_event};
 use jojobot_domain::mailbox::{
-    Acting, Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
+    Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageEvent, MessageEventKind, MessageId, MessageState, NewMessage, Quarantined, StateCounts,
-    Superseded, TakenBy, normalize_notes, validate_mailbox_name, validate_message_id,
+    Superseded, TakenBy, validate_mailbox_name, validate_message_id,
 };
 use jojobot_domain::memory::EntityId;
 
@@ -110,29 +111,12 @@ impl Image {
         Ok(self.events.get(id).cloned().unwrap_or_default())
     }
 
-    /// Append the event a change of state left, numbered as the store numbers
-    /// it: one past the highest the message holds.
-    fn record(
-        &mut self,
-        id: &MessageId,
-        kind: MessageEventKind,
-        acting: Acting<'_>,
-        by_box: &MailboxName,
-        prior_state: MessageState,
-    ) -> &mut MessageEvent {
+    /// Append the event a change of state left. [`next_event`] makes it, as it
+    /// does for the store, so the number and the wording are not decided here.
+    fn record(&mut self, id: &MessageId, change: Change<'_>) {
         let events = self.events.entry(id.clone()).or_default();
-        let ordinal = events.iter().map(|e| e.ordinal).max().unwrap_or(0) + 1;
-        events.push(MessageEvent {
-            ordinal,
-            kind,
-            at: acting.at,
-            by_session: acting.session.map(str::to_string),
-            by_box: Some(by_box.clone()),
-            prior_state,
-            notes: None,
-            reason: None,
-        });
-        events.last_mut().expect("the event was just pushed")
+        let event = next_event(events.iter().map(|e| e.ordinal), change);
+        events.push(event);
     }
 
     /// Hold `message` as the store answered it, in the place of the one of that
@@ -468,10 +452,7 @@ impl Mailboxes for FoldedMailboxes {
                         let kept = image.put(d.message.clone());
                         image.record(
                             &d.message.id,
-                            MessageEventKind::Read,
-                            acting,
-                            name,
-                            MessageState::New,
+                            Change::new(MessageEventKind::Read, acting, name, MessageState::New),
                         );
                         kept
                     })
@@ -492,10 +473,12 @@ impl Mailboxes for FoldedMailboxes {
             if !delivered.seen_before {
                 image.record(
                     id,
-                    MessageEventKind::Read,
-                    acting,
-                    &delivered.message.mailbox,
-                    MessageState::New,
+                    Change::new(
+                        MessageEventKind::Read,
+                        acting,
+                        &delivered.message.mailbox,
+                        MessageState::New,
+                    ),
                 );
             }
             image.put(delivered.message.clone())
@@ -517,15 +500,16 @@ impl Mailboxes for FoldedMailboxes {
                 return false;
             };
             let prior = image.messages[place].state;
-            image
-                .record(
-                    id,
+            image.record(
+                id,
+                Change::new(
                     MessageEventKind::Processed,
                     acting,
                     &processed.mailbox,
                     prior,
                 )
-                .notes = normalize_notes(notes);
+                .with_notes(notes),
+            );
             image.put(processed.clone())
         })
         .await;

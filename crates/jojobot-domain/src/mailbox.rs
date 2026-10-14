@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::memory::{EntityId, guard as memory_guard};
 use crate::text;
 
+pub mod event;
 pub mod guard;
 pub mod mention;
 pub mod quote;
