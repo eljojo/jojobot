@@ -16,9 +16,9 @@
 //!
 //! **Only a handle a write was filed under, and nothing else.** A handle the
 //! build still supplies keeps its writes under its text. A key with no colon is
-//! no handle: it is a badge whose row is gone, which is other damage. A badge a
-//! row wears, a handle a thing wore before a rename, and a key whose kind this
-//! build does not declare are none of them an orphan to adopt.
+//! no handle, and a badge never has one: a key like that is a badge whose row is
+//! gone, which is other damage. A handle a thing wore before a rename, and a key
+//! whose kind this build does not declare, are not an orphan to adopt either.
 
 use std::collections::BTreeSet;
 
@@ -50,7 +50,6 @@ impl DoltMemory {
              ) AS written
              WHERE entity LIKE '%:%'
                AND entity NOT IN (SELECT id FROM entity)
-               AND entity NOT IN (SELECT badge FROM entity WHERE badge IS NOT NULL)
                AND entity NOT IN (SELECT former_handle FROM entity_former_handle)
              ORDER BY entity",
         )
