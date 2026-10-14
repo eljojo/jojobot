@@ -372,6 +372,15 @@ impl Mailboxes for Mentioning {
         }
         Ok(events)
     }
+
+    /// **As the store holds them.** The only caller is the image under this
+    /// decorator, which keeps what the store wrote and is rendered here on the
+    /// way out by [`Self::message_history`].
+    async fn scan_message_events(
+        &self,
+    ) -> Result<Vec<(MessageId, Vec<MessageEvent>)>, MailboxError> {
+        self.inner.scan_message_events().await
+    }
 }
 
 #[cfg(test)]

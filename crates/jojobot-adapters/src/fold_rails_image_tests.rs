@@ -42,6 +42,7 @@ const SWITCHED_MAIL: &[&str] = &[
     "sent_by",
     "read_mailbox",
     "read_mailbox",
+    "message_history",
 ];
 
 /// The teaching calls served from memory once the ledger has loaded.

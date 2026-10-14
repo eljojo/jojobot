@@ -49,6 +49,7 @@ const SWITCHED_MAIL: &[&str] = &[
     "sent_by",
     "read_mailbox",
     "read_mailbox",
+    "message_history",
 ];
 
 /// The teaching calls the image serves.
@@ -346,7 +347,127 @@ async fn a_damaged_card_stays_named_by_its_box_while_the_board_moves() {
         format!("{:?}", folded.scan_messages().await),
         format!("{:?}", store.scan_messages().await),
     );
+    let damaged = jojobot_domain::mailbox::MessageId("damaged1".into());
+    assert_eq!(
+        format!("{:?}", folded.message_history(&damaged).await),
+        format!("{:?}", store.message_history(&damaged).await),
+        "the account of a card the store cannot read is the store's"
+    );
     server.stop().await;
+}
+
+/// **A boot reads the events a store already holds, and a history then answers
+/// with the store gone.** The events were written before the image existed, as
+/// the deployed build's store holds them. The store is stopped after the boot,
+/// so a history that reached it would fail, and the counted wrapper says no
+/// read was made.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_gone() {
+    use jojobot_domain::mailbox::{
+        Acting, MailboxName, Mailboxes, MessageEventKind, MessageState, NewMessage, TakenBy,
+    };
+    let scratch = Scratch::new("history-boot");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database(&server, "history_boot").await;
+    let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)));
+    let at = |second: i64| {
+        jiff::Timestamp::from_second(1_790_000_000 + second).expect("a valid instant")
+    };
+    let inbox = MailboxName("gamma".into());
+    store
+        .create_mailbox(&inbox, &EntityId("bot:gamma".into()), None)
+        .await
+        .expect("create")
+        .written()
+        .expect("not blocked");
+    let mut ids = Vec::new();
+    for (n, body) in ["one", "two", "three"].iter().enumerate() {
+        let filed = store
+            .post_message(NewMessage {
+                mailbox: inbox.clone(),
+                body: (*body).into(),
+                subject: None,
+                sender: "delta".into(),
+                sent_at: at(n as i64),
+                in_reply_to: None,
+                supersedes: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("post")
+            .written()
+            .expect("not blocked");
+        ids.push(filed.id);
+    }
+    store
+        .read_mailbox(&inbox, TakenBy::Reading, Acting::by("run1", at(10)))
+        .await
+        .expect("delivery")
+        .written()
+        .expect("not blocked");
+    store
+        .mark_processed(&ids[0], Some("done"), Acting::by("run2", at(20)))
+        .await
+        .expect("processed");
+    store
+        .quarantine(
+            &ids[1],
+            &inbox,
+            "  not trusted  ",
+            Acting::by("run3", at(30)),
+        )
+        .await
+        .expect("quarantine");
+
+    let counted = Arc::new(CountedMailboxes::new(store.clone()));
+    let folded = FoldedMailboxes::new(counted.clone());
+    folded.rebuild().await.expect("the image loads");
+    let mut asked = Vec::new();
+    for id in &ids {
+        asked.push((
+            id.clone(),
+            store.message_history(id).await.expect("the store answers"),
+        ));
+    }
+    server.stop().await;
+    counted.calls.reset();
+
+    for (id, from_store) in &asked {
+        assert_eq!(
+            &folded
+                .message_history(id)
+                .await
+                .expect("the image answers with the store gone"),
+            from_store,
+            "history of {id:?}"
+        );
+    }
+    assert_eq!(
+        counted.calls.reads(),
+        0,
+        "a history reached the store: {:?}",
+        counted.calls.seen()
+    );
+    // Pinned from what the store wrote, not from the comparison above: the
+    // delivered and processed message has both events, the quarantined one
+    // its reason, and the delivered-only one a single read.
+    let kinds = |n: usize| -> Vec<MessageEventKind> { asked[n].1.iter().map(|e| e.kind).collect() };
+    assert_eq!(
+        kinds(0),
+        vec![MessageEventKind::Read, MessageEventKind::Processed]
+    );
+    assert_eq!(
+        kinds(1),
+        vec![MessageEventKind::Read, MessageEventKind::Quarantined]
+    );
+    assert_eq!(kinds(2), vec![MessageEventKind::Read]);
+    assert_eq!(asked[0].1[1].notes.as_deref(), Some("done"));
+    assert_eq!(asked[0].1[1].by_session.as_deref(), Some("run2"));
+    assert_eq!(asked[0].1[1].prior_state, MessageState::Read);
+    assert_eq!(asked[1].1[1].reason.as_deref(), Some("not trusted"));
 }
 
 /// **A run the store cannot read leaves no image, and the reads stay correct**

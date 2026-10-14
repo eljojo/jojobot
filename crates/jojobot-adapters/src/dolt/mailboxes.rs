@@ -737,6 +737,34 @@ fn event(
     }
 }
 
+/// One stored message event, as the domain's record. A cell this build cannot
+/// read is damage and is named.
+fn event_from_row(row: &sqlx::mysql::MySqlRow) -> Result<MessageEvent, MailboxError> {
+    let damaged = |what: &str| {
+        MailboxError::Store(format!("a stored message event could not be read: {what}"))
+    };
+    let kind: String = row.try_get("kind").map_err(store)?;
+    let at: String = row.try_get("at").map_err(store)?;
+    let prior: String = row.try_get("prior_state").map_err(store)?;
+    Ok(MessageEvent {
+        ordinal: row.try_get::<i32, _>("ordinal").map_err(store)?.max(0) as usize,
+        kind: MessageEventKind::from_token(&kind)
+            .ok_or_else(|| damaged("its kind is not one this build knows"))?,
+        at: at
+            .parse()
+            .map_err(|_| damaged("its moment is not an instant"))?,
+        by_session: row.try_get("by_session").map_err(store)?,
+        by_box: row
+            .try_get::<Option<String>, _>("by_box")
+            .map_err(store)?
+            .map(MailboxName),
+        prior_state: MessageState::from_token(&prior)
+            .ok_or_else(|| damaged("its prior state is not one this build knows"))?,
+        notes: row.try_get("notes").map_err(store)?,
+        reason: row.try_get("reason").map_err(store)?,
+    })
+}
+
 fn store(e: sqlx::Error) -> MailboxError {
     if e.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
@@ -1452,33 +1480,31 @@ impl Mailboxes for DoltMailboxes {
         .await
         .map_err(store)?;
         tx.commit().await.map_err(store)?;
-        let damaged = |what: &str| {
-            MailboxError::Store(format!("a stored message event could not be read: {what}"))
-        };
-        let mut history = Vec::with_capacity(rows.len());
+        rows.iter().map(event_from_row).collect()
+    }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<Vec<(MessageId, Vec<MessageEvent>)>, MailboxError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let rows = sqlx::query(
+            "SELECT message_id, ordinal, kind, at, by_session, by_box, prior_state, notes, reason
+             FROM message_event ORDER BY message_id, ordinal",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        let mut all: Vec<(MessageId, Vec<MessageEvent>)> = Vec::new();
         for row in &rows {
-            let kind: String = row.try_get("kind").map_err(store)?;
-            let at: String = row.try_get("at").map_err(store)?;
-            let prior: String = row.try_get("prior_state").map_err(store)?;
-            history.push(MessageEvent {
-                ordinal: row.try_get::<i32, _>("ordinal").map_err(store)?.max(0) as usize,
-                kind: MessageEventKind::from_token(&kind)
-                    .ok_or_else(|| damaged("its kind is not one this build knows"))?,
-                at: at
-                    .parse()
-                    .map_err(|_| damaged("its moment is not an instant"))?,
-                by_session: row.try_get("by_session").map_err(store)?,
-                by_box: row
-                    .try_get::<Option<String>, _>("by_box")
-                    .map_err(store)?
-                    .map(MailboxName),
-                prior_state: MessageState::from_token(&prior)
-                    .ok_or_else(|| damaged("its prior state is not one this build knows"))?,
-                notes: row.try_get("notes").map_err(store)?,
-                reason: row.try_get("reason").map_err(store)?,
-            });
+            let id = MessageId(row.try_get::<String, _>("message_id").map_err(store)?);
+            let event = event_from_row(row)?;
+            match all.last_mut() {
+                Some((held, events)) if *held == id => events.push(event),
+                _ => all.push((id, vec![event])),
+            }
         }
-        Ok(history)
+        Ok(all)
     }
 }
 

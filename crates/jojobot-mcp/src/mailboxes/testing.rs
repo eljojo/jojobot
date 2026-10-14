@@ -436,6 +436,20 @@ impl mailbox::Mailboxes for DownMailboxes {
             "the mailbox world is down".into(),
         ))
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        Err(jojobot_domain::mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -521,6 +535,18 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     {
         self.0.message_history(id).await
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        self.0.scan_message_events().await
+    }
 }
 
 #[async_trait]
@@ -605,6 +631,18 @@ impl mailbox::Mailboxes for CountingMailboxes {
     ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
     {
         self.inner.message_history(id).await
+    }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        self.inner.scan_message_events().await
     }
 }
 
@@ -692,5 +730,17 @@ impl mailbox::Mailboxes for RenamingMailboxes {
     ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
     {
         self.inner.message_history(id).await
+    }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        self.inner.scan_message_events().await
     }
 }

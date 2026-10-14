@@ -3147,6 +3147,18 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
     {
         unimplemented!("this double only scans messages")
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        unimplemented!("this double only scans messages")
+    }
 }
 
 /// The mail half's twin of the corpus-failure race above. A board read
@@ -7593,6 +7605,18 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
     ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
     {
         self.inner.message_history(id).await
+    }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        self.inner.scan_message_events().await
     }
 }
 

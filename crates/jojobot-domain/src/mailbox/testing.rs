@@ -837,6 +837,27 @@ impl Mailboxes for InMemoryMailboxes {
         kept.sort_by_key(|event| event.ordinal);
         Ok(kept)
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<Vec<(MessageId, Vec<MessageEvent>)>, MailboxError> {
+        let held = self.events.lock().expect("event lock");
+        let mut ids: Vec<&MessageId> = held.iter().map(|(id, _)| id).collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids
+            .into_iter()
+            .map(|id| {
+                let mut events: Vec<MessageEvent> = held
+                    .iter()
+                    .filter(|(held, _)| held == id)
+                    .map(|(_, event)| event.clone())
+                    .collect();
+                events.sort_by_key(|event| event.ordinal);
+                (id.clone(), events)
+            })
+            .collect())
+    }
 }
 
 /// An owner handle as the entity record the near-miss screen needs.
@@ -3306,6 +3327,51 @@ pub mod contract {
         );
     }
 
+    /// **One scan lists the events of every message that has any, each as its
+    /// own history reads.** A message nothing has changed is not listed, and the
+    /// one that was read and then processed has both events in order.
+    pub async fn a_scan_of_events_lists_each_changed_message_as_its_history_does(
+        store: &dyn Mailboxes,
+    ) {
+        use crate::mailbox::{Acting, MessageEventKind};
+        create(store, "inbox").await;
+        let first = post(store, "inbox", "alpha", "one", 0).await;
+        let second = post(store, "inbox", "alpha", "two", 1).await;
+        read(store, "inbox").await;
+        store
+            .mark_processed(&first.id, Some("done"), Acting::by("run-a", at(9)))
+            .await
+            .expect("the message is processed");
+        let untouched = post(store, "inbox", "alpha", "three", 2).await;
+
+        let scanned = store.scan_message_events().await.expect("the events scan");
+
+        let mut listed: Vec<&MessageId> = scanned.iter().map(|(id, _)| id).collect();
+        listed.sort();
+        let mut changed = vec![&first.id, &second.id];
+        changed.sort();
+        assert_eq!(
+            listed, changed,
+            "the message nothing changed has no entry: {scanned:?}"
+        );
+        assert!(!listed.contains(&&untouched.id));
+        for (id, events) in &scanned {
+            assert_eq!(
+                events,
+                &store.message_history(id).await.expect("the history reads"),
+                "the scan and the history of {id:?} disagree"
+            );
+        }
+        let (_, of_first) = scanned
+            .iter()
+            .find(|(id, _)| id == &first.id)
+            .expect("the processed message is listed");
+        assert_eq!(
+            of_first.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            vec![MessageEventKind::Read, MessageEventKind::Processed]
+        );
+    }
+
     pub async fn run_all<S, F, Fut>(fresh: F) -> ()
     where
         S: Mailboxes,
@@ -3366,5 +3432,6 @@ pub mod contract {
         a_delivery_records_one_read_per_message_it_moved(&fresh().await).await;
         a_quarantine_keeps_the_state_the_message_was_set_aside_from(&fresh().await).await;
         the_history_of_an_unknown_message_is_a_miss(&fresh().await).await;
+        a_scan_of_events_lists_each_changed_message_as_its_history_does(&fresh().await).await;
     }
 }

@@ -1224,4 +1224,16 @@ impl Mailboxes for IndexedMailboxes {
     {
         self.inner.message_history(id).await
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        self.inner.scan_message_events().await
+    }
 }

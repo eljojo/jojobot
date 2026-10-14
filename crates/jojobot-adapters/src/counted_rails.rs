@@ -334,6 +334,19 @@ impl Mailboxes for CountedMailboxes {
         self.calls.hit("message_history", Kind::Read);
         self.inner.message_history(id).await
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(
+            jojobot_domain::mailbox::MessageId,
+            Vec<jojobot_domain::mailbox::MessageEvent>,
+        )>,
+        jojobot_domain::mailbox::MailboxError,
+    > {
+        self.calls.hit("scan_message_events", Kind::Read);
+        self.inner.scan_message_events().await
+    }
 }
 
 /// A teaching ledger that counts the calls made to it.
@@ -417,6 +430,22 @@ mod tests {
             .expect("the history reads");
 
         assert_eq!(counted.calls.seen().get("message_history"), Some(&1));
+        assert_eq!(counted.calls.reads(), 1, "{:?}", counted.calls.seen());
+        assert_eq!(counted.calls.writes(), 0);
+    }
+
+    /// **The one read of every message's events is counted as a read**, for the
+    /// reason the history of one message is.
+    #[tokio::test]
+    async fn a_scan_of_every_messages_events_is_counted_as_a_read() {
+        let counted = CountedMailboxes::new(Arc::new(InMemoryMailboxes::knowing_any_owner()));
+
+        counted
+            .scan_message_events()
+            .await
+            .expect("the events scan");
+
+        assert_eq!(counted.calls.seen().get("scan_message_events"), Some(&1));
         assert_eq!(counted.calls.reads(), 1, "{:?}", counted.calls.seen());
         assert_eq!(counted.calls.writes(), 0);
     }

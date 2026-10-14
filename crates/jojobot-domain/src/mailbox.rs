@@ -1156,6 +1156,15 @@ pub trait Mailboxes: Send + Sync {
     /// message is answered**: its events are the account of why it left the
     /// board, so this does not refuse it the way a delivery does.
     async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError>;
+
+    /// **Every message's events, in one read**, for the image that answers
+    /// [`Self::message_history`] from memory. One entry for each message that
+    /// has any, its events in the order they happened; a message with none is
+    /// not listed. A read, like the history of one message, and the events are
+    /// as the store holds them: nothing here renders a handle.
+    async fn scan_message_events(
+        &self,
+    ) -> Result<Vec<(MessageId, Vec<MessageEvent>)>, MailboxError>;
 }
 
 /// **Who made a change to a message, and when.**

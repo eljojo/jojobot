@@ -220,6 +220,15 @@ impl Mailboxes for Nudging {
     ) -> Result<Vec<crate::mailbox::MessageEvent>, crate::mailbox::MailboxError> {
         self.inner.message_history(id).await
     }
+
+    async fn scan_message_events(
+        &self,
+    ) -> Result<
+        Vec<(crate::mailbox::MessageId, Vec<crate::mailbox::MessageEvent>)>,
+        crate::mailbox::MailboxError,
+    > {
+        self.inner.scan_message_events().await
+    }
 }
 
 /// **What is sent**, composed from a message and nothing else.

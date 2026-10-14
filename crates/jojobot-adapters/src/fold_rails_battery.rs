@@ -483,6 +483,26 @@ impl MailRails<'_> {
             )
             .await;
         }
+        // **The account of every change of state**, for every message on the
+        // board and for the ids that name none. The ids are `ids` above, so a
+        // message the store has quarantined and no longer lists is asked after
+        // too, through the boxes' own record of it.
+        let mut asked = ids.clone();
+        for mailbox in d.list_mailboxes().await.expect("the store lists") {
+            asked.extend(mailbox.quarantined);
+        }
+        for id in &asked {
+            check(
+                when,
+                "message_history",
+                id.as_str(),
+                calls,
+                s,
+                f.message_history(id),
+                d.message_history(id),
+            )
+            .await;
+        }
         let mut sets: Vec<Vec<&str>> = vec![vec![], vec!["nobody-of-that-name"]];
         sets.extend(senders.iter().map(|s| vec![s.as_str()]));
         if senders.len() > 1 {

@@ -5,12 +5,15 @@
 //! memory and answers a read from there. [`FoldedMailboxes`] wraps a
 //! [`Mailboxes`] and, once [`rebuild`](FoldedMailboxes::rebuild) has run, serves
 //! the reads of the port from an image filled by the store's own reads: the
-//! boxes with their owners, counts and unreadable cards, and every readable
-//! message in the order the store returns them.
+//! boxes with their owners, counts and unreadable cards, every readable
+//! message in the order the store returns them, and every message's events.
 //!
 //! **A write goes to the store first, and the image takes the answer the store
 //! gave.** A message posted, a delivery, a message marked processed: each comes
-//! back from the store as it stored it, and the image holds that. A write that
+//! back from the store as it stored it, and the image holds that. **A change of
+//! state also leaves an event, which the image appends in the same step**, from
+//! the same call and the state it held before, because the store's answer does
+//! not carry it and a write must not read the store to follow itself. A write that
 //! can change many cards at once or the shape of a box (creating a box,
 //! repointing an owner, a quarantine) is rare, and the image is filled again
 //! after it.
@@ -29,9 +32,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use jojobot_domain::mailbox::{
-    Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, Quarantined, StateCounts, Superseded, TakenBy,
-    validate_mailbox_name,
+    Acting, Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
+    MessageEvent, MessageEventKind, MessageId, MessageState, NewMessage, Quarantined, StateCounts,
+    Superseded, TakenBy, normalize_notes, validate_mailbox_name, validate_message_id,
 };
 use jojobot_domain::memory::EntityId;
 
@@ -52,10 +55,17 @@ struct Image {
     messages: Vec<Message>,
     /// Where each message sits in `messages`.
     at: HashMap<MessageId, usize>,
+    /// Every change of state of every message that has one, oldest first. A
+    /// message the store has quarantined is here and not in `messages`.
+    events: HashMap<MessageId, Vec<MessageEvent>>,
 }
 
 impl Image {
-    fn of(boxes: Vec<Mailbox>, messages: Vec<Message>) -> Self {
+    fn of(
+        boxes: Vec<Mailbox>,
+        messages: Vec<Message>,
+        events: Vec<(MessageId, Vec<MessageEvent>)>,
+    ) -> Self {
         let at = messages
             .iter()
             .enumerate()
@@ -73,6 +83,7 @@ impl Image {
                 .collect(),
             messages,
             at,
+            events: events.into_iter().collect(),
         }
     }
 
@@ -81,6 +92,47 @@ impl Image {
             .iter_mut()
             .find(|b| &b.name == name)
             .map(|b| &mut b.counts)
+    }
+
+    /// **The account of a message's changes**, as `message_history` answers it:
+    /// the shape check first, then the events of a message the board holds or
+    /// the boxes name as set aside, and the refusal the store gives for an id
+    /// that names neither.
+    fn history_of(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError> {
+        validate_message_id(id)?;
+        let known =
+            self.at.contains_key(id) || self.boxes.iter().any(|b| b.quarantined.contains(id));
+        if !known {
+            return Err(MailboxError::UnknownMessage {
+                attempted: id.to_string(),
+            });
+        }
+        Ok(self.events.get(id).cloned().unwrap_or_default())
+    }
+
+    /// Append the event a change of state left, numbered as the store numbers
+    /// it: one past the highest the message holds.
+    fn record(
+        &mut self,
+        id: &MessageId,
+        kind: MessageEventKind,
+        acting: Acting<'_>,
+        by_box: &MailboxName,
+        prior_state: MessageState,
+    ) -> &mut MessageEvent {
+        let events = self.events.entry(id.clone()).or_default();
+        let ordinal = events.iter().map(|e| e.ordinal).max().unwrap_or(0) + 1;
+        events.push(MessageEvent {
+            ordinal,
+            kind,
+            at: acting.at,
+            by_session: acting.session.map(str::to_string),
+            by_box: Some(by_box.clone()),
+            prior_state,
+            notes: None,
+            reason: None,
+        });
+        events.last_mut().expect("the event was just pushed")
     }
 
     /// Hold `message` as the store answered it, in the place of the one of that
@@ -233,13 +285,14 @@ impl FoldedMailboxes {
         let read = async {
             let boxes = self.inner.list_mailboxes().await?;
             let messages = self.inner.scan_messages().await?;
-            Ok::<_, MailboxError>((boxes, messages))
+            let events = self.inner.scan_message_events().await?;
+            Ok::<_, MailboxError>((boxes, messages, events))
         }
         .await;
         match read {
-            Ok((boxes, messages)) => {
+            Ok((boxes, messages, events)) => {
                 let held = messages.len();
-                *self.image.write().expect("fold lock") = Some(Image::of(boxes, messages));
+                *self.image.write().expect("fold lock") = Some(Image::of(boxes, messages, events));
                 self.wanted.store(true, Ordering::SeqCst);
                 Ok(held)
             }
@@ -411,7 +464,17 @@ impl Mailboxes for FoldedMailboxes {
                     .messages
                     .iter()
                     .filter(|d| !d.seen_before)
-                    .all(|d| image.put(d.message.clone()))
+                    .all(|d| {
+                        let kept = image.put(d.message.clone());
+                        image.record(
+                            &d.message.id,
+                            MessageEventKind::Read,
+                            acting,
+                            name,
+                            MessageState::New,
+                        );
+                        kept
+                    })
             })
             .await;
         }
@@ -425,8 +488,19 @@ impl Mailboxes for FoldedMailboxes {
     ) -> Result<Delivered, MailboxError> {
         let _gate = self.writing.lock().await;
         let delivered = self.inner.read_message(id, acting).await?;
-        self.follow("read_message", |image| image.put(delivered.message.clone()))
-            .await;
+        self.follow("read_message", |image| {
+            if !delivered.seen_before {
+                image.record(
+                    id,
+                    MessageEventKind::Read,
+                    acting,
+                    &delivered.message.mailbox,
+                    MessageState::New,
+                );
+            }
+            image.put(delivered.message.clone())
+        })
+        .await;
         Ok(delivered)
     }
 
@@ -438,8 +512,23 @@ impl Mailboxes for FoldedMailboxes {
     ) -> Result<Message, MailboxError> {
         let _gate = self.writing.lock().await;
         let processed = self.inner.mark_processed(id, notes, acting).await?;
-        self.follow("mark_processed", |image| image.put(processed.clone()))
-            .await;
+        self.follow("mark_processed", |image| {
+            let Some(place) = image.at.get(id).copied() else {
+                return false;
+            };
+            let prior = image.messages[place].state;
+            image
+                .record(
+                    id,
+                    MessageEventKind::Processed,
+                    acting,
+                    &processed.mailbox,
+                    prior,
+                )
+                .notes = normalize_notes(notes);
+            image.put(processed.clone())
+        })
+        .await;
         Ok(processed)
     }
 
@@ -456,11 +545,27 @@ impl Mailboxes for FoldedMailboxes {
         Ok(quarantined)
     }
 
-    async fn message_history(
+    async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError> {
+        match self.held(|image| image.history_of(id)) {
+            Some(history) => history,
+            None => self.inner.message_history(id).await,
+        }
+    }
+
+    async fn scan_message_events(
         &self,
-        id: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
-    {
-        self.inner.message_history(id).await
+    ) -> Result<Vec<(MessageId, Vec<MessageEvent>)>, MailboxError> {
+        match self.held(|image| {
+            let mut all: Vec<_> = image
+                .events
+                .iter()
+                .map(|(id, events)| (id.clone(), events.clone()))
+                .collect();
+            all.sort_by(|a, b| a.0.cmp(&b.0));
+            all
+        }) {
+            Some(all) => Ok(all),
+            None => self.inner.scan_message_events().await,
+        }
     }
 }
