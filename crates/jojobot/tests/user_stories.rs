@@ -289,6 +289,9 @@ mod view_inputs;
 mod views;
 #[path = "user_stories/vocabulary.rs"]
 mod vocabulary;
+/// A write's receipt says what the write changed, so the caller never reads it again.
+#[path = "user_stories/what_a_write_changed.rs"]
+mod what_a_write_changed;
 #[path = "user_stories/whats_next.rs"]
 mod whats_next;
 /// Which things, said in one line: `where`, its scope, its order and its refusals.
