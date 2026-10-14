@@ -1,18 +1,21 @@
-# Release QA, run when main moves.
+# Release QA, run by the EM by dispatch on the head about to be pushed.
 #
 # `make prepush` is the whole bar, the real store, every room, the year room,
 # the package build and the flake check. Every step runs and each reports, so
 # a red first step does not hide whether the rest are green.
 #
-# `workflow_dispatch` is here so the job can be exercised on a branch before
-# main moves on this host.
+# It is the gate before a push to the deploy branch, not a run after every
+# carry, so it has no push trigger. Only `workflow_dispatch` starts it.
 name: prepush
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+
+# One run at a time. A started run finishes and reports; a newer request
+# replaces only a queued one.
+concurrency:
+  group: prepush
+  cancel-in-progress: false
 
 jobs:
   prepush:
