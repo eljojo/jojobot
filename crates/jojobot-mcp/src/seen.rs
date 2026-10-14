@@ -265,16 +265,16 @@ pub(crate) fn entities_in(body: &serde_json::Value) -> Vec<Shown> {
                         handle: handle.to_string(),
                         kind: kind.to_string(),
                         name: name.to_string(),
-                        aliases: fields
-                            .get("alternateName")
-                            .and_then(serde_json::Value::as_array)
-                            .map(|all| {
-                                all.iter()
-                                    .filter_map(serde_json::Value::as_str)
-                                    .map(str::to_string)
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
+                        // **Every name the thing answers to**: the aliases a
+                        // caller wrote and the names of what was folded into it.
+                        aliases: ["alternateName", "foldedNames"]
+                            .iter()
+                            .filter_map(|key| fields.get(*key))
+                            .filter_map(serde_json::Value::as_array)
+                            .flatten()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect(),
                         parent: fields
                             .get("parent")
                             .and_then(serde_json::Value::as_str)
@@ -669,5 +669,56 @@ mod tests {
             Some("project:atlas")
         );
         assert_eq!(parent_of("work:atlas-root"), None);
+    }
+
+    /// **A creation that resembles a name only a merge gave the shown survivor is
+    /// asked about.** The survivor is read off what a read serves, which lists the
+    /// names of what was folded into it as `foldedNames` and not among its
+    /// `alternateName`; both are the names the thing answers to. **Paired** with
+    /// the same survivor read without those names, which is not asked about, so
+    /// the question comes from the folded name and not from anything else.
+    #[test]
+    fn a_creation_resembling_a_folded_name_of_a_shown_survivor_is_asked_about() {
+        let survivor = |folded: &[&str]| jojobot_domain::memory::Entity {
+            folded_names: folded.iter().map(|name| name.to_string()).collect(),
+            id: jojobot_domain::memory::EntityId("place:wonder-wharf".into()),
+            kind: EntityKind::PLACE,
+            name: "Wonder Wharf".into(),
+            aliases: vec!["The Wharf".into()],
+            source: "the roster".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        let consult = |entity: &jojobot_domain::memory::Entity| {
+            let body = serde_json::json!({
+                "entities": [crate::memory::wire::entity_json(entity)]
+            });
+            let mut ledger = Ledger::default();
+            ledger.record("s1", entities_in(&body));
+            ledger.consult(
+                "s1",
+                &Creation {
+                    handle: &format!("place:{}", "driftwood-pier"),
+                    kind: "place",
+                    name: "Driftwood Pier",
+                    aliases: &[],
+                    parent: None,
+                },
+                &|_| true,
+            )
+        };
+        let asked = consult(&survivor(&["Old Driftwood"]))
+            .expect("a creation sharing a word with a folded name is asked about");
+        assert_eq!(asked.handle, "place:wonder-wharf");
+        assert_eq!(asked.word, "driftwood");
+        assert_eq!(
+            consult(&survivor(&[])),
+            None,
+            "without the folded name there is no word shared"
+        );
     }
 }
