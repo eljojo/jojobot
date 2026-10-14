@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use jojobot_domain::memory::claim_walk::{ClaimMove, follow_claim};
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FieldAges, FieldBacking,
     FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fields,
@@ -413,22 +414,32 @@ impl Image {
     /// **Where an address went when its thing was merged away**, followed
     /// through a survivor merged later; `None` when no event moved it.
     pub fn moved(&self, address: &FactAddress) -> Option<FactAddress> {
-        let mut at = (
-            self.entity(&address.home)?.id.clone(),
+        let home = self.entity(&address.home)?.id.clone();
+        let (survivor, now) = follow_claim::<_, std::convert::Infallible>(
+            home,
             address.local.clone(),
-        );
-        let mut moved = false;
-        while let Some((survivor, now)) = self.events.iter().find_map(|event| {
-            event
-                .claims
-                .iter()
-                .find(|(was, _)| event.folded == at.0 && was == &at.1)
-                .map(|(_, now)| (event.survivor.clone(), now.clone()))
-        }) {
-            at = (survivor, now);
-            moved = true;
-        }
-        moved.then(|| FactAddress::new(at.0, at.1))
+            |home, local| {
+                Ok(self
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, event)| &event.folded == home)
+                    .filter_map(|(order, event)| {
+                        event
+                            .claims
+                            .iter()
+                            .find(|(was, _)| was == local)
+                            .map(|(_, now)| ClaimMove {
+                                order: order as u64,
+                                survivor: event.survivor.clone(),
+                                survivor_id: now.clone(),
+                            })
+                    })
+                    .collect())
+            },
+        )
+        .unwrap_or_else(|never| match never {})?;
+        Some(FactAddress::new(survivor, now))
     }
 
     pub fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {

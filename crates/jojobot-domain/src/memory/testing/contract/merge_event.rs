@@ -307,3 +307,95 @@ pub async fn an_address_from_before_a_merge_still_names_its_claim<M: Memory>(sto
         "the claim under the survivor is the one taken back: {after:?}"
     );
 }
+
+/// **An address from before two merges names its claim after both**, and the
+/// address the first merge gave it names the same claim. Every store follows a
+/// chain of merges to the same end, which is what the one walk in
+/// [`crate::memory::claim_walk`] gives them.
+pub async fn an_address_from_before_a_chain_of_merges_names_its_claim_at_the_end<M: Memory>(
+    store: &M,
+) {
+    let (middle, first, moved) = fold_one_into_the_other(
+        store,
+        "contract-merge-chain-ned",
+        "contract-merge-chain-edna",
+        "contract-merge-chain-lenny",
+        None,
+    )
+    .await;
+    let last = EntityId::person(format!("person:{}", "contract-merge-chain-burns"));
+    add(
+        store,
+        NewEntity::new(
+            last.clone(),
+            "contract merge chain burns",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    store
+        .merge(
+            &middle,
+            &last,
+            Some("filed twice again"),
+            date(2026, 6, 4),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the second fold lands");
+
+    let first_merge = &store
+        .merge_events(Some(&first))
+        .await
+        .expect("the events read")[0];
+    let second_merge = &store
+        .merge_events(Some(&last))
+        .await
+        .expect("the events read")[0];
+    let given_by_first = |was: &Fact| -> FactId {
+        first_merge
+            .claims
+            .iter()
+            .find(|(old, _)| old == &was.id)
+            .expect("the first merge moved the claim")
+            .1
+            .clone()
+    };
+    let given_by_second = |at: &FactId| -> FactId {
+        second_merge
+            .claims
+            .iter()
+            .find(|(old, _)| old == at)
+            .expect("the second merge moved the claim")
+            .1
+            .clone()
+    };
+    for claim in &moved {
+        let end = FactAddress::new(last.clone(), given_by_second(&given_by_first(claim)));
+        assert_eq!(
+            store
+                .moved_address(&FactAddress::new(first.clone(), claim.id.clone()))
+                .await
+                .expect("reads"),
+            Some(end.clone()),
+            "the address from before both merges"
+        );
+        assert_eq!(
+            store
+                .moved_address(&FactAddress::new(middle.clone(), given_by_first(claim)))
+                .await
+                .expect("reads"),
+            Some(end),
+            "the address the first merge gave it"
+        );
+    }
+    assert_eq!(
+        store
+            .moved_address(&FactAddress::new(first.clone(), FactId("f99".into())))
+            .await
+            .expect("reads"),
+        None,
+        "an address that was never a claim still does not move"
+    );
+}

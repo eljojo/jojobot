@@ -30,6 +30,7 @@
 use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
+use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk};
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
@@ -1326,34 +1327,50 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
-        let Some((mut key, _)) = self.resolve(tx, &address.home).await? else {
+        let Some((key, _)) = self.resolve(tx, &address.home).await? else {
             return Ok(None);
         };
-        let mut local = address.local.as_str().to_string();
-        let mut moved = false;
-        // A merge cannot fold a thing into itself, so the chain ends; the bound
-        // is for a store that has been edited by hand.
-        for _ in 0..64 {
-            let next = sqlx::query(
-                "SELECT survivor, survivor_id FROM merge_event
-                 WHERE folded = ? AND folded_id = ? AND ordinal > 0
-                 ORDER BY merge_no DESC LIMIT 1",
+        let Some(end) = Self::walk_claim(tx, &FactAddress::new(key, address.local.clone())).await?
+        else {
+            return Ok(None);
+        };
+        let handle = self.current_handle(tx, &end.home).await?;
+        Ok(Some(FactAddress::new(handle, end.local)))
+    }
+
+    /// **Where the merge events say a claim went**, by the walk the domain owns:
+    /// this supplies the events that moved the address the walk stands at.
+    /// `None` when no event moved it. `address.home` must be a storage key.
+    async fn walk_claim(
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<Option<FactAddress>, MemoryError> {
+        let mut walk = ClaimWalk::new(address.home.clone(), address.local.clone());
+        loop {
+            let (home, local) = walk.at();
+            let rows = sqlx::query(
+                "SELECT merge_no, survivor, survivor_id FROM merge_event
+                 WHERE folded = ? AND folded_id = ? AND ordinal > 0",
             )
-            .bind(key.as_str())
-            .bind(&local)
-            .fetch_optional(&mut **tx)
+            .bind(home.as_str())
+            .bind(local.as_str())
+            .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
-            let Some(next) = next else { break };
-            key = EntityId(next.try_get::<String, _>("survivor").map_err(store)?);
-            local = next.try_get::<String, _>("survivor_id").map_err(store)?;
-            moved = true;
+            let mut moves = Vec::with_capacity(rows.len());
+            for row in &rows {
+                moves.push(ClaimMove {
+                    order: row.try_get::<i64, _>("merge_no").map_err(store)? as u64,
+                    survivor: EntityId(row.try_get::<String, _>("survivor").map_err(store)?),
+                    survivor_id: FactId(row.try_get::<String, _>("survivor_id").map_err(store)?),
+                });
+            }
+            if !walk.step(moves) {
+                return Ok(walk
+                    .finish()
+                    .map(|(home, local)| FactAddress::new(home, local)));
+            }
         }
-        if !moved {
-            return Ok(None);
-        }
-        let handle = self.current_handle(tx, &key).await?;
-        Ok(Some(FactAddress::new(handle, FactId(local))))
     }
 
     /// **Whether a merge folded this key into another thing.** The events say
@@ -1488,25 +1505,9 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<FactAddress, MemoryError> {
-        let mut at = address.clone();
-        for _ in 0..64 {
-            let next = sqlx::query(
-                "SELECT survivor, survivor_id FROM merge_event
-                 WHERE folded = ? AND folded_id = ? AND ordinal > 0
-                 ORDER BY merge_no DESC LIMIT 1",
-            )
-            .bind(at.home.as_str())
-            .bind(at.local.as_str())
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?;
-            let Some(next) = next else { break };
-            at = FactAddress::new(
-                EntityId(next.try_get::<String, _>("survivor").map_err(store)?),
-                FactId(next.try_get::<String, _>("survivor_id").map_err(store)?),
-            );
-        }
-        Ok(at)
+        Ok(Self::walk_claim(tx, address)
+            .await?
+            .unwrap_or_else(|| address.clone()))
     }
 
     /// **The handle a pointer's target answers to now**, following a merge that

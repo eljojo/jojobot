@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use jiff::civil::Date;
 
 use super::*;
+use crate::memory::claim_walk::{ClaimMove, follow_claim};
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
@@ -677,19 +678,30 @@ impl InMemoryMemory {
     fn moved(&self, address: &FactAddress) -> Option<FactAddress> {
         let (key, _) = self.resolve(&address.home)?;
         let merges = self.merges.lock().expect("fake mutex poisoned");
-        let mut at = (key, address.local.clone());
-        let mut moved = false;
-        while let Some((survivor, now)) = merges.iter().find_map(|m| {
-            m.claims
-                .iter()
-                .find(|(was, _)| m.folded == at.0 && was == &at.1)
-                .map(|(_, now)| (m.survivor.clone(), now.clone()))
-        }) {
-            at = (survivor, now);
-            moved = true;
-        }
+        let (key, local) = follow_claim::<_, std::convert::Infallible>(
+            key,
+            address.local.clone(),
+            |home, local| {
+                Ok(merges
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| &m.folded == home)
+                    .filter_map(|(order, m)| {
+                        m.claims
+                            .iter()
+                            .find(|(was, _)| was == local)
+                            .map(|(_, now)| ClaimMove {
+                                order: order as u64,
+                                survivor: m.survivor.clone(),
+                                survivor_id: now.clone(),
+                            })
+                    })
+                    .collect())
+            },
+        )
+        .unwrap_or_else(|never| match never {})?;
         drop(merges);
-        moved.then(|| FactAddress::new(self.current_handle(&at.0), at.1))
+        Some(FactAddress::new(self.current_handle(&key), local))
     }
 
     fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
