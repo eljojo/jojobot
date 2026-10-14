@@ -40,6 +40,27 @@ pub(super) async fn next(
     table: &'static str,
     key: &[(&'static str, &str)],
 ) -> Result<i64, sqlx::Error> {
+    Ok(after(read(conn, table, key).await?))
+}
+
+/// **The highest ordinal `table` holds for `key`**, `None` when it holds none,
+/// whichever way the store said so. For a caller that numbers the next row by a
+/// rule of its own, shared with a store that is not this one (a run's history is
+/// numbered in the domain, for the fold image too), so it reads the same read.
+pub(super) async fn highest(
+    conn: &mut MySqlConnection,
+    table: &'static str,
+    key: &[(&'static str, &str)],
+) -> Result<Option<i64>, sqlx::Error> {
+    Ok(read(conn, table, key).await?.flatten())
+}
+
+/// The one ungrouped `MAX` both of the above ask, as the store answered it.
+async fn read(
+    conn: &mut MySqlConnection,
+    table: &'static str,
+    key: &[(&'static str, &str)],
+) -> Result<Highest, sqlx::Error> {
     let mut sql = format!("SELECT CAST(MAX(ordinal) AS SIGNED) FROM `{table}`");
     for (at, (column, _)) in key.iter().enumerate() {
         sql.push_str(if at == 0 { " WHERE " } else { " AND " });
@@ -49,8 +70,7 @@ pub(super) async fn next(
     for (_, value) in key {
         query = query.bind(*value);
     }
-    let highest: Highest = query.fetch_optional(&mut *conn).await?;
-    Ok(after(highest))
+    query.fetch_optional(&mut *conn).await
 }
 
 #[cfg(test)]

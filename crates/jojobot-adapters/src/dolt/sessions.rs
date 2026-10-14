@@ -407,12 +407,9 @@ impl DoltSessions {
     ) -> Result<(), SessionError> {
         // **Only the highest, never the list**: a read of every record a run
         // holds would grow with them.
-        let highest: Option<i64> =
-            sqlx::query_scalar("SELECT MAX(ordinal) FROM session_write WHERE session = ?")
-                .bind(id.as_str())
-                .fetch_one(&mut **tx)
-                .await
-                .map_err(store)?;
+        let highest = ordinal::highest(tx, "session_write", &[("session", id.as_str())])
+            .await
+            .map_err(store)?;
         let made = next_change(highest.map(|n| n.max(0) as usize), change, self.moment());
         sqlx::query(
             "INSERT INTO session_write (session, ordinal, written_at, changed, value)
@@ -437,12 +434,11 @@ impl DoltSessions {
         id: &SessionId,
         written: &JournalEntry,
     ) -> Result<(), SessionError> {
-        let highest: Option<i32> = sqlx::query_scalar(
-            "SELECT MAX(ordinal) FROM journal_entry_write WHERE session = ? AND entry = ?",
+        let highest = ordinal::highest(
+            tx,
+            "journal_entry_write",
+            &[("session", id.as_str()), ("entry", written.id.as_str())],
         )
-        .bind(id.as_str())
-        .bind(written.id.as_str())
-        .fetch_one(&mut **tx)
         .await
         .map_err(store)?;
         let made = next_wording(
