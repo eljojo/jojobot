@@ -73,6 +73,18 @@ const PREFIX_READS: &[(&str, &[&str])] = &[
         "SELECT MAX(ordinal) FROM entity_former_handle WHERE former_handle = ?",
         &["person:alpha"],
     ),
+    (
+        "SELECT MAX(ordinal) FROM push_attempt WHERE message_id = ?",
+        &["m1"],
+    ),
+    (
+        "SELECT MAX(ordinal) FROM charter_change_write WHERE bot = ?",
+        &["bot:marge"],
+    ),
+    (
+        "SELECT MAX(ordinal) FROM type_write WHERE name = ?",
+        &["stall"],
+    ),
 ];
 
 /// **A key prefix that matches no row, over a table that holds rows, answers one
