@@ -2827,6 +2827,46 @@ pub struct Window<'a> {
     pub size_of: &'a (dyn Fn(&Object) -> usize + Sync),
 }
 
+/// **The room a window serves objects into**, spent one object at a time.
+///
+/// The object that takes the total past the budget is served and is the last: it
+/// is the first the caller finds does not fit, and the ones behind it cannot.
+/// The walk spends it while it reads, and [`window_bounds`] spends it over sizes
+/// already known, so the two cut a selection at the same object.
+pub struct Room {
+    budget: usize,
+    spent: usize,
+}
+
+impl Room {
+    pub fn new(budget: usize) -> Room {
+        Room { budget, spent: 0 }
+    }
+
+    /// Serve an object of `size`. True when it was the last the room serves.
+    pub fn takes(&mut self, size: usize) -> bool {
+        self.spent += size;
+        self.spent > self.budget
+    }
+}
+
+/// **Where a window starts and ends over objects of these sizes**: how many
+/// stand before it, and the index one past the last it serves. `offset` objects
+/// are skipped, all of them when there are fewer; the rest are served into a
+/// [`Room`].
+pub fn window_bounds(sizes: &[usize], offset: usize, budget: usize) -> (usize, usize) {
+    let skipped = offset.min(sizes.len());
+    let mut room = Room::new(budget);
+    let mut passed = skipped;
+    for size in &sizes[skipped..] {
+        passed += 1;
+        if room.takes(*size) {
+            break;
+        }
+    }
+    (skipped, passed)
+}
+
 /// [`walk`], reading only the objects a window will serve when the question
 /// lets the selection be decided without reading them.
 ///
@@ -2974,7 +3014,7 @@ where
         let total = selected.objects.len();
         let skipped = window.offset.min(total);
         let mut objects: Vec<Object> = Vec::new();
-        let mut spent = 0usize;
+        let mut room = Room::new(window.budget);
         let mut passed = skipped;
         for shell in &selected.objects[skipped..] {
             passed += 1;
@@ -2987,12 +3027,12 @@ where
             };
             fill_revision_counts(store, &mut object).await?;
             fill_ages(store, &mut object).await;
-            spent += (window.size_of)(&object);
+            let last = room.takes((window.size_of)(&object));
             objects.push(object);
             // The object that takes the total past the room is read and kept: it
             // is the first the caller will find does not fit, and the ones behind
             // it cannot.
-            if spent > window.budget {
+            if last {
                 break;
             }
         }

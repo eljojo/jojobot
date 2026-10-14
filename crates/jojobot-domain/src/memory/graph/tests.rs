@@ -4569,3 +4569,35 @@ fn a_term_on_a_key_nothing_holds_says_so() {
             .is_empty()
     );
 }
+
+// ---------------------------------------------------------------------------
+// The window's arithmetic: one room, spent by the walk and by a cut over sizes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_object_that_takes_the_total_past_the_room_is_served_and_is_the_last() {
+    // 10 + 10 = 20 fits in 25; the third takes it to 30 and is served.
+    assert_eq!(window_bounds(&[10, 10, 10, 10], 0, 25), (0, 3));
+}
+
+#[test]
+fn a_window_that_fits_everything_serves_everything() {
+    assert_eq!(window_bounds(&[10, 10, 10], 0, 30), (0, 3));
+    assert_eq!(window_bounds(&[], 0, 30), (0, 0));
+}
+
+#[test]
+fn an_offset_skips_objects_before_the_room_is_counted() {
+    // Two objects stand before the window; the room is spent on the rest.
+    assert_eq!(window_bounds(&[50, 50, 10, 10, 10], 2, 15), (2, 4));
+}
+
+#[test]
+fn an_offset_past_the_end_skips_all_and_serves_nothing() {
+    assert_eq!(window_bounds(&[10, 10], 9, 100), (2, 2));
+}
+
+#[test]
+fn a_room_smaller_than_one_object_still_serves_that_object() {
+    assert_eq!(window_bounds(&[40, 40], 0, 5), (0, 1));
+}
