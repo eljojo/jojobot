@@ -33,6 +33,12 @@ const DEPLOY_3_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy3";
 /// shape, a key written under `sets`, a closing entry on a wrapped run, a moment
 /// on every write and a wrap window.
 const DEPLOY_4_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy4";
+/// The fixture recorded from the build deploy 5 shipped, the build the operator
+/// runs when deploy 6 takes over (03311d93). It holds what that build wrote over
+/// a store it migrated itself: the pass markers its own boot set, folds made
+/// before any merge event existed with pointers left at the folded thing, a
+/// fold whose survivor was renamed, and a run with hundreds of per-write rows.
+const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -2007,13 +2013,17 @@ fn is_left_as_text_under(line: &str, key: &str) -> bool {
 /// field value is `'<key>',<ordinal>,'<value>'` in the dump, and a plain handle
 /// is a value that starts with a kind, where a stored id starts with the mark.
 fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
-    let dir = [DEPLOY_3_FIXTURE_DIR, DEPLOY_4_FIXTURE_DIR]
-        .into_iter()
-        .find(|dir| {
-            std::fs::read_to_string(format!("{dir}/ref.txt"))
-                .is_ok_and(|recorded| recorded.trim() == git_ref)
-        })
-        .unwrap_or_else(|| panic!("no fixture was recorded at {git_ref}"));
+    let dir = [
+        DEPLOY_3_FIXTURE_DIR,
+        DEPLOY_4_FIXTURE_DIR,
+        DEPLOY_5_FIXTURE_DIR,
+    ]
+    .into_iter()
+    .find(|dir| {
+        std::fs::read_to_string(format!("{dir}/ref.txt"))
+            .is_ok_and(|recorded| recorded.trim() == git_ref)
+    })
+    .unwrap_or_else(|| panic!("no fixture was recorded at {git_ref}"));
     let dump = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
         .unwrap_or_else(|e| panic!("reading the dump in {dir}: {e}"));
     dump.split("'upgrade_fixture_points_at',")
@@ -5960,5 +5970,232 @@ async fn an_edge_at_a_handle_the_build_stopped_supplying_follows_the_row_the_boo
         "recorded at {git_ref}: the edge still holds the handle's text, not the badge"
     );
     store.stop().await;
+    drop(scratch);
+}
+
+// ── What the deploy 5 build left, read by the build that follows it (card 2385).
+//
+// The recording at `upgrade_deploy5` was made by the deployed build (03311d93)
+// through its served surface. That build kept no merge event, left pointers at a
+// folded thing in the shapes recorded below, and wrote a run's history one row at
+// a time.
+
+/// The holder of every pointer the recording drew at a folded thing.
+const FOLD_HOLDER: &str = "person:upgrade-fixture-person";
+/// The thing the first duplicate was folded into, and the duplicate.
+const FOLD_SURVIVOR: &str = "thing:upgrade-fixture-thing";
+const FOLD_FOLDED: &str = "thing:recorded-twin";
+/// The second duplicate, and the name its survivor was given after the fold.
+const FOLD_FOLDED_TWO: &str = "thing:recorded-spare";
+const FOLD_SURVIVOR_TWO_NOW: &str = "thing:jukebox";
+
+/// **The claims the recording drew at a folded thing**, each by its words, with
+/// where its pointer is read: the edge of the claim, the `refs` of the claim, or
+/// the key it set on the holder.
+const FOLD_POINTERS: [(&str, &str, &str); 8] = [
+    ("keeps an eye on the twin", "edge", FOLD_SURVIVOR),
+    ("mentions the twin among its refs", "refs", FOLD_SURVIVOR),
+    ("watches the twin", "upgrade_fixture_watches", FOLD_SURVIVOR),
+    ("holds the twin", "keeps", FOLD_SURVIVOR),
+    (
+        "watches the twin after the fold",
+        "upgrade_fixture_watches_after",
+        FOLD_SURVIVOR,
+    ),
+    (
+        "keeps an eye on the twin after the fold",
+        "edge",
+        FOLD_SURVIVOR,
+    ),
+    (
+        "watches the second twin",
+        "upgrade_fixture_watches_two",
+        FOLD_SURVIVOR_TWO_NOW,
+    ),
+    (
+        "keeps an eye on the second twin",
+        "edge",
+        FOLD_SURVIVOR_TWO_NOW,
+    ),
+];
+
+/// **The recording, read below the surface before any boot, says which pointers
+/// the deployed build left at a folded thing.** Without this the cases below could
+/// pass over a recording that drew none. The store holds no merge event yet: the
+/// table is not there.
+async fn the_fold_pointers_the_deployed_build_left(state_dir: &std::path::Path, store_port: u16) {
+    let mut store = open_the_store(state_dir, store_port).await;
+    let tables: Vec<String> = sqlx::query_scalar("SHOW TABLES LIKE 'merge_event'")
+        .fetch_all(store.pool())
+        .await
+        .expect("the tables read");
+    assert!(
+        tables.is_empty(),
+        "the deployed build kept merge events, so this recording is not the one the case is about"
+    );
+    for folded in [FOLD_FOLDED, FOLD_FOLDED_TWO] {
+        let merged_into: Option<String> =
+            sqlx::query_scalar("SELECT merged_into FROM entity WHERE id = ?")
+                .bind(folded)
+                .fetch_one(store.pool())
+                .await
+                .unwrap_or_else(|e| panic!("{folded} is in the recording: {e}"));
+        assert!(
+            merged_into.is_some(),
+            "{folded} was folded by the deployed build and names where it went"
+        );
+    }
+    store.stop().await;
+}
+
+/// The claim of the holder with these words, as a recall serves it.
+fn the_claim_saying<'a>(read: &'a serde_json::Value, words: &str) -> &'a serde_json::Value {
+    read["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| facts.iter().find(|fact| fact["content"] == words))
+        .unwrap_or_else(|| panic!("the holder has no claim saying {words:?}: {read}"))
+}
+
+/// **A pointer at a thing the deployed build folded reads as the thing it was
+/// folded into, after the first boot of the build that follows it.** The deployed
+/// build kept no merge event, so the rows it left are all there is to go by: an
+/// edge, the refs of a claim, and a key set on the holder, written before the fold
+/// and after it, by the handle the duplicate went on answering to, and a fold
+/// whose survivor was renamed afterwards.
+#[tokio::test]
+async fn a_pointer_at_a_thing_the_deployed_build_folded_reads_as_the_survivor_after_the_boot() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "fold-pointers").await;
+    the_fold_pointers_the_deployed_build_left(&state_dir, store_port).await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
+            .await,
+    )
+    .expect("the holder reads");
+    booted.stop().await;
+
+    let fields = &read["objects"][0]["fields"];
+    let mut wrong = Vec::new();
+    for (words, place, survivor) in FOLD_POINTERS {
+        let claim = the_claim_saying(&read, words);
+        let (named, how) = match place {
+            "edge" => (claim["edge"]["object"].clone(), "its edge"),
+            "refs" => (claim["refs"][0].clone(), "its first ref"),
+            key => (fields[key].clone(), "the key it set on the holder"),
+        };
+        if named != survivor {
+            wrong.push(format!(
+                "{words:?} reads {named} through {how}, not {survivor}"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "recorded at {git_ref}: a pointer at a thing the deployed build folded is not read as \
+         the thing it went into: {wrong:#?}"
+    );
+    drop(scratch);
+}
+
+/// **The first boot over a store the deployed build filled says nothing is wrong,
+/// and the second boot logs the same.** The store's pass markers are set, so the
+/// passes that already ran take their settled branch, and the passes this build
+/// adds run once. `boot_current` holds every boot to no warning and no error
+/// line; this case names the property and boots until it has seen it three times.
+#[tokio::test]
+async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "no-noise").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let marked: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+        .fetch_all(store.pool())
+        .await
+        .expect("the pass markers read");
+    store.stop().await;
+    assert!(
+        marked.iter().any(|name| name == "field value lowering")
+            && marked.iter().any(|name| name == "reference field lowering"),
+        "the recording holds the markers the deployed build's own boot set: {marked:?}"
+    );
+    let mut dumps = Vec::new();
+    for boot in 1..=3 {
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let log = booted.log.clone();
+        booted.stop().await;
+        let noisy = degradations(&log, false, &[]);
+        assert!(
+            noisy.is_empty(),
+            "boot {boot} over the store recorded at {git_ref} logged: {noisy:?}"
+        );
+        dumps.push(dump_store(&state_dir).await);
+    }
+    // **And a boot that has nothing left to do writes nothing**: the second and
+    // the third leave the store as the first left it.
+    assert!(
+        dumps[1] == dumps[0] && dumps[2] == dumps[1],
+        "a later boot over the store recorded at {git_ref} changed it: {} lines after the \
+         first boot, {} after the second, {} after the third",
+        dumps[0].lines().count(),
+        dumps[1].lines().count(),
+        dumps[2].lines().count()
+    );
+    drop(scratch);
+}
+
+/// **A run with hundreds of the deployed build's per-write rows boots inside the
+/// time a boot is given.** The recording holds one run with a long history. The
+/// case states the size of it from the store, boots, and holds the boot to the
+/// time the gate gives a boot (the serving line has to appear) and to half of it,
+/// so a boot that grows with a run's history moves this case before it moves the
+/// deadline.
+#[tokio::test]
+async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "long-history").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (longest_run, rows): (String, i64) = sqlx::query_as(
+        "SELECT session, COUNT(*) AS n FROM session_write GROUP BY session ORDER BY n DESC LIMIT 1",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("the longest run reads");
+    store.stop().await;
+    assert!(
+        rows >= 200,
+        "the recording holds a run with a long history, or this proves nothing: {longest_run} \
+         holds {rows} rows"
+    );
+
+    let began = std::time::Instant::now();
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let took = began.elapsed();
+    booted.stop().await;
+    assert!(
+        took < jojobot_exercise::room::READY_TIMEOUT / 2,
+        "the boot over a run of {rows} per-write rows took {took:?}, over half of the {:?} a boot \
+         is given",
+        jojobot_exercise::room::READY_TIMEOUT
+    );
     drop(scratch);
 }

@@ -282,6 +282,74 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the duplicate's claim is captured");
+    // **Pointers at the duplicate, written before it is folded.** The deployed
+    // build keeps no merge event, so what it leaves naming the folded thing is
+    // all a later build has to go by: an edge, a reference of a named kind, a
+    // handle under a key nobody declares, and a ref of the claim.
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "upgrade-fixture-keeper",
+                "fields": [{"key": "keeps", "holds": "reference:thing"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the keeper type is declared");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "keeps an eye on the twin",
+                "provenance": "testimony",
+                "shape": "about",
+                "object": "thing:recorded-twin",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the edge at the duplicate is captured");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "watches the twin",
+                "provenance": "testimony",
+                "sets": {"upgrade_fixture_watches": "thing:recorded-twin"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the handle under an undeclared key is captured");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "holds the twin",
+                "provenance": "testimony",
+                "sets": {"keeps": "thing:recorded-twin"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the reference at the duplicate is captured");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "mentions the twin among its refs",
+                "provenance": "testimony",
+                "refs": ["thing:recorded-twin"],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the ref at the duplicate is captured");
     surface
         .must(
             "merge_entities",
@@ -294,6 +362,128 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the duplicate is merged into the survivor");
+
+    // **Pointers written after the fold, by the handle the duplicate still
+    // answers to.** The deployed build may follow the handle to the survivor or
+    // keep the folded thing's key; the recording keeps whichever it did, and the
+    // gate reads it back before and after the boot. An answer that refuses is
+    // printed and recorded as nothing.
+    for (field, content) in [
+        (
+            "upgrade_fixture_watches_after",
+            "watches the twin after the fold",
+        ),
+        ("keeps", "holds the twin after the fold"),
+    ] {
+        let answer = surface
+            .call(
+                "capture",
+                json!({
+                    "subject": "person:upgrade-fixture-person",
+                    "content": content,
+                    "provenance": "testimony",
+                    "sets": {field: "thing:recorded-twin"},
+                    "sid": sid,
+                }),
+            )
+            .await;
+        eprintln!("a field at the folded handle, after the fold ({field}): {answer}");
+    }
+    let answer = surface
+        .call(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "keeps an eye on the twin after the fold",
+                "provenance": "testimony",
+                "shape": "about",
+                "object": "thing:recorded-twin",
+                "sid": sid,
+            }),
+        )
+        .await;
+    eprintln!("an edge at the folded handle, after the fold: {answer}");
+
+    // **A fold whose survivor is renamed afterwards.** The folded row names the
+    // handle the survivor wore at the fold, and the rename moves no other row.
+    for (slug, name) in [
+        ("recorded-spare", "A Second Spare Copy"),
+        ("recorded-heir", "A Recorded Heir"),
+    ] {
+        surface
+            .must(
+                "add_entity",
+                json!({"kind": "thing", "handle": slug, "name": name,
+                       "source": "test", "sid": sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("add_entity thing:{slug}: {e:#}"));
+    }
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "watches the second twin",
+                "provenance": "testimony",
+                "sets": {"upgrade_fixture_watches_two": "thing:recorded-spare"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the handle at the second duplicate is captured");
+    surface
+        .must(
+            "merge_entities",
+            json!({
+                "duplicate": "thing:recorded-spare",
+                "survivor": "thing:recorded-heir",
+                "reason": "recorded as one more thing",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the second duplicate is merged");
+    // **The deployed build screens the rename against the survivor's own folded
+    // names**, so the first call is turned back and names the token that lifts it.
+    // The token is read out of the refusal, as a caller has to.
+    let turned_back = surface
+        .call(
+            "rename_entity",
+            json!({"handle": "thing:recorded-heir", "to": "thing:jukebox", "sid": sid}),
+        )
+        .await;
+    let turned_back: serde_json::Value =
+        serde_json::from_str(&turned_back).expect("the refusal is JSON");
+    let advice = turned_back["how_to_proceed"].as_str().unwrap_or_default();
+    let token = advice
+        .split("override_token: \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("the rename was not turned back with a token: {turned_back}"));
+    surface
+        .must(
+            "rename_entity",
+            json!({"handle": "thing:recorded-heir", "to": "thing:jukebox",
+                   "override_token": token, "sid": sid}),
+        )
+        .await
+        .expect("the second survivor is renamed after the fold");
+    // An edge drawn at the second duplicate once its survivor wears a new handle.
+    let answer = surface
+        .call(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "keeps an eye on the second twin",
+                "provenance": "testimony",
+                "shape": "about",
+                "object": "thing:recorded-spare",
+                "sid": sid,
+            }),
+        )
+        .await;
+    eprintln!("an edge at the second folded handle, after the rename: {answer}");
 
     // **A pair written before a write had a moment of its own, left unmerged.**
     // Each holds `status` once, so both own ordinal 1 of the key. The gate
@@ -531,14 +721,19 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .expect("the undeclared handle field is captured");
 
     // **The instance's own record, with the zone it works in.**
-    surface
-        .must(
+    // **A build that seeds the instance record has it already**, and refuses the
+    // creation by its exact handle; an older build has none and makes it here.
+    let instance = surface
+        .call(
             "add_entity",
             json!({"kind": "topic", "handle": "instance", "name": "This instance",
                    "source": "test", "sid": sid}),
         )
-        .await
-        .expect("the instance topic is added");
+        .await;
+    assert!(
+        !instance.contains("\"status\":\"blocked\"") || instance.contains("exact-handle"),
+        "the instance topic was refused for a reason other than being there: {instance}"
+    );
     surface
         .must(
             "capture",
@@ -694,7 +889,62 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .await
         .expect("the second bot's run wraps");
 
-    held_sid
+    // **A run with a long history.** One bot, one run, a hundred and twenty
+    // beats and a hundred and fifty reads, so the store holds hundreds of the
+    // deployed build's per-write rows for a run. The gate boots over it.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "bot", "handle": "upgrade-fixture-chatterer",
+                   "name": "A Recorded Chatterer", "source": "test", "sid": held_sid}),
+        )
+        .await
+        .expect("the chatterer is added");
+    let chatterer = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-chatterer", "brief": true}),
+        )
+        .await
+        .expect("the chatterer boots");
+    let chatter_sid = chatterer["session"]["sid"]
+        .as_str()
+        .expect("a fresh boot carries a session id")
+        .to_string();
+    for beat in 0..120 {
+        surface
+            .must(
+                "journal",
+                json!({"entry": format!("beat {beat} of a long run"),
+                       "focus": format!("beat {beat}"), "sid": chatter_sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("beat {beat}: {e:#}"));
+    }
+    for _ in 0..150 {
+        surface
+            .must(
+                "recall",
+                json!({"subject": "person:upgrade-fixture-person", "facts": true,
+                       "sid": chatter_sid}),
+            )
+            .await
+            .expect("a read of the long run");
+    }
+    surface
+        .must(
+            "wrap_session",
+            json!({"sid": chatter_sid, "story": "talked for a long time"}),
+        )
+        .await
+        .expect("the long run wraps");
+
+    // **The holder is recorded by the run's public name where a build has one.**
+    // A build that keeps the key only as a hash has no name to find the run by
+    // but the one it hands back as `run`; an older build's sid was the name.
+    held["session"]["run"]
+        .as_str()
+        .map_or(held_sid, str::to_string)
 }
 
 /// **Whether a `declare_type` answer leaves the recording where it meant to be.**

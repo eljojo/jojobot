@@ -316,11 +316,12 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 #     make refresh-upgrade-fixture [REF=<ref>] DIR=<fixture directory>
 #
 # DIR is relative to crates/jojobot and has no default; the target refuses
-# without it. The gate keeps the fixtures of the last two deployed builds, for
-# the build the operator's third deploy shipped (its commit is in that fixture's
-# ref.txt) in DIR=tests/fixtures/upgrade_deploy3, and for the build the fourth
-# deploy shipped in DIR=tests/fixtures/upgrade_deploy4. The recording needs a
-# build that takes `sets` and writes a closing entry on a wrap.
+# without it. The gate keeps the fixtures of the deployed builds it proves an
+# upgrade from, for the build the operator's third deploy shipped (its commit is
+# in that fixture's ref.txt) in DIR=tests/fixtures/upgrade_deploy3, for the build
+# the fourth deploy shipped in DIR=tests/fixtures/upgrade_deploy4 and for the
+# build the fifth deploy shipped in DIR=tests/fixtures/upgrade_deploy5. The
+# recording needs a build that takes `sets` and writes a closing entry on a wrap.
 REF ?= origin/main
 DIR ?=
 refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)
