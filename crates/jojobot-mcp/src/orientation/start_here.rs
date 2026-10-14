@@ -5,6 +5,19 @@
 
 use super::*;
 
+/// **Why a fetch and a compaction report are two calls.** A fetch answers before
+/// the boot and starts nothing, so a report sent beside it would be dropped
+/// without a word, and the run would go on believing the server had forgotten
+/// what it was taught and shown.
+fn compaction_beside_a_fetch(what: &str) -> String {
+    format!(
+        "reporting a compaction and reading {what} are two calls: a fetch touches no run, so \
+         honouring `compacted` here would drop it and forget nothing. Call start_here with \
+         `compacted` and your `sid` to report the compaction, then again with the fetch alone — \
+         or drop `compacted` to read now."
+    )
+}
+
 /// Arguments to `start_here` — **the one door**, with or without an identity.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct OrientArgs {
@@ -286,6 +299,9 @@ impl Jojobot {
                         .to_string(),
                 ));
             }
+            if args.compacted == Some(true) {
+                return Ok(misused(compaction_beside_a_fetch("a skill")));
+            }
             return match skills::named(wanted) {
                 Some(skill) => json_result(&serde_json::json!({
                     "skill": {
@@ -328,6 +344,9 @@ impl Jojobot {
                      — or drop `section` to boot now."
                         .to_string(),
                 ));
+            }
+            if args.compacted == Some(true) {
+                return Ok(misused(compaction_beside_a_fetch("a section")));
             }
             let (preamble, sections) = essay::remainder();
             let body = if wanted == "opening" {

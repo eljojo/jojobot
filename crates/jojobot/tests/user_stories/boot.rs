@@ -432,3 +432,37 @@ async fn the_refusal_for_an_unknown_bot_lists_twenty_bots_and_counts_the_rest() 
     small.finish().await;
     story.finish().await;
 }
+
+/// **A compaction report beside a skill is refused**, as `bot` beside `skill`
+/// is. A fetch answers before the boot, so it would drop the report without a
+/// word and the run would go on believing the server knew what it had forgotten.
+/// Paired with the report alone, which a live run makes and is answered.
+#[tokio::test]
+async fn a_compaction_report_beside_a_skill_is_refused_rather_than_dropped() {
+    let story = Story::begin("bot:gamma").await;
+    let refusal = story
+        .refused_at_the_door(
+            "start_here",
+            json!({"skill": "recommend", "compacted": true}),
+        )
+        .await
+        .json();
+    assert!(
+        refusal["how_to_proceed"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("compacted"),
+        "the refusal names the argument it refused: {refusal}"
+    );
+    // The same refusal for a section, which is a fetch too.
+    story
+        .refused_at_the_door(
+            "start_here",
+            json!({"section": "opening", "compacted": true}),
+        )
+        .await;
+    // Paired: the skill alone is read.
+    let read = story.skill("recommend").await;
+    assert_eq!(read["skill"]["name"], "recommend", "{read}");
+    story.finish().await;
+}
