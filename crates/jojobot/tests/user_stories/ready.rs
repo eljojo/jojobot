@@ -96,6 +96,64 @@ async fn what_can_be_started_and_what_stops_the_rest() {
     story.finish().await;
 }
 
+/// "What does the whole plan look like, and what stops each piece?" One call
+/// names the plan view and lists every piece of work not finished, with whether
+/// it can start and, when it cannot, what stops it: the session does not ask
+/// after the pieces one at a time.
+#[tokio::test]
+async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let work = |slug: &str, sets: serde_json::Value| {
+        json!({"kind": "work", "handle": slug, "name": slug,
+               "source": "user-named", "sets": sets})
+    };
+    s.call("add_entity", work("sigma", json!({"status": "done"})))
+        .await;
+    s.call("add_entity", work("tau", json!({"status": "now"})))
+        .await;
+    s.call(
+        "add_entity",
+        work("phi", json!({"status": "next", "depends_on": "work:sigma"})),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work(
+            "first-mix",
+            json!({"status": "next", "depends_on": "work:sigma, work:tau"}),
+        ),
+    )
+    .await;
+
+    let plan = s.call("recall", json!({"view": "plan"})).await;
+
+    assert_eq!(
+        listed(&plan),
+        ["work:first-mix", "work:phi", "work:tau"],
+        "{}",
+        plan.raw()
+    );
+    let objects = &plan.json()["objects"];
+    assert_eq!(objects[0]["ready"], false, "{}", plan.raw());
+    assert_eq!(
+        objects[0]["blocked_by"],
+        json!([{"blocker": "dependency", "handle": "work:tau", "why": "unfinished"}]),
+        "{}",
+        plan.raw()
+    );
+    assert_eq!(objects[1]["ready"], true, "{}", plan.raw());
+    assert_eq!(objects[2]["ready"], true, "{}", plan.raw());
+    assert_eq!(
+        plan.json()["ready_left_out"]["count"],
+        1,
+        "the finished piece is left out and counted: {}",
+        plan.raw()
+    );
+
+    story.finish().await;
+}
+
 /// "Ready includes what I have already started. How do I get only what I have
 /// not?" The ready answer carries one line beside its list: ready means
 /// unblocked and not finished, so work in progress is in it, and `where` narrows

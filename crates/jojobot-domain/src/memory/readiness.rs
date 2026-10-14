@@ -23,6 +23,43 @@ pub const WAITING_ON: &str = "waiting_on";
 /// **The ask a view names to get this question.**
 pub const ASK: &str = "ready";
 
+/// **The ask a view names to get a whole plan**: every piece of work that is not
+/// finished, each with whether it is ready and, when it is not, what stops it.
+pub const ASK_PLAN: &str = "plan";
+
+/// **What a view asks about readiness.** Both asks run the same readiness
+/// question on each piece of work; they differ in which pieces they keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// Only the work that can be started now.
+    Ready,
+    /// All the work that is not finished, ready or not.
+    Plan,
+}
+
+impl Ask {
+    /// The ask a view's `asks` key names, when it names this question.
+    pub fn named(word: &str) -> Option<Ask> {
+        match word {
+            ASK => Some(Ask::Ready),
+            ASK_PLAN => Some(Ask::Plan),
+            _ => None,
+        }
+    }
+
+    /// **Whether work with this verdict stays in the answer.** A ready ask keeps
+    /// what is ready. A plan keeps everything the work itself has not ended: a
+    /// piece of work that is finished or archived is not part of the plan.
+    pub fn keeps(self, ready: bool, blockers: &[Blocker]) -> bool {
+        match self {
+            Ask::Ready => ready,
+            Ask::Plan => !blockers
+                .iter()
+                .any(|blocker| matches!(blocker, Blocker::Finished | Blocker::Archived)),
+        }
+    }
+}
+
 /// **The tree for "can be started".**
 pub fn tree() -> Filter {
     Filter::All(vec![

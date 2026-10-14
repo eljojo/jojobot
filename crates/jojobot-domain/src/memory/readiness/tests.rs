@@ -303,3 +303,27 @@ fn the_work_itself_follows_the_instance_status_words() {
     let unmapped = bag(&[("status", "shipped")]);
     assert!(is_ready(&item(&unmapped), &World::new()));
 }
+
+/// **The ready ask keeps what is ready; the plan ask keeps everything the work
+/// itself has not ended.** Blocked work is in a plan and not in the ready list;
+/// finished and archived work is in neither.
+#[test]
+fn the_plan_ask_keeps_blocked_work_and_neither_ask_keeps_finished_or_archived() {
+    let blocked = [dependency("work:tau", Why::Unfinished)];
+    assert!(Ask::Ready.keeps(true, &[]));
+    assert!(!Ask::Ready.keeps(false, &blocked));
+    assert!(Ask::Plan.keeps(true, &[]));
+    assert!(Ask::Plan.keeps(false, &blocked));
+    assert!(Ask::Plan.keeps(false, &[Blocker::WaitingOn("person:milhouse".into())]));
+    assert!(!Ask::Plan.keeps(false, &[Blocker::Finished]));
+    assert!(!Ask::Plan.keeps(false, &[Blocker::Archived, blocked[0].clone()]));
+    assert!(!Ask::Ready.keeps(false, &[Blocker::Finished]));
+}
+
+/// **A view's `asks` word names its ask**, and any other word names none.
+#[test]
+fn an_asks_word_names_its_ask() {
+    assert_eq!(Ask::named(ASK), Some(Ask::Ready));
+    assert_eq!(Ask::named(ASK_PLAN), Some(Ask::Plan));
+    assert_eq!(Ask::named("overdue"), None);
+}

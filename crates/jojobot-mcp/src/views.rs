@@ -10,9 +10,10 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Three views ship, and that is deliberate rather than a first instalment of
-//! a catalogue.** Two are the ones the operator named and one asks what can be
-//! started, and a rich set is generated once the shape is settled. If this file starts growing a query
+//! **Four views ship, and that is deliberate rather than a first instalment of
+//! a catalogue.** Two are the ones the operator named and two ask about work:
+//! what can be started and what a plan holds. A rich set is generated once the
+//! shape is settled. If this file starts growing a query
 //! per question somebody asks, it has taken the wrong turn.
 
 use std::collections::BTreeMap;
@@ -100,6 +101,20 @@ pub fn provisions() -> Vec<Provision> {
             &[
                 ("selects", "work"),
                 ("asks", jojobot_domain::memory::readiness::ASK),
+            ],
+        ),
+        // **A whole plan in one call.** The work that is not finished, each
+        // piece with whether it can be started and, when it cannot, what stops
+        // it. The same readiness question as `ready`, kept differently: a plan
+        // lists the blocked work too, so a session reads a project's blockers
+        // without asking after each piece. Name a project as `parent` to read
+        // its plan.
+        view(
+            "view:plan",
+            "Plan",
+            &[
+                ("selects", "work"),
+                ("asks", jojobot_domain::memory::readiness::ASK_PLAN),
             ],
         ),
     ]

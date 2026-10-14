@@ -313,10 +313,13 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new("shows", ValueType::Text),
             // **A question the graph answers that a selection cannot** —
             // `overdue`, which is arithmetic over two dates and a cadence, and
-            // `ready`, which asks about the things a reference list names.
-            // They are named asks rather than filters because neither is a
+            // `ready` and `plan`, which ask about the things a reference list
+            // names. They are named asks rather than filters because none is a
             // value held on the thing itself.
-            Field::one_of("asks", ["overdue", super::readiness::ASK]),
+            Field::one_of(
+                "asks",
+                ["overdue", super::readiness::ASK, super::readiness::ASK_PLAN],
+            ),
             // **Which things, as one expression over keys** — the line a recall's
             // `where` takes. A handle written in it is bound to the permanent id
             // when the view is written, so a rename does not break the view.

@@ -233,6 +233,7 @@ A **view** is a question somebody already worked out, asked for by name. Ask
     recall  view: "colleagues"     the identities here, what each is for, and whom each reports to
     recall  view: "loops"          the recurring things, and what each last recorded
     recall  view: "ready"          the work not finished, unblocked and waiting on no one, and how many it left out
+    recall  view: "plan"           the work not finished, ready or blocked, each with what stops it
 
 The colleagues view says whom each bot reports to and nothing inward. Who
 reports to a bot is a second call, a walk along `reports_to` the other way:
@@ -460,12 +461,19 @@ Name a project as `parent` to see the ready work of that project only:
 
     recall  view: "ready"  parent: "project:atlas"  where: "status = next"
 
-Ask why one piece of work is not on that list by naming it:
+See a whole plan in one call, every piece of work under a project that is not
+finished, whether or not it can start:
+
+    recall  view: "plan"  parent: "project:atlas"
+
+Each piece comes back with `ready`, and when it is not ready with `blocked_by`,
+so the blockers of the whole plan are in one answer. Work that is finished or
+archived is left out and counted. To read one piece alone, name it:
 
     recall  view: "ready"  subject: "work:first-mix"
 
-The answer says `ready: false` and `blocked_by`, a list of what stops it. A
-blocker is a `dependency` that is `unfinished`, `archived` or `dangling` (its
+A piece that is not ready says `ready: false` and `blocked_by`, a list of what
+stops it. A blocker is a `dependency` that is `unfinished`, `archived` or `dangling` (its
 handle names nothing), a `waiting_on` handle, or the work itself being
 `finished` or `archived`. Archived work is never ready, however it is named.
 A `waiting_on` handle keeps work out of the view for as long as the key holds it.

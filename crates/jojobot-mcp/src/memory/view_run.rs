@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
+use jojobot_domain::memory::readiness;
 use jojobot_domain::memory::search::DocScan;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError};
@@ -31,9 +32,17 @@ use super::ready::{self, Verdict};
 pub struct Asks {
     /// **Only what is owed on this day**, oldest due first.
     pub overdue: Option<jiff::civil::Date>,
-    /// **Only the work that can be started.** The inner value is the one thing
-    /// a call named, which always comes back so a caller can read why.
-    pub ready: Option<Option<EntityId>>,
+    /// **What of the work to keep, by readiness**: only what can be started, or
+    /// the whole plan.
+    pub ready: Option<Readiness>,
+}
+
+/// **A readiness question.**
+pub struct Readiness {
+    pub ask: readiness::Ask,
+    /// The one thing a call named, which always comes back so a caller can read
+    /// why.
+    pub named: Option<EntityId>,
 }
 
 /// **A question, ready to be answered**: a query for the graph and its
@@ -100,7 +109,7 @@ impl Question {
         );
         question.asks = Asks {
             overdue: asked.overdue.then_some(today),
-            ready: asked.ready.then_some(None),
+            ready: asked.ready.map(|ask| Readiness { ask, named: None }),
         };
         Ok(question)
     }
@@ -146,7 +155,7 @@ pub async fn narrow(
         .overdue
         .map(|as_of| keep_owed(found, context.carriers, context.instance, as_of));
     let ready = match &asks.ready {
-        Some(named) => Some(keep_ready(memory, found, named.as_ref()).await?),
+        Some(asked) => Some(keep_ready(memory, found, asked).await?),
         None => None,
     };
     Ok(Narrowed { owed, ready })
@@ -293,14 +302,15 @@ pub struct ReadyPass {
     pub left_out: usize,
 }
 
-/// **Keep the work that can be started.** Asked of the work the selection
-/// found, against the things its `depends_on` names. Work that is not ready is
-/// left out and counted, **except the one thing a call named**, which always
-/// comes back so a caller can read why.
+/// **Keep the work the ask keeps**: what can be started, or the whole plan, see
+/// [`readiness::Ask`]. Asked of the work the selection found, against the things
+/// its `depends_on` names. Work the ask does not keep is left out and counted,
+/// **except the one thing a call named**, which always comes back so a caller
+/// can read why. There is one readiness question for both asks.
 pub async fn keep_ready(
     memory: &dyn Memory,
     found: &mut Vec<graph::Object>,
-    named: Option<&EntityId>,
+    asked: &Readiness,
 ) -> Result<ReadyPass, MemoryError> {
     let verdicts = {
         let asked: Vec<ready::Asked<'_>> = found
@@ -317,7 +327,9 @@ pub async fn keep_ready(
     let mut kept_verdicts = Vec::with_capacity(found.len());
     let mut left_out = 0usize;
     for (object, verdict) in found.drain(..).zip(verdicts) {
-        if verdict.ready || named == Some(&object.entity.id) {
+        if asked.ask.keeps(verdict.ready, &verdict.blockers)
+            || asked.named.as_ref() == Some(&object.entity.id)
+        {
             kept.push(object);
             kept_verdicts.push(verdict);
         } else {

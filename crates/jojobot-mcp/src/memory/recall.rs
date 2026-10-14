@@ -14,7 +14,7 @@ use crate::memory::view_run;
 use crate::session::session_declined;
 use jojobot_domain::memory::search::{Coverage, HeldField};
 use jojobot_domain::memory::types::Compare;
-use jojobot_domain::memory::{entitlement, filter, graph};
+use jojobot_domain::memory::{entitlement, filter, graph, readiness};
 use jojobot_domain::text;
 
 /// One key filter of a `recall` — a key, and optionally the value it holds.
@@ -1316,7 +1316,8 @@ impl Jojobot {
         &self,
         named: &str,
         args: RecallArgs,
-    ) -> Result<(RecallArgs, Vec<graph::FieldFilter>, bool), Box<CallToolResult>> {
+    ) -> Result<(RecallArgs, Vec<graph::FieldFilter>, Option<readiness::Ask>), Box<CallToolResult>>
+    {
         let handle = match named.trim().split_once(':') {
             Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
                 EntityId(named.trim().to_string())
@@ -2209,8 +2210,8 @@ impl Jojobot {
         let view_named = args.view.clone();
         let caller_named_scope = args.scope.is_some();
         let where_is_the_views = args.expression.is_none();
-        let (args, view_filters, asks_ready) = match args.view.clone() {
-            None => (args, Vec::new(), false),
+        let (args, view_filters, readiness_asked) = match args.view.clone() {
+            None => (args, Vec::new(), None),
             Some(named) => match self.asked_by_name(&named, args).await {
                 Ok(filled) => filled,
                 Err(refused) => return Ok(*refused),
@@ -2220,7 +2221,7 @@ impl Jojobot {
         // view selects the work kind; a caller that sent another kind beside it,
         // or named a subject of another kind, would be handed `ready` for things
         // that have no dependencies to wait on.
-        if asks_ready {
+        if readiness_asked.is_some() {
             if args
                 .kind
                 .as_deref()
@@ -2926,7 +2927,7 @@ impl Jojobot {
         // spent during the walk is spent on finished work and on work that is
         // blocked, and the ready work behind them never reaches the answer; the
         // window is applied after the narrowing, over what is ready.
-        let (walk_window, deferred_window) = if asks_ready {
+        let (walk_window, deferred_window) = if readiness_asked.is_some() {
             (None, window)
         } else {
             (window, None)
@@ -3039,7 +3040,10 @@ impl Jojobot {
         // call that does.
         let asks = view_run::Asks {
             overdue: as_of,
-            ready: asks_ready.then(|| query.select.subject.clone()),
+            ready: readiness_asked.map(|ask| view_run::Readiness {
+                ask,
+                named: query.select.subject.clone(),
+            }),
         };
         let carriers = self.carriers();
         // **What the operator mapped their status words to**, read once and
@@ -3255,16 +3259,29 @@ impl Jojobot {
             // when nothing was left out.
             // **One line beside the ready list**, on the ready view and nowhere
             // else: what ready means, and the argument that narrows it.
-            "ready_note": asks_ready.then_some(
-                "ready means unblocked and not finished, so work already under way is in this \
-                 list; where narrows it to your board's not-started status, for example \
-                 where: \"status = next\""
-            ),
+            "ready_note": readiness_asked.map(|ask| match ask {
+                readiness::Ask::Ready => {
+                    "ready means unblocked and not finished, so work already under way is in \
+                     this list; where narrows it to your board's not-started status, for \
+                     example where: \"status = next\""
+                }
+                readiness::Ask::Plan => {
+                    "every piece of work here is not finished: ready says whether it can be \
+                     started and, when it cannot, blocked_by says what stops it"
+                }
+            }),
             "ready_left_out": ready_left_out.filter(|left| *left > 0).map(|left| serde_json::json!({
                 "count": left,
-                "how_to_read": "recall again with this view and subject set to one piece of \
-                                work: it comes back with ready: false and blocked_by naming \
-                                what stops it",
+                "how_to_read": match readiness_asked {
+                    Some(readiness::Ask::Plan) => {
+                        "these pieces of work are finished or archived, so they are not in the \
+                         plan; recall one by handle to read it"
+                    }
+                    _ => {
+                        "recall again with this view and subject set to one piece of work: it \
+                         comes back with ready: false and blocked_by naming what stops it"
+                    }
+                },
             })),
             // **The day, the window and the clock this read used**, and null
             // when it asked about no day. A caller that let jojobot supply

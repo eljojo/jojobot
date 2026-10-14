@@ -8220,6 +8220,126 @@ async fn paging_the_ready_view_walks_ready_work_only() {
     );
 }
 
+/// A piece of work filed under a parent, through the surface.
+async fn work_under(jojobot: &Jojobot, slug: &str, parent: &str, sets: &[(&str, &str)]) {
+    let result = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some(parent.into()),
+            sets: Some(
+                sets.iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            ),
+            sid: Some(writing_as(jojobot)),
+            ..add_args("work", slug, slug)
+        }))
+        .await
+        .expect("add_entity call ok");
+    assert_ne!(
+        json_of(&result)["status"],
+        "blocked",
+        "work:{slug} was blocked: {}",
+        json_of(&result)
+    );
+}
+
+/// **One call answers a whole plan.** Under one project: a piece of work that
+/// can start, one under way with nothing in its way, two that wait on unfinished work, one that waits on a person, and
+/// one that is finished. The answer lists the five unfinished, each with
+/// whether it is ready and, when it is not, what stops it; the finished one is
+/// left out and counted.
+#[tokio::test]
+async fn the_plan_view_answers_a_whole_plan_in_one_call() {
+    let jojobot = crate::harness::handler_shipped();
+    crate::memory::testing::ensure(&jojobot, "project:atlas").await;
+    crate::memory::testing::ensure(&jojobot, "person:kenny").await;
+    work_under(&jojobot, "sigma", "project:atlas", &[("status", "next")]).await;
+    work_under(
+        &jojobot,
+        "tau",
+        "project:atlas",
+        &[("status", "next"), ("depends_on", "work:sigma")],
+    )
+    .await;
+    work_under(
+        &jojobot,
+        "kappa",
+        "project:atlas",
+        &[("status", "next"), ("depends_on", "work:tau")],
+    )
+    .await;
+    work_under(
+        &jojobot,
+        "theta",
+        "project:atlas",
+        &[("status", "waiting"), ("waiting_on", "person:kenny")],
+    )
+    .await;
+    work_under(&jojobot, "delta", "project:atlas", &[("status", "now")]).await;
+    work_under(&jojobot, "omega", "project:atlas", &[("status", "done")]).await;
+
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("plan".into()),
+                parent: Some("project:atlas".into()),
+                subject: None,
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:kappa")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+
+    assert_eq!(
+        listed(&body),
+        [
+            "work:delta",
+            "work:kappa",
+            "work:sigma",
+            "work:tau",
+            "work:theta"
+        ],
+        "{body}"
+    );
+    let object = |handle: &str| {
+        body["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .find(|o| o["id"] == handle)
+            .unwrap_or_else(|| panic!("{handle} is not in the answer: {body}"))
+            .clone()
+    };
+    for ready in ["work:sigma", "work:delta"] {
+        assert_eq!(object(ready)["ready"], true, "{ready}: {body}");
+        assert!(object(ready).get("blocked_by").is_none(), "{ready}: {body}");
+    }
+    let blocked = |handle: &str| object(handle)["blocked_by"].clone();
+    for (handle, why) in [
+        (
+            "work:tau",
+            serde_json::json!([{"blocker": "dependency", "handle": "work:sigma", "why": "unfinished"}]),
+        ),
+        (
+            "work:kappa",
+            serde_json::json!([{"blocker": "dependency", "handle": "work:tau", "why": "unfinished"}]),
+        ),
+        (
+            "work:theta",
+            serde_json::json!([{"blocker": "waiting_on", "handle": "person:kenny"}]),
+        ),
+    ] {
+        assert_eq!(object(handle)["ready"], false, "{handle}: {body}");
+        assert_eq!(blocked(handle), why, "{handle}: {body}");
+    }
+    assert_eq!(
+        body["ready_left_out"]["count"], 1,
+        "the finished piece is left out and counted: {body}"
+    );
+}
+
 /// **`ready` belongs to the work kind.** A call that uses the view and sends any
 /// other kind is refused, the refusal names the work kind as the one the ask
 /// answers for, and the same call with the work kind is answered.

@@ -749,7 +749,7 @@ async fn view_section(
     };
     // **Readiness is a question about work, and only work answers it** — the
     // refusal the verb gives a view that asks it of another kind.
-    if asked.ready && kind != EntityKind::WORK {
+    if asked.ready.is_some() && kind != EntityKind::WORK {
         return cannot_run("it asks what is ready, which only work answers.");
     }
     // **The server's own day, in the instance's zone.** A browser states no
