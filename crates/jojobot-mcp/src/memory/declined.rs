@@ -422,8 +422,9 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         // broke, which sending the same call again meets again. Not an outage.
         MemoryError::Refused(_) => Some(FixBy::Change),
         // A kind set nothing re-reads, and a claim only the operator can bless.
-        MemoryError::KindsNeverLoaded { .. }
-        | MemoryError::UnconfirmedPromotion => Some(FixBy::Person),
+        MemoryError::KindsNeverLoaded { .. } | MemoryError::UnconfirmedPromotion => {
+            Some(FixBy::Person)
+        }
         // Stored damage, which sending the call again or changing it cannot help:
         // only a person repairs it.
         MemoryError::StoredDamage { .. } => Some(FixBy::Person),
