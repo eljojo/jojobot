@@ -235,7 +235,9 @@ impl DoltMailboxes {
         let countable = countable_predicate();
         let grouped = sqlx::query(&format!(
             "SELECT m.mailbox AS mailbox, m.state AS state, COUNT(*) AS n,
-                    CAST(SUM(EXISTS (SELECT 1 FROM message s WHERE s.supersedes = m.id)) AS SIGNED) AS replaced
+                    CAST(SUM(EXISTS (SELECT 1 FROM message s
+                                     WHERE s.supersedes = m.id AND s.state <> 'quarantined'))
+                         AS SIGNED) AS replaced
              FROM message m WHERE {countable}
              GROUP BY m.mailbox, m.state"
         ))
@@ -339,12 +341,19 @@ impl DoltMailboxes {
         tx: &mut Transaction<'_, MySql>,
         scope: Scope<'_>,
     ) -> Result<Vec<Card>, MailboxError> {
+        // **A message that was set aside replaces nothing.** Nobody can read it,
+        // so the message it named is not withheld for it: the `state <>
+        // 'quarantined'` below is the spelling of `QUARANTINE_STATE_TOKEN`, which
+        // the contract case `a_message_whose_replacement_was_set_aside_is_delivered`
+        // holds against this store.
+        //
         // **A LEFT join, because a message that has not been delivered has no
         // row over there** — and that absence is a fact about the message
         // rather than a reason to leave it out.
         const WHOLE: &str = "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender,
                     m.sent_at, m.state, m.notes, m.in_reply_to, m.supersedes,
                     (SELECT s.id FROM message s WHERE s.supersedes = m.id
+                       AND s.state <> 'quarantined'
                      ORDER BY s.ordinal DESC LIMIT 1) AS superseded_by,
                     m.sender_mail_waiting_at_send, m.posted_by_session,
                     m.quarantined_by, m.quarantine_reason,
@@ -360,6 +369,7 @@ impl DoltMailboxes {
                     CAST(NULL AS CHAR) AS in_reply_to,
                     CAST(NULL AS CHAR) AS supersedes,
                     (SELECT s.id FROM message s WHERE s.supersedes = m.id
+                       AND s.state <> 'quarantined'
                      ORDER BY s.ordinal DESC LIMIT 1) AS superseded_by,
                     CAST(NULL AS SIGNED) AS sender_mail_waiting_at_send,
                     CAST(NULL AS CHAR) AS posted_by_session,

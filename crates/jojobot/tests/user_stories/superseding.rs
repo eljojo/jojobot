@@ -266,9 +266,8 @@ async fn a_message_whose_replacement_was_set_aside_is_still_handed_over() {
     // ── the original is owed again, and the correction stays set aside ──────
     let after = g.call("read_mailbox", json!({"counts_only": true})).await;
     assert_eq!(after.json()["counts"]["new"], 1, "{}", after.raw());
-    assert_eq!(
-        after.json()["counts"]["superseded"],
-        0,
+    assert!(
+        after.json()["counts"].get("superseded").is_none(),
         "the original is counted as replaced by a message nobody can read: {}",
         after.raw()
     );

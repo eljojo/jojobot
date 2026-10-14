@@ -805,6 +805,19 @@ impl Mailboxes for InMemoryMailboxes {
             id,
             Change::new(MessageEventKind::Quarantined, acting, by, prior).with_reason(&reason),
         );
+        // **A message that was set aside replaces nothing**, as in the real store,
+        // where the replaced message is not read as replaced by a row in the
+        // quarantine state. Nothing reads the set-aside message again, so its link
+        // is dropped here rather than judged at every read.
+        if let Some(set_aside) = self
+            .messages
+            .lock()
+            .expect("message lock")
+            .iter_mut()
+            .find(|m| &m.id == id)
+        {
+            set_aside.supersedes = None;
+        }
         self.quarantined.lock().expect("quarantine lock").push((
             mailbox.clone(),
             id.clone(),
@@ -2881,6 +2894,80 @@ pub mod contract {
             .await
     }
 
+    /// **A message whose replacement was set aside is delivered, and the box
+    /// does not count it as replaced.** The sender posts A and then B replacing
+    /// A. The reader sets B aside. B can no longer be read, so A is the only
+    /// words that reach the reader: the delivery hands A over, nothing is named
+    /// apart, A reads as replaced by nothing, and B stays set aside.
+    ///
+    /// The control is a replacement that was not set aside: with it in place A is
+    /// withheld, so the case does not hold on a store that never withholds.
+    pub async fn a_message_whose_replacement_was_set_aside_is_delivered(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let a = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+        let b = superseding(store, "inbox", "alpha", "ship it on monday", 1, &a.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a replacement of the sender's own message is written");
+        let with_it = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            (with_it.new, with_it.superseded),
+            (1, 1),
+            "the control: with the replacement in place the original is counted apart"
+        );
+
+        store
+            .quarantine(
+                &b.id,
+                &name("inbox"),
+                "the sender meant a different box",
+                crate::mailbox::Acting::unnamed(at(5)),
+            )
+            .await
+            .expect("setting the replacement aside succeeds");
+
+        let after = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            (after.new, after.superseded),
+            (1, 0),
+            "the original is waiting and is not counted as replaced: {after:?}"
+        );
+        let handed = store
+            .message_by_id(&a.id)
+            .await
+            .expect("read ok")
+            .expect("there");
+        assert_eq!(
+            handed.superseded_by, None,
+            "a message set aside replaces nothing"
+        );
+
+        let delivery = read(store, "inbox").await;
+        let ids: Vec<&MessageId> = delivery.messages.iter().map(|d| &d.message.id).collect();
+        assert_eq!(ids, vec![&a.id], "the original is delivered");
+        assert!(
+            delivery.superseded.is_empty(),
+            "nothing is named apart: {:?}",
+            delivery.superseded
+        );
+        assert!(
+            scanned(store, "inbox")
+                .await
+                .iter()
+                .all(|message| message.id != b.id),
+            "the replacement stays set aside"
+        );
+
+        // A second replacement of the same message lands: the first one is not
+        // standing in its way.
+        superseding(store, "inbox", "alpha", "ship it on tuesday", 2, &a.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a message whose replacement was set aside can be replaced again");
+    }
+
     /// **A replaced message nobody has read is not delivered, and the box says
     /// so.** The sender posts A and then B replacing A. The reader's delivery
     /// hands over B, names A apart with the id that replaced it, and leaves A in
@@ -3518,6 +3605,7 @@ pub mod contract {
         a_delivery_records_how_it_was_taken(&fresh().await).await;
         a_delivery_skips_processed_mail_and_hands_over_what_is_owed(&fresh().await).await;
         an_unread_message_that_was_replaced_is_listed_apart_not_delivered(&fresh().await).await;
+        a_message_whose_replacement_was_set_aside_is_delivered(&fresh().await).await;
         a_replaced_message_the_reader_already_has_is_still_delivered(&fresh().await).await;
         a_replaced_message_is_readable_by_id_on_request(&fresh().await).await;
         a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(&fresh().await).await;
