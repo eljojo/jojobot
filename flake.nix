@@ -3,11 +3,15 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    # **The store's engine tracks unstable, the rest of the toolchain does
-    # not.** dolt moves faster than a release channel does, and a deploying
-    # host runs the version it tracks rather than the one this flake pinned —
-    # so the version the tests run against is the newer one, not the older.
-    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # **The store's engine comes from its own pin, the rest of the toolchain
+    # does not.** dolt moves faster than a release channel does, so it is taken
+    # from a nixpkgs revision of its own. **It is pinned at 2.3.5, the newest
+    # 2.3 release, on purpose**: dolt 2.4.1 and 2.4.2 answer NO row, not one row
+    # holding NULL, to `SELECT MAX(ordinal) FROM t WHERE <key prefix> = ?` when
+    # the prefix matches nothing, and a write that picks its next ordinal that
+    # way fails for every new thing. `dolt_ungrouped_max` holds the store to the
+    # standard answer. Move this pin forward only to a dolt that passes it.
+    nixpkgs-dolt.url = "github:NixOS/nixpkgs/63ff57e2c7fbcf7cd33585d1150161e96b251606";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -22,7 +26,7 @@
     {
       self,
       nixpkgs,
-      nixpkgs-unstable,
+      nixpkgs-dolt,
       rust-overlay,
       flake-utils,
       crane,
@@ -34,8 +38,8 @@
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
 
-        # The one package taken from unstable — see the input's note.
-        dolt = (import nixpkgs-unstable { inherit system; }).dolt;
+        # The one package taken from its own pin — see the input's note.
+        dolt = (import nixpkgs-dolt { inherit system; }).dolt;
 
         # Toolchain comes from rust-toolchain.toml so dev and CI agree.
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
