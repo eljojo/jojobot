@@ -81,6 +81,11 @@ pub struct Bound {
 }
 
 impl Bound {
+    /// Bound values, by input name.
+    pub fn new(values: BTreeMap<String, Option<Value>>) -> Bound {
+        Bound { values }
+    }
+
     /// The value of a declared input: `Some(None)` when it was left out, `None`
     /// when no input of that name is declared.
     pub fn get(&self, name: &str) -> Option<Option<&Value>> {
@@ -112,7 +117,7 @@ fn refusal(words: impl Into<String>) -> Refusal {
 
 /// Whether a word is an input's name: a lowercase letter, then lowercase letters,
 /// digits and `_`, which is what `$name` reads.
-fn is_a_name(word: &str) -> bool {
+pub(crate) fn is_a_name(word: &str) -> bool {
     let mut chars = word.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')

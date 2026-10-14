@@ -313,3 +313,131 @@ fn a_quoted_operand_of_an_ordering_says_a_quote_makes_it_literal_text() {
     tree("due < 2026-01-01");
     tree("due < today");
 }
+
+/// The inputs a call bound: a value for each name given, and no value for the
+/// names given as `None`, which a call left out.
+fn bound(pairs: &[(&str, Option<&str>)]) -> crate::memory::view_inputs::Bound {
+    use crate::memory::view_inputs::{Bound, Value};
+    Bound::new(
+        pairs
+            .iter()
+            .map(|(name, text)| {
+                (
+                    name.to_string(),
+                    text.map(|text| Value {
+                        text: text.to_string(),
+                        handle: None,
+                    }),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn filled(text: &str, pairs: &[(&str, Option<&str>)]) -> Option<String> {
+    with_inputs(text, &bound(pairs)).unwrap_or_else(|e| panic!("'{text}' should fill: {e:?}"))
+}
+
+/// **A `$name` becomes the value bound to it**, in an equality, an ordering and a
+/// `contains`, and the filled line reads as the line written with the value in
+/// it. **Paired** with the dropping case below: the same line with the input left
+/// out loses exactly the term that used it.
+#[test]
+fn an_input_is_replaced_by_the_value_bound_to_it() {
+    let line = filled(
+        "status != done && project = $project",
+        &[("project", Some("project:krusty-burger-app"))],
+    );
+    assert_eq!(
+        line.as_deref(),
+        Some("status != done && project = project:krusty-burger-app")
+    );
+    assert_eq!(
+        tree(line.as_deref().unwrap()),
+        tree("status != done && project = project:krusty-burger-app")
+    );
+    assert_eq!(
+        filled("due <= $when", &[("when", Some("2026-10-17"))]).as_deref(),
+        Some("due <= 2026-10-17")
+    );
+    // Words with a space in them stay one value.
+    assert_eq!(
+        filled("title contains $q", &[("q", Some("two words"))]).as_deref(),
+        Some("title contains \"two words\"")
+    );
+    assert_eq!(
+        tree("title contains \"two words\""),
+        Filter::contains("title", "two words")
+    );
+}
+
+/// **A term that uses an input the call left out is dropped**, and so is a group
+/// or a negation left holding nothing. What is left still reads, with the same
+/// grouping it had. **Paired**: a term that uses no input, or one the call did
+/// bind, is kept.
+#[test]
+fn a_term_using_a_left_out_input_is_dropped_with_what_it_leaves_empty() {
+    let left_out = &[("project", None)];
+    assert_eq!(
+        filled("status != done && project = $project", left_out).as_deref(),
+        Some("status != done")
+    );
+    assert_eq!(
+        filled("project = $project && status != done", left_out).as_deref(),
+        Some("status != done")
+    );
+    assert_eq!(
+        filled(
+            "(project = $project || owner = $who) && status != done",
+            &[("project", None), ("who", Some("bot:gamma"))]
+        )
+        .as_deref(),
+        Some("(owner = bot:gamma) && status != done")
+    );
+    assert_eq!(
+        filled("(project = $project) && status != done", left_out).as_deref(),
+        Some("status != done")
+    );
+    assert_eq!(
+        filled("!(project = $project) && status != done", left_out).as_deref(),
+        Some("status != done")
+    );
+    assert_eq!(
+        filled("tags in ($a, b) && status != done", &[("a", None)]).as_deref(),
+        Some("status != done")
+    );
+    // Nothing left to ask.
+    assert_eq!(filled("project = $project", left_out), None);
+    assert_eq!(
+        filled(
+            "project = $project || owner = $who",
+            &[("project", None), ("who", None)]
+        ),
+        None
+    );
+    // The line read with the left-out term dropped still parses to the rest.
+    assert_eq!(
+        tree(
+            filled("a = 1 && b = $b || c = 3", &[("b", None)])
+                .unwrap()
+                .as_str()
+        ),
+        tree("a = 1 || c = 3")
+    );
+}
+
+/// **A `$word` the view did not declare is a word.** Nothing is replaced or
+/// dropped for it, and a line with no inputs bound reads exactly as written.
+#[test]
+fn a_word_that_is_no_declared_input_is_left_as_written() {
+    assert_eq!(
+        filled("price = $5 && name = $other", &[("project", Some("x"))]).as_deref(),
+        Some("price = $5 && name = $other")
+    );
+    assert_eq!(
+        with_inputs("status != done", &bound(&[]))
+            .unwrap()
+            .as_deref(),
+        Some("status != done")
+    );
+}

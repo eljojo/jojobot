@@ -79,6 +79,223 @@ pub fn date_word(word: &str, today: Date) -> Result<String, MemoryError> {
     }
 }
 
+/// **A saved expression with its inputs filled in.** A `$name` the view declared
+/// becomes the value the call bound it to, and every term that uses an input the
+/// call left out is dropped, with the `&&`, `||`, `!` and parentheses around it
+/// closed up. Nothing is left to ask when every term was dropped.
+///
+/// **A `$word` the call bound nothing for is a word**, so a line with no inputs
+/// reads as it always did. A line this cannot read the shape of is handed back as
+/// written, and the reader that parses it next says what is wrong with it.
+pub fn with_inputs(
+    text: &str,
+    bound: &crate::memory::view_inputs::Bound,
+) -> Result<Option<String>, MemoryError> {
+    if bound.is_empty() || text.chars().count() > MAX_LENGTH {
+        return Ok(Some(text.to_string()));
+    }
+    let Ok(tokens) = lex(text) else {
+        return Ok(Some(text.to_string()));
+    };
+    let mut shape = Shape {
+        tokens,
+        at: 0,
+        depth: 0,
+    };
+    let Some(tree) = shape.any() else {
+        return Ok(Some(text.to_string()));
+    };
+    if shape.at != shape.tokens.len() {
+        return Ok(Some(text.to_string()));
+    }
+    filled(&tree, bound)
+}
+
+/// An expression's shape: its terms and what combines them, with the words of each
+/// term kept as they were written.
+enum Node {
+    Term(Vec<Token>),
+    Not(Box<Node>),
+    Group(Box<Node>),
+    All(Vec<Node>),
+    Any(Vec<Node>),
+}
+
+struct Shape {
+    tokens: Vec<Token>,
+    at: usize,
+    depth: usize,
+}
+
+impl Shape {
+    fn peek(&self) -> Option<&Kind> {
+        self.tokens.get(self.at).map(|t| &t.kind)
+    }
+
+    fn take(&mut self) -> Option<Token> {
+        let token = self.tokens.get(self.at).cloned();
+        self.at += token.is_some() as usize;
+        token
+    }
+
+    fn any(&mut self) -> Option<Node> {
+        let mut branches = vec![self.all()?];
+        while self.peek() == Some(&Kind::Or) {
+            self.at += 1;
+            branches.push(self.all()?);
+        }
+        Some(match branches.len() {
+            1 => branches.remove(0),
+            _ => Node::Any(branches),
+        })
+    }
+
+    fn all(&mut self) -> Option<Node> {
+        let mut parts = vec![self.unary()?];
+        while self.peek() == Some(&Kind::And) {
+            self.at += 1;
+            parts.push(self.unary()?);
+        }
+        Some(match parts.len() {
+            1 => parts.remove(0),
+            _ => Node::All(parts),
+        })
+    }
+
+    fn unary(&mut self) -> Option<Node> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return None;
+        }
+        let token = self.take()?;
+        let node = match token.kind {
+            Kind::Not => Node::Not(Box::new(self.unary()?)),
+            Kind::Open => {
+                let inner = self.any()?;
+                (self.take()?.kind == Kind::Close).then_some(())?;
+                Node::Group(Box::new(inner))
+            }
+            Kind::Word(_) => self.term(token)?,
+            _ => return None,
+        };
+        self.depth -= 1;
+        Some(node)
+    }
+
+    /// A key and what is asked of it, as the tokens it is written in.
+    fn term(&mut self, key: Token) -> Option<Node> {
+        let mut words = vec![key];
+        let value = |shape: &mut Shape, words: &mut Vec<Token>| {
+            let token = shape.take()?;
+            matches!(token.kind, Kind::Word(_) | Kind::Quoted(_)).then(|| words.push(token))
+        };
+        match self.peek() {
+            None | Some(Kind::And | Kind::Or | Kind::Close) => {}
+            Some(
+                Kind::Equals
+                | Kind::NotEquals
+                | Kind::Less
+                | Kind::LessOrEqual
+                | Kind::Greater
+                | Kind::GreaterOrEqual,
+            ) => {
+                words.push(self.take()?);
+                value(self, &mut words)?;
+            }
+            Some(Kind::Word(word)) if word == "contains" => {
+                words.push(self.take()?);
+                value(self, &mut words)?;
+            }
+            Some(Kind::Word(word)) if word == "in" => {
+                words.push(self.take()?);
+                (self.peek() == Some(&Kind::Open)).then_some(())?;
+                words.push(self.take()?);
+                value(self, &mut words)?;
+                while self.peek() == Some(&Kind::Comma) {
+                    words.push(self.take()?);
+                    value(self, &mut words)?;
+                }
+                (self.peek() == Some(&Kind::Close)).then_some(())?;
+                words.push(self.take()?);
+            }
+            Some(_) => return None,
+        }
+        Some(Node::Term(words))
+    }
+}
+
+/// The line a node stands for with the call's inputs in it, or nothing when every
+/// term in it was dropped.
+fn filled(
+    node: &Node,
+    bound: &crate::memory::view_inputs::Bound,
+) -> Result<Option<String>, MemoryError> {
+    match node {
+        Node::Term(words) => filled_term(words, bound),
+        Node::Not(inner) => Ok(filled(inner, bound)?.map(|line| format!("!{line}"))),
+        Node::Group(inner) => Ok(filled(inner, bound)?.map(|line| format!("({line})"))),
+        Node::All(parts) | Node::Any(parts) => {
+            let mut kept = Vec::new();
+            for part in parts {
+                kept.extend(filled(part, bound)?);
+            }
+            let glue = if matches!(node, Node::All(_)) {
+                " && "
+            } else {
+                " || "
+            };
+            Ok((!kept.is_empty()).then(|| kept.join(glue)))
+        }
+    }
+}
+
+/// One term, with each `$name` in it replaced; nothing when it uses an input that
+/// was left out.
+fn filled_term(
+    words: &[Token],
+    bound: &crate::memory::view_inputs::Bound,
+) -> Result<Option<String>, MemoryError> {
+    let mut line = String::new();
+    let mut previous: Option<&Kind> = None;
+    for (at, word) in words.iter().enumerate() {
+        let name = match &word.kind {
+            Kind::Word(w) if at > 0 => w
+                .strip_prefix('$')
+                .filter(|name| crate::memory::view_inputs::is_a_name(name)),
+            _ => None,
+        };
+        let spelled = match name.and_then(|name| bound.get(name)) {
+            // Declared and left out: the term goes.
+            Some(None) => return Ok(None),
+            Some(Some(value)) => as_a_value(&value.text)?,
+            // Not declared: a word like any other.
+            None => word.spelled(),
+        };
+        let tight = matches!(word.kind, Kind::Comma | Kind::Close)
+            || matches!(previous, Some(Kind::Open) | None);
+        if !tight {
+            line.push(' ');
+        }
+        line.push_str(&spelled);
+        previous = Some(&word.kind);
+    }
+    Ok(Some(line))
+}
+
+/// A bound value as one value of an expression: a word as it is, or in quotes when
+/// it holds a character that would end the word.
+fn as_a_value(text: &str) -> Result<String, MemoryError> {
+    if text.contains('"') {
+        return Err(refused(
+            "an input cannot hold a double quote, which is how an expression ends a quoted value",
+        ));
+    }
+    if text.is_empty() || text.chars().any(ends_a_word) {
+        return Ok(format!("\"{text}\""));
+    }
+    Ok(text.to_string())
+}
+
 fn read(text: &str, today: Date) -> Result<(Filter, Vec<ValueWord>), MemoryError> {
     // **Checked before anything is read**, so text a caller makes huge costs
     // one count and no tokens.
