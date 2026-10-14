@@ -273,6 +273,8 @@ mod timezones;
 #[path = "user_stories/two_bags.rs"]
 mod two_bags;
 
+#[path = "user_stories/a_claim_naming_another_thing.rs"]
+mod a_claim_naming_another_thing;
 #[path = "user_stories/typing.rs"]
 mod typing;
 #[path = "user_stories/unprompted.rs"]

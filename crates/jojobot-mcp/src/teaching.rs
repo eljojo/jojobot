@@ -414,11 +414,7 @@ impl Jojobot {
     /// one: a teaching that could not be recorded must not fail the verb it
     /// rides on, and answering `true` on a write that did not land would
     /// teach nothing while believing it had.
-    pub(crate) async fn first_contact(
-        &self,
-        domain: &'static str,
-        caller: Option<&Caller>,
-    ) -> bool {
+    pub(crate) async fn first_contact(&self, domain: &str, caller: Option<&Caller>) -> bool {
         let Some(caller) = caller else {
             return false;
         };

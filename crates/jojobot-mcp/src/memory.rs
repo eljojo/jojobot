@@ -25,6 +25,7 @@ pub mod due;
 pub mod list_entities;
 pub mod merge_entities;
 pub mod parse;
+pub mod possible_subject;
 pub mod put_document;
 pub mod read_document;
 pub mod ready;

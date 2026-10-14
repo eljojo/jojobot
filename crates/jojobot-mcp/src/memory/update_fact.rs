@@ -518,6 +518,7 @@ impl Jojobot {
             attention::DueMove::Cleared => clears_due_on = true,
             attention::DueMove::Unchanged => {}
         }
+        let content_sent = args.content.is_some();
         let patch = FactPatch {
             content: args.content,
             details: args.details,
@@ -937,6 +938,9 @@ impl Jojobot {
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_status_word(&fact, &mut body).await;
                 self.note_depends_on_read(&fact, &caller, &mut body).await;
+                if content_sent {
+                    self.note_possible_subject(&fact, &caller, &mut body).await;
+                }
                 let unstarred_this_write =
                     was_starred && fact.fields.get("starred").is_none_or(|v| v != "true");
                 self.note_unstarred(&fact, was_starred, caller.sid.as_str());
