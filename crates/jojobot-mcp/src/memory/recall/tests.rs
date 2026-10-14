@@ -9541,7 +9541,7 @@ async fn a_narrowed_object_carries_none_of_the_identity_fields_and_the_answer_sa
     let jojobot = crate::harness::handler_shipped();
     project_named(&jojobot, "atlas").await;
     for slug in ["sigma", "tau"] {
-        work_under(&jojobot, "project:atlas", slug, &[("status", "next")]).await;
+        work_under(&jojobot, slug, "project:atlas", &[("status", "next")]).await;
     }
 
     let narrowed = ready_under(&jojobot, "project:atlas", Some(&["status"]), None).await;
