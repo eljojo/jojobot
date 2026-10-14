@@ -1,0 +1,27 @@
+# Release QA, run when main moves.
+#
+# `make prepush` is the whole bar, the real store, every room, the year room,
+# the package build and the flake check. Every step runs and each reports, so
+# a red first step does not hide whether the rest are green.
+#
+# `workflow_dispatch` is here so the job can be exercised on a branch before
+# main moves on this host.
+name: prepush
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  prepush:
+    # A host executor: see pull-request.yml for what the runner sees.
+    runs-on: nix
+    steps:
+      # The whole history, for the same reason as the pull-request jobs: the
+      # fixture roster test reads the commit range.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make prepush

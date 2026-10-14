@@ -1,0 +1,55 @@
+# The bars that outlive a session, run on every pull request to main.
+#
+# This repository is built by disposable implementer sessions that report their
+# own results. A bar that runs only when a session types the command and reads
+# the exit code honestly looks exactly like a green build when the session
+# forgets. These three jobs run without anybody remembering them.
+#
+# The job names are `check`, `rooms` and `year`, and they are exactly those on
+# purpose: they become the required status checks of main, and a rename here
+# silently removes a requirement there.
+#
+# One command per job, the same `make` target the house rules name. A second
+# command here would be a second standard, and the two would drift.
+name: pull-request
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# The runner labelled `nix` is a host executor: the job runs on the machine
+# itself, sees only the runner's own directory, and reaches the internet and
+# the Forgejo host. The flake is the toolchain, so each job enters it with
+# `nix develop`. Nothing is installed by the job.
+jobs:
+  check:
+    runs-on: nix
+    steps:
+      # The whole history, not the default depth of one commit. The fixture
+      # roster test reads the commit messages since a fixed boundary and fails
+      # when it cannot read the range, so a one-commit checkout is red on every
+      # run.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make check
+
+  # Every room suite except the year room. `make rooms` builds the workspace
+  # in the same command, because a room spawns the built server.
+  rooms:
+    runs-on: nix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make rooms
+
+  # The year room is the slowest suite and no other target runs it.
+  year:
+    runs-on: nix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make year
