@@ -277,10 +277,10 @@ impl Jojobot {
         self.refusal_for(&fact, None, None, measured).await
     }
 
-    /// **The same check for a merge.** The survivor takes the duplicate's name
-    /// and aliases as aliases and the duplicate's keys under its own, so the
-    /// row is measured with both folded in, and the account the merge writes
-    /// is measured as a record on the survivor.
+    /// **The same check for a merge.** The survivor is named the duplicate's name
+    /// and aliases, as the names of what was folded in, and takes the duplicate's
+    /// keys under its own, so the row is measured with both folded in, and the
+    /// account the merge writes is measured as a record on the survivor.
     pub(crate) async fn refuses_a_merge_too_big_to_read(
         &self,
         duplicate: &EntityId,
@@ -290,12 +290,7 @@ impl Jojobot {
     ) -> Option<MemoryError> {
         let (kept, was) = self.thing_as_read(survivor, None).await?;
         let (folded, folded_fields) = self.thing_as_read(duplicate, None).await?;
-        let mut after = kept.clone();
-        for label in std::iter::once(&folded.name).chain(folded.aliases.iter()) {
-            if !after.aliases.contains(label) && *label != after.name {
-                after.aliases.push(label.clone());
-            }
-        }
+        let after = survivor_after_a_merge(&kept, &folded);
         let mut now = was.clone();
         for (key, value) in folded_fields {
             now.entry(key).or_insert(value);
@@ -314,6 +309,28 @@ impl Jojobot {
         let measured = self.measured_beside(&account, &after, now);
         self.refusal_for(&account, None, None, measured).await
     }
+}
+
+/// **The survivor as a read serves it once a merge has landed**: the aliases a
+/// caller wrote are as they were, and the duplicate's name, its aliases and the
+/// names folded into it join the names of what was folded in, each once and
+/// none that the survivor already answers to. The row a read finds is the row
+/// this measures.
+fn survivor_after_a_merge(kept: &Entity, folded: &Entity) -> Entity {
+    let mut after = kept.clone();
+    let named = std::iter::once(&folded.name)
+        .chain(folded.aliases.iter())
+        .chain(folded.folded_names.iter());
+    for label in named {
+        let held = after
+            .labels()
+            .iter()
+            .any(|known| known.to_lowercase() == label.to_lowercase());
+        if !held {
+            after.folded_names.push(label.clone());
+        }
+    }
+    after
 }
 
 /// **A read of one thing with facts asked for, before any fact is added**: the
@@ -466,4 +483,79 @@ pub fn stored_records_over_the_ceiling(
         }
     }
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::{Memory, NewEntity};
+
+    /// **The row a merge is measured as is the row a read serves after it.** The
+    /// estimate is compared with the survivor the fake lists once the merge has
+    /// really landed, through the wire shape, so a difference in where a name is
+    /// carried would show as a different size.
+    #[tokio::test]
+    async fn the_merged_row_measured_is_the_merged_row_served() {
+        let memory = InMemoryMemory::booted();
+        let handle = |slug: &str| EntityId(format!("org:{slug}"));
+        let (kept, spare, older) = (handle("kept"), handle("spare"), handle("older"));
+        for (id, name, aliases) in [
+            (&kept, "Kept", vec!["The Keeper".to_string()]),
+            (
+                &spare,
+                "Spare",
+                vec!["The Spare".to_string(), "Extra".to_string()],
+            ),
+            (&older, "Older", vec!["Ancient".to_string()]),
+        ] {
+            memory
+                .add_entity(NewEntity {
+                    aliases,
+                    ..NewEntity::new(id.clone(), name, "the roster")
+                })
+                .await
+                .expect("add ok")
+                .written()
+                .expect("not blocked");
+        }
+        let caller = EntityId("bot:sigma".into());
+        let date = jiff::civil::date(2026, 10, 14);
+        memory
+            .merge(&older, &spare, None, date, &caller, None)
+            .await
+            .expect("the first fold lands");
+        async fn roster(memory: &InMemoryMemory, id: &EntityId) -> Entity {
+            memory
+                .list_entities(None)
+                .await
+                .expect("the roster reads")
+                .into_iter()
+                .find(|entity| &entity.id == id)
+                .expect("the thing is listed")
+        }
+        let kept_before = roster(&memory, &kept).await;
+        let spare_before = roster(&memory, &spare).await;
+        let estimate = survivor_after_a_merge(&kept_before, &spare_before);
+        memory
+            .merge(&spare, &kept, None, date, &caller, None)
+            .await
+            .expect("the second fold lands");
+        let served = roster(&memory, &kept).await;
+        // **The order of the folded names is the store's own** and does not change
+        // how big the row is, so the two are compared once the names are in one.
+        let mut estimate = estimate;
+        let mut served_names = served.clone();
+        estimate.folded_names.sort();
+        served_names.folded_names.sort();
+        assert_eq!(
+            crate::memory::wire::entity_json(&estimate),
+            crate::memory::wire::entity_json(&served_names),
+            "the estimate is not the row a read serves"
+        );
+        assert!(
+            estimate.aliases == kept_before.aliases,
+            "the aliases a caller wrote are not touched: {estimate:?}"
+        );
+    }
 }
