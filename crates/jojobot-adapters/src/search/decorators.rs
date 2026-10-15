@@ -308,12 +308,46 @@ impl IndexedMemory {
     }
 }
 
+impl IndexedMemory {
+    /// **The one door every write that changes a document goes through.** A write
+    /// the store committed whose fold could not follow answers
+    /// [`MemoryError::FoldBehind`], and the write still landed: this reads the
+    /// documents it touched again, so the index holds them or marks itself behind
+    /// them, and hands the same error back. Nothing is recorded as current under
+    /// the store's signal, so the next read scans. `also` names documents the
+    /// write rewrote without returning them, which are read again the same way.
+    async fn through<T>(
+        &self,
+        also: &[EntityId],
+        write: impl std::future::Future<Output = Result<T, MemoryError>>,
+    ) -> Result<T, MemoryError> {
+        use jojobot_domain::memory::Landed;
+        let result = write.await;
+        if let Err(MemoryError::FoldBehind { landed, .. }) = &result {
+            let touched = match landed {
+                Landed::Fact(fact) => vec![fact.home.clone()],
+                Landed::Creation(made) => vec![made.0.id.clone()],
+                Landed::Retraction(taken_back) => vec![taken_back.retracted.home.clone()],
+                Landed::Merge(done) => {
+                    // The folded bot's runs read as the survivor's now.
+                    self.index.names_changed();
+                    vec![done.folded.clone(), done.survivor.id.clone()]
+                }
+            };
+            for entity in touched.iter().chain(also) {
+                self.refresh(entity).await;
+            }
+        }
+        result
+    }
+}
+
 #[async_trait]
 impl Memory for IndexedMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let written = self.inner.add_entity(new).await?;
+        let written = self.through(&[], self.inner.add_entity(new)).await?;
         if let Guarded::Written(entity) = &written {
             let reread = self.refresh(&entity.id).await;
             self.caught_up(began, vec![reread]).await;
@@ -331,7 +365,9 @@ impl Memory for IndexedMemory {
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let written = self.inner.add_entity_with_first_claim(new, first).await?;
+        let written = self
+            .through(&[], self.inner.add_entity_with_first_claim(new, first))
+            .await?;
         if let Guarded::Written((entity, _)) = &written {
             let reread = self.refresh(&entity.id).await;
             self.caught_up(began, vec![reread]).await;
@@ -350,8 +386,10 @@ impl Memory for IndexedMemory {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
         let written = self
-            .inner
-            .update_entity_with_claim(handle, patch, claim)
+            .through(
+                &[],
+                self.inner.update_entity_with_claim(handle, patch, claim),
+            )
             .await?;
         if let Guarded::Written((entity, _)) = &written {
             let reread = self.refresh(&entity.id).await;
@@ -375,7 +413,9 @@ impl Memory for IndexedMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let written = self.inner.update_entity(handle, patch).await?;
+        let written = self
+            .through(&[], self.inner.update_entity(handle, patch))
+            .await?;
         if let Guarded::Written(entity) = &written {
             let reread = self.refresh(&entity.id).await;
             self.caught_up(began, vec![reread]).await;
@@ -411,8 +451,11 @@ impl Memory for IndexedMemory {
             Vec::new()
         };
         let written = self
-            .inner
-            .rename_entity(from, to, parent, date, resemblance, session)
+            .through(
+                &holders,
+                self.inner
+                    .rename_entity(from, to, parent, date, resemblance, session),
+            )
             .await?;
         if let Guarded::Written(entity) = &written {
             let mut reread = vec![self.refresh(&entity.id).await];
@@ -434,7 +477,9 @@ impl Memory for IndexedMemory {
     ) -> Result<Entity, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let entity = self.inner.archive_entity(id, reason, session).await?;
+        let entity = self
+            .through(&[], self.inner.archive_entity(id, reason, session))
+            .await?;
         let reread = self.refresh(&entity.id).await;
         self.caught_up(began, vec![reread]).await;
         Ok(entity)
@@ -447,7 +492,9 @@ impl Memory for IndexedMemory {
     ) -> Result<(Entity, Archived), MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let restored = self.inner.restore_entity(id, session).await?;
+        let restored = self
+            .through(&[], self.inner.restore_entity(id, session))
+            .await?;
         let reread = self.refresh(&restored.0.id).await;
         self.caught_up(began, vec![reread]).await;
         Ok(restored)
@@ -456,7 +503,7 @@ impl Memory for IndexedMemory {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let written = self.inner.capture(fact).await?;
+        let written = self.through(&[], self.inner.capture(fact)).await?;
         if let Guarded::Written(fact) = &written {
             let reread = self.refresh(&fact.home).await;
             self.caught_up(began, vec![reread]).await;
@@ -608,7 +655,9 @@ impl Memory for IndexedMemory {
     ) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let written = self.inner.update_fact(address, patch, caller).await?;
+        let written = self
+            .through(&[], self.inner.update_fact(address, patch, caller))
+            .await?;
         if let Guarded::Written(fact) = &written {
             let reread = self.refresh(&fact.home).await;
             self.caught_up(began, vec![reread]).await;
@@ -631,8 +680,10 @@ impl Memory for IndexedMemory {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
         let taken_back = self
-            .inner
-            .retract(address, reason, date, caller, session)
+            .through(
+                &[],
+                self.inner.retract(address, reason, date, caller, session),
+            )
             .await?;
         let reread = self.refresh(&taken_back.retracted.home).await;
         self.caught_up(began, vec![reread]).await;
@@ -668,8 +719,11 @@ impl Memory for IndexedMemory {
             Vec::new()
         };
         let done = self
-            .inner
-            .merge(folded, survivor, reason, date, caller, session)
+            .through(
+                &holders,
+                self.inner
+                    .merge(folded, survivor, reason, date, caller, session),
+            )
             .await?;
         // The folded bot's runs read as the survivor's now.
         self.index.names_changed();
@@ -696,7 +750,9 @@ impl Memory for IndexedMemory {
     ) -> Result<String, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
-        let stored = self.inner.set_prose(entity, prose, session).await?;
+        let stored = self
+            .through(&[], self.inner.set_prose(entity, prose, session))
+            .await?;
         let reread = self.refresh(entity).await;
         self.caught_up(began, vec![reread]).await;
         Ok(stored)

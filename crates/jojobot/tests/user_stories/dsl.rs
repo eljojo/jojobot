@@ -228,6 +228,35 @@ impl jojobot_domain::memory::Memory for Blindable {
     > {
         self.inner.update_entity(handle, patch).await
     }
+    async fn add_entity_with_first_claim(
+        &self,
+        new: jojobot_domain::memory::NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<(
+            jojobot_domain::memory::Entity,
+            jojobot_domain::memory::Fact,
+        )>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.add_entity_with_first_claim(new, first).await
+    }
+    async fn update_entity_with_claim(
+        &self,
+        handle: &jojobot_domain::memory::EntityId,
+        patch: jojobot_domain::memory::EntityPatch,
+        claim: jojobot_domain::memory::NewFact,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<(
+            jojobot_domain::memory::Entity,
+            jojobot_domain::memory::Fact,
+        )>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner
+            .update_entity_with_claim(handle, patch, claim)
+            .await
+    }
     async fn rename_entity(
         &self,
         from: &jojobot_domain::memory::EntityId,
