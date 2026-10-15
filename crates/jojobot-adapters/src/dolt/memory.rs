@@ -6878,7 +6878,8 @@ impl Memory for DoltMemory {
         // **Each child the fold serves under the survivor gets a version that
         // says so**, naming the run, because the child's own row is not
         // rewritten and its history would otherwise show no move.
-        for child in Self::children_served_under(&mut tx, &folded_key).await? {
+        let bare = Self::folds_without_an_event(&mut tx).await?;
+        for child in Self::children_served_under(&mut tx, &folded_key, &bare).await? {
             append_entity_version(&mut tx, &child, Some(&survivor_key), &self.clock, session)
                 .await?;
         }

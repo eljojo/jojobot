@@ -4,7 +4,7 @@
 //! from the `merge_event` table and nothing that decides where a walk goes or
 //! when it ends.
 
-use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, MergeLoop, ThingWalk};
+use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, FoldedInto, MergeLoop, ThingWalk};
 use jojobot_domain::memory::{EntityId, FactAddress, FactId, MemoryError};
 use sqlx::{MySql, Row, Transaction};
 
@@ -102,17 +102,18 @@ impl DoltMemory {
     /// merge**: the live children of `folded` and of everything folded into it.
     /// A merge moves no row, so each still holds the key of the parent it was
     /// made under. Returned by the handle the row is stored under.
+    ///
+    /// `bare` is [`Self::folds_without_an_event`], which the caller reads once for
+    /// the whole walk: a walk over the members of a collection asks this once for
+    /// each member, and a read of the same set for each would cost a statement
+    /// for each.
     pub(super) async fn children_served_under(
         tx: &mut Transaction<'_, MySql>,
         folded: &EntityId,
+        bare: &[String],
     ) -> Result<Vec<EntityId>, MemoryError> {
         let mut parents = vec![folded.clone()];
-        parents.extend(
-            Self::merges_into(tx, folded)
-                .await?
-                .into_iter()
-                .map(|step| EntityId(step.folded)),
-        );
+        parents.extend(Self::fold_sources_of(tx, folded, bare).await?);
         let mut children = Vec::new();
         for parent in parents {
             let held: Vec<String> = sqlx::query_scalar(
@@ -125,6 +126,74 @@ impl DoltMemory {
             children.extend(held.into_iter().map(EntityId));
         }
         Ok(children)
+    }
+
+    /// **The keys of the things folded with no merge event naming them**: the set
+    /// a forwarding row alone places, which is small and fixed once the build
+    /// keeps events. A walk reads it once and hands it to every step.
+    pub(super) async fn folds_without_an_event(
+        tx: &mut Transaction<'_, MySql>,
+    ) -> Result<Vec<String>, MemoryError> {
+        sqlx::query_scalar(
+            "SELECT COALESCE(badge, id) FROM entity
+             WHERE merged_into IS NOT NULL
+               AND COALESCE(badge, id) NOT IN (SELECT folded FROM merge_event WHERE ordinal = 0)",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)
+    }
+
+    /// **Every key folded into `survivor`, directly or through the things
+    /// folded into those**: the merge events in the order the merges were made,
+    /// then what only a forwarding row says. A fold made before events were kept
+    /// has no event, and [`Self::survivor_of`] reads its forwarding row, so a
+    /// walk that asked the events alone would serve the survivor without the
+    /// children such a fold gave it, where `index()` serves them.
+    async fn fold_sources_of(
+        tx: &mut Transaction<'_, MySql>,
+        survivor: &EntityId,
+        bare: &[String],
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let mut keys: Vec<EntityId> = Self::merges_into(tx, survivor)
+            .await?
+            .into_iter()
+            .map(|step| EntityId(step.folded))
+            .collect();
+        if bare.is_empty() {
+            return Ok(keys);
+        }
+        let mut walk = FoldedInto::new(survivor.as_str().to_string());
+        while let Some(key) = walk.pending() {
+            let rows: Vec<String> = sqlx::query_scalar(
+                "SELECT folded FROM merge_event WHERE ordinal = 0 AND survivor = ?",
+            )
+            .bind(&key)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            let mut folded = rows;
+            for held in bare {
+                if !folded.contains(held)
+                    && Self::survivor_of(tx, &EntityId(held.clone()))
+                        .await?
+                        .is_some_and(|placed| placed.as_str() == key)
+                {
+                    folded.push(held.clone());
+                }
+            }
+            walk.reach(folded);
+        }
+        let reached = match walk.finish() {
+            Ok(reached) => reached,
+            Err(looped) => return Err(Self::damage_of(tx, looped).await),
+        };
+        for key in reached {
+            if !keys.iter().any(|held| held.as_str() == key) {
+                keys.push(EntityId(key));
+            }
+        }
+        Ok(keys)
     }
 
     /// **The thing a merge folded this one into**, by the key the merge events

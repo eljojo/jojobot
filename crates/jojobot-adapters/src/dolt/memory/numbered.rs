@@ -32,14 +32,17 @@ impl DoltMemory {
         let mut found = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::from([root.to_string()]);
         let mut frontier = vec![root.to_string()];
+        // **Read once for the walk**, not once for each member it reaches.
+        let bare = Self::folds_without_an_event(tx).await?;
         while let Some(parent) = frontier.pop() {
             // **The children a read serves under the thing**, which include those
             // of everything folded into it.
-            let ids: Vec<String> = Self::children_served_under(tx, &EntityId(parent.clone()))
-                .await?
-                .into_iter()
-                .map(|id| id.as_str().to_string())
-                .collect();
+            let ids: Vec<String> =
+                Self::children_served_under(tx, &EntityId(parent.clone()), &bare)
+                    .await?
+                    .into_iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect();
             let mut badges = Self::badges_of(tx, &ids).await?;
             let rows: Vec<(String, Option<String>)> = ids
                 .into_iter()
