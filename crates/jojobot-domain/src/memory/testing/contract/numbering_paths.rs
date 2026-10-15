@@ -1,0 +1,656 @@
+//! **No write path skips a guard a collection's numbers depend on** (card 2395),
+//! proven against any [`Memory`] adapter.
+//!
+//! A number in a numbered collection names one member for ever. Three guards
+//! keep that true: **one holder** (no two members hold a number), **keeps its
+//! number** (a number held before a write is held after it) and **the kind
+//! floor** (a write may not take a required key off a thing that held it).
+//! Capture and update_fact met all three; merge, a reparent and a retraction
+//! changed what a collection holds with none of them.
+//!
+//! The table below is every write path against every guard. [`attempt`] matches
+//! the pair with no wildcard, so a new path or a new guard is a compile error
+//! until its cells are written, and a cell that is not a refusal says why.
+
+use super::numbered::{Ordinances, numbered, ordinances};
+use super::support::{add, capture, other_caller, state};
+use super::*;
+use std::collections::BTreeMap;
+
+/// The verbs that change what a collection or a member holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Path {
+    Capture,
+    UpdateFact,
+    Merge,
+    Reparent,
+    Retract,
+}
+
+const PATHS: [Path; 5] = [
+    Path::Capture,
+    Path::UpdateFact,
+    Path::Merge,
+    Path::Reparent,
+    Path::Retract,
+];
+
+/// What a write is held to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Guard {
+    OneHolder,
+    KeepsNumber,
+    KindFloor,
+}
+
+const GUARDS: [Guard; 3] = [Guard::OneHolder, Guard::KeepsNumber, Guard::KindFloor];
+
+/// What one cell of the table did.
+enum Cell {
+    /// The write was refused. `names` is a word the refusal has to carry: the
+    /// member that holds the number, or the key the floor protects.
+    Refused {
+        result: Result<(), MemoryError>,
+        names: String,
+    },
+    /// The path cannot reach the guard, and the reason it cannot.
+    CannotReach(&'static str),
+    /// The path is not held to the guard on purpose, so the write lands.
+    ServedOnPurpose {
+        result: Result<(), MemoryError>,
+        why: &'static str,
+    },
+}
+
+/// The world every cell is attempted in. **Every refusal writes nothing**, so
+/// one world serves them all, and each cell is checked against what the world
+/// held before it.
+struct World {
+    o: Ordinances,
+    /// A member that holds no number.
+    signs: EntityId,
+    /// A member whose number was written twice: 7 first, 8 last.
+    banner: EntityId,
+    banner_second: FactAddress,
+    /// A member that holds 7, the number `banner` gave up.
+    rider: EntityId,
+    rider_claim: FactAddress,
+    /// A thing outside the collection that holds 2, a number the collection holds.
+    outsider: EntityId,
+    /// A thing outside the collection with no number.
+    elsewhere: EntityId,
+    /// Parking's own claim, the one that gives it 2.
+    parking_claim: FactAddress,
+    /// A promise in the collection that holds its day, the key its kind requires.
+    pledge: EntityId,
+    pledge_claim: FactAddress,
+    /// A thing outside the collection that wrote a day, then took it off.
+    former: EntityId,
+    /// A member that holds no number and has a child that holds 11.
+    annex: EntityId,
+    annex_child: EntityId,
+}
+
+fn member(collection: &EntityId, id: &EntityId, name: &str) -> NewEntity {
+    NewEntity {
+        parent: Some(collection.clone()),
+        ..NewEntity::new(id.clone(), name, "contract-fixture")
+    }
+}
+
+async fn claim_about<M: Memory>(
+    store: &M,
+    about: &EntityId,
+    words: &str,
+    fields: &[(&str, &str)],
+) -> Fact {
+    capture(
+        store,
+        state(NewFact {
+            fields: fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..NewFact::about(about.clone(), words, date(2026, 6, 1))
+        }),
+    )
+    .await
+}
+
+async fn the_world<M: Memory>(store: &M) -> World {
+    // The promise kind's required day is a key the store holds once the kinds
+    // are seeded, which a store's boot does and this case may not assume.
+    crate::memory::kinds::seed(store)
+        .await
+        .expect("the kinds are seeded");
+    let o = ordinances(
+        store,
+        "Pathways collection",
+        [
+            "topic:contract-ordinances-paths",
+            "decision:contract-ordinance-paths-curfew",
+            "decision:contract-ordinance-paths-parking",
+            "decision:contract-ordinance-paths-leaves",
+            "decision:contract-ordinance-paths-fireworks",
+        ],
+    )
+    .await;
+    let handle = |raw: &str| EntityId(raw.to_string());
+    let signs = handle("decision:contract-ordinance-paths-signs");
+    let banner = handle("decision:contract-ordinance-paths-banner");
+    let rider = handle("decision:contract-ordinance-paths-rider");
+    let outsider = handle("decision:contract-ordinance-paths-outsider");
+    let elsewhere = handle("decision:contract-ordinance-paths-elsewhere");
+    let pledge = handle("promise:contract-ordinance-paths-pledge");
+    let former = handle("thing:contract-ordinance-paths-former");
+    let annex = handle("decision:contract-ordinance-paths-outbuilding");
+    let annex_child = handle("decision:contract-ordinance-paths-extension");
+    for (id, name) in [
+        (&signs, "Pathways signs"),
+        (&banner, "Pathways banner"),
+        (&rider, "Pathways rider"),
+        (&pledge, "Pathways pledge"),
+        (&annex, "Pathways outbuilding"),
+    ] {
+        add(store, member(&o.collection, id, name)).await;
+    }
+    add(store, member(&annex, &annex_child, "Pathways extension")).await;
+    claim_about(store, &annex_child, "wing is eleven", &[("number", "11")]).await;
+    for (id, name) in [
+        (&outsider, "Pathways outsider"),
+        (&elsewhere, "Pathways elsewhere"),
+        (&former, "Pathways former"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    // Banner gives up 7 for 8; the rider takes the 7 it left.
+    claim_about(store, &banner, "banner is seven", &[("number", "7")]).await;
+    let banner_second = claim_about(store, &banner, "banner is eight", &[("number", "8")]).await;
+    let rider_fact = claim_about(store, &rider, "rider is seven", &[("number", "7")]).await;
+    claim_about(store, &outsider, "outsider holds two", &[("number", "2")]).await;
+    let pledge_fact = claim_about(
+        store,
+        &pledge,
+        "pledge falls due",
+        &[("promised_by", "2026-12-01")],
+    )
+    .await;
+    // The former thing wrote a day and then took it off, after the pledge wrote
+    // its own: folded into the pledge, its newest write of the key is the removal.
+    let former_fact = claim_about(
+        store,
+        &former,
+        "former had a day",
+        &[("promised_by", "2026-12-02")],
+    )
+    .await;
+    store
+        .update_fact(
+            &former_fact.address(),
+            FactPatch {
+                clear_fields: vec!["promised_by".to_string()],
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a thing with no floor may drop its day");
+    let parking_claim = store
+        .recall(&o.parking)
+        .await
+        .expect("parking reads")
+        .into_iter()
+        .find(|f| f.fields.contains_key("number"))
+        .expect("parking holds a claim that gives it a number")
+        .address();
+    World {
+        o,
+        signs,
+        banner,
+        banner_second: banner_second.address(),
+        rider,
+        rider_claim: rider_fact.address(),
+        outsider,
+        elsewhere,
+        parking_claim,
+        pledge,
+        pledge_claim: pledge_fact.address(),
+        former,
+        annex,
+        annex_child,
+    }
+}
+
+/// **What the world holds**, as a string two reads can be compared by: the
+/// numbering, the fields of every member the table touches and where the
+/// moved things sit.
+async fn held<M: Memory>(store: &M, w: &World) -> String {
+    let mut out = format!(
+        "{:?}",
+        store
+            .numbering_of(&w.o.collection)
+            .await
+            .expect("the collection reads")
+    );
+    for id in [
+        &w.o.curfew,
+        &w.o.parking,
+        &w.o.fireworks,
+        &w.signs,
+        &w.banner,
+        &w.rider,
+        &w.outsider,
+        &w.elsewhere,
+        &w.pledge,
+        &w.former,
+        &w.annex_child,
+    ] {
+        let fields = store.fields(id).await;
+        out.push_str(&format!("\n{id}: {fields:?}"));
+    }
+    let listed = store.list_entities(None).await.expect("the roster lists");
+    for id in [
+        &w.o.parking,
+        &w.outsider,
+        &w.elsewhere,
+        &w.former,
+        &w.signs,
+        &w.annex,
+    ] {
+        let row = listed.iter().find(|e| &e.id == id);
+        out.push_str(&format!(
+            "\n{id} sits under {:?}, folded into {:?}",
+            row.and_then(|e| e.parent.clone()),
+            row.and_then(|e| e.merged_into.clone())
+        ));
+    }
+    out
+}
+
+async fn next_number<M: Memory>(store: &M, collection: &EntityId) -> u64 {
+    store
+        .numbering_of(collection)
+        .await
+        .expect("the collection reads")
+        .expect("it numbers its members")
+        .next_number
+}
+
+fn landed<T>(result: Result<T, MemoryError>) -> Result<(), MemoryError> {
+    result.map(|_| ())
+}
+
+fn refused(result: Result<(), MemoryError>, names: &EntityId) -> Cell {
+    Cell::Refused {
+        result,
+        names: names.to_string(),
+    }
+}
+
+fn refused_key(result: Result<(), MemoryError>, key: &str) -> Cell {
+    Cell::Refused {
+        result,
+        names: key.to_string(),
+    }
+}
+
+async fn merge<M: Memory>(
+    store: &M,
+    folded: &EntityId,
+    survivor: &EntityId,
+) -> Result<(), MemoryError> {
+    landed(
+        store
+            .merge(
+                folded,
+                survivor,
+                Some("one thing filed twice"),
+                date(2026, 6, 2),
+                &other_caller(),
+                Some("session-paths"),
+            )
+            .await,
+    )
+}
+
+async fn reparent<M: Memory>(
+    store: &M,
+    thing: &EntityId,
+    parent: &EntityId,
+) -> Result<(), MemoryError> {
+    landed(
+        store
+            .rename_entity(
+                thing,
+                thing,
+                Some(parent.clone()),
+                date(2026, 6, 2),
+                crate::memory::Override::none(),
+                None,
+            )
+            .await,
+    )
+}
+
+async fn retract<M: Memory>(store: &M, address: &FactAddress) -> Result<(), MemoryError> {
+    landed(
+        store
+            .retract(
+                address,
+                Some("written in error"),
+                date(2026, 6, 2),
+                &other_caller(),
+                None,
+            )
+            .await,
+    )
+}
+
+async fn update<M: Memory>(
+    store: &M,
+    address: &FactAddress,
+    patch: FactPatch,
+) -> Result<(), MemoryError> {
+    landed(store.update_fact(address, patch, &other_caller()).await)
+}
+
+/// **One cell of the table.** No wildcard: a pair left out does not compile.
+async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> Cell {
+    match (path, guard) {
+        (Path::Capture, Guard::OneHolder) => refused(
+            landed(
+                store
+                    .capture(state(NewFact {
+                        fields: BTreeMap::from([("number".to_string(), "4".to_string())]),
+                        ..NewFact::about(w.signs.clone(), "signs take four", date(2026, 6, 2))
+                    }))
+                    .await,
+            ),
+            &w.o.fireworks,
+        ),
+        (Path::Capture, Guard::KeepsNumber) => {
+            Cell::CannotReach("a capture adds keys to a thing and cannot take one off")
+        }
+        (Path::Capture, Guard::KindFloor) => refused_key(
+            landed(
+                store
+                    .capture(state(NewFact {
+                        fields: BTreeMap::from([("promised_by".to_string(), "soon".to_string())]),
+                        ..NewFact::about(w.pledge.clone(), "pledge, vaguely", date(2026, 6, 2))
+                    }))
+                    .await,
+            ),
+            "promised_by",
+        ),
+
+        (Path::UpdateFact, Guard::OneHolder) => refused(
+            update(store, &w.rider_claim, state_patch_of("number", "1")).await,
+            &w.o.curfew,
+        ),
+        (Path::UpdateFact, Guard::KeepsNumber) => refused(
+            update(
+                store,
+                &w.rider_claim,
+                FactPatch {
+                    clear_fields: vec!["number".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await,
+            &w.rider,
+        ),
+        (Path::UpdateFact, Guard::KindFloor) => refused_key(
+            update(
+                store,
+                &w.pledge_claim,
+                FactPatch {
+                    clear_fields: vec!["promised_by".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await,
+            "promised_by",
+        ),
+
+        // The outsider holds 2 and parking holds 2: signs, which holds none,
+        // would serve the outsider's 2 and the collection would have two holders.
+        (Path::Merge, Guard::OneHolder) => {
+            refused(merge(store, &w.outsider, &w.signs).await, &w.o.parking)
+        }
+        // Parking leaves the collection with its 2.
+        (Path::Merge, Guard::KeepsNumber) => {
+            refused(merge(store, &w.o.parking, &w.elsewhere).await, &w.o.parking)
+        }
+        // The former thing's newest write of the day is the removal.
+        (Path::Merge, Guard::KindFloor) => {
+            refused_key(merge(store, &w.former, &w.pledge).await, "promised_by")
+        }
+
+        (Path::Reparent, Guard::OneHolder) => refused(
+            reparent(store, &w.outsider, &w.o.collection).await,
+            &w.o.parking,
+        ),
+        (Path::Reparent, Guard::KeepsNumber) => refused(
+            reparent(store, &w.o.parking, &w.elsewhere).await,
+            &w.o.parking,
+        ),
+        (Path::Reparent, Guard::KindFloor) => {
+            Cell::CannotReach("a reparent writes no field, so no key can leave the thing")
+        }
+
+        // Banner's older claim says 7, which the rider holds now.
+        (Path::Retract, Guard::OneHolder) => {
+            refused(retract(store, &w.banner_second).await, &w.rider)
+        }
+        // Parking's only claim of its number.
+        (Path::Retract, Guard::KeepsNumber) => {
+            refused(retract(store, &w.parking_claim).await, &w.o.parking)
+        }
+        // **A retraction is served on purpose**: it says the claim should never
+        // have been written, so a claim somebody wants taken back is never held
+        // back by a kind's floor. The floor guards the ordinary writes.
+        (Path::Retract, Guard::KindFloor) => Cell::ServedOnPurpose {
+            result: retract(store, &w.pledge_claim).await,
+            why: "a retraction takes a record back and is never held back by a floor",
+        },
+    }
+}
+
+fn state_patch_of(key: &str, value: &str) -> FactPatch {
+    super::support::state_patch(FactPatch {
+        fields: BTreeMap::from([(key.to_string(), value.to_string())]),
+        ..FactPatch::default()
+    })
+}
+
+/// Whether a refusal is the guard's own.
+fn is_the_refusal_of(guard: Guard, error: &MemoryError) -> bool {
+    match guard {
+        Guard::OneHolder => matches!(error, MemoryError::NumberTaken { .. }),
+        Guard::KeepsNumber => matches!(error, MemoryError::NumberFreed { .. }),
+        Guard::KindFloor => matches!(
+            error,
+            MemoryError::BreaksFit { .. } | MemoryError::BreaksType { .. }
+        ),
+    }
+}
+
+/// **Every write path is held to every guard, and a refusal writes nothing.**
+///
+/// A cell is a refusal by that guard's own error, naming the member or the key,
+/// with the world exactly as it was before the attempt. A cell that is not a
+/// refusal says why, so a path that quietly skips a guard cannot hide as one.
+/// **Paired** by [`a_write_that_keeps_every_number_with_one_holder_still_lands`]:
+/// the refusals are about the numbers, not about merging, moving or retracting.
+pub async fn no_write_path_skips_a_numbering_guard<M: Memory>(store: &M) {
+    let w = the_world(store).await;
+    let mut served_on_purpose = Vec::new();
+    // **Every cell is attempted and every failure is named**, so a path that
+    // skips two guards is read as two cells and not as the first of them.
+    let mut failures: Vec<String> = Vec::new();
+    for path in PATHS {
+        for guard in GUARDS {
+            let before = held(store, &w).await;
+            let cell = attempt(store, &w, path, guard).await;
+            let cell_name = format!("{path:?} x {guard:?}");
+            match cell {
+                Cell::Refused { result, names } => match result {
+                    Ok(()) => failures.push(format!("{cell_name}: the write landed")),
+                    Err(error) if !is_the_refusal_of(guard, &error) => {
+                        failures.push(format!("{cell_name}: refused by another guard: {error:?}"))
+                    }
+                    Err(error) if !error.to_string().contains(&names) => failures.push(format!(
+                        "{cell_name}: the refusal does not name {names}: {error}"
+                    )),
+                    Err(_) => {
+                        if held(store, &w).await != before {
+                            failures.push(format!(
+                                "{cell_name}: a refused write changed what the world holds"
+                            ));
+                        }
+                    }
+                },
+                Cell::CannotReach(why) => {
+                    assert!(
+                        !why.is_empty(),
+                        "{cell_name}: a cell that cannot be reached says why"
+                    );
+                }
+                Cell::ServedOnPurpose { result, why } => match result {
+                    Ok(()) => served_on_purpose.push(cell_name),
+                    Err(error) => failures.push(format!("{cell_name}: {why}: {error:?}")),
+                },
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "a write path skipped a guard:\n{}",
+        failures.join("\n")
+    );
+    assert_eq!(
+        served_on_purpose,
+        ["Retract x KindFloor"],
+        "the only path held back from a guard on purpose"
+    );
+    // **A number under a member that moves is held with it.** The annex holds no
+    // number; what is under it does. Folding the annex into a thing outside the
+    // collection, or moving it out, would carry the 11 out too.
+    let before = held(store, &w).await;
+    let folded_out = merge(store, &w.annex, &w.elsewhere).await;
+    let moved_out = reparent(store, &w.annex, &w.elsewhere).await;
+    for (how, result) in [("merge", folded_out), ("reparent", moved_out)] {
+        let error = result.expect_err(&format!("{how}: the annex carries a number out"));
+        assert!(
+            matches!(&error, MemoryError::NumberFreed { holder, number: 11, .. }
+                if holder == &w.annex_child.to_string()),
+            "{how}: refused for the number under the annex: {error:?}"
+        );
+    }
+    assert_eq!(held(store, &w).await, before, "the refusals wrote nothing");
+}
+
+/// **A write that keeps every number with one holder lands, and the number keeps
+/// naming its member.** The negative of the table: merging an unnumbered member
+/// into a numbered one, merging a numbered one into an unnumbered member (the
+/// survivor serves the number), moving a thing with a free number into the
+/// collection, moving a member within it, and retracting a claim that does not
+/// set the number.
+pub async fn a_write_that_keeps_every_number_with_one_holder_still_lands<M: Memory>(store: &M) {
+    let o = ordinances(
+        store,
+        "Landings collection",
+        [
+            "topic:contract-ordinances-lands",
+            "decision:contract-ordinance-lands-curfew",
+            "decision:contract-ordinance-lands-parking",
+            "decision:contract-ordinance-lands-leaves",
+            "decision:contract-ordinance-lands-fireworks",
+        ],
+    )
+    .await;
+    let handle = |raw: &str| EntityId(raw.to_string());
+    let signs = handle("decision:contract-ordinance-lands-signs");
+    let stand = handle("decision:contract-ordinance-lands-stand");
+    let latecomer = handle("decision:contract-ordinance-lands-latecomer");
+    add(store, member(&o.collection, &signs, "Landings signs")).await;
+    add(store, member(&o.collection, &stand, "Landings stand")).await;
+    add(
+        store,
+        NewEntity::new(latecomer.clone(), "Landings latecomer", "contract-fixture"),
+    )
+    .await;
+    claim_about(store, &latecomer, "latecomer is nine", &[("number", "9")]).await;
+    // A member under a member: the whole subtree is the collection's scope.
+    let wing = handle("decision:contract-ordinance-lands-wing");
+    add(store, member(&o.fireworks, &wing, "Landings wing")).await;
+    claim_about(store, &wing, "wing is six", &[("number", "6")]).await;
+    let note = claim_about(
+        store,
+        &o.curfew,
+        "curfew has a note",
+        &[("note", "start at ten")],
+    )
+    .await;
+
+    assert_eq!(next_number(store, &o.collection).await, 7);
+
+    // An unnumbered member folded into a numbered one: 1 stays with curfew.
+    merge(store, &signs, &o.curfew)
+        .await
+        .expect("an unnumbered member folds into a numbered one");
+    let one = store
+        .fields(&numbered(&o.collection, 1))
+        .await
+        .expect("1 still names a member");
+    assert_eq!(one.get("title").map(String::as_str), Some("Curfew"));
+
+    // A numbered member folded into an unnumbered one: the survivor serves 4.
+    merge(store, &o.fireworks, &stand)
+        .await
+        .expect("a numbered member folds into an unnumbered one");
+    let four = store
+        .fields(&numbered(&o.collection, 4))
+        .await
+        .expect("4 still names a member");
+    assert_eq!(four.get("title").map(String::as_str), Some("Fireworks"));
+    assert_eq!(
+        next_number(store, &o.collection).await,
+        7,
+        "no number was freed and none was added"
+    );
+    // The member's own child is still a member of the collection, served now
+    // under the survivor.
+    let six = store
+        .fields(&numbered(&o.collection, 6))
+        .await
+        .expect("6 still names the child of the folded member");
+    assert_eq!(six.get("number").map(String::as_str), Some("6"));
+
+    // A thing outside the collection holding a number it does not hold moves in.
+    reparent(store, &latecomer, &o.collection)
+        .await
+        .expect("a thing with a free number joins the collection");
+    assert_eq!(next_number(store, &o.collection).await, 10);
+    let nine = store
+        .fields(&numbered(&o.collection, 9))
+        .await
+        .expect("9 names the new member");
+    assert_eq!(nine.get("number").map(String::as_str), Some("9"));
+
+    // A member moved within the collection keeps its number.
+    reparent(store, &o.parking, &o.curfew)
+        .await
+        .expect("a member moves under another member");
+    let two = store
+        .fields(&numbered(&o.collection, 2))
+        .await
+        .expect("2 still names a member");
+    assert_eq!(two.get("title").map(String::as_str), Some("Parking"));
+
+    // A claim that does not set the number can be taken back.
+    retract(store, &note.address())
+        .await
+        .expect("a claim that sets no number is retracted");
+    assert_eq!(next_number(store, &o.collection).await, 10);
+}

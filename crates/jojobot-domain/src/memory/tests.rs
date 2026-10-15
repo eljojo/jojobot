@@ -1659,6 +1659,17 @@ async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
 }
 
 #[tokio::test]
+async fn fake_holds_every_write_path_to_every_numbering_guard() {
+    contract::no_write_path_skips_a_numbering_guard(&InMemoryMemory::booted()).await;
+}
+
+#[tokio::test]
+async fn fake_lets_a_write_that_keeps_every_number_land() {
+    contract::a_write_that_keeps_every_number_with_one_holder_still_lands(&InMemoryMemory::booted())
+        .await;
+}
+
+#[tokio::test]
 async fn fake_gives_a_numbered_handle_to_no_new_numbered_thing() {
     contract::a_numbered_handle_is_never_given_to_a_new_thing(&InMemoryMemory::booted()).await;
 }

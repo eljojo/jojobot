@@ -383,6 +383,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::NumberTaken { .. }
+        | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
@@ -900,6 +901,25 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 "Nothing was written: {e}. A number is never reused, even when its holder is \
                  archived, and no token overrides this. The next free number is {next}: send \
                  that. To read the holder, recall {collection}/{number} (it is {holder})."
+            ),
+        )),
+        // **The number stays with its holder**, so the way forward is a write that
+        // leaves the member holding it. No override: this is the same integrity
+        // guard as the one above (rule 472).
+        MemoryError::NumberFreed {
+            ref collection,
+            ref holder,
+            number,
+            ..
+        } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. A number names one member for ever, so it stays \
+                 with {holder} while it is a member of {collection}, and no token overrides \
+                 this. Keep the number on the member and change something else, or archive \
+                 the member: an archived member keeps its number. To read the holder, recall \
+                 {collection}/{number}."
             ),
         )),
         MemoryError::NotANumber { ref collection, .. } => Ok(blocked_body(
@@ -1671,6 +1691,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::RemapsShippedWord { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::NumberTaken { .. }
+        | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
@@ -2435,6 +2456,16 @@ pub(crate) mod tests {
                 MemoryError::DocumentMergedWithAThing {
                     document: s("document:alpha"),
                     other: s("thing:handcart"),
+                },
+                Some("change"),
+            ),
+            (
+                "NumberFreed",
+                MemoryError::NumberFreed {
+                    collection: s("topic:widgets"),
+                    key: s("number"),
+                    number: 2,
+                    holder: s("thing:handcart"),
                 },
                 Some("change"),
             ),

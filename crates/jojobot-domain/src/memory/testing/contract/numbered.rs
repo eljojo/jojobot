@@ -6,15 +6,15 @@ use std::collections::BTreeMap;
 /// case: a collection that numbers by `number`, three decisions numbered 1, 2
 /// and 4, and a fourth, numbered 3, that has been archived. Handles are the
 /// suite's own, so cases that share a store never meet.
-struct Ordinances {
-    collection: EntityId,
-    curfew: EntityId,
-    parking: EntityId,
-    fireworks: EntityId,
-    leaves: EntityId,
+pub(super) struct Ordinances {
+    pub(super) collection: EntityId,
+    pub(super) curfew: EntityId,
+    pub(super) parking: EntityId,
+    pub(super) fireworks: EntityId,
+    pub(super) leaves: EntityId,
 }
 
-async fn ordinances<M: Memory>(store: &M, name: &str, handles: [&str; 5]) -> Ordinances {
+pub(super) async fn ordinances<M: Memory>(store: &M, name: &str, handles: [&str; 5]) -> Ordinances {
     let [collection, curfew, parking, leaves, fireworks] = handles.map(|h| EntityId(h.to_string()));
     add(
         store,
@@ -72,7 +72,7 @@ async fn ordinances<M: Memory>(store: &M, name: &str, handles: [&str; 5]) -> Ord
     }
 }
 
-fn numbered(collection: &EntityId, number: u64) -> EntityId {
+pub(super) fn numbered(collection: &EntityId, number: u64) -> EntityId {
     EntityId(format!("{collection}/{number}"))
 }
 
@@ -462,4 +462,7 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(store).await;
     a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(store).await;
     a_numbered_handle_is_never_given_to_a_new_thing(store).await;
+    super::numbering_paths::no_write_path_skips_a_numbering_guard(store).await;
+    super::numbering_paths::a_write_that_keeps_every_number_with_one_holder_still_lands(store)
+        .await;
 }

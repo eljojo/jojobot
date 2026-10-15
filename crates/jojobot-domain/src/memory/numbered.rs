@@ -105,8 +105,10 @@ impl Numbered {
 }
 
 /// **Every descendant of `root`, however deep**, by the parent pointers. Merged
-/// things are not members: a fold moved what they held to the survivor. A cycle
-/// in the pointers ends the walk rather than looping.
+/// things are not members: a merge appends an event and moves no row, and the
+/// survivor serves what the folded thing held, so the folded thing's own number
+/// is held by the survivor or by nobody ([`refuses_numbering`] asks which). A
+/// cycle in the pointers ends the walk rather than looping.
 pub fn descendants<'a>(root: &EntityId, entities: &'a [Entity]) -> Vec<&'a Entity> {
     let mut found: Vec<&Entity> = Vec::new();
     let mut seen: BTreeSet<&EntityId> = BTreeSet::from([root]);
@@ -193,40 +195,273 @@ pub fn member_numbered(
         .map(|m| m.handle.clone())
 }
 
-/// **Refuse a write that would leave a member with a bad number or another
-/// member's.** `after` is the subject's folded fields as the write leaves them;
-/// `scopes` are the collections it sits under ([`scopes_of`]). A subject that
-/// holds no number under a collection's key is not asked anything: a member
-/// that carries no number is allowed. There is no override (rule 472).
-pub fn refuses_numbering(
-    subject: &EntityId,
-    after: &BTreeMap<String, String>,
-    scopes: &[Numbered],
-) -> Option<MemoryError> {
-    for scope in scopes {
-        let Some(raw) = after.get(&scope.key) else {
-            continue;
-        };
-        let Some(number) = whole_number(raw) else {
+/// **One change a write makes to the members of a numbered collection.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Edit {
+    /// The thing holds `value` under the collection's key after the write. A
+    /// thing that is not a member yet becomes one. `renumbers` is true when the
+    /// writer named the number, so the number the member held before may go.
+    Set {
+        handle: EntityId,
+        value: Option<String>,
+        renumbers: bool,
+    },
+    /// The thing is not a member after the write.
+    Leave(EntityId),
+}
+
+/// **What a write does to the things it touches**, in terms of what each holds
+/// once the write has landed. Every write path that changes what a collection or
+/// a member holds describes itself this way and asks [`Reach::refuses`]: one
+/// question, however the number came to change.
+#[derive(Debug, Clone, Default)]
+pub struct Change {
+    /// The things the write leaves where they are, holding these fields as
+    /// served.
+    pub holds: Vec<(EntityId, BTreeMap<String, String>)>,
+    /// The things the write stops being members of anything: a merged-away
+    /// thing, whose number is held on only if the survivor now serves it.
+    pub leaves: Vec<EntityId>,
+    /// The things the write moves to another parent, with what each holds: the
+    /// collections they sit in change with them. A reparent moves the thing and
+    /// everything under it; a merge moves what was under the duplicate to the
+    /// survivor.
+    pub moved: Vec<(EntityId, BTreeMap<String, String>)>,
+    /// Whether the writer named the number itself (a capture or an edit that
+    /// sets the key), which may give up the number the member held.
+    pub renumbers: bool,
+}
+
+impl Change {
+    /// Every thing the change names.
+    pub fn touched(&self) -> impl Iterator<Item = &EntityId> {
+        self.holds
+            .iter()
+            .chain(self.moved.iter())
+            .map(|(handle, _)| handle)
+            .chain(self.leaves.iter())
+    }
+}
+
+/// **The collections a write touches, as they stand before it**, and the ones a
+/// moved thing joins. Read by the store inside the transaction of the write (or
+/// by the fake over its rows), then asked once.
+#[derive(Debug, Clone, Default)]
+pub struct Reach {
+    /// Every numbered collection above a touched thing, and above the new parent.
+    pub scopes: Vec<Numbered>,
+    /// The collections at or above the new parent of a thing that moves.
+    pub chain: BTreeSet<EntityId>,
+}
+
+impl Numbered {
+    /// **The edits a change makes to this collection.** `joins` says whether the
+    /// things that move end up inside it.
+    fn edits_for(&self, change: &Change, joins: bool) -> Vec<Edit> {
+        let is_member = |h: &EntityId| self.members.iter().any(|m| &m.handle == h);
+        let mut edits = Vec::new();
+        for handle in &change.leaves {
+            if is_member(handle) {
+                edits.push(Edit::Leave(handle.clone()));
+            }
+        }
+        for (handle, fields) in &change.holds {
+            if is_member(handle) {
+                edits.push(Edit::Set {
+                    handle: handle.clone(),
+                    value: fields.get(&self.key).cloned(),
+                    renumbers: change.renumbers,
+                });
+            }
+        }
+        for (handle, fields) in &change.moved {
+            if joins {
+                edits.push(Edit::Set {
+                    handle: handle.clone(),
+                    value: fields.get(&self.key).cloned(),
+                    renumbers: false,
+                });
+            } else if is_member(handle) {
+                edits.push(Edit::Leave(handle.clone()));
+            }
+        }
+        edits
+    }
+}
+
+impl Reach {
+    /// **Refuse a write that would leave a member with a bad number or another
+    /// member's, or leave a number nobody holds.** There is no override (rule
+    /// 472).
+    pub fn refuses(&self, change: &Change) -> Option<MemoryError> {
+        // A collection inside the moved subtree moves with its members and
+        // changes nothing for them.
+        let moved: BTreeSet<&EntityId> = change.moved.iter().map(|(h, _)| h).collect();
+        for scope in &self.scopes {
+            if moved.contains(&scope.collection) {
+                continue;
+            }
+            let edits = scope.edits_for(change, self.chain.contains(&scope.collection));
+            if let Some(refusal) = refuses_numbering(scope, &edits) {
+                return Some(refusal);
+            }
+        }
+        None
+    }
+}
+
+/// **Refuse the edits that would leave one collection with a bad number, with
+/// two holders of a number, or with a number nobody holds.**
+///
+/// Asked in this order: a value that is no number; a number two members hold
+/// after the write, naming the one the write did not touch; a number held before
+/// and held by nobody after. The last is how a number keeps naming one member
+/// for ever: a member that left the collection, was merged into a thing outside
+/// it, lost the claim that gave it the number or had the key taken off all free
+/// a number, and `next` could hand it to a different member. A member that
+/// *replaces* its number with another through a write that names it is the one
+/// way a number goes, and it is the writer's.
+pub fn refuses_numbering(before: &Numbered, edits: &[Edit]) -> Option<MemoryError> {
+    let mut after = before.members.clone();
+    let mut touched: BTreeSet<&EntityId> = BTreeSet::new();
+    for edit in edits {
+        match edit {
+            Edit::Leave(handle) => after.retain(|m| &m.handle != handle),
+            Edit::Set { handle, value, .. } => {
+                touched.insert(handle);
+                match after.iter_mut().find(|m| &m.handle == handle) {
+                    Some(member) => member.value = value.clone(),
+                    None => after.push(Member {
+                        handle: handle.clone(),
+                        value: value.clone(),
+                    }),
+                }
+            }
+        }
+    }
+    let held_before = |handle: &EntityId| {
+        before
+            .members
+            .iter()
+            .find(|m| &m.handle == handle)
+            .and_then(|m| m.value.as_deref())
+    };
+    // A value that is no number, in a member the write set to it. A member that
+    // already held it, and is only being read through a merge, is not refused for
+    // what it held before.
+    for edit in edits {
+        if let Edit::Set {
+            handle,
+            value: Some(raw),
+            ..
+        } = edit
+            && whole_number(raw).is_none()
+            && held_before(handle) != Some(raw.as_str())
+        {
             return Some(MemoryError::NotANumber {
-                collection: scope.collection.to_string(),
-                key: scope.key.clone(),
+                collection: before.collection.to_string(),
+                key: before.key.clone(),
                 value: raw.clone(),
             });
+        }
+    }
+    let now = Numbered {
+        collection: before.collection.clone(),
+        key: before.key.clone(),
+        members: after,
+    };
+    for handle in &touched {
+        let Some(number) = now
+            .members
+            .iter()
+            .find(|m| &m.handle == *handle)
+            .and_then(|m| m.value.as_deref())
+            .and_then(whole_number)
+        else {
+            continue;
         };
-        if let Some(holder) = scope.members.iter().find(|m| {
-            &m.handle != subject && m.value.as_deref().and_then(whole_number) == Some(number)
-        }) {
+        let rivals: Vec<&Member> = now
+            .members
+            .iter()
+            .filter(|m| {
+                &m.handle != *handle && m.value.as_deref().and_then(whole_number) == Some(number)
+            })
+            .collect();
+        if let Some(holder) = rivals
+            .iter()
+            .find(|m| !touched.contains(&m.handle))
+            .or(rivals.first())
+        {
             return Some(MemoryError::NumberTaken {
-                collection: scope.collection.to_string(),
-                key: scope.key.clone(),
+                collection: before.collection.to_string(),
+                key: before.key.clone(),
                 number,
                 holder: holder.handle.to_string(),
-                next: scope.next(),
+                next: now.next(),
+            });
+        }
+    }
+    for member in &before.members {
+        let Some(number) = member.value.as_deref().and_then(whole_number) else {
+            continue;
+        };
+        if now.holder_of(number).is_some() {
+            continue;
+        }
+        let replaced = edits.iter().any(|edit| {
+            matches!(
+                edit,
+                Edit::Set { handle, value: Some(_), renumbers: true } if handle == &member.handle
+            )
+        });
+        if !replaced {
+            return Some(MemoryError::NumberFreed {
+                collection: before.collection.to_string(),
+                key: before.key.clone(),
+                number,
+                holder: member.handle.to_string(),
             });
         }
     }
     None
+}
+
+/// **The collections a change touches**, over a roster and what each thing
+/// holds: the ones above any thing it holds or releases, and for a move the ones
+/// at or above the new parent. The fake reads its rows this way; a store that
+/// reads a transaction builds the same [`Reach`] from its own queries.
+pub fn reach_of(
+    change: &Change,
+    under: Option<&EntityId>,
+    entities: &[Entity],
+    fields: &BTreeMap<EntityId, BTreeMap<String, String>>,
+) -> Reach {
+    let mut reach = Reach::default();
+    let add = |scope: Numbered, reach: &mut Reach| {
+        if !reach
+            .scopes
+            .iter()
+            .any(|s| s.collection == scope.collection)
+        {
+            reach.scopes.push(scope);
+        }
+    };
+    for handle in change.touched() {
+        for scope in scopes_of(handle, entities, fields) {
+            add(scope, &mut reach);
+        }
+    }
+    if let Some(parent) = under {
+        let mut above = scopes_of(parent, entities, fields);
+        if let Some(own) = collection_of(parent, entities, fields) {
+            above.insert(0, own);
+        }
+        for scope in above {
+            reach.chain.insert(scope.collection.clone());
+            add(scope, &mut reach);
+        }
+    }
+    reach
 }
 
 /// The day every derived former handle carries. **No rename happened**: the

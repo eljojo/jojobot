@@ -627,6 +627,20 @@ answer: {
 }
 ```
 
+### Memory refusal `NumberFreed`
+
+```text
+reads: 'topic:widgets' numbers its members by 'number', and this write would leave thing:handcart without 2
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'topic:widgets' numbers its members by 'number', and this write would leave thing:handcart without 2. A number names one member for ever, so it stays with thing:handcart while it is a member of topic:widgets, and no token overrides this. Keep the number on the member and change something else, or archive the member: an archived member keeps its number. To read the holder, recall topic:widgets/2.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `NothingToRename`
 
 ```text

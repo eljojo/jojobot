@@ -5794,6 +5794,27 @@ pub enum MemoryError {
         /// The number the next member takes.
         next: u64,
     },
+    /// **The write would leave a number in a numbered collection that nobody
+    /// holds.** A member of the collection held `number`, and after this write no
+    /// member does: it took the key off, moved out of the collection, was merged
+    /// into a thing outside it, or lost the claim that gave it the number. A
+    /// number is never reused, so a number nobody holds could be handed to a
+    /// different member and `<collection>/<number>` would name another one. There
+    /// is no override.
+    #[error(
+        "'{collection}' numbers its members by '{key}', and this write would leave {holder} \
+         without {number}"
+    )]
+    NumberFreed {
+        /// The collection that numbers its members.
+        collection: String,
+        /// The key the members are numbered by.
+        key: String,
+        /// The number no member would hold.
+        number: u64,
+        /// The member that held it.
+        holder: String,
+    },
     /// **The value is no number, under a key a collection numbers by.** A
     /// numbered member holds a positive whole number in its one spelling.
     #[error(

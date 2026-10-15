@@ -105,3 +105,91 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
     miss.says(&format!("{COLLECTION}/2"));
     story.finish().await;
 }
+
+/// **A number names one member for good, whatever verb is used on the
+/// collection.** Folding a numbered member into a thing outside, moving it out
+/// and taking back the claim that gives it the number would each free the
+/// number, so each is refused and says which number and whose. Paired: folding
+/// an unnumbered member into a numbered one, and taking back a claim that sets
+/// no number, change nothing about the numbers and land.
+#[tokio::test]
+async fn a_number_stays_with_its_member_through_a_fold_a_move_and_a_retraction() {
+    const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(COLLECTION, "Town ordinances").await;
+    s.call(
+        "capture",
+        json!({"subject": COLLECTION, "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    for (handle, name, number) in [(CURFEW, "Curfew", "1"), (PARKING, "Parking", "2")] {
+        let (kind, slug) = handle.split_once(':').expect("a handle");
+        s.call(
+            "add_entity",
+            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named",
+                   "parent": COLLECTION, "sets": {"number": number}}),
+        )
+        .await;
+    }
+    let (kind, slug) = SIGNS.split_once(':').expect("a handle");
+    s.call(
+        "add_entity",
+        json!({"kind": kind, "handle": slug, "name": "Sign height", "source": "user-named",
+               "parent": COLLECTION}),
+    )
+    .await;
+    s.add(OUTSIDER, "Someone elsewhere").await;
+
+    // ── folding a numbered member into a thing outside the collection ───────
+    s.refused(
+        "merge_entities",
+        json!({"duplicate": PARKING, "survivor": OUTSIDER, "reason": "the same ordinance"}),
+    )
+    .await
+    .says(PARKING)
+    .says(&format!("{COLLECTION}/2"));
+    // ── moving it out ───────────────────────────────────────────────────────
+    s.refused(
+        "rename_entity",
+        json!({"handle": PARKING, "to": PARKING, "parent": OUTSIDER}),
+    )
+    .await
+    .says(PARKING)
+    .says(&format!("{COLLECTION}/2"));
+    // ── taking back the claim that gives it the number ──────────────────────
+    let parking = s.recall(PARKING).await.json();
+    let gives_two = parking["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("the member's first claim has an address")
+        .to_string();
+    s.refused(
+        "retract",
+        json!({"address": gives_two, "reason": "written in error"}),
+    )
+    .await
+    .says(&format!("{COLLECTION}/2"));
+    // Nothing moved: 2 still names parking, and the next number is where it was.
+    s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
+    let collection = s.recall(COLLECTION).await.json();
+    assert_eq!(collection["objects"][0]["next_number"], 3, "{collection}");
+
+    // ── the negatives' positives: the numbers do not change, so these land ──
+    s.merge_entities(SIGNS, CURFEW, "the same ordinance", None)
+        .await;
+    s.recall(&format!("{COLLECTION}/1")).await.says(CURFEW);
+    let note = s
+        .call(
+            "capture",
+            json!({"subject": CURFEW, "content": "starts at ten", "provenance": "testimony"}),
+        )
+        .await;
+    s.call(
+        "retract",
+        json!({"address": note.field("address"), "reason": "written in error"}),
+    )
+    .await;
+    s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
+    story.finish().await;
+}

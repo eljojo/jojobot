@@ -2876,7 +2876,16 @@ impl DoltMemory {
             &after,
             &governs,
         )?;
-        self.guard_numbering(tx, &subject_handle, &after).await?;
+        self.guard_numbering(
+            tx,
+            &jojobot_domain::memory::numbered::Change {
+                holds: vec![(subject_handle.clone(), after.clone())],
+                renumbers: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
         Self::write_fact(tx, &stored, &self.clock, fact.session.as_deref()).await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing. **A reference-typed value is
@@ -5113,6 +5122,11 @@ impl Memory for DoltMemory {
                 entity.id
             )));
         };
+        // **A move faces the numbering of the collections it leaves and joins.**
+        if let Some(new_parent) = &parent {
+            self.guard_reparent(&mut tx, from, &EntityId(badge.clone()), new_parent)
+                .await?;
+        }
         // **What is actually written is the badge** (rule 268): unchanged
         // when this rename named no new parent (`effective_parent` came off
         // `entity.parent`, already served through it once, so it is
@@ -6291,8 +6305,16 @@ impl Memory for DoltMemory {
         self.compose_reference_fields(&mut tx, &mut served_after)
             .await?;
         guard_fit(kind.as_token(), &served_before, &served_after, &governs)?;
-        self.guard_numbering(&mut tx, &handle, &served_after)
-            .await?;
+        self.guard_numbering(
+            &mut tx,
+            &jojobot_domain::memory::numbered::Change {
+                holds: vec![(handle.clone(), served_after.clone())],
+                renumbers: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind, atomically with the write that would leave it.** See
         // `refuses_unlicensed_change` and `refuses_room_overflow` in the
@@ -6592,6 +6614,26 @@ impl Memory for DoltMemory {
             }
         }
 
+        // **The numbered collections the fold reaches, read before it writes**,
+        // and what the survivor held, for the floor of its kind.
+        // What was under the duplicate is served under the survivor.
+        let folded_subtree = self
+            .subtree_holding(&mut tx, &folded_handle, &folded_key)
+            .await?;
+        let children_moved: Vec<_> = folded_subtree.into_iter().skip(1).collect();
+        let numbering = self
+            .numbering_reach(
+                &mut tx,
+                &jojobot_domain::memory::numbered::Change {
+                    holds: vec![(survivor_handle.clone(), Default::default())],
+                    leaves: vec![folded_handle.clone()],
+                    moved: children_moved.clone(),
+                    ..Default::default()
+                },
+                Some(&survivor_handle),
+            )
+            .await?;
+        let survivor_before = Self::held_by(&mut tx, &survivor_key).await?;
         // **A merge appends its event and moves no row.** The claims, their
         // writes, the field writes, the pointers other records hold at the
         // folded thing and its children all stay under the key they were stored
@@ -6741,6 +6783,34 @@ impl Memory for DoltMemory {
         // make a merge visible to it, whatever the sweep's fan-out was.
         append_entity_write(&mut tx, folded, &self.clock, session).await?;
 
+        // **The survivor now serves what the duplicate held, so the floor of its
+        // kind and the numbering are asked of that state.** A refusal here drops
+        // the transaction and nothing of the fold lands.
+        let survivor_after = Self::held_by(&mut tx, &survivor_key).await?;
+        let governs = Self::kind_keys_in(&mut tx, survivor.kind_token()).await?;
+        // **Judged as handles, as an edit is**: a reference key holds the id of
+        // what it names, which is no handle and breaks the key's type.
+        let (mut served_before, mut served_after) =
+            (survivor_before.clone(), survivor_after.clone());
+        self.compose_reference_fields(&mut tx, &mut served_before)
+            .await?;
+        self.compose_reference_fields(&mut tx, &mut served_after)
+            .await?;
+        guard_fit(
+            survivor.kind_token(),
+            &served_before,
+            &served_after,
+            &governs,
+        )?;
+        if let Some(refusal) = numbering.refuses(&jojobot_domain::memory::numbered::Change {
+            holds: vec![(survivor_handle.clone(), survivor_after)],
+            leaves: vec![folded_handle.clone()],
+            moved: children_moved,
+            ..Default::default()
+        }) {
+            return Err(refusal);
+        }
+
         // **Read back rather than reconstructed.** The fold may have moved the
         // survivor's own row — a folded parent is re-pointed above — so the
         // answer is what the store now holds and not what this call assembled.
@@ -6885,6 +6955,17 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
+        // **A retraction may leave a member without the number its claim gave
+        // it**, or hand it an older claim's number another member holds.
+        self.guard_numbering(
+            &mut tx,
+            &jojobot_domain::memory::numbered::Change {
+                holds: vec![(handle.clone(), after_fold.clone())],
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
         let retracted_on_disk = Self::as_stored(&mut tx, &retracted).await?;
         Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session).await?;
         Self::write_fact(&mut tx, &record, &self.clock, session).await?;

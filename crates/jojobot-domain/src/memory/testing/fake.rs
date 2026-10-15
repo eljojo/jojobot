@@ -12,6 +12,7 @@ use crate::memory::forward_field_value;
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
 /// real store's per-doc numbering. A fresh instance starts empty.
 /// One merge as the fake keeps it, under the storage keys.
+#[derive(Clone)]
 struct StoredMerge {
     folded: EntityId,
     survivor: EntityId,
@@ -956,21 +957,23 @@ impl InMemoryMemory {
         guard::screen(asked, &[], index)
     }
 
-    /// **Refuse a write that would give a numbered member a bad number or one
-    /// another member holds**, over the claims the write sees.
+    /// **Refuse a write that would give a numbered member a bad number, one
+    /// another member holds, or would leave a number nobody holds**, over the
+    /// claims and the roster the write sees. `under` is the parent a moved thing
+    /// takes. The one function every write path asks.
     fn guards_numbering(
         &self,
-        subject: &EntityId,
-        after: &std::collections::BTreeMap<String, String>,
+        change: &super::super::numbered::Change,
+        under: Option<&EntityId>,
+        rows: &[Entity],
         facts: &[Fact],
     ) -> Result<(), MemoryError> {
         if !self.carries_numbering() {
             return Ok(());
         }
-        let known = self.known();
-        let fields = self.fields_by_handle(&known, facts);
-        let scopes = super::super::numbered::scopes_of(subject, &known, &fields);
-        match super::super::numbered::refuses_numbering(subject, after, &scopes) {
+        let fields = self.fields_by_handle(rows, facts);
+        let reach = super::super::numbered::reach_of(change, under, rows, &fields);
+        match reach.refuses(change) {
             Some(refusal) => Err(refusal),
             None => Ok(()),
         }
@@ -1052,6 +1055,30 @@ impl InMemoryMemory {
         drop(merges);
         let world = std::sync::Arc::new(world);
         *self.world_cache.lock().expect("fake mutex poisoned") = Some((key, world.clone()));
+        world
+    }
+
+    /// **The world as it would read once `extra` had been merged**, built the way
+    /// [`Self::world`] builds the real one and kept nowhere. A write that must be
+    /// judged on the state it leaves behind asks this before it writes.
+    fn world_if_merged(&self, extra: StoredMerge) -> World {
+        let mut world = World {
+            facts: self.facts.lock().expect("fake mutex poisoned").clone(),
+            writes: self.writes.lock().expect("fake mutex poisoned").clone(),
+            claim_writes: self
+                .claim_writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .clone(),
+        };
+        let declared = self.types.lock().expect("fake mutex poisoned").clone();
+        let mut merges = self.merges.lock().expect("fake mutex poisoned").clone();
+        merges.push(extra);
+        world.relocate(&merges);
+        for merge in merges.iter() {
+            world.repoint(merge);
+        }
+        world.forward_values(&merges, &declared);
         world
     }
 
@@ -2602,6 +2629,37 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
+        // **A move changes which collections the thing and everything under it
+        // sit in**, so it faces the numbering every other write faces.
+        if let Some(new_parent) = &parent {
+            let facts = self.facts_view();
+            let fields = self.fields_by_handle(&known, &facts);
+            let mut moved = vec![entity.id.clone()];
+            moved.extend(
+                super::super::numbered::descendants(&entity.id, &known)
+                    .into_iter()
+                    .map(|e| e.id.clone()),
+            );
+            let under = self
+                .resolve(new_parent)
+                .map(|(_, handle)| handle)
+                .unwrap_or_else(|| new_parent.clone());
+            self.guards_numbering(
+                &super::super::numbered::Change {
+                    moved: moved
+                        .into_iter()
+                        .map(|handle| {
+                            let held = fields.get(&handle).cloned().unwrap_or_default();
+                            (handle, held)
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                Some(&under),
+                &known,
+                &facts,
+            )?;
+        }
         // **What actually gets written is the badge**: unchanged when this
         // rename named no new parent (`entity.parent` already is one), or
         // resolved fresh when it did — the guard just above already found
@@ -3002,7 +3060,16 @@ impl Memory for InMemoryMemory {
             &after,
             &governs,
         )?;
-        self.guards_numbering(&subject_entity.id, &after, &facts)?;
+        self.guards_numbering(
+            &super::super::numbered::Change {
+                holds: vec![(subject_entity.id.clone(), after.clone())],
+                renumbers: true,
+                ..Default::default()
+            },
+            None,
+            &self.known(),
+            &facts,
+        )?;
         // **The write spends the id of the call that carries one**, under the
         // lock the write is made under, so a second call with the same id finds
         // it spent and stores nothing.
@@ -3835,7 +3902,16 @@ impl Memory for InMemoryMemory {
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
         super::super::guard_fit(kind.as_token(), &before, &after, &governs)?;
-        self.guards_numbering(&handle, &after, &facts)?;
+        self.guards_numbering(
+            &super::super::numbered::Change {
+                holds: vec![(handle.clone(), after.clone())],
+                renumbers: true,
+                ..Default::default()
+            },
+            None,
+            &self.known(),
+            &facts,
+        )?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind** — the same check the real store runs, atomically with the
         // write it gates.
@@ -4107,7 +4183,7 @@ impl Memory for InMemoryMemory {
         }
 
         // **Read before the locks below are taken**, as the held facts are.
-        let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        let known_rows = self.known();
 
         // **A merge appends its event and moves no row.** A fact id is local to
         // the doc that holds it, so both sides own an `f1`: the event gives each
@@ -4126,6 +4202,55 @@ impl Memory for InMemoryMemory {
             })
             .collect();
         let rehomed = moved.len();
+        // **The survivor serves what the duplicate held, so the numbering is
+        // asked of the state the merge leaves**: the survivor's fields once the
+        // duplicate's are folded in, and the duplicate no longer a member. A
+        // number held by the duplicate is held on only if the survivor serves it.
+        {
+            let after = self.world_if_merged(StoredMerge {
+                folded: folded_key.clone(),
+                survivor: survivor_key.clone(),
+                at: self.clock().now(),
+                session: None,
+                claims: moved.clone(),
+            });
+            let served = super::super::folded_fields(
+                &Self::key_writes_on(&after.writes, &survivor_key, &after.facts),
+                &self.declarations(),
+            );
+            // **The floor of the survivor's kind, on the same state**: a fold whose
+            // newest write of a required key took it off leaves the survivor below
+            // what it held.
+            // **Judged as handles, as an edit is**: a reference key holds the id
+            // of what it names, which is no handle and breaks the key's type.
+            let (mut held_served, mut after_served) = (held.clone(), served.clone());
+            self.compose_reference_fields(&mut held_served);
+            self.compose_reference_fields(&mut after_served);
+            super::super::guard_fit(
+                survivor.kind_token(),
+                &held_served,
+                &after_served,
+                &self.kind_keys_of(survivor.kind_token()),
+            )?;
+            self.guards_numbering(
+                &super::super::numbered::Change {
+                    holds: vec![(survivor_handle.clone(), served)],
+                    leaves: vec![folded_handle.clone()],
+                    // What was under the duplicate is served under the survivor.
+                    moved: {
+                        let fields = self.fields_by_handle(&known_rows, &held_facts);
+                        super::super::numbered::descendants(&folded_handle, &known_rows)
+                            .into_iter()
+                            .map(|e| (e.id.clone(), fields.get(&e.id).cloned().unwrap_or_default()))
+                            .collect()
+                    },
+                    ..Default::default()
+                },
+                Some(&survivor_handle),
+                &known_rows,
+                &held_facts,
+            )?;
+        }
         // **When both sides are documents, the folded sections follow the
         // survivor's last one**, and each chunk names its heading's new id. Written
         // here, before the event is appended, while the folded records are still
@@ -4165,6 +4290,7 @@ impl Memory for InMemoryMemory {
                 self.append_writes(&folded_key, &place.fact, wrote, &classes);
             }
         }
+        let mut entities = self.entities.lock().expect("fake mutex poisoned");
         self.merges
             .lock()
             .expect("fake mutex poisoned")
@@ -4368,6 +4494,17 @@ impl Memory for InMemoryMemory {
         ) {
             return Err(err);
         }
+        // **A retraction may leave a member without the number its claim gave
+        // it**, or hand it an older claim's number another member holds.
+        self.guards_numbering(
+            &super::super::numbered::Change {
+                holds: vec![(handle.clone(), after_fold.clone())],
+                ..Default::default()
+            },
+            None,
+            &index,
+            &facts,
+        )?;
         self.spend_request(|| format!("{{\"address\":\"{address}\"}}"))?;
         self.rewrite_stored(
             &FactAddress::new(key.clone(), address.local.clone()),

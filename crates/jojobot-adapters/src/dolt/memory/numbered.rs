@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use jojobot_domain::memory::guard::EntityMatch;
 use jojobot_domain::memory::numbered::{
-    Member, NUMBERED_DAY, NUMBERS_BY, Numbered, numbered_handle, refuses_numbering,
+    Change, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, Reach, numbered_handle,
 };
 
 use super::*;
@@ -28,13 +28,18 @@ impl DoltMemory {
         let mut seen: BTreeSet<String> = BTreeSet::from([root.to_string()]);
         let mut frontier = vec![root.to_string()];
         while let Some(parent) = frontier.pop() {
-            let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-                "SELECT id, badge FROM entity WHERE parent = ? AND merged_into IS NULL ORDER BY id",
-            )
-            .bind(&parent)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?;
+            // **The children a read serves under the thing**, which include those
+            // of everything folded into it.
+            let mut rows: Vec<(String, Option<String>)> = Vec::new();
+            for id in Self::children_served_under(tx, &EntityId(parent.clone())).await? {
+                let badge: Option<String> =
+                    sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+                        .bind(id.as_str())
+                        .fetch_one(&mut **tx)
+                        .await
+                        .map_err(store)?;
+                rows.push((id.as_str().to_string(), badge));
+            }
             for (id, badge) in rows {
                 let key = badge.unwrap_or_else(|| id.clone());
                 if seen.insert(key.clone()) {
@@ -123,19 +128,104 @@ impl DoltMemory {
         Ok(scopes)
     }
 
-    /// **Refuse a write that would give a numbered member a bad number or one
-    /// another member holds**, in the transaction the write is made in.
+    /// **The numbered collections a write reaches, as they stand before it**:
+    /// those above any thing it touches, and for a move those at or above the new
+    /// parent. Read in the transaction of the write, so the answer and the write
+    /// commit together.
+    pub(super) async fn numbering_reach(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        change: &Change,
+        under: Option<&EntityId>,
+    ) -> Result<Reach, MemoryError> {
+        let mut reach = Reach::default();
+        let push = |scope: Numbered, reach: &mut Reach| {
+            if !reach
+                .scopes
+                .iter()
+                .any(|s| s.collection == scope.collection)
+            {
+                reach.scopes.push(scope);
+            }
+        };
+        for handle in change.touched() {
+            for scope in self.numbering_scopes(tx, handle).await? {
+                push(scope, &mut reach);
+            }
+        }
+        if let Some(parent) = under
+            && let Some((key, handle)) = self.resolve(tx, parent).await?
+        {
+            let mut above = Vec::new();
+            if let Some(own) = Self::collection_at(tx, &handle, &key).await? {
+                above.push(own);
+            }
+            above.extend(self.numbering_scopes(tx, &handle).await?);
+            for scope in above {
+                reach.chain.insert(scope.collection.clone());
+                push(scope, &mut reach);
+            }
+        }
+        Ok(reach)
+    }
+
+    /// **Refuse a write that would give a numbered member a bad number, one
+    /// another member holds, or leave a number nobody holds**, in the transaction
+    /// the write is made in. The one function a write whose result is known
+    /// before it lands asks (a capture, an edit, a retraction, a move).
     pub(super) async fn guard_numbering(
         &self,
         tx: &mut Transaction<'_, MySql>,
-        subject: &EntityId,
-        after: &std::collections::BTreeMap<String, String>,
+        change: &Change,
+        under: Option<&EntityId>,
     ) -> Result<(), MemoryError> {
-        let scopes = self.numbering_scopes(tx, subject).await?;
-        match refuses_numbering(subject, after, &scopes) {
+        match self
+            .numbering_reach(tx, change, under)
+            .await?
+            .refuses(change)
+        {
             Some(refusal) => Err(refusal),
             None => Ok(()),
         }
+    }
+
+    /// **A move changes which collections the thing and everything under it sit
+    /// in.** Each of them is held to the numbers of the collections it leaves and
+    /// of those it joins.
+    pub(super) async fn guard_reparent(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        thing: &EntityId,
+        thing_key: &EntityId,
+        new_parent: &EntityId,
+    ) -> Result<(), MemoryError> {
+        let moved = self.subtree_holding(tx, thing, thing_key).await?;
+        self.guard_numbering(
+            tx,
+            &Change {
+                moved,
+                ..Default::default()
+            },
+            Some(new_parent),
+        )
+        .await
+    }
+
+    /// **A thing and every thing under it, with what each holds.** What a move
+    /// carries with it: a read serves the children of everything folded into a
+    /// thing as its own ([`Self::descendants_of_key`]), so a folded thing's
+    /// children are in it.
+    pub(super) async fn subtree_holding(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        thing: &EntityId,
+        thing_key: &EntityId,
+    ) -> Result<Vec<(EntityId, std::collections::BTreeMap<String, String>)>, MemoryError> {
+        let mut subtree = vec![(thing.clone(), Self::held_by(tx, thing_key).await?)];
+        for (handle, key) in Self::descendants_of_key(tx, thing_key.as_str()).await? {
+            subtree.push((handle, Self::held_by(tx, &key).await?));
+        }
+        Ok(subtree)
     }
 
     /// **`<collection>/<N>`, resolved**: the member of the collection holding N,
