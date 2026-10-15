@@ -109,6 +109,9 @@ mod documents;
 mod dsl;
 #[path = "user_stories/duplicates.rs"]
 mod duplicates;
+/// A thing that ended stops being owed and keeps its date.
+#[path = "user_stories/ending_what_is_owed.rs"]
+mod ending_what_is_owed;
 #[path = "user_stories/entitlements.rs"]
 mod entitlements;
 /// A thing's own writes: what it was called before, and which run changed it.

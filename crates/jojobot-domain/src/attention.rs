@@ -555,6 +555,11 @@ pub struct Ending {
     pub key: &'static str,
     /// The words it holds.
     pub words: Vec<&'static str>,
+    /// **Whether any word ends it.** `false` for a carrier whose key holds one of
+    /// `words` and whose day its kind requires, so ending is the only way out.
+    /// `true` for a carrier whose day is optional: `words` are then examples, and
+    /// clearing the source of the day is a second way out that erases the date.
+    pub any_word: bool,
 }
 
 /// **The loop carrier**: a rhythm falls due a cadence after the date its cycle
@@ -674,11 +679,27 @@ impl Carrier for RunsOut {
         )
     }
 
+    /// **How it ended decides whether the day still counts**, so a write that
+    /// names only that can move the due moment.
+    fn also_reads(&self) -> &'static [&'static str] {
+        &[ENDED]
+    }
+
+    /// **A thing that ran out and was dealt with keeps its day**: ending it is
+    /// how it stops falling due while `runs_out` stays on it. Any word ends it.
+    fn ending(&self) -> Option<Ending> {
+        Some(open_ending())
+    }
+
     /// **A parse failure is loud, never silent** — the same shape every other
     /// carrier in this file takes: a thing holding this key at all is this
     /// carrier's business, and a value that will not parse is a defect to
-    /// report rather than a reason to look away.
+    /// report rather than a reason to look away. **An ended thing owes
+    /// nothing**, and the day stays where it was written.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+        if has_ended(fields) {
+            return Due::Never;
+        }
         match fields.get(RUNS_OUT).map(|held| held.trim().parse()) {
             Some(Ok(day)) => Due::On(day),
             Some(Err(_)) => Due::Unreadable,
@@ -703,7 +724,24 @@ impl Carrier for DecideBy {
         )
     }
 
+    /// **How it ended decides whether the day still counts**, as for a thing
+    /// that runs out.
+    fn also_reads(&self) -> &'static [&'static str] {
+        &[ENDED]
+    }
+
+    /// **A decision made keeps its day**: ending it is how it stops falling due
+    /// while `decide_by` stays on it. Any word ends it.
+    fn ending(&self) -> Option<Ending> {
+        Some(open_ending())
+    }
+
+    /// **An ended decision owes nothing**, and the day stays where it was
+    /// written.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+        if has_ended(fields) {
+            return Due::Never;
+        }
         match fields.get(DECIDE_BY).map(|held| held.trim().parse()) {
             Some(Ok(day)) => Due::On(day),
             Some(Err(_)) => Due::Unreadable,
@@ -722,6 +760,24 @@ pub const REGARDING: &str = "regarding";
 /// **How a promise ended**, one of [`PromiseEnd`]'s words. A promise carrying
 /// none is open.
 pub const ENDED: &str = "ended";
+
+/// **Whether a thing carries an ending word.** Any non-empty value counts, the
+/// way a promise's does.
+fn has_ended(fields: &BTreeMap<String, String>) -> bool {
+    fields
+        .get(ENDED)
+        .is_some_and(|held| !held.trim().is_empty())
+}
+
+/// **The ending of a carrier whose day is optional** (a thing that runs out, a
+/// decision): any word ends it, and these are the examples a refusal gives.
+fn open_ending() -> Ending {
+    Ending {
+        key: ENDED,
+        words: vec!["kept", "renewed", "replaced", "cancelled"],
+        any_word: true,
+    }
+}
 
 /// **The three ways a promise ends, told apart afterwards.** It was kept
 /// (`delivered`), it was let go by the one it was made to or by the one who
@@ -781,6 +837,7 @@ impl Carrier for Promises {
         Some(Ending {
             key: ENDED,
             words: PromiseEnd::ALL.map(PromiseEnd::as_token).to_vec(),
+            any_word: false,
         })
     }
 
@@ -908,6 +965,26 @@ pub fn due_reads(carriers: &[&dyn Carrier]) -> Vec<String> {
         }
     }
     keys
+}
+
+/// **What each carrier reads beyond its interface, in carrier order, and
+/// whether reading it ends the owing.** One entry per carrier, aligned with
+/// [`due_key_groups`]: the words it reads that set no day, each with `true`
+/// when the carrier names that word as its way to end.
+pub fn due_group_reads(carriers: &[&dyn Carrier]) -> Vec<Vec<(String, bool)>> {
+    let setting = due_keys(carriers);
+    carriers
+        .iter()
+        .map(|carrier| {
+            let ending = carrier.ending().map(|ending| ending.key);
+            carrier
+                .also_reads()
+                .iter()
+                .filter(|key| !setting.iter().any(|set| set == **key))
+                .map(|key| ((*key).to_string(), ending == Some(*key)))
+                .collect()
+        })
+        .collect()
 }
 
 /// **Every key that makes a thing fall due**, once each, in carrier order.
@@ -2675,5 +2752,47 @@ mod tests {
             "asked through the carrier that answers for the fields",
         );
         assert_eq!(RunsOut.unreadable_because(&broken), None);
+    }
+
+    /// **A thing that runs out, or needs a decision, stops being owed when it
+    /// carries any ending word, and keeps its day.**
+    ///
+    /// Paired in one read: the same fields without the word are owed on the day
+    /// they name, an empty word ends nothing, and a promise still takes only
+    /// its three words. A carrier that ignored the word would pass the first
+    /// half alone.
+    #[test]
+    fn a_thing_that_ended_owes_nothing_and_keeps_its_day() {
+        let held = |key: &str, ended: Option<&str>| {
+            let mut fields = BTreeMap::from([(key.to_string(), "2026-03-08".to_string())]);
+            if let Some(word) = ended {
+                fields.insert(ENDED.to_string(), word.to_string());
+            }
+            fields
+        };
+        let carriers: [(&dyn Carrier, &str); 2] = [(&RunsOut, RUNS_OUT), (&DecideBy, DECIDE_BY)];
+        for (carrier, key) in carriers {
+            assert_eq!(
+                carrier.due(&held(key, None)),
+                Due::On(date(2026, 3, 8)),
+                "{key} is owed until it ends"
+            );
+            assert_eq!(carrier.due(&held(key, Some("kept"))), Due::Never, "{key}");
+            assert_eq!(
+                carrier.due(&held(key, Some("  "))),
+                Due::On(date(2026, 3, 8)),
+                "a blank word ends nothing"
+            );
+            assert_eq!(carrier.also_reads(), [ENDED]);
+            let ending = carrier
+                .ending()
+                .expect("a date that can end names its word");
+            assert_eq!(ending.key, ENDED);
+            assert!(ending.any_word, "any word ends it, so clearing stays a way");
+        }
+        assert!(
+            !Promises.ending().expect("a promise ends").any_word,
+            "a promise's day is required, so its words are a closed list"
+        );
     }
 }

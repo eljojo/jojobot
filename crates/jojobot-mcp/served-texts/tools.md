@@ -1050,7 +1050,7 @@ recall it by the container's handle, a slash and the number
 (`topic:all-rules/32`). The container's own recall says its `next_number`,
 and a number already held is refused naming its holder and the free number.
 
-A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
+A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 
 #### `capture` — argument `/inputSchema.shape`
@@ -6079,7 +6079,7 @@ labels the claim is never a
 property of the thing and is refused here by name. The keys that make a
 thing fall due act on it only when sent here.
 
-A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
+A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 
 #### `update_fact` — argument `/inputSchema.shape`

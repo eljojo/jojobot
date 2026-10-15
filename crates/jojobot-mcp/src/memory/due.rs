@@ -34,6 +34,28 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
     if groups.iter().all(Vec::is_empty) {
         return String::new();
     }
+    // **A word a carrier reads beside its keys**, named where the keys are, so a
+    // caller is told which word acts on which thing: `ended` beside a date, and
+    // `outcome` beside a loop's schedule. A word that is the carrier's way to end
+    // ends it; any other changes it.
+    let reads = attention::due_group_reads(carriers);
+    let beside = |words: Vec<(String, bool)>, one: &str| -> String {
+        let mut shown: Vec<(String, bool)> = Vec::new();
+        for (word, ends) in words {
+            if !shown.iter().any(|(seen, _)| *seen == word) {
+                shown.push((word, ends));
+            }
+        }
+        shown
+            .iter()
+            .map(|(word, ends)| {
+                format!(
+                    "; `{word}` beside {one} {} it",
+                    if *ends { "ends" } else { "changes" }
+                )
+            })
+            .collect()
+    };
     let dates: Vec<String> = groups
         .iter()
         .filter(|group| group.len() == 1)
@@ -45,22 +67,27 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
         // **The bag is named in the first sentence**: a key sent under `fields`
         // stays on its claim and moves nothing, so a caller told which keys act
         // has to be told where they act.
+        let single_reads: Vec<(String, bool)> = groups
+            .iter()
+            .zip(&reads)
+            .filter(|(group, _)| group.len() == 1)
+            .flat_map(|(_, words)| words.clone())
+            .collect();
         sentences.push(format!(
-            "A date under {} in `sets` makes a thing fall due on that day.",
+            "A date under {} in `sets` makes a thing fall due on that day{}.",
             named(&dates, "or"),
+            beside(single_reads, "one"),
         ));
     }
-    for group in groups.iter().filter(|group| group.len() > 1) {
+    for (group, words) in groups
+        .iter()
+        .zip(&reads)
+        .filter(|(group, _)| group.len() > 1)
+    {
         sentences.push(format!(
-            "{} together set when a thing falls due.",
+            "{} together set when a thing falls due{}.",
             named(group, "and"),
-        ));
-    }
-    let reads = attention::due_reads(carriers);
-    if !reads.is_empty() {
-        sentences.push(format!(
-            "{} set no day and still change what a thing owes.",
-            named(&reads, "and"),
+            beside(words.clone(), "them"),
         ));
     }
     // **A finished piece of work is not owed**, so `status` on those kinds acts
@@ -447,6 +474,16 @@ impl Jojobot {
             String::new()
         };
         let way_out = match ending {
+            // **The day is optional, so both routes work and only one keeps it.**
+            // Ending is named first, because clearing the source erases the date.
+            Some(ending) if ending.any_word => format!(
+                "To end the owing and keep the day, write '{}' with a word saying how it \
+                 ended, for example {}: the day stays on the thing and jojobot removes '{key}' \
+                 with it. To remove it and erase the day too, clear the one it came from, and \
+                 jojobot removes '{key}' with it.",
+                ending.key,
+                ending.words.join(", "),
+            ),
             Some(ending) => format!(
                 "To remove it, write '{}' as one of {}: this one keeps its day, so ending it is \
                  how it stops falling due, and jojobot removes '{key}' with it.",
@@ -476,6 +513,33 @@ mod tests {
     use super::*;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
     use std::collections::BTreeMap;
+
+    /// **The text says which word acts beside which keys.** `ended` is named
+    /// beside the dates it ends, `outcome` beside the loop's schedule, and a
+    /// word that is not the carrier's way to end is not said to end it. A
+    /// generator that listed the words together would name both and pass a
+    /// bare containment check, so the position is read.
+    #[test]
+    fn each_word_is_named_beside_the_keys_it_acts_with() {
+        let shipped = attention::shipped();
+        let carriers: Vec<&dyn attention::Carrier> =
+            shipped.iter().map(std::convert::AsRef::as_ref).collect();
+        let text = what_makes_a_thing_fall_due(&carriers);
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("{needle}: {text}"))
+        };
+        let dates_end = at("`ended` beside one ends it");
+        assert!(
+            at("`runs_out`") < dates_end,
+            "the dates come before their word: {text}"
+        );
+        let loop_word = at("`outcome` beside them changes it");
+        assert!(
+            at("`snoozed_until`") < loop_word && dates_end < loop_word,
+            "a loop's word follows the loop's keys: {text}"
+        );
+    }
 
     /// A carrier the build does not ship, with one date key of its own.
     struct Pledges;
