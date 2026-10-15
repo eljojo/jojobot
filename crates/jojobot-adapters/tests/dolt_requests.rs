@@ -733,3 +733,241 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
 
     server.stop().await;
 }
+
+/// **Lead (a): two ids that differ only in case are two ids in the real store.**
+/// The ledger's column is a plain `VARCHAR`, and a collation that ignores case
+/// would read `Req-A` as `req-a`: the second write would hit the first one's row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-case-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_case")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let ledger = DoltRequests::new(pool.clone());
+    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+
+    let upper = request("bot:sigma", "Req-A");
+    let lower = request("bot:sigma", "req-a");
+    assert_eq!(
+        captured(
+            &memory,
+            upper.clone(),
+            claim_about(&milhouse, "wears glasses")
+        )
+        .await,
+        (true, true)
+    );
+    assert!(
+        ledger
+            .lookup(&lower.bot, &lower.id)
+            .await
+            .expect("readable")
+            .is_none(),
+        "the lower-case id reads the upper-case id's row"
+    );
+    assert_eq!(
+        captured(
+            &memory,
+            lower.clone(),
+            claim_about(&milhouse, "plays chess")
+        )
+        .await,
+        (true, true),
+        "a write under the lower-case id stores and spends it"
+    );
+    assert_eq!(rows(&pool).await, 2);
+    assert!(
+        ledger
+            .lookup(&upper.bot, &upper.id)
+            .await
+            .expect("readable")
+            .is_some()
+    );
+    assert!(
+        ledger
+            .lookup(&lower.bot, &lower.id)
+            .await
+            .expect("readable")
+            .is_some()
+    );
+
+    server.stop().await;
+}
+
+/// **Lead (c): a handle that two things have worn resolves to the newest.** The
+/// ledger finds a bot's key through the former-handle table, and `resolve`
+/// reads that table newest first. A read with no order may answer with the
+/// older thing, and the id is then spent for the wrong bot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-former-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_former")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let ledger = DoltRequests::new(pool.clone());
+    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+
+    // One bot wears `bot:sigma`, moves off it, and a second bot takes the name
+    // and moves off it too: both own it as a former handle.
+    thing(&memory, "bot:sigma", "Sigma").await;
+    for (from, to) in [("bot:sigma", "bot:older")] {
+        memory
+            .rename_entity(
+                &EntityId(from.into()),
+                &EntityId(to.into()),
+                None,
+                date(2026, 9, 1),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("rename")
+            .written()
+            .expect("the rename lands");
+    }
+    // The freed name meets the near-miss screen; the token is read from the refusal.
+    let again = NewEntity::new(
+        EntityId("bot:sigma".into()),
+        "Sigma again",
+        "contract-fixture",
+    );
+    let jojobot_domain::memory::Guarded::Blocked {
+        attempted,
+        candidates,
+    } = memory.add_entity(again.clone()).await.expect("add ok")
+    else {
+        panic!("the freed name was expected to meet the screen");
+    };
+    memory
+        .add_entity(NewEntity {
+            override_token: Some(jojobot_domain::memory::guard::override_token(
+                &attempted,
+                &candidates,
+            )),
+            override_reason: Some("a different bot that took the freed name".to_string()),
+            ..again
+        })
+        .await
+        .expect("add ok")
+        .written()
+        .expect("the freed name can be taken");
+    memory
+        .rename_entity(
+            &EntityId("bot:sigma".into()),
+            &EntityId("bot:newer".into()),
+            None,
+            date(2026, 9, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("rename")
+        .written()
+        .expect("the rename lands");
+
+    // An id spent under the shared old handle belongs to the bot that wore it last.
+    let spent = request("bot:sigma", "r1");
+    assert_eq!(
+        captured(
+            &memory,
+            spent.clone(),
+            claim_about(&milhouse, "wears glasses")
+        )
+        .await,
+        (true, true)
+    );
+    let newer = ledger
+        .lookup(&EntityId("bot:newer".into()), &spent.id)
+        .await
+        .expect("readable");
+    let older = ledger
+        .lookup(&EntityId("bot:older".into()), &spent.id)
+        .await
+        .expect("readable");
+    assert!(
+        newer.is_some() && older.is_none(),
+        "the id was spent for the wrong bot: newer {newer:?}, older {older:?}"
+    );
+
+    server.stop().await;
+}
+
+/// **Lead (b): a claim that fails before it inserts hands the id back.** The
+/// verb's commit takes the call's request once. If the claim fails on a store
+/// error, the request must be free for the next commit of the same call, or that
+/// commit would store its write with no row for the id and a resend would write
+/// twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_commit() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-claim-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_claim")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+
+    let scope = Scope::new(request("bot:sigma", "r1"));
+    // The ledger is out of reach for the first commit: the claim's first
+    // statement on it fails.
+    sqlx::query("RENAME TABLE request_receipt TO request_receipt_away")
+        .execute(&pool)
+        .await
+        .expect("the table moves");
+    let failed = within(
+        Arc::clone(&scope),
+        armed(memory.capture(claim_about(&milhouse, "wears glasses"))),
+    )
+    .await;
+    assert!(failed.is_err(), "the commit cannot reach the ledger");
+    assert!(!scope.was_spent());
+
+    sqlx::query("RENAME TABLE request_receipt_away TO request_receipt")
+        .execute(&pool)
+        .await
+        .expect("the table comes back");
+    // The same call, committing again: it can take the request, and spends it.
+    within(
+        Arc::clone(&scope),
+        armed(memory.capture(claim_about(&milhouse, "wears glasses"))),
+    )
+    .await
+    .expect("the second commit lands");
+    assert!(
+        scope.was_spent(),
+        "the failed claim kept the request, so the write stored with no row for its id"
+    );
+    assert_eq!(rows(&pool).await, 1);
+
+    server.stop().await;
+}

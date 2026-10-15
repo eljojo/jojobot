@@ -348,6 +348,8 @@ const ORDINARY: &[&str] = &[
     "bot:upgrade-fixture-chatterer",
     "bot:upgrade-fixture-heavy",
     "bot:upgrade-fixture-lead",
+    "bot:older",
+    "bot:newer",
     "bot:upgrade-fixture-wrapper",
     "bot:contract-merge-cap",
     "bot:contract-merge-ceiling-carrier",

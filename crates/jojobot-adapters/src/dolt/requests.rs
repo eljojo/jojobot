@@ -42,10 +42,15 @@ async fn bot_key(
         let badge: Option<String> = row.try_get("badge")?;
         return Ok(Some(badge.unwrap_or_else(|| handle.0.clone())));
     }
-    sqlx::query_scalar("SELECT badge FROM entity_former_handle WHERE former_handle = ?")
-        .bind(handle.as_str())
-        .fetch_optional(&mut *conn)
-        .await
+    // **Newest first**, as every other read of the table is: a handle two things
+    // have worn answers to the one that wore it last.
+    sqlx::query_scalar(
+        "SELECT badge FROM entity_former_handle WHERE former_handle = ? \
+         ORDER BY ordinal DESC LIMIT 1",
+    )
+    .bind(handle.as_str())
+    .fetch_optional(&mut *conn)
+    .await
 }
 
 /// The ledger over the one table.
@@ -160,9 +165,18 @@ pub(crate) async fn claim(
     let Some(reservation) = take() else {
         return Ok(Claim { reservation: None });
     };
-    let request = reservation.request().clone();
+    // **Held by the claim from here on**, so every way out of this function that
+    // is not the committed write hands the request back (see `Claim`'s drop).
+    let claim = Claim {
+        reservation: Some(reservation),
+    };
+    let request = claim
+        .reservation
+        .as_ref()
+        .expect("the claim was just made with one")
+        .request()
+        .clone();
     let Some(key) = bot_key(tx, &request.bot).await? else {
-        reservation.failed();
         return Err(sqlx::Error::RowNotFound);
     };
     let now = clock.now();
@@ -170,7 +184,7 @@ pub(crate) async fn claim(
         .bind(stamp(now - KEPT_FOR))
         .execute(&mut **tx)
         .await?;
-    let inserted = sqlx::query(
+    sqlx::query(
         "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
          VALUES (?, ?, ?, ?, ?, ?)",
     )
@@ -181,14 +195,8 @@ pub(crate) async fn claim(
     .bind(landed())
     .bind(stamp(now))
     .execute(&mut **tx)
-    .await;
-    if let Err(e) = inserted {
-        reservation.failed();
-        return Err(e);
-    }
-    Ok(Claim {
-        reservation: Some(reservation),
-    })
+    .await?;
+    Ok(claim)
 }
 
 /// **Commit the transaction that stores a write, with the id's row in it** when
