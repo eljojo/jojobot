@@ -1132,3 +1132,61 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
         "…and a further repeat writes nothing: {third}"
     );
 }
+
+/// **A section that was worked out from an archived one is not that one's
+/// restored copy.** `derived_from` says a record was worked out from another, and
+/// a restore also writes it; a restore must take only its own copies as the
+/// section they restore. Here the closing is archived and the opening is edited
+/// to say it was worked out from the closing. A restore to the day before must
+/// bring the closing back as its own section and leave the opening as it was,
+/// not read the opening as the closing's copy and put the closing's words over it.
+///
+/// **Paired**: the restore reads the September page byte for byte, so the
+/// closing came back and the opening is the opening.
+#[tokio::test]
+async fn a_section_worked_out_from_an_archived_one_is_not_its_restored_copy() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let addresses = manual_addresses(&session).await;
+    let (opening, closing) = (addresses[1].clone(), addresses[2].clone());
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({"address": closing, "status": "archived"}),
+        )
+        .await;
+    session
+        .call(
+            "update_fact",
+            json!({"address": opening, "derived_from": closing}),
+        )
+        .await;
+    assert_ne!(
+        read_the_whole_manual(&session).await,
+        MANUAL,
+        "the closing is gone, or this story proves nothing"
+    );
+
+    let restored = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_ne!(restored["status"], "blocked", "{restored}");
+    assert_eq!(
+        read_the_whole_manual(&session).await,
+        MANUAL,
+        "the September page, byte for byte: {restored}"
+    );
+}

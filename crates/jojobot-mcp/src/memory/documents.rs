@@ -248,9 +248,17 @@ fn plan_restore(
     // restores**, so a second restore to the same moment finds it there and has
     // nothing to do. An archived claim has no un-archive, which is why the copy
     // is a record of its own.
+    //
+    // **Only a record that did not stand then is a copy.** A record that stood on
+    // that day under its own identity was worked out from another by its writer,
+    // which `derived_from` also says; taking it for a copy would put the words of
+    // the section it names over it.
+    let then_ids: std::collections::HashSet<&str> =
+        then.iter().map(|held| held.fact.id.0.as_str()).collect();
     let now_by_origin: std::collections::HashMap<String, usize> = now
         .iter()
         .enumerate()
+        .filter(|(_, held)| !then_ids.contains(held.fact.id.0.as_str()))
         .filter_map(|(at, held)| {
             held.fact
                 .derived_from
