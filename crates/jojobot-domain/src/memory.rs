@@ -33,6 +33,7 @@ pub mod kinds;
 pub mod likeness;
 pub mod list;
 pub mod mention;
+pub mod merge;
 pub mod numbered;
 pub mod order;
 pub mod owned;
@@ -6233,6 +6234,21 @@ pub enum MemoryError {
         document: String,
         /// The handle that is not.
         other: String,
+    },
+    /// **A thing was folded into one of its own descendants.**
+    ///
+    /// The folded thing's children are served under the survivor, so a survivor
+    /// below it would be served as its own parent. The way forward is to fold the
+    /// other way, or to move the survivor out from under the thing first.
+    #[error(
+        "'{survivor}' sits below '{folded}': '{folded}' cannot be folded into its own \
+         descendant"
+    )]
+    MergeIntoDescendant {
+        /// The handle that would be folded away.
+        folded: String,
+        /// The handle it would be folded into, which sits below it.
+        survivor: String,
     },
     /// **The row named was already folded into something else.**
     ///

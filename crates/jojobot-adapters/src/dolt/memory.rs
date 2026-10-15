@@ -6511,14 +6511,15 @@ impl Memory for DoltMemory {
         let index = self.index(&mut tx).await?;
         // **Everything is decided before anything is written.** A fold writes
         // rows in several tables, so a refusal discovered half-way through is
-        // the one outcome this must not produce.
-        for side in [folded, survivor] {
-            let Some(held) = index.iter().find(|e| &e.id == side) else {
+        // the one outcome this must not produce. The sides are judged by the one
+        // function every store asks.
+        match jojobot_domain::memory::merge::refuses_merge_sides(folded, survivor, &index) {
+            Some(jojobot_domain::memory::merge::SideRefusal::Missing(side)) => {
                 // **A supplied record is real and still not a row** — reported
                 // apart from an ordinary miss (rule 234): the handle reads,
                 // lists and searches as existing, so `UnknownEntity` here
                 // would tell the caller in the next breath that it does not.
-                if self.supplied.record_for(side).is_some() {
+                if self.supplied.record_for(&side).is_some() {
                     return Err(MemoryError::SuppliedHandle {
                         attempted: side.to_string(),
                     });
@@ -6526,15 +6527,13 @@ impl Memory for DoltMemory {
                 let known = self.extend_with_supplied(index.clone());
                 return Err(MemoryError::UnknownEntity {
                     attempted: side.to_string(),
-                    nearest: self.nearest(&mut tx, side, &known).await?,
-                });
-            };
-            if let Some(into) = &held.merged_into {
-                return Err(MemoryError::AlreadyMerged {
-                    attempted: side.to_string(),
-                    into: into.to_string(),
+                    nearest: self.nearest(&mut tx, &side, &known).await?,
                 });
             }
+            Some(jojobot_domain::memory::merge::SideRefusal::Refused(refused)) => {
+                return Err(refused);
+            }
+            None => {}
         }
         // **A document merges only into another document**, decided before
         // anything is written.

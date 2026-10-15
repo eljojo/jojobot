@@ -443,3 +443,48 @@ async fn only_a_different_full_date_under_the_same_parent_sets_two_handles_apart
         .await;
     story.finish().await;
 }
+
+/// "I filed the council twice, once under its own office." **A thing is not
+/// folded into one of its own descendants, and the refusal says what to do
+/// instead.** The folded thing's children are served under the survivor, so a
+/// survivor below it would be its own parent. The way forward is read from the
+/// refusal and taken: the same two things fold the other way. **Paired**: nothing
+/// moved on the refusal, and the fold the other way lands.
+#[tokio::test]
+async fn a_thing_is_not_folded_into_its_own_descendant_and_the_refusal_names_the_way() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("org:springfield-town-council", "Town council").await;
+    s.add_under(
+        "org:springfield-town-council",
+        "org:springfield-records-office",
+        "Records office",
+    )
+    .await;
+
+    let refused = s
+        .refused(
+            "merge_entities",
+            json!({"duplicate": "org:springfield-town-council",
+                   "survivor": "org:springfield-records-office",
+                   "reason": "one body under two names"}),
+        )
+        .await;
+    refused.says("rename_entity");
+    // Nothing moved: the office still answers to its own parent.
+    s.recall("org:springfield-records-office")
+        .await
+        .says("\"parent\":\"org:springfield-town-council\"");
+
+    // The way the refusal names, taken: the other way round.
+    let merged = s
+        .merge_entities(
+            "org:springfield-records-office",
+            "org:springfield-town-council",
+            "one body under two names",
+            None,
+        )
+        .await;
+    assert!(merged.get("claims_moved").is_some(), "{merged}");
+    story.finish().await;
+}

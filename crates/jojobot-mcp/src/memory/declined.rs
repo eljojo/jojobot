@@ -407,6 +407,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NothingToMerge { .. }
         | MemoryError::DocumentMergedWithAThing { .. }
+        | MemoryError::MergeIntoDescendant { .. }
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }
         | MemoryError::HandleMoved { .. }
@@ -1078,6 +1079,21 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  away with archive_entity."
             ),
         )),
+        // **A thing does not fold into its own descendant.** Both handles are
+        // real; the call has to change. Fold the other way, or move the
+        // survivor out from under the thing first and fold after.
+        MemoryError::MergeIntoDescendant {
+            ref folded,
+            ref survivor,
+        } => Ok(blocked_body(
+            &EntityId(folded.clone()),
+            &[],
+            format!(
+                "Nothing was merged: {e}. To fold them anyway, either call {verb} the other \
+                 way, folding '{survivor}' into '{folded}', or move '{survivor}' out from \
+                 under '{folded}' first with rename_entity and its parent argument, then fold."
+            ),
+        )),
         // **Stale, not absent** (rule 261): the row named is real — it is a
         // forwarding row rather than a side to fold or a survivor to fold
         // into — so the way forward is the handle it forwards to, on
@@ -1708,6 +1724,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::NotArchived { .. }
         | MemoryError::NothingToMerge { .. }
         | MemoryError::DocumentMergedWithAThing { .. }
+        | MemoryError::MergeIntoDescendant { .. }
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }
         | MemoryError::HandleMoved { .. }
@@ -2474,6 +2491,14 @@ pub(crate) mod tests {
                 "NothingToRename",
                 MemoryError::NothingToRename {
                     attempted: s("person:alpha"),
+                },
+                Some("change"),
+            ),
+            (
+                "MergeIntoDescendant",
+                MemoryError::MergeIntoDescendant {
+                    folded: s("org:parent-one"),
+                    survivor: s("org:child-one"),
                 },
                 Some("change"),
             ),
