@@ -269,6 +269,7 @@ const ORDINARY: &[&str] = &[
     "view:contract-asked-by-view",
     "view:contract-supplied-rename-target",
     "view:contract-retired",
+    "view:contract-renamed",
     "view:contract-listed",
     "view:contract-never",
     "view:contract-shipped",

@@ -175,6 +175,57 @@ const HANDLE_KEYED_COLUMNS: &[(&str, &str)] = &[
     ("fact_stands_for", "source_home"),
 ];
 
+/// **Every column that keeps storage keys inside a JSON text**: the references
+/// and the marks a write kept. A key in them is the permanent id of a thing, or
+/// the handle's own text for a thing with no row, so the adoption of a handle
+/// moves these with [`HANDLE_KEYED_COLUMNS`].
+const HANDLE_KEYED_JSON_COLUMNS: &[(&str, &str)] =
+    &[("fact_write", "refs"), ("fact_write", "stands_for")];
+
+/// **A LIKE pattern for the rows whose JSON text holds `handle` as a whole
+/// string**: the handle as JSON writes it, quotes included, so a longer handle
+/// that starts with it does not match. The wildcards in it are escaped.
+fn json_string_pattern(handle: &str) -> String {
+    let quoted = serde_json::to_string(handle).expect("a string is JSON");
+    let escaped: String = quoted
+        .chars()
+        .flat_map(|c| match c {
+            '\\' | '%' | '_' => vec!['\\', c],
+            other => vec![other],
+        })
+        .collect();
+    format!("%{escaped}%")
+}
+
+/// **A kept list with `handle` replaced by `badge`**, or `None` when it names the
+/// handle nowhere or is not the list this store wrote. A cell that cannot be read
+/// is left as it is: the reader names it as damage.
+fn rekey_kept_list(column: &str, cell: &str, handle: &str, badge: &str) -> Option<String> {
+    let swap = |key: &str| {
+        if key == handle {
+            badge.to_string()
+        } else {
+            key.to_string()
+        }
+    };
+    match column {
+        "refs" => {
+            let keys: Vec<String> = serde_json::from_str(cell).ok()?;
+            let moved: Vec<String> = keys.iter().map(|key| swap(key)).collect();
+            (moved != keys).then(|| serde_json::to_string(&moved).expect("strings are JSON"))
+        }
+        "stands_for" => {
+            let pairs: Vec<[String; 2]> = serde_json::from_str(cell).ok()?;
+            let moved: Vec<[String; 2]> = pairs
+                .iter()
+                .map(|[home, local]| [swap(home), local.clone()])
+                .collect();
+            (moved != pairs).then(|| serde_json::to_string(&moved).expect("pairs are JSON"))
+        }
+        _ => None,
+    }
+}
+
 /// Memory kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -434,6 +485,31 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
+        for (table, column) in HANDLE_KEYED_JSON_COLUMNS {
+            let rows: Vec<(String, String, i64, String)> = sqlx::query_as(&format!(
+                "SELECT entity, fact_id, ordinal, {column} FROM {table} WHERE {column} LIKE ?"
+            ))
+            .bind(json_string_pattern(handle))
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            for (entity, fact_id, ordinal, cell) in rows {
+                let Some(moved) = rekey_kept_list(column, &cell, handle, badge) else {
+                    continue;
+                };
+                sqlx::query(&format!(
+                    "UPDATE {table} SET {column} = ?
+                     WHERE entity = ? AND fact_id = ? AND ordinal = ?"
+                ))
+                .bind(moved)
+                .bind(entity)
+                .bind(fact_id)
+                .bind(ordinal)
+                .execute(&mut **tx)
+                .await
+                .map_err(store)?;
+            }
+        }
         Ok(())
     }
 
@@ -477,6 +553,18 @@ impl DoltMemory {
                     .fetch_optional(pool)
                     .await
                     .map_err(store)?;
+            if hit.is_some() {
+                return Ok(true);
+            }
+        }
+        for (table, column) in HANDLE_KEYED_JSON_COLUMNS {
+            let hit: Option<i64> = sqlx::query_scalar(&format!(
+                "SELECT 1 FROM {table} WHERE {column} LIKE ? LIMIT 1"
+            ))
+            .bind(json_string_pattern(handle))
+            .fetch_optional(pool)
+            .await
+            .map_err(store)?;
             if hit.is_some() {
                 return Ok(true);
             }
