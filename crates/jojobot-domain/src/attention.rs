@@ -847,10 +847,7 @@ impl Carrier for Promises {
     /// open one with a day that will not parse is loud**, as every carrier's
     /// is: a thing holding the key at all is this carrier's business.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due {
-        if fields
-            .get(ENDED)
-            .is_some_and(|held| !held.trim().is_empty())
-        {
+        if has_ended(fields) {
             return Due::Never;
         }
         match fields.get(PROMISED_BY).map(|held| held.trim().parse()) {
@@ -952,19 +949,6 @@ pub fn due_key_groups(carriers: &[&dyn Carrier]) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
-}
-
-/// **Every key that changes what a thing owes without setting its day**, once
-/// each, in carrier order: what a carrier reads beyond its interface.
-pub fn due_reads(carriers: &[&dyn Carrier]) -> Vec<String> {
-    let setting = due_keys(carriers);
-    let mut keys: Vec<String> = Vec::new();
-    for key in carriers.iter().flat_map(|carrier| carrier.also_reads()) {
-        if !setting.iter().any(|set| set == key) && !keys.iter().any(|seen| seen == key) {
-            keys.push((*key).to_string());
-        }
-    }
-    keys
 }
 
 /// **What each carrier reads beyond its interface, in carrier order, and
