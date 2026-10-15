@@ -703,7 +703,8 @@ pub async fn boot_store_pushing(
     // **Forwarding rows an older build left naming a handle their survivor wore
     // before a rename, brought to the handle it wears now.** Runs before the pass
     // below, which reads the same rows. Marked finished once it has committed
-    // and skipped no row; a row it could not place is warned about at every boot.
+    // and skipped no row; a row it could not place is warned about once, the first boot that
+    // meets it.
     match linking.migrate_forward_names().await {
         Ok(report) if report.settled => {
             tracing::info!("store: forwarding rows name their survivor: already done");
@@ -725,7 +726,7 @@ pub async fn boot_store_pushing(
     // the thing it ended in.** Runs after the pass above, which makes the link
     // table agree with the writes it reads. Marked finished once it has
     // committed and skipped no forward, so it is made once; a forward it could
-    // not place keeps it open and is warned about at every boot.
+    // not place keeps it open and is warned about once, the first boot that meets it.
     match linking.migrate_forwarded_links().await {
         Ok(report) if report.settled => {
             tracing::info!("store: links on forwarding rows: already done");
