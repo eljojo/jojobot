@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Context was just compacted. Before anything else, call start_here with your bot name and compacted: true.'"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "mcp__paseo__create_heartbeat",
