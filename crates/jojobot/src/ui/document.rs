@@ -261,7 +261,11 @@ mod tests {
         let ids = ids_of("## Notes\n\n## Notes\n\n## Notes 2\n\n## Notes 2\n");
         let distinct: std::collections::BTreeSet<&String> = ids.iter().collect();
         assert_eq!(ids.len(), 4, "{ids:?}");
-        assert_eq!(distinct.len(), ids.len(), "two headings share an id: {ids:?}");
+        assert_eq!(
+            distinct.len(),
+            ids.len(),
+            "two headings share an id: {ids:?}"
+        );
         assert_eq!(ids[0], "sec-notes", "{ids:?}");
         assert_eq!(ids[1], "sec-notes-2", "{ids:?}");
 
