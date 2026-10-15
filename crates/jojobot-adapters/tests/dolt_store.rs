@@ -10518,23 +10518,35 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
     store.stop().await;
 }
 
-/// How many times as long a capture on a member of a numbered collection may take
-/// as the same capture on a plain thing, at the collection size the case below
-/// builds. A capture reads the whole collection to check its numbers, so some
-/// multiple is the price. Reading every member's writes one query at a time cost
-/// over forty times as much at this size on the real store; the batched read costs
-/// about a dozen times. The bound sits between the two, as a ratio so a loaded
-/// machine moves both sides together.
-const MEMBER_CAPTURE_OVER_PLAIN: u128 = 25;
+/// How many statements a capture on a member of a numbered collection may cost
+/// for each member the collection holds, beyond what the same capture on a plain
+/// thing costs. A capture reads the whole collection to check its numbers, so some
+/// cost per member is the price: the walk down the tree asks about each member.
+/// Reading each member's type table and writes with statements of its own cost
+/// six per member on the real store, and the batched read costs two.
+const STATEMENTS_PER_MEMBER: usize = 3;
+
+/// **The statements the server has executed so far**, from its own counter.
+async fn statements_run(pool: &sqlx::MySqlPool) -> usize {
+    use sqlx::Row;
+    let row = sqlx::query("SHOW GLOBAL STATUS LIKE 'Questions'")
+        .fetch_one(pool)
+        .await
+        .expect("the server counts its statements");
+    row.try_get::<String, _>("Value")
+        .expect("the counter has a value")
+        .parse()
+        .expect("the counter is a number")
+}
 
 /// **A capture on a member of a large numbered collection reads the collection in
-/// a handful of statements, not a few per member.** A collection of 250 members
-/// numbered by a key, a plain thing beside it, and the same note captured on each
-/// five times. The median of the member's captures is held to a multiple of the
-/// median of the plain thing's. **Paired**: both captures land, so the ratio is
-/// about the reads and not about a refusal.
+/// a bounded number of statements per member.** A collection of 250 members
+/// numbered by a key, a plain thing beside it, and the same note captured on each.
+/// The statements the server runs for each capture are counted from its own
+/// counter, which does not move with the load on the machine. **Paired**: both
+/// captures land, so the count is about the reads and not about a refusal.
 #[tokio::test]
-async fn a_capture_on_a_member_of_a_large_numbered_collection_costs_a_bounded_multiple_of_a_plain_one()
+async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_number_of_statements_per_member()
  {
     use jojobot_domain::memory::{Guarded, guard};
     const MEMBERS: u32 = 250;
@@ -10547,6 +10559,7 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_costs_a_bounded_mu
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
+    let counter = pool.clone();
     let memory_store = DoltMemory::open(pool);
 
     // Entities of one family share words, and the guard asks to be told apart.
@@ -10621,28 +10634,24 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_costs_a_bounded_mu
             .expect("not blocked");
     }
 
-    let median_of = async |target: &EntityId| {
-        let mut times = Vec::new();
-        for i in 0..5 {
-            let fact = note(target, format!("a note {i}"));
-            let started = std::time::Instant::now();
-            memory_store
-                .capture(fact)
-                .await
-                .expect("the note lands")
-                .written()
-                .expect("not blocked");
-            times.push(started.elapsed().as_micros());
-        }
-        times.sort_unstable();
-        times[2]
+    let statements_for = async |target: &EntityId, text: &str| {
+        let fact = note(target, text.to_string());
+        let before = statements_run(&counter).await;
+        memory_store
+            .capture(fact)
+            .await
+            .expect("the note lands")
+            .written()
+            .expect("not blocked");
+        statements_run(&counter).await - before
     };
-    let on_member = median_of(&last).await;
-    let on_plain = median_of(&plain).await;
+    let on_member = statements_for(&last, "a note on a member").await;
+    let on_plain = statements_for(&plain, "a note on a plain thing").await;
+    let per_member = (on_member - on_plain) as f64 / MEMBERS as f64;
     assert!(
-        on_member <= on_plain * MEMBER_CAPTURE_OVER_PLAIN,
-        "a capture on one of {MEMBERS} members took {on_member} us against {on_plain} us on a \
-         plain thing: more than {MEMBER_CAPTURE_OVER_PLAIN} times"
+        on_member <= on_plain + STATEMENTS_PER_MEMBER * MEMBERS as usize,
+        "a capture on one of {MEMBERS} members ran {on_member} statements against {on_plain} \
+         on a plain thing: {per_member:.2} per member, more than {STATEMENTS_PER_MEMBER}"
     );
 
     store.stop().await;
