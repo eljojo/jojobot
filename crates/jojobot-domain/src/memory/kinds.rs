@@ -298,16 +298,16 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::pointing_at("operator", super::EntityKind::PERSON),
             Field::listing(COLUMNS, ValueType::Text),
         ],
-        // **A question asked by name.** The keys are what a view IS: what it
-        // selects over, and what it keeps. A view that holds `selects` keeps it,
-        // because a question that says nothing about what it looks at is one
-        // nobody can ask — unlike a loop, where an absent cadence still leaves a
-        // loop. A view whose ask is `overdue` holds none, and needs none.
+        // **A question asked by name.** No key is required. What a view needs is
+        // something that narrows it: `selects`, `asks`, `where` or `parent`. A view
+        // that asks what is overdue looks at every kind that owes something and
+        // names no kind, so the shipped `view:due` holds no `selects`; a view
+        // with nothing to narrow it is refused when it is asked, which is where
+        // that is guarded.
         "view" => vec![
-            // **What the question looks at** — the kind it selects. Required of a
-            // view that has one: once a view holds it, a write cannot take it
-            // away. An `overdue` ask names no kind (see below).
-            Field::required("selects", ValueType::Text),
+            // **What the question looks at** — the kind it selects. Optional: an
+            // `overdue` ask names no kind (see below).
+            Field::new("selects", ValueType::Text),
             // **What of each one comes back**, as the names the read already
             // uses: `facts`, `prose`, `charter`. Optional, and a view that
             // names none answers with the things themselves.
@@ -657,6 +657,24 @@ mod tests {
         assert!(
             declared.iter().all(|field| !field.required),
             "a document is whole with none of them: {declared:?}"
+        );
+    }
+
+    /// **A view requires no key of its own.** A view that asks what is overdue
+    /// looks at every kind that owes something, so it names no kind to select,
+    /// and a kind that demanded `selects` would call the shipped `view:due`
+    /// incomplete. What a view needs is something that narrows it, and the
+    /// ask-time refusal guards that.
+    #[test]
+    fn the_view_kind_requires_no_key_so_an_overdue_view_is_whole_without_selects() {
+        let declared = keys_of("view");
+        assert!(
+            declared.iter().any(|field| field.key == "selects"),
+            "selects is still a key a view may hold: {declared:?}"
+        );
+        assert!(
+            declared.iter().all(|field| !field.required),
+            "a view that asks what is overdue selects no kind: {declared:?}"
         );
     }
 
