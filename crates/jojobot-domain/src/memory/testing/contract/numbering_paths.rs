@@ -596,6 +596,88 @@ pub async fn no_write_path_skips_a_numbering_guard_except_a_retraction_by_design
         .expect("not blocked");
 }
 
+/// **A number names one member, whatever was merged.** A thing outside the
+/// collection holds a child; the thing is folded into a member of the collection.
+/// The child is now served under that member, so a write on it is held to the
+/// collection's numbers exactly as a write on the member's own child: a number
+/// the collection holds is refused, naming its holder, and the number the child
+/// holds cannot be freed. **Paired**: the child's own number and a write that
+/// sets none still land, so the refusals are about the numbers.
+pub async fn a_folded_things_child_is_held_to_the_survivors_numbers<M: Memory>(store: &M) {
+    let o = ordinances(
+        store,
+        "Folding collection",
+        [
+            "topic:contract-ordinances-folding",
+            "decision:contract-ordinance-folding-curfew",
+            "decision:contract-ordinance-folding-parking",
+            "decision:contract-ordinance-folding-leaves",
+            "decision:contract-ordinance-folding-fireworks",
+        ],
+    )
+    .await;
+    let handle = |raw: &str| EntityId(raw.to_string());
+    let survivor = handle("decision:contract-ordinance-folding-survivor");
+    let folded = handle("decision:contract-ordinance-folding-former");
+    let child = handle("decision:contract-ordinance-folding-child");
+    add(store, member(&o.collection, &survivor, "Folding survivor")).await;
+    claim_about(store, &survivor, "survivor is five", &[("number", "5")]).await;
+    add(
+        store,
+        NewEntity::new(folded.clone(), "Folding former", "contract-fixture"),
+    )
+    .await;
+    add(store, member(&folded, &child, "Folding child")).await;
+    claim_about(store, &child, "child is twelve", &[("number", "12")]).await;
+
+    merge(store, &folded, &survivor)
+        .await
+        .expect("a thing outside the collection folds into a member");
+
+    let taken = store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), "5".to_string())]),
+            ..NewFact::about(child.clone(), "child takes five", date(2026, 6, 3))
+        }))
+        .await;
+    assert!(
+        matches!(&taken, Err(MemoryError::NumberTaken { holder, .. })
+            if holder == &survivor.to_string()),
+        "a number the collection holds is refused on a folded thing's child: {taken:?}"
+    );
+    let freed = store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), "13".to_string())]),
+            ..NewFact::about(child.clone(), "child takes thirteen", date(2026, 6, 3))
+        }))
+        .await;
+    assert!(
+        matches!(&freed, Err(MemoryError::NumberFreed { holder, number: 12, .. })
+            if holder == &child.to_string()),
+        "the number a folded thing's child holds cannot be freed: {freed:?}"
+    );
+
+    for fields in [
+        BTreeMap::from([("number".to_string(), "12".to_string())]),
+        BTreeMap::from([("note".to_string(), "no number here".to_string())]),
+    ] {
+        store
+            .capture(state(NewFact {
+                fields,
+                ..NewFact::about(child.clone(), "child, again", date(2026, 6, 4))
+            }))
+            .await
+            .expect("a write that keeps the numbers lands")
+            .written()
+            .expect("not blocked");
+    }
+    let twelve = store
+        .fields(&numbered(&o.collection, 12))
+        .await
+        .expect("12 names the folded thing's child");
+    assert_eq!(twelve.get("number").map(String::as_str), Some("12"));
+}
+
 /// **A write that keeps every number with one holder lands, and the number keeps
 /// naming its member.** The negative of the table: merging an unnumbered member
 /// into a numbered one, merging a numbered one into an unnumbered member (the

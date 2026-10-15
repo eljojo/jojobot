@@ -114,7 +114,10 @@ impl DoltMemory {
             let Some(parent) = parent.flatten() else {
                 break;
             };
-            let Some((key, handle)) = self.resolve_stored_key(tx, &parent).await? else {
+            // A merge moves no row, so a child of a folded thing still holds the
+            // folded thing's key; the reads serve it under the survivor.
+            let parent = Self::forward_key(tx, &EntityId(parent)).await?;
+            let Some((key, handle)) = self.resolve_stored_key(tx, parent.as_str()).await? else {
                 break;
             };
             if !seen.insert(handle.clone()) {

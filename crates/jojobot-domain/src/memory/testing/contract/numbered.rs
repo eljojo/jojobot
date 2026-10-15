@@ -575,4 +575,5 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     .await;
     super::numbering_paths::a_write_that_keeps_every_number_with_one_holder_still_lands(store)
         .await;
+    super::numbering_paths::a_folded_things_child_is_held_to_the_survivors_numbers(store).await;
 }
