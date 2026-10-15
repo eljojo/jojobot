@@ -155,10 +155,14 @@ async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
     s.add("bot:delta", "Delta").await;
 
     let only = story.as_bot("bot:delta").await;
-    capture(&only, "orders the pie").await.says(CLAIMS_TEACHING);
-    capture(&only, "orders the pie again")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    let taught = capture(&only, "orders the pie").await.teachings();
+    assert!(!taught.is_empty(), "a first capture teaches");
+    assert!(
+        capture(&only, "orders the pie again")
+            .await
+            .teachings()
+            .is_empty()
+    );
 
     let (reported, handed) = story
         .call("start_here", json!({"compacted": true, "bot": "delta"}))
@@ -178,9 +182,12 @@ async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
         "{body}"
     );
     reported.never_says(only.sid());
-    capture(&only, "orders the pie after the compaction")
-        .await
-        .says(CLAIMS_TEACHING);
+    assert_eq!(
+        capture(&only, "orders the pie after the compaction")
+            .await
+            .teachings(),
+        taught
+    );
 
     // ── two live runs: refused, both named, nothing forgotten ────────────────
     let first = story.as_bot("bot:gamma").await;
@@ -191,12 +198,18 @@ async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
         .refused_at_the_door("start_here", json!({"compacted": true, "bot": "gamma"}))
         .await;
     refusal.says(first.run()).says(second.run());
-    capture(&first, "orders the donut again")
-        .await
-        .never_says(CLAIMS_TEACHING);
-    capture(&second, "orders the cake again")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    assert!(
+        capture(&first, "orders the donut again")
+            .await
+            .teachings()
+            .is_empty()
+    );
+    assert!(
+        capture(&second, "orders the cake again")
+            .await
+            .teachings()
+            .is_empty()
+    );
 
     story.finish().await;
 }
