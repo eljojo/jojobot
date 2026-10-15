@@ -979,22 +979,56 @@ async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_tha
 
 /// **The procedure shows one board question answered with `where`**, so a
 /// session that asks the board something finds the argument in the place it
-/// learns where work stands.
+/// learns where work stands. The example it shows is sent back as written: it
+/// is accepted and narrows the ready list.
 #[tokio::test]
 async fn the_projects_skill_answers_a_board_question_with_where() {
     let story = Story::begin("bot:gamma").await;
-    let body = story.skill("projects").await.to_string();
-    assert!(
-        body.contains("status = next"),
-        "the skill shows a board question as a where expression: {body}"
-    );
-    assert!(
-        body.contains("not-started"),
-        "and names the move, so a board with stages of its own adapts the example: {body}"
-    );
-    assert!(
-        body.contains("work:sigma"),
-        "and the section it sits in is the one about where work stands: {body}"
+    let s = story.session().await;
+    let body = story.skill("projects").await["skill"]["body"]
+        .as_str()
+        .expect("the skill serves a body")
+        .to_string();
+    // The example lines are calls: a verb, then `name: value` arguments. The
+    // one that asks the ready view with `where` and no `parent` is the one read.
+    let example = body
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            line.starts_with("recall")
+                && line.contains("view: \"ready\"")
+                && line.contains("where:")
+                && !line.contains("parent:")
+        })
+        .unwrap_or_else(|| panic!("the skill shows a ready question with where: {body}"));
+    let expression = example
+        .split("where: \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("the example quotes its expression: {example}"));
+
+    let work = |slug: &str, sets: serde_json::Value| {
+        json!({"kind": "work", "handle": slug, "name": slug,
+               "source": "user-named", "sets": sets})
+    };
+    s.call("add_entity", work("sigma", json!({"status": "now"})))
+        .await;
+    s.call("add_entity", work("tau", json!({"status": "next"})))
+        .await;
+    let answer = s
+        .call("recall", json!({"view": "ready", "where": expression}))
+        .await;
+    let ids: Vec<String> = answer.json()["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        ["work:tau"],
+        "the skill's example narrows the ready list to the work not started: {}",
+        answer.raw()
     );
     story.finish().await;
 }
