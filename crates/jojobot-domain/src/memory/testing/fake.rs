@@ -4060,25 +4060,17 @@ impl Memory for InMemoryMemory {
         // it was.
         match super::super::merge::refuses_merge_sides(folded, survivor, &index) {
             Some(super::super::merge::SideRefusal::Missing(side)) => {
-                // **A supplied record is real and still not a row.** Reported
-                // apart from an ordinary miss (rule 234): the handle reads,
-                // lists and searches as existing, so `UnknownEntity` here
-                // would tell the caller in the next breath that it does not.
-                if self
+                let supplied = self
                     .supplied
                     .lock()
                     .expect("fake mutex poisoned")
                     .record_for(&side)
-                    .is_some()
-                {
-                    return Err(MemoryError::SuppliedHandle {
-                        attempted: side.to_string(),
-                    });
-                }
-                return Err(MemoryError::UnknownEntity {
-                    attempted: side.to_string(),
-                    nearest: self.nearest_for(&side, &self.known()),
-                });
+                    .is_some();
+                return Err(super::super::merge::missing_side(
+                    &side,
+                    supplied,
+                    self.nearest_for(&side, &self.known()),
+                ));
             }
             Some(super::super::merge::SideRefusal::Refused(refused)) => return Err(refused),
             None => {}
@@ -4104,70 +4096,36 @@ impl Memory for InMemoryMemory {
         let (survivor_key, survivor_handle) =
             self.resolve(survivor).expect("checked present above");
 
-        // **The duplicate's thoughts become the survivor's, so they meet the
-        // survivor's room and body cap before anything moves** — the same
-        // question `capture` asks of a thought, asked of every one that
-        // arrives. Served under the handles, as the real store serves them.
-        //
-        // **Asked of a copy, before the locks below are taken**: serving a
-        // record reads the entity rows, and those locks do not nest.
+        // **The guards of a fold run in the one order the domain keeps**, over
+        // what this store reads. The duplicate's thoughts meet the survivor's
+        // room and body cap before anything moves, served under the handles as
+        // the real store serves them; asked of a copy, before the locks below
+        // are taken, because serving a record reads the entity rows and those
+        // locks do not nest.
         let held_facts = self.world().facts.clone();
-        let incoming: Vec<Fact> = held_facts
-            .iter()
-            .filter(|f| f.home == folded_key)
-            .map(|f| self.served(f.clone(), folded))
-            .collect();
         let held = super::super::folded_fields(
             &self.writes_on(&survivor_key, &held_facts),
             &self.declarations(),
         );
-        // **A merge into the caller's own bot cannot carry a ceiling onto
-        // it**, decided over what the duplicate holds in this same act.
-        let carried = super::super::folded_fields(
-            &self.writes_on(&folded_key, &held_facts),
-            &self.declarations(),
-        );
-        let lineage = super::super::needs_the_chart(&self.with_manager_served(&carried))
-            .map(|named| self.lineage_among(&held_facts, &survivor_handle, named));
-        if let Some(err) = super::super::refuses_merge_carrying(
-            caller,
-            &survivor_handle,
-            &folded_handle,
-            &carried,
-            lineage.as_ref(),
-        ) {
-            return Err(err);
-        }
-        // **And not into a bot that sits below it**, which no key it carries
-        // shows: the loop is made by the forwarding alone.
-        if let Some(err) = super::super::refuses_merge_below_the_duplicate(
-            &survivor_handle,
-            &folded_handle,
-            &self.chain_above_among(&held_facts, &survivor_handle),
-        ) {
-            return Err(err);
-        }
-        let room: Vec<Fact> = super::super::thought_room(
-            &held_facts
-                .iter()
-                .filter(|f| f.home == survivor_key)
-                .cloned()
-                .collect::<Vec<_>>(),
+        super::super::merge::refuses_merge_guards(
+            &super::super::merge::Fold {
+                caller,
+                folded: &folded_handle,
+                survivor: &survivor_handle,
+                survivor_named: survivor,
+            },
+            &mut FakeFoldReads {
+                store: self,
+                facts: &held_facts,
+                folded,
+                survivor,
+                folded_key: &folded_key,
+                survivor_key: &survivor_key,
+                survivor_handle: &survivor_handle,
+                held: &held,
+            },
         )
-        .into_iter()
-        .map(|f| self.served(f, survivor))
-        .collect();
-        if let Some(err) = super::super::refuses_merge_into_room(
-            survivor,
-            &incoming,
-            room,
-            held.get(super::super::THOUGHT_CAPACITY)
-                .and_then(|v| v.trim().parse::<usize>().ok()),
-            held.get(super::super::THOUGHT_BODY_CAP)
-                .and_then(|v| v.trim().parse::<usize>().ok()),
-        ) {
-            return Err(err);
-        }
+        .await?;
 
         // **Read before the locks below are taken**, as the held facts are.
         let known_rows = self.known();
@@ -4748,6 +4706,66 @@ impl Memory for InMemoryMemory {
             .expect("fake mutex poisoned")
             .retain(|t| t.name != token);
         Ok(())
+    }
+}
+
+/// **What the fake reads to judge a fold**, from the copy of its claims taken
+/// before the locks.
+struct FakeFoldReads<'a> {
+    store: &'a InMemoryMemory,
+    facts: &'a [Fact],
+    folded: &'a EntityId,
+    survivor: &'a EntityId,
+    folded_key: &'a EntityId,
+    survivor_key: &'a EntityId,
+    survivor_handle: &'a EntityId,
+    held: &'a std::collections::BTreeMap<String, String>,
+}
+
+#[async_trait::async_trait]
+impl super::super::merge::MergeReads for FakeFoldReads<'_> {
+    async fn carried(&mut self) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let carried = super::super::folded_fields(
+            &self.store.writes_on(self.folded_key, self.facts),
+            &self.store.declarations(),
+        );
+        Ok(self.store.with_manager_served(&carried))
+    }
+
+    async fn lineage(
+        &mut self,
+        named: Option<EntityId>,
+    ) -> Result<super::super::Lineage, MemoryError> {
+        Ok(self
+            .store
+            .lineage_among(self.facts, self.survivor_handle, named))
+    }
+
+    async fn chain_above_survivor(&mut self) -> Result<Vec<EntityId>, MemoryError> {
+        Ok(self
+            .store
+            .chain_above_among(self.facts, self.survivor_handle))
+    }
+
+    async fn incoming(&mut self) -> Result<Vec<Fact>, MemoryError> {
+        Ok(self
+            .facts
+            .iter()
+            .filter(|f| &f.home == self.folded_key)
+            .map(|f| self.store.served(f.clone(), self.folded))
+            .collect())
+    }
+
+    async fn survivors_room(&mut self) -> Result<super::super::merge::SurvivorRoom, MemoryError> {
+        Ok(super::super::merge::SurvivorRoom {
+            claims: self
+                .facts
+                .iter()
+                .filter(|f| &f.home == self.survivor_key)
+                .map(|f| self.store.served(f.clone(), self.survivor))
+                .collect(),
+            held: self.held.clone(),
+        })
     }
 }
 

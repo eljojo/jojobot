@@ -4670,6 +4670,51 @@ fn validate_new_entity(new: &NewEntity) -> Result<(), MemoryError> {
     )
 }
 
+/// **What this store reads to judge a fold**, inside the fold's transaction.
+struct DoltFoldReads<'a, 'tx> {
+    store: &'a DoltMemory,
+    tx: &'a mut Transaction<'tx, MySql>,
+    folded_key: &'a EntityId,
+    survivor_key: &'a EntityId,
+    survivor_handle: &'a EntityId,
+}
+
+#[async_trait]
+impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
+    async fn carried(&mut self) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let carried = DoltMemory::held_by(self.tx, self.folded_key).await?;
+        self.store.with_manager_rendered(self.tx, &carried).await
+    }
+
+    async fn lineage(
+        &mut self,
+        named: Option<EntityId>,
+    ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
+        self.store
+            .lineage_in(self.tx, self.survivor_handle, named)
+            .await
+    }
+
+    async fn chain_above_survivor(&mut self) -> Result<Vec<EntityId>, MemoryError> {
+        self.store
+            .chain_above_in(self.tx, self.survivor_handle)
+            .await
+    }
+
+    async fn incoming(&mut self) -> Result<Vec<Fact>, MemoryError> {
+        self.store.facts_of(self.tx, self.folded_key).await
+    }
+
+    async fn survivors_room(
+        &mut self,
+    ) -> Result<jojobot_domain::memory::merge::SurvivorRoom, MemoryError> {
+        Ok(jojobot_domain::memory::merge::SurvivorRoom {
+            held: DoltMemory::held_by(self.tx, self.survivor_key).await?,
+            claims: self.store.facts_of(self.tx, self.survivor_key).await?,
+        })
+    }
+}
+
 #[async_trait]
 impl Memory for DoltMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
@@ -6496,20 +6541,16 @@ impl Memory for DoltMemory {
         // function every store asks.
         match jojobot_domain::memory::merge::refuses_merge_sides(folded, survivor, &index) {
             Some(jojobot_domain::memory::merge::SideRefusal::Missing(side)) => {
-                // **A supplied record is real and still not a row** — reported
-                // apart from an ordinary miss (rule 234): the handle reads,
-                // lists and searches as existing, so `UnknownEntity` here
-                // would tell the caller in the next breath that it does not.
-                if self.supplied.record_for(&side).is_some() {
-                    return Err(MemoryError::SuppliedHandle {
-                        attempted: side.to_string(),
-                    });
-                }
-                let known = self.extend_with_supplied(index.clone());
-                return Err(MemoryError::UnknownEntity {
-                    attempted: side.to_string(),
-                    nearest: self.nearest(&mut tx, &side, &known).await?,
-                });
+                let supplied = self.supplied.record_for(&side).is_some();
+                let nearest = if supplied {
+                    Vec::new()
+                } else {
+                    let known = self.extend_with_supplied(index.clone());
+                    self.nearest(&mut tx, &side, &known).await?
+                };
+                return Err(jojobot_domain::memory::merge::missing_side(
+                    &side, supplied, nearest,
+                ));
             }
             Some(jojobot_domain::memory::merge::SideRefusal::Refused(refused)) => {
                 return Err(refused);
@@ -6539,58 +6580,25 @@ impl Memory for DoltMemory {
             .await?
             .expect("checked above");
 
-        // **A merge into the caller's own bot cannot carry a ceiling onto
-        // it**, decided over what the duplicate holds, read inside this
-        // transaction so no write can land between the question and the move.
-        let carried = Self::held_by(&mut tx, &folded_key).await?;
-        let carried = self.with_manager_rendered(&mut tx, &carried).await?;
-        let lineage = match jojobot_domain::memory::needs_the_chart(&carried) {
-            Some(named) => Some(self.lineage_in(&mut tx, &survivor_handle, named).await?),
-            None => None,
-        };
-        if let Some(err) = jojobot_domain::memory::refuses_merge_carrying(
-            caller,
-            &survivor_handle,
-            &folded_handle,
-            &carried,
-            lineage.as_ref(),
-        ) {
-            return Err(err);
-        }
-        // **And not into a bot that sits below it**, which no key it carries
-        // shows: the loop is made by the forwarding alone. The chain is read in
-        // this transaction, so no chart change can land between the question and
-        // the move.
-        let above_survivor = self.chain_above_in(&mut tx, &survivor_handle).await?;
-        if let Some(err) = jojobot_domain::memory::refuses_merge_below_the_duplicate(
-            &survivor_handle,
-            &folded_handle,
-            &above_survivor,
-        ) {
-            return Err(err);
-        }
-        // **The duplicate's thoughts become the survivor's, so they meet the
-        // survivor's room and body cap before anything moves** — the same
-        // question `capture` asks of a thought, asked of every one that
-        // arrives. Read inside this transaction, so no write can land between
-        // the question and the move.
-        let incoming = self.facts_of(&mut tx, &folded_key).await?;
-        if !jojobot_domain::memory::thought_room(&incoming).is_empty() {
-            let held = Self::held_by(&mut tx, &survivor_key).await?;
-            let room =
-                jojobot_domain::memory::thought_room(&self.facts_of(&mut tx, &survivor_key).await?);
-            if let Some(err) = jojobot_domain::memory::refuses_merge_into_room(
-                survivor,
-                &incoming,
-                room,
-                held.get(jojobot_domain::memory::THOUGHT_CAPACITY)
-                    .and_then(|v| v.trim().parse::<usize>().ok()),
-                held.get(jojobot_domain::memory::THOUGHT_BODY_CAP)
-                    .and_then(|v| v.trim().parse::<usize>().ok()),
-            ) {
-                return Err(err);
-            }
-        }
+        // **The guards of a fold run in the one order the domain keeps**, over
+        // what this store reads inside this transaction, so no write can land
+        // between a question and the move.
+        jojobot_domain::memory::merge::refuses_merge_guards(
+            &jojobot_domain::memory::merge::Fold {
+                caller,
+                folded: &folded_handle,
+                survivor: &survivor_handle,
+                survivor_named: survivor,
+            },
+            &mut DoltFoldReads {
+                store: self,
+                tx: &mut tx,
+                folded_key: &folded_key,
+                survivor_key: &survivor_key,
+                survivor_handle: &survivor_handle,
+            },
+        )
+        .await?;
 
         // **The numbered collections the fold reaches, read before it writes**,
         // and what the survivor held, for the floor of its kind.

@@ -17960,6 +17960,7 @@ macro_rules! all_cases {
         $m!(a_merge_of_a_document_and_a_thing_is_refused_with_the_route($store));
         $m!(a_merge_judges_each_side_in_turn_so_an_already_folded_side_is_refused_before_a_missing_one($store));
         $m!(a_parent_cannot_be_folded_into_its_own_descendant($store));
+        $m!(a_fold_that_earns_two_refusals_is_refused_for_the_first_guard($store));
         $m!(an_address_from_before_a_merge_still_names_its_claim($store));
         $m!(an_address_from_before_a_chain_of_merges_names_its_claim_at_the_end($store));
         $m!(what_was_built_on_a_folded_claim_is_found_from_every_address_it_has_had($store));

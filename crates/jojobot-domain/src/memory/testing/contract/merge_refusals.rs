@@ -4,8 +4,9 @@
 //! comes first in the order [folded, survivor]. A thing cannot be folded into
 //! one of its own descendants. Each refusal is read beside the merge that lands.
 
-use super::support::{add, capture, other_caller};
+use super::support::{add, capture, other_caller, state};
 use super::*;
+use crate::memory::{REPORTS_TO, THOUGHT_CAPACITY};
 
 /// Fold `folded` into `survivor` as a caller who owns neither.
 async fn fold<M: Memory>(
@@ -144,4 +145,69 @@ pub async fn a_parent_cannot_be_folded_into_its_own_descendant<M: Memory>(store:
     fold(store, &parent, &sibling)
         .await
         .expect("a parent folds into a thing beside it");
+}
+
+/// **A fold that earns two refusals is refused for the first guard in the
+/// order**, in every store. The caller is the survivor, and the duplicate both
+/// carries a ceiling the caller may not take onto its own bot and sits above
+/// the survivor in the chart. The ceiling is weighed first, so the refusal names
+/// the ceiling; the loop the chart would make is the second. **Paired**: with the
+/// ceiling gone the same fold is refused for the loop, so the first refusal was
+/// the order and not the only thing wrong.
+pub async fn a_fold_that_earns_two_refusals_is_refused_for_the_first_guard<M: Memory>(store: &M) {
+    let carrier = EntityId("bot:contract-order-carrier".into());
+    let keeper = EntityId("bot:contract-order-keeper".into());
+    for (id, name) in [
+        (&carrier, "Contract Order Carrier"),
+        (&keeper, "Contract Order Keeper"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "5".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(carrier.clone(), "capacity is five", date(2026, 10, 1))
+        }),
+    )
+    .await;
+    // The survivor reports to the duplicate.
+    capture(
+        store,
+        state(NewFact {
+            fields: [(REPORTS_TO.to_string(), carrier.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(keeper.clone(), "reports to the carrier", date(2026, 10, 1))
+        }),
+    )
+    .await;
+
+    let refused = store
+        .merge(&carrier, &keeper, None, date(2026, 10, 2), &keeper, None)
+        .await
+        .expect_err("a fold that earns two refusals is refused");
+    assert!(
+        matches!(&refused, MemoryError::MergeCarriesGuardedKeys { .. }),
+        "the ceiling is weighed before the chart: {refused:?}"
+    );
+
+    // Somebody else folds it: the ceiling is no longer in the way, and the loop is.
+    let refused = store
+        .merge(
+            &carrier,
+            &keeper,
+            None,
+            date(2026, 10, 2),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect_err("the chart refuses the loop");
+    assert!(
+        matches!(&refused, MemoryError::ChartCycle { .. }),
+        "with the ceiling out of the way the loop is the refusal: {refused:?}"
+    );
 }

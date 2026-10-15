@@ -477,6 +477,8 @@ const ORDINARY: &[&str] = &[
     "org:contract-guild",
     // The merge refusal cases: a parent, its child, its grandchild and a thing
     // beside it, and four people for the order the sides are judged in.
+    "bot:contract-order-carrier",
+    "bot:contract-order-keeper",
     "org:contract-child-one",
     "org:contract-grandchild-one",
     "org:contract-parent-one",
