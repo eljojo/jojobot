@@ -32,11 +32,16 @@ async fn a_key_that_keeps_its_newest_write_is_cleared_by_following_the_sentence(
         }),
     )
     .await;
-    for mood in ["content", "queasy"] {
+    // **The newest record holds a second key**, so clearing one key of it can be
+    // told from clearing the record.
+    for (mood, sets) in [
+        ("content", json!({ "mood": "content" })),
+        ("queasy", json!({ "mood": "queasy", "hat": "bowler" })),
+    ] {
         s.event_with(
             "person:homer",
             &format!("felt {mood} after the plant"),
-            json!({ "mood": mood }),
+            sets,
             &[],
         )
         .await;
@@ -67,10 +72,12 @@ async fn a_key_that_keeps_its_newest_write_is_cleared_by_following_the_sentence(
     )
     .await;
 
-    // The positive the negative rests on: the other key is still there.
+    // The positive the negative rests on: the other key is still there, in the
+    // same read that no longer holds the cleared one.
     let after = s
         .shape("what Homer holds now", json!({ "subject": "person:homer" }))
         .await;
+    after.says("\"hat\":\"bowler\"");
     after.never_says("\"mood\":\"queasy\"");
 
     story.finish().await;
