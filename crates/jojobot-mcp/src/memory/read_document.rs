@@ -108,7 +108,7 @@ impl Jojobot {
         // the chunk of a section whose heading was.
         let archived = facts
             .iter()
-            .filter(|fact| fact.fields.contains_key(document::ORDER))
+            .filter(|fact| document::is_section(fact))
             .count()
             - live.len();
         let offset = args.offset.unwrap_or(0).min(live.len());

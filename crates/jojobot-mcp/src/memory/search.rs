@@ -1035,12 +1035,7 @@ impl Jojobot {
 /// not part of its text.
 fn section_document(hit: &Hit) -> Option<&EntityRef> {
     match hit {
-        Hit::Fact { fact, home, .. }
-            if home.kind == Some(EntityKind::DOCUMENT)
-                && fact
-                    .fields
-                    .contains_key(jojobot_domain::memory::document::ORDER) =>
-        {
+        Hit::Fact { fact, home, .. } if jojobot_domain::memory::document::is_section(fact) => {
             Some(home)
         }
         _ => None,
