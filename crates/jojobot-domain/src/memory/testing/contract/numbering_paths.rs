@@ -72,10 +72,10 @@ struct World {
     o: Ordinances,
     /// A member that holds no number.
     signs: EntityId,
-    /// A member whose number was written twice: 7 first, 8 last.
+    /// A member that holds 8, from one claim.
     banner: EntityId,
-    banner_second: FactAddress,
-    /// A member that holds 7, the number `banner` gave up.
+    banner_claim: FactAddress,
+    /// A member that holds 7.
     rider: EntityId,
     rider_claim: FactAddress,
     /// A thing outside the collection that holds 2, a number the collection holds.
@@ -166,9 +166,7 @@ async fn the_world<M: Memory>(store: &M) -> World {
     ] {
         add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
     }
-    // Banner gives up 7 for 8; the rider takes the 7 it left.
-    claim_about(store, &banner, "banner is seven", &[("number", "7")]).await;
-    let banner_second = claim_about(store, &banner, "banner is eight", &[("number", "8")]).await;
+    let banner_fact = claim_about(store, &banner, "banner is eight", &[("number", "8")]).await;
     let rider_fact = claim_about(store, &rider, "rider is seven", &[("number", "7")]).await;
     claim_about(store, &outsider, "outsider holds two", &[("number", "2")]).await;
     let pledge_fact = claim_about(
@@ -210,7 +208,7 @@ async fn the_world<M: Memory>(store: &M) -> World {
         o,
         signs,
         banner,
-        banner_second: banner_second.address(),
+        banner_claim: banner_fact.address(),
         rider,
         rider_claim: rider_fact.address(),
         outsider,
@@ -371,9 +369,18 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
             ),
             &w.o.fireworks,
         ),
-        (Path::Capture, Guard::KeepsNumber) => {
-            Cell::CannotReach("a capture adds keys to a thing and cannot take one off")
-        }
+        // The rider holds 7, and a capture of another number would free it.
+        (Path::Capture, Guard::KeepsNumber) => refused(
+            landed(
+                store
+                    .capture(state(NewFact {
+                        fields: BTreeMap::from([("number".to_string(), "9".to_string())]),
+                        ..NewFact::about(w.rider.clone(), "rider takes nine", date(2026, 6, 2))
+                    }))
+                    .await,
+            ),
+            &w.rider,
+        ),
         (Path::Capture, Guard::KindFloor) => refused_key(
             landed(
                 store
@@ -444,10 +451,10 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
         // **A retraction is served on purpose, by all three guards**: it says the
         // claim should never have been written, so a claim somebody wants taken
         // back is never held back by what it gave (the floor of a kind, a number).
-        // The guards are for the ordinary writes. Banner's older claim says 7,
-        // which the rider holds now; parking's only claim gives it 2.
+        // The guards are for the ordinary writes. Banner's only claim gives it 8;
+        // parking's only claim gives it 2.
         (Path::Retract, Guard::OneHolder) => Cell::ServedOnPurpose {
-            result: retract(store, &w.banner_second).await,
+            result: retract(store, &w.banner_claim).await,
             why: "a retraction takes back a record that should never have been written",
         },
         (Path::Retract, Guard::KeepsNumber) => Cell::ServedOnPurpose {

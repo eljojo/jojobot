@@ -635,7 +635,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'topic:widgets' numbers its members by 'number', and this write would leave thing:handcart without 2. A number names one member for ever, so it stays with thing:handcart while it is a member of topic:widgets, and no token overrides this. Keep the number on the member and change something else, or archive the member: an archived member keeps its number. To read the holder, recall topic:widgets/2.",
+  "how_to_proceed": "Nothing was written: 'topic:widgets' numbers its members by 'number', and this write would leave thing:handcart without 2. A number names one member for ever, so it stays with thing:handcart while it is a member of topic:widgets, and no token overrides this. Send the number it holds, or change something else. An archived member keeps its number. A number given by mistake is taken back by retracting the claim that gave it, and then the right one can be given. To read the holder, recall topic:widgets/2.",
   "status": "blocked",
   "wrote": false
 }

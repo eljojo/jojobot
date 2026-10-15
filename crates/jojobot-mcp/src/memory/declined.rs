@@ -917,9 +917,10 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing was written: {e}. A number names one member for ever, so it stays \
                  with {holder} while it is a member of {collection}, and no token overrides \
-                 this. Keep the number on the member and change something else, or archive \
-                 the member: an archived member keeps its number. To read the holder, recall \
-                 {collection}/{number}."
+                 this. Send the number it holds, or change something else. An archived \
+                 member keeps its number. A number given by mistake is taken back by \
+                 retracting the claim that gave it, and then the right one can be given. To \
+                 read the holder, recall {collection}/{number}."
             ),
         )),
         MemoryError::NotANumber { ref collection, .. } => Ok(blocked_body(

@@ -199,12 +199,10 @@ pub fn member_numbered(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
     /// The thing holds `value` under the collection's key after the write. A
-    /// thing that is not a member yet becomes one. `renumbers` is true when the
-    /// writer named the number, so the number the member held before may go.
+    /// thing that is not a member yet becomes one.
     Set {
         handle: EntityId,
         value: Option<String>,
-        renumbers: bool,
     },
     /// The thing is not a member after the write.
     Leave(EntityId),
@@ -227,9 +225,6 @@ pub struct Change {
     /// everything under it; a merge moves what was under the duplicate to the
     /// survivor.
     pub moved: Vec<(EntityId, BTreeMap<String, String>)>,
-    /// Whether the writer named the number itself (a capture or an edit that
-    /// sets the key), which may give up the number the member held.
-    pub renumbers: bool,
 }
 
 impl Change {
@@ -270,7 +265,6 @@ impl Numbered {
                 edits.push(Edit::Set {
                     handle: handle.clone(),
                     value: fields.get(&self.key).cloned(),
-                    renumbers: change.renumbers,
                 });
             }
         }
@@ -279,7 +273,6 @@ impl Numbered {
                 edits.push(Edit::Set {
                     handle: handle.clone(),
                     value: fields.get(&self.key).cloned(),
-                    renumbers: false,
                 });
             } else if is_member(handle) {
                 edits.push(Edit::Leave(handle.clone()));
@@ -316,10 +309,11 @@ impl Reach {
 /// Asked in this order: a value that is no number; a number two members hold
 /// after the write, naming the one the write did not touch; a number held before
 /// and held by nobody after. The last is how a number keeps naming one member
-/// for ever: a member that left the collection, was merged into a thing outside
-/// it or had the key taken off frees a number, and `next` could hand it to a
-/// different member. A member that *replaces* its number with another through a
-/// write that names it is the one way a number goes, and it is the writer's.
+/// for ever: **a member keeps the number it holds**, so a member that left the
+/// collection, was merged into a thing outside it, had the key taken off or was
+/// given a different number frees a number, and `next` could hand it to a
+/// different member. A write that sends the number the member already holds
+/// changes nothing and lands. A member that holds no number may be given one.
 /// **A retraction never asks this**: it says the record should never have been
 /// written, so a number given by mistake can always be taken back, and a number
 /// that was never given is free. "Never reused" is about a member that is
@@ -330,7 +324,7 @@ pub fn refuses_numbering(before: &Numbered, edits: &[Edit]) -> Option<MemoryErro
     for edit in edits {
         match edit {
             Edit::Leave(handle) => after.retain(|m| &m.handle != handle),
-            Edit::Set { handle, value, .. } => {
+            Edit::Set { handle, value } => {
                 touched.insert(handle);
                 match after.iter_mut().find(|m| &m.handle == handle) {
                     Some(member) => member.value = value.clone(),
@@ -356,7 +350,6 @@ pub fn refuses_numbering(before: &Numbered, edits: &[Edit]) -> Option<MemoryErro
         if let Edit::Set {
             handle,
             value: Some(raw),
-            ..
         } = edit
             && whole_number(raw).is_none()
             && held_before(handle) != Some(raw.as_str())
@@ -411,20 +404,12 @@ pub fn refuses_numbering(before: &Numbered, edits: &[Edit]) -> Option<MemoryErro
         if now.holder_of(number).is_some() {
             continue;
         }
-        let replaced = edits.iter().any(|edit| {
-            matches!(
-                edit,
-                Edit::Set { handle, value: Some(_), renumbers: true } if handle == &member.handle
-            )
+        return Some(MemoryError::NumberFreed {
+            collection: before.collection.to_string(),
+            key: before.key.clone(),
+            number,
+            holder: member.handle.to_string(),
         });
-        if !replaced {
-            return Some(MemoryError::NumberFreed {
-                collection: before.collection.to_string(),
-                key: before.key.clone(),
-                number,
-                holder: member.handle.to_string(),
-            });
-        }
     }
     None
 }

@@ -5796,11 +5796,12 @@ pub enum MemoryError {
     },
     /// **The write would leave a number in a numbered collection that nobody
     /// holds.** A member of the collection held `number`, and after this write no
-    /// member does: it took the key off, moved out of the collection, was merged
-    /// into a thing outside it, or had a claim set the key to nothing. A
-    /// number is never reused, so a number nobody holds could be handed to a
-    /// different member and `<collection>/<number>` would name another one. There
-    /// is no override.
+    /// member does: it was given a different number, took the key off, moved out
+    /// of the collection, or was merged into a thing outside it. **A member keeps
+    /// the number it holds**, so a number nobody holds could be handed to a
+    /// different member and `<collection>/<number>` would name another one.
+    /// There is no override. A retraction is the exception, and it is served on
+    /// purpose: it takes back a record that should never have been written.
     #[error(
         "'{collection}' numbers its members by '{key}', and this write would leave {holder} \
          without {number}"

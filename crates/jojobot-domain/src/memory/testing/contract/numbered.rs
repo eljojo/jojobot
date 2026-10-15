@@ -216,7 +216,7 @@ pub async fn a_number_is_held_by_one_member_and_a_bad_value_is_refused<M: Memory
         5
     );
     // The positive of the pair: the next free number lands, and the next moves.
-    store
+    let five = store
         .capture(write("5"))
         .await
         .expect("capture ok")
@@ -232,14 +232,7 @@ pub async fn a_number_is_held_by_one_member_and_a_bad_value_is_refused<M: Memory
         6
     );
     // An edit that moves a member onto a held number is refused too.
-    let claim = capture(
-        store,
-        state(NewFact {
-            fields: BTreeMap::from([("number".to_string(), "6".to_string())]),
-            ..NewFact::about(sign.clone(), "signs take six", date(2026, 5, 4))
-        }),
-    )
-    .await;
+    let claim = five;
     let refused = store
         .update_fact(
             &claim.address(),
@@ -254,20 +247,57 @@ pub async fn a_number_is_held_by_one_member_and_a_bad_value_is_refused<M: Memory
         panic!("an edit onto a held number must be refused: {refused:?}");
     };
     assert_eq!(holder, o.curfew.to_string());
+    // **A member keeps the number it holds: no write gives it a different one**,
+    // so no other member can ever take it. Giving it another number is refused
+    // by a capture and by an edit alike, naming the member and its number, and
+    // the way to a different number is to retract the claim that gave this one.
+    let kept = |refused: Result<_, MemoryError>, what: &str| match refused {
+        Err(MemoryError::NumberFreed { holder, number, .. }) => {
+            assert_eq!((holder.as_str(), number), (sign.as_str(), 5), "{what}");
+        }
+        other => panic!("{what}: a held number is not replaced: {other:?}"),
+    };
+    kept(
+        store.capture(write("6")).await,
+        "a capture of another number",
+    );
+    kept(
+        store
+            .update_fact(
+                &claim.address(),
+                state_patch(FactPatch {
+                    fields: BTreeMap::from([("number".to_string(), "7".to_string())]),
+                    ..FactPatch::default()
+                }),
+                &other_caller(),
+            )
+            .await,
+        "an edit to another number",
+    );
+    assert_eq!(
+        store
+            .numbering_of(&o.collection)
+            .await
+            .expect("reads")
+            .expect("numbered")
+            .next_number,
+        6,
+        "the refusals wrote nothing, and 6 and 7 are nobody's"
+    );
+    // Sending the number the member holds again lands, by an edit and by a
+    // capture: the holder it would collide with is itself.
     let edited = edit(
         store,
         &claim.address(),
         state_patch(FactPatch {
-            fields: BTreeMap::from([("number".to_string(), "7".to_string())]),
+            fields: BTreeMap::from([("number".to_string(), "5".to_string())]),
             ..FactPatch::default()
         }),
     )
     .await;
-    assert_eq!(edited.fields.get("number").map(String::as_str), Some("7"));
-    // A member that writes the number it already holds is not refused: the
-    // holder it would collide with is itself.
+    assert_eq!(edited.fields.get("number").map(String::as_str), Some("5"));
     store
-        .capture(write("7"))
+        .capture(write("5"))
         .await
         .expect("capture ok")
         .written()
