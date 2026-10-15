@@ -181,6 +181,7 @@ async fn a_refused_voucher_write_names_the_door_that_issues_one() {
         .await;
     assert!(none.is_none(), "asking for a code starts no session");
     asked.says("\"challenge\"");
+    story.finish().await;
 }
 
 /// "A voucher exists. Can a bot edit it, rename it or take it back?"

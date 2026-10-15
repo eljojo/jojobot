@@ -154,6 +154,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     }
 
     s.wrap("asked the ready view for one project by name").await;
+    story.finish().await;
 }
 
 #[tokio::test]
@@ -260,6 +261,7 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
 
     s.wrap("declared a view with inputs and asked it by name")
         .await;
+    story.finish().await;
 }
 
 /// "What is coming up, and what is already late?" A cold session lists the views,
@@ -353,4 +355,5 @@ async fn a_session_asks_the_due_view_what_is_coming_and_what_is_late() {
 
     s.wrap("asked the due view what is coming and what is late")
         .await;
+    story.finish().await;
 }

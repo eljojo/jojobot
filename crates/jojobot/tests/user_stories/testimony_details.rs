@@ -125,4 +125,5 @@ async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
         .await
         .claim(&own)
         .says("to the minute");
+    story.finish().await;
 }
