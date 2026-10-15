@@ -201,15 +201,15 @@ async fn a_document_and_a_thing_do_not_merge_and_the_refusal_names_the_route() {
     story.finish().await;
 }
 
-/// **A read as of a day before the merge returns the records of both
-/// documents, each whole.** A merge moves claims and not dates, so a claim the
-/// folded document wrote in August reads on the survivor from August: the
-/// September read holds beta's sections as well, placed by the order keys they
-/// were written with, which came from the same start as alpha's. What it must
-/// not do is lose a record's edges or hand one record another's, which is what a
-/// folded record's writes did while they wore an id the survivor also held.
+/// **A read as of a day before the merge returns the survivor's own sections
+/// of that day, and a read as of the merge day or later returns both.** Alpha and
+/// beta are written in August and beta is merged into alpha in October. As of
+/// September alpha held its three sections and beta's two were on beta, so the
+/// read holds alpha's alone. As of the merge day the folded sections have arrived,
+/// and they read after the survivor's last. The two reads differ only by the
+/// merge, so the argument is doing something.
 #[tokio::test]
-async fn a_read_as_of_before_the_merge_returns_every_section_whole() {
+async fn a_read_as_of_before_the_merge_returns_only_the_survivors_own_sections() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
     let s = story.session().await;
     s.add("document:alpha", "Alpha notes").await;
@@ -219,34 +219,27 @@ async fn a_read_as_of_before_the_merge_returns_every_section_whole() {
         json!({"document": "document:alpha", "markdown": ALPHA}),
     )
     .await;
+    let betas = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
     s.call(
         "put_document",
-        json!({"document": "document:beta", "markdown": "# Beta one\n\nb1\n\n# Beta two\n\nb2\n"}),
+        json!({"document": "document:beta", "markdown": betas}),
     )
     .await;
     clock.stating(OCTOBER.parse().expect("a day"));
     s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
         .await;
 
-    let then = read_whole(&s, "document:alpha", Some(SEPTEMBER)).await;
-    for kept in [
-        "# Alpha one\n\nthe first body\n\n",
-        "# Alpha two\n\nthe second body\n\n",
-        "# Alpha three\n\nthe third body\n",
-        "# Beta one\n\nb1\n\n",
-        "# Beta two\n\nb2\n",
-    ] {
-        assert!(then.contains(kept), "{kept:?} is whole in {then:?}");
-    }
-    let place = |heading: &str| {
-        then.find(heading)
-            .unwrap_or_else(|| panic!("{heading} in {then:?}"))
-    };
-    assert!(
-        place("# Alpha one") < place("# Alpha two")
-            && place("# Alpha two") < place("# Alpha three"),
-        "alpha keeps its own order: {then:?}"
+    assert_eq!(
+        read_whole(&s, "document:alpha", Some(SEPTEMBER)).await,
+        ALPHA,
+        "before the merge alpha held its own sections and nothing of beta's"
     );
-    assert!(place("# Beta one") < place("# Beta two"), "{then:?}");
+    for day in [OCTOBER, "2026-10-09"] {
+        assert_eq!(
+            read_whole(&s, "document:alpha", Some(day)).await,
+            format!("{ALPHA}{betas}"),
+            "as of {day} alpha's sections, then beta's, whole"
+        );
+    }
     story.finish().await;
 }

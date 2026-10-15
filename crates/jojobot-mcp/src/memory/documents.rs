@@ -640,9 +640,24 @@ impl Jojobot {
         let trails = self.memory.key_trails(subject).await?;
         let by_then =
             |written_at: Option<jiff::Timestamp>| written_at.is_none_or(|at| at <= moment);
+        // **A claim that came in through a merge made after `moment` was not on
+        // this document then.** A merge moves claims and keeps their dates, so
+        // their writes alone would place them here from the day they were made.
+        // The merge event names the ids they wear under this document.
+        let arrived_later: std::collections::HashSet<FactId> = self
+            .memory
+            .merge_events(Some(subject))
+            .await?
+            .into_iter()
+            .filter(|event| &event.survivor == subject && event.merged_at > moment)
+            .flat_map(|event| event.claims.into_iter().map(|(_, now)| now))
+            .collect();
         let mut kept = Vec::with_capacity(facts.len());
         let mut unplaced = Vec::new();
         for mut fact in facts {
+            if arrived_later.contains(&fact.id) {
+                continue;
+            }
             let Some(write) = chains
                 .get(&fact.id)
                 .and_then(|chain| chain.iter().rev().find(|write| by_then(write.written_at)))
