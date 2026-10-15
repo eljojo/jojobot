@@ -299,11 +299,12 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::listing(COLUMNS, ValueType::Text),
         ],
         // **A question asked by name.** No key is required. What a view needs is
-        // something that narrows it: `selects`, `asks`, `where` or `parent`. A view
-        // that asks what is overdue looks at every kind that owes something and
-        // names no kind, so the shipped `view:due` holds no `selects`; a view
-        // with nothing to narrow it is refused when it is asked, which is where
-        // that is guarded.
+        // something that narrows it: a kind (`selects`), an `overdue` ask, a
+        // `parent`, an `answers_type` or a filter on keys. A view that asks what is
+        // overdue looks at every kind that owes something and names no kind, so the
+        // shipped `view:due` holds no `selects`. A view holding none of those is a
+        // request for the whole store, and it is refused when it is asked
+        // (`Selection::narrows_nothing`), which is where that is guarded.
         "view" => vec![
             // **What the question looks at** — the kind it selects. Optional: an
             // `overdue` ask names no kind (see below).

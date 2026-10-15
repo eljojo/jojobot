@@ -278,6 +278,8 @@ const ORDINARY: &[&str] = &[
     "view:my-bikes",
     "view:my-friends",
     "view:marked-things",
+    "view:plain-listing",
+    "view:kind-listing",
     "view:matches-nothing",
     "view:my-loops",
     "view:my-things-of",

@@ -570,3 +570,35 @@ async fn a_callers_fields_beside_a_view_replace_the_views_own_whole() {
     );
     story.finish().await;
 }
+
+/// **A view that narrows nothing is refused when it is asked.** The view kind
+/// requires no key, so a view can be declared holding only what it shows. Asked
+/// by name it names no kind, no parent, no overdue ask, no type and no key
+/// filter, which is a request for the whole store and not a question. Paired with
+/// a view that selects a kind, which answers.
+#[tokio::test]
+async fn a_view_holding_nothing_that_narrows_is_refused_when_asked_by_name() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:omega", "Omega").await;
+
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "plain-listing", "name": "Plain listing",
+               "source": "user-named", "sets": {"shows": "facts"}}),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "kind-listing", "name": "Kind listing",
+               "source": "user-named", "sets": {"selects": "thing", "shows": "facts"}}),
+    )
+    .await;
+
+    s.refused("recall", json!({"view": "plain-listing"}))
+        .await
+        .says("name what to recall");
+    let answered = s.call("recall", json!({"view": "kind-listing"})).await;
+    answered.says("thing:omega");
+    story.finish().await;
+}
