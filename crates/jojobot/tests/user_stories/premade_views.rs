@@ -87,6 +87,16 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     assert_eq!(sigma["fields"]["status"], "now", "{}", board.raw());
     assert_eq!(sigma["fields"]["owner"], "person:bart", "{}", board.raw());
     assert!(sigma["fields"].get("effort").is_none(), "{}", board.raw());
+    // The third key a board is read by: what a piece waits on, on the piece that
+    // waits.
+    let tau = board.json()["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .find(|o| o["id"] == "work:tau")
+        .expect("tau")
+        .clone();
+    assert_eq!(tau["fields"]["depends_on"], "work:sigma", "{}", board.raw());
     assert!(
         sigma["fields_left_out"]
             .as_str()
@@ -152,6 +162,16 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
     // The blocked piece is in the plan with what stops it.
     let tau = &plan.json()["objects"][1];
     assert_eq!(tau["ready"], false, "{}", plan.raw());
+    assert_eq!(
+        tau["blocked_by"],
+        json!([{"blocker": "dependency", "handle": "work:sigma", "why": "unfinished"}]),
+        "{}",
+        plan.raw()
+    );
+    // The piece that waits on nothing is ready and names no blocker.
+    let sigma = &plan.json()["objects"][0];
+    assert_eq!(sigma["ready"], true, "{}", plan.raw());
+    assert!(sigma.get("blocked_by").is_none(), "{}", plan.raw());
     plan.never_says("work:phi");
 
     // Asked with nothing, it is every project's plan, as it was.
