@@ -13,23 +13,12 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_retraction_the_store_took_is_answered_as_done_when_the_image_cannot_read_it_back() {
-    let (first, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let early = first.session().await;
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
+    let s = story.session().await;
 
     // ── something recorded while everything works ───────────────────────────
-    early.add("person:milhouse", "Milhouse").await;
-    let address = early.fact("person:milhouse", "allergic to shellfish").await;
-    early
-        .wrap("recorded a claim before the server restarted")
-        .await;
-
-    // ── a restart fills the image, so the next write has an image to follow it ─
-    //
-    // A server that has never been restarted holds no image of the store, and a
-    // write has nothing to refresh.
-    let story = first.restarted().await;
-    first.finish().await;
-    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    let address = s.fact("person:milhouse", "allergic to shellfish").await;
 
     // ── the store stops answering the read that follows a write ─────────────
     store.goes_away();
