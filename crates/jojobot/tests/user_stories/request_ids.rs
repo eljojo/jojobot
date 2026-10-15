@@ -457,83 +457,95 @@ async fn a_message_posted_and_retired_twice_under_one_id_is_posted_and_retired_o
     story.finish().await;
 }
 
-/// What the run has been charged and told so far. **The characters are read the
-/// way a caller reads them**, from `list_runs`. **The beat is read from the
-/// store**, because no verb that leaves the run open serves the text of a beat
-/// that jojobot wrote: `recall` of the run gives only how many beats it holds,
-/// and a repeat that replayed a beat would add to the tally in a beat's text and
-/// not to that count. Reading charges the run too, which is why the case below
-/// measures what a read costs on its own.
-async fn bookkeeping(story: &Story, s: &Session) -> (u64, Option<String>) {
-    use jojobot_domain::session::Sessions;
+/// What the run has been charged and told so far, **read the way a caller reads
+/// it**: the characters from `list_runs`, and the chronology jojobot wrote of the
+/// run from `recall` of the run with its prose. jojobot's own beat counts what it
+/// saw, so a repeat that replayed a beat would move the count in the text. Both
+/// reads are charged to the run, which is why the case below measures what a
+/// pair of them costs on its own.
+async fn bookkeeping(s: &Session) -> (u64, String) {
     let runs = s.call("list_runs", json!({})).await.json();
     let served = runs["runs"]
         .as_array()
         .and_then(|all| all.iter().find(|run| run["run"] == s.run()))
         .and_then(|run| run["served"]["characters"].as_u64())
         .unwrap_or_else(|| panic!("list_runs does not say what the run was handed: {runs}"));
-    let held = story
-        .sessions_store()
-        .all_sessions()
+    let run = s
+        .call("recall", json!({"kind": "session", "prose": true}))
         .await
-        .expect("the board reads");
-    let beat = held
-        .iter()
-        .find(|run| {
-            run.sid
-                .as_ref()
-                .is_some_and(|name| name.as_str() == s.run())
-        })
-        .and_then(|run| {
-            run.entries
-                .iter()
-                .find(|entry| entry.beat.as_deref() == Some("capture"))
-        })
-        .map(|entry| entry.text.clone());
-    (served, beat)
+        .json();
+    let chronology = run["objects"]
+        .as_array()
+        .and_then(|all| all.iter().find(|o| o["fields"]["sid"] == s.run()))
+        .and_then(|o| o["prose"].as_str())
+        .unwrap_or_else(|| panic!("recall of the run serves its chronology: {run}"))
+        .to_string();
+    (served, chronology)
 }
 
+/// **How far one read of the bookkeeping can differ from the one before it with
+/// nothing between them**: a moment prints without its trailing zeros, so a
+/// timestamp in an answer is up to nine characters longer or shorter, and the
+/// count of characters can gain a digit.
+const A_READ_VARIES_BY: u64 = 24;
+
 /// **A repeat is answered and charges the run nothing, and replays no beat.**
-/// Both reads are charged, so the case first measures what a pair of reads costs
-/// with nothing between them. A repeat between two reads adds less than its own
-/// answer; a capture that is not a repeat adds at least that much, and moves the
-/// beat. The second half is the positive the first rests on.
+/// Both reads are charged, so the case first measures what a read of the
+/// bookkeeping costs with nothing between two of them. A repeat between two reads
+/// adds no more than that and a read's own variation, however small a part of its
+/// answer it would have charged; a capture that is not a repeat adds at least
+/// half its answer more, and moves the beat. The second half is the positive the
+/// first rests on.
 #[tokio::test]
 async fn a_repeat_replays_no_beat_and_no_accounting() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:milhouse", "Milhouse").await;
     s.call("capture", capture("wears glasses", "r1")).await;
-    let (first, beat) = bookkeeping(&story, &s).await;
-    assert!(beat.is_some(), "the first capture left its beat");
+    let (first, chronology) = bookkeeping(&s).await;
+    assert!(
+        chronology.contains("person:milhouse"),
+        "the first capture left its beat, which names the thing: {chronology}"
+    );
 
-    // What a pair of reads costs, with nothing between them.
-    let (second, still) = bookkeeping(&story, &s).await;
-    let reading = second - first;
+    // What a pair of reads costs, with nothing between them, and again.
+    let (second, still) = bookkeeping(&s).await;
+    let (third, _) = bookkeeping(&s).await;
+    let reading = (second - first).max(third - second);
     assert!(reading > 0, "a read is charged: {first} then {second}");
-    assert_eq!(still, beat, "reading moved no beat");
+    assert_eq!(still, chronology, "reading moved no beat");
+    assert!(
+        (second - first).abs_diff(third - second) <= A_READ_VARIES_BY,
+        "two pairs of reads cost {} and {}",
+        second - first,
+        third - second
+    );
 
     let repeat = s.call("capture", capture("wears glasses", "r1")).await;
     is_a_repeat(&repeat.json());
     let answered = repeat.raw().chars().count() as u64;
-    let (third, after_repeat) = bookkeeping(&story, &s).await;
+    let (fourth, after_repeat) = bookkeeping(&s).await;
     assert!(
-        third - second < reading + answered / 2,
-        "a repeat of {answered} characters was charged: reads cost {reading}, then {}",
-        third - second
+        answered > 4 * A_READ_VARIES_BY,
+        "a repeat's answer is long enough to be told from a read: {answered}"
     );
-    assert_eq!(after_repeat, beat, "a repeat replays no beat");
+    assert!(
+        fourth - third <= reading + A_READ_VARIES_BY,
+        "a repeat of {answered} characters was charged: a pair of reads costs {reading}, then {}",
+        fourth - third
+    );
+    assert_eq!(after_repeat, still, "a repeat replays no beat");
 
     // The positive: a capture that is not a repeat is charged and moves the beat.
     let fresh = s.call("capture", capture("owns a radio", "r2")).await;
     let charged = fresh.raw().chars().count() as u64;
-    let (fourth, after_fresh) = bookkeeping(&story, &s).await;
+    let (fifth, after_fresh) = bookkeeping(&s).await;
     assert!(
-        fourth - third > reading + charged / 2,
-        "a new write of {charged} characters is charged: reads cost {reading}, then {}",
-        fourth - third
+        fifth - fourth > reading + charged / 2,
+        "a new write of {charged} characters is charged: a pair of reads costs {reading}, then {}",
+        fifth - fourth
     );
-    assert_ne!(after_fresh, beat, "a new write moves the beat's count");
+    assert_ne!(after_fresh, still, "a new write moves the beat's count");
 
     story.finish().await;
 }
