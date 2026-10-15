@@ -943,3 +943,165 @@ pub async fn declaring_the_numbering_key_a_counter_is_held_to_the_numbers<M: Mem
         .await
         .expect("a counter on a key the collection does not number by is declared");
 }
+
+/// **Redeclaring a type without the numbering key's counter is held to the
+/// numbers.** A counter holds the total of a key's writes and a key nothing
+/// declares holds the newest, so a redeclaration that leaves the key out changes
+/// what every member holds under it without any member being written. Here the
+/// first entry wrote 1 and then 0 and holds 1 as a counter, the second wrote 2
+/// and then 0 and holds 2: without the counter both hold 0. The redeclaration is refused for the number
+/// two members would share, and the type still sums. **Paired**: a collection
+/// whose newest writes and totals agree lets the same redeclaration land.
+pub async fn redeclaring_the_numbering_key_without_its_counter_is_held_to_the_numbers<M: Memory>(
+    store: &M,
+) {
+    use crate::memory::types::{DeclaredType, Field};
+    let summed = |declared: &[DeclaredType], name: &str, key: &str| {
+        declared
+            .iter()
+            .find(|held| held.name == name)
+            .map(|held| {
+                held.fields
+                    .iter()
+                    .any(|field| field.key == key && field.folds == crate::memory::types::Fold::Sum)
+            })
+            .unwrap_or(false)
+    };
+    let slot = |held: BTreeMap<String, String>, key: &str| held.get(key).cloned();
+
+    let shelf = EntityId("topic:contract-ledger-shelf".into());
+    let first = EntityId("decision:contract-ledger-first".into());
+    let second = EntityId("decision:contract-ledger-second".into());
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-ledger-counter",
+                vec![Field::summing("ledger_slot")],
+            ),
+            None,
+        )
+        .await
+        .expect("a counter is declared before any collection numbers by it");
+    add(
+        store,
+        NewEntity::new(shelf.clone(), "Ledger shelf", "contract-fixture"),
+    )
+    .await;
+    claim_about(
+        store,
+        &shelf,
+        "numbers its entries",
+        &[("numbers_by", "ledger_slot")],
+    )
+    .await;
+    add(store, member(&shelf, &first, "First ledger entry")).await;
+    add(store, member(&shelf, &second, "Second ledger entry")).await;
+    claim_about(store, &first, "slot 1", &[("ledger_slot", "1")]).await;
+    claim_about(store, &second, "slot 2", &[("ledger_slot", "2")]).await;
+    for id in [&first, &second] {
+        claim_about(store, id, "slot cleared", &[("ledger_slot", "0")]).await;
+    }
+    for (id, expected) in [(&first, "1"), (&second, "2")] {
+        assert_eq!(
+            slot(store.fields(id).await.expect("fields read"), "ledger_slot"),
+            Some(expected.to_string()),
+            "{id} holds the total of its writes as a counter"
+        );
+    }
+
+    let dropped = DeclaredType::new(
+        "contract-ledger-counter",
+        vec![Field::new("ledger_visits", ValueType::Number)],
+    );
+    let refused = store
+        .declare_type(dropped.clone(), None)
+        .await
+        .expect_err("a member would hold no number");
+    assert!(
+        matches!(
+            &refused,
+            MemoryError::NotANumber { collection, key, value }
+                if collection == &shelf.0 && key == "ledger_slot" && value == "0"
+        ),
+        "refused for the number a member would hold: {refused:?}"
+    );
+    assert!(
+        summed(
+            &store.declared_types().await.expect("the roster reads"),
+            "contract-ledger-counter",
+            "ledger_slot"
+        ),
+        "a refused redeclaration leaves the counter declared"
+    );
+    for (id, expected) in [(&first, "1"), (&second, "2")] {
+        assert_eq!(
+            slot(store.fields(id).await.expect("fields read"), "ledger_slot"),
+            Some(expected.to_string()),
+            "{id} holds what it held"
+        );
+    }
+
+    let rack = EntityId("topic:contract-ledger-rack".into());
+    let third = EntityId("decision:contract-ledger-third".into());
+    let fourth = EntityId("decision:contract-ledger-fourth".into());
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-ledger-aisles",
+                vec![Field::summing("ledger_aisle")],
+            ),
+            None,
+        )
+        .await
+        .expect("a second counter is declared");
+    add(
+        store,
+        NewEntity::new(rack.clone(), "Ledger rack", "contract-fixture"),
+    )
+    .await;
+    claim_about(
+        store,
+        &rack,
+        "numbers its entries",
+        &[("numbers_by", "ledger_aisle")],
+    )
+    .await;
+    for (id, name, aisle) in [
+        (&third, "Third ledger entry", "1"),
+        (&fourth, "Fourth ledger entry", "2"),
+    ] {
+        add(store, member(&rack, id, name)).await;
+        claim_about(
+            store,
+            id,
+            &format!("aisle {aisle}"),
+            &[("ledger_aisle", aisle)],
+        )
+        .await;
+    }
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-ledger-aisles",
+                vec![Field::new("ledger_visits", ValueType::Number)],
+            ),
+            None,
+        )
+        .await
+        .expect("members whose totals and newest writes agree keep their numbers");
+    assert!(
+        !summed(
+            &store.declared_types().await.expect("the roster reads"),
+            "contract-ledger-aisles",
+            "ledger_aisle"
+        ),
+        "the redeclaration landed"
+    );
+    for (id, expected) in [(&third, "1"), (&fourth, "2")] {
+        assert_eq!(
+            slot(store.fields(id).await.expect("fields read"), "ledger_aisle"),
+            Some(expected.to_string()),
+            "{id} holds the number it held"
+        );
+    }
+}

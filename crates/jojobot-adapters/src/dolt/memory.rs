@@ -7554,20 +7554,26 @@ impl Memory for DoltMemory {
         if declared.origin == Origin::Shipped && held_origin == Some(Origin::Declared) {
             displace(&mut tx, &declared.name, &self.clock).await?;
         }
-        // **The collections that number by a key this type names, as they stand
-        // before it.** A fold is declared here, and a counter changes what a member
-        // holds without a write to the member.
-        let declared_keys: std::collections::BTreeSet<&str> =
-            declared.fields.iter().map(|f| f.key.as_str()).collect();
+        // **The collections that number by a key this type names or named, as they
+        // stand before it.** A fold is declared here, and a counter changes what a
+        // member holds without a write to the member. A key the declaration leaves
+        // out stops being declared, so it folds as the newest write again.
+        let named_before: Vec<String> =
+            sqlx::query_scalar("SELECT key_name FROM type_field WHERE type_name = ? AND owner = ?")
+                .bind(&declared.name)
+                .bind(KEYS_OF_A_TYPE)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let declared_keys: std::collections::BTreeSet<&str> = declared
+            .fields
+            .iter()
+            .map(|f| f.key.as_str())
+            .chain(named_before.iter().map(String::as_str))
+            .collect();
         let numbered_before = self
             .collections_numbering_by(&mut tx, &declared_keys)
             .await?;
-        sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
-            .bind(&declared.name)
-            .bind(KEYS_OF_A_TYPE)
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
         sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
             .bind(&declared.name)
             .bind(KEYS_OF_A_TYPE)

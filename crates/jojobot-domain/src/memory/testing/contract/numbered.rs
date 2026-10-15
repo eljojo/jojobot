@@ -925,4 +925,8 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     super::numbering_paths::a_folded_things_child_is_held_to_the_survivors_numbers(store).await;
     super::numbering_paths::declaring_the_numbering_key_a_counter_is_held_to_the_numbers(store)
         .await;
+    super::numbering_paths::redeclaring_the_numbering_key_without_its_counter_is_held_to_the_numbers(
+        store,
+    )
+    .await;
 }
