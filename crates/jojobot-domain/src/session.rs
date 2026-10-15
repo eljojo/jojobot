@@ -890,12 +890,20 @@ pub struct Session {
     pub wrap_window: Option<WrapWindow>,
     /// **When this run was last handed its bot's charter**, if the store has
     /// been told. A charter another identity rewrote after this moment has not
-    /// been read by the run. `None` on a run that was handed it at its start
-    /// and has not read it since, and on every card written before this existed:
-    /// the run's start is then the moment to compare from.
+    /// been read by the run. [`NEVER_TOLD`] on a run that no call ever handed it
+    /// to. `None` on a run that was handed it at its start and has not read it
+    /// since, and on every card written before this existed: the run's start is
+    /// then the moment to compare from.
     #[serde(default)]
     pub charter_told_at: Option<Timestamp>,
 }
+
+/// **The moment a run that was never handed its charter is held to have been
+/// told it**: before every rewrite there can be. It is a value of its own, apart
+/// from the `None` of a card written before the column existed, because the two
+/// mean different things: a run of an older build is compared from its start, and
+/// a run never told is news-bearing for every rewrite by another identity.
+pub const NEVER_TOLD: Timestamp = Timestamp::UNIX_EPOCH;
 
 impl Session {
     /// **Whether a write to this run is allowed.** An open run takes writes. A

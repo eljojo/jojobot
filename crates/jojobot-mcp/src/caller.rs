@@ -776,10 +776,14 @@ impl Jojobot {
         // The registry learns the card here — this is the moment one exists.
         self.registry.attach_card(&caller.sid, begun.id.clone());
         // The charter this run was handed before it had a card is kept on the
-        // card, so that a restart does not forget it.
-        if let Some(told) = self.registry.charter_told_at(caller.sid.as_str())
-            && let Err(e) = self.sessions.set_charter_told(&begun.id, told).await
-        {
+        // card, so that a restart does not forget it. **A run no call handed it
+        // to is kept as never told**: left empty, the card would read as one of
+        // an older build and be compared from its start.
+        let told = self
+            .registry
+            .charter_told_at(caller.sid.as_str())
+            .unwrap_or(jojobot_domain::session::NEVER_TOLD);
+        if let Err(e) = self.sessions.set_charter_told(&begun.id, told).await {
             tracing::warn!(error = %e, "the moment a charter was handed over could not be kept");
         }
         // **A newer run of the bot has started**, which ends the wrap window of

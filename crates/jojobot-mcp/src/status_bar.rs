@@ -134,7 +134,7 @@ impl Jojobot {
                     let card = self.sessions.read_session(card).await.ok()?;
                     card.charter_told_at.unwrap_or(card.started_at)
                 }
-                None => jiff::Timestamp::UNIX_EPOCH,
+                None => jojobot_domain::session::NEVER_TOLD,
             },
         };
         (change.at > told).then(|| {

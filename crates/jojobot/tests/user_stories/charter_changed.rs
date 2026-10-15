@@ -494,3 +494,89 @@ async fn a_new_run_is_told_of_a_charter_rewritten_between_the_offer_and_the_answ
         story.finish().await;
     }
 }
+
+/// **A run begun with `new` and no offer code is told about a rewrite until it
+/// reads the charter, whatever it writes first and across a restart.** No call
+/// handed that run its charter, so a rewrite by another identity is news to it
+/// from its first moment. The first write makes its card; the card must record
+/// that the run was never told, or the notice would be measured from the
+/// moment the run began and a rewrite made before that would stop being news.
+/// A restart then loses what the process held, so the card is all that is left.
+#[tokio::test]
+async fn a_new_run_with_no_offer_code_keeps_the_notice_through_its_first_write_and_a_restart() {
+    let story = Story::begin("bot:gamma").await;
+    let gamma = story.session().await;
+    gamma.add("bot:delta", "Delta").await;
+    // A write makes the run a card, which is what a later boot offers back.
+    gamma.journal("working to the first charter").await;
+    let delta = story.as_bot("bot:delta").await;
+    delta
+        .call(
+            "set_charter",
+            json!({ "bot": "bot:gamma", "prose": "The second charter." }),
+        )
+        .await;
+
+    let (door, none) = story
+        .call("start_here", json!({ "bot": "gamma", "brief": true }))
+        .await;
+    assert!(none.is_none(), "an offer, not a handle: {}", door.raw());
+    let (door, fresh) = story
+        .call(
+            "start_here",
+            json!({ "bot": "gamma", "brief": true, "resume": "new" }),
+        )
+        .await;
+    let fresh = fresh.unwrap_or_else(|| panic!("`new` hands back a handle: {}", door.raw()));
+
+    // ── before the run has a card ───────────────────────────────────────────
+    let held = fresh.call("list_entities", json!({ "kind": "bot" })).await;
+    assert_eq!(entrant(&held)["by"], "bot:delta", "{}", held.raw());
+
+    // ── after its first write has made the card ─────────────────────────────
+    fresh.journal("started the second run").await;
+    let written = fresh.call("list_entities", json!({ "kind": "bot" })).await;
+    assert_eq!(entrant(&written)["by"], "bot:delta", "{}", written.raw());
+
+    // ── after a restart, picking the run back up ────────────────────────────
+    let again = story.restarted().await;
+    let (door, none) = again
+        .call("start_here", json!({ "bot": "gamma", "brief": true }))
+        .await;
+    assert!(none.is_none(), "an offer, not a handle: {}", door.raw());
+    let sid = door.json()["session"]["choices"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .find(|choice| {
+            choice["working_on"]
+                .as_str()
+                .is_some_and(|f| f.contains("second run"))
+        })
+        .and_then(|choice| choice["run"].as_str())
+        .unwrap_or_else(|| panic!("the new run is offered back: {}", door.raw()))
+        .to_string();
+    let (_, resumed) = again
+        .call(
+            "start_here",
+            json!({ "bot": "gamma", "brief": true, "resume": sid }),
+        )
+        .await;
+    let resumed = resumed.expect("the run is picked up after a restart");
+    let told = resumed
+        .call("list_entities", json!({ "kind": "bot" }))
+        .await;
+    assert_eq!(entrant(&told)["by"], "bot:delta", "{}", told.raw());
+
+    // ── and reading the charter is what ends it ─────────────────────────────
+    resumed
+        .call("recall", json!({ "subject": "bot:gamma", "charter": true }))
+        .await;
+    let after = resumed
+        .call("list_entities", json!({ "kind": "bot" }))
+        .await;
+    assert_eq!(entrant(&after), Value::Null, "{}", after.raw());
+
+    again.finish().await;
+}
