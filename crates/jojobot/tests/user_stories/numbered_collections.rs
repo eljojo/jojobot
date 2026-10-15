@@ -221,3 +221,93 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
         .says(&format!("{COLLECTION}/1"));
     story.finish().await;
 }
+
+/// **A merge refused for a number is told the ways a merge can go on, and each
+/// way works.** Two numbered members of one collection cannot be folded into
+/// one, because the survivor would serve one number and free the other. The
+/// refusal an EDIT earns for the same reason sends the caller back to the number
+/// it holds, and a merge has no number to send. The merge's refusal names the two
+/// routes that exist for a merge: take back the claim that gave one of the
+/// numbers and merge again, or archive the duplicate, which keeps its number. The
+/// edit's refusal names neither archiving. Both routes are followed here, on two
+/// pairs.
+#[tokio::test]
+async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_works() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(COLLECTION, "Town ordinances").await;
+    s.call(
+        "capture",
+        json!({"subject": COLLECTION, "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    for (handle, name, number) in [
+        (CURFEW, "Curfew", "1"),
+        (PARKING, "Parking", "2"),
+        (SIGNS, "Sign height", "3"),
+        (FIREWORKS, "Noise hours", "4"),
+    ] {
+        let (kind, slug) = handle.split_once(':').expect("a handle");
+        s.call(
+            "add_entity",
+            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named",
+                   "parent": COLLECTION, "sets": {"number": number}}),
+        )
+        .await;
+    }
+
+    // ── the edit that frees a number: sent back to the number it holds ──────
+    let edit = s
+        .refused(
+            "capture",
+            json!({"subject": PARKING, "content": "renumbered", "provenance": "testimony",
+                   "sets": {"number": "9"}}),
+        )
+        .await;
+    edit.says(&format!("{COLLECTION}/2"));
+    edit.never_says("archive_entity");
+
+    // ── the merge that frees a number: told the two ways a merge can go on ──
+    let merge = s
+        .refused(
+            "merge_entities",
+            json!({"duplicate": PARKING, "survivor": CURFEW, "reason": "the same ordinance"}),
+        )
+        .await;
+    merge.says("retract").says("archive_entity");
+    merge.says(&format!("{COLLECTION}/"));
+    // Nothing moved: both numbers still name their members.
+    s.recall(&format!("{COLLECTION}/1")).await.says(CURFEW);
+    s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
+
+    // ── way one: take back the claim that gave the duplicate its number ─────
+    let parking = s.recall(PARKING).await.json();
+    let gives_two = parking["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("the member's first claim has an address")
+        .to_string();
+    s.call(
+        "retract",
+        json!({"address": gives_two, "reason": "written in error"}),
+    )
+    .await;
+    s.merge_entities(PARKING, CURFEW, "the same ordinance", None)
+        .await;
+    s.recall(&format!("{COLLECTION}/1")).await.says(CURFEW);
+
+    // ── way two: archive the duplicate, which keeps its number ──────────────
+    s.refused(
+        "merge_entities",
+        json!({"duplicate": FIREWORKS, "survivor": SIGNS, "reason": "the same ordinance"}),
+    )
+    .await
+    .says("archive_entity");
+    s.call(
+        "archive_entity",
+        json!({"handle": FIREWORKS, "reason": "the same ordinance as signs"}),
+    )
+    .await;
+    s.recall(&format!("{COLLECTION}/4")).await.says(FIREWORKS);
+    story.finish().await;
+}

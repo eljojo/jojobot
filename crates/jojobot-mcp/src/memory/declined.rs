@@ -455,6 +455,45 @@ pub(crate) fn memory_declined(
     memory_declined_arms(verb, e).map(|answered| stamp(answered, word))
 }
 
+/// **What to do about a number a write would free**, in the words of the verb
+/// that asked. One place decides the text, so the two verbs cannot drift.
+///
+/// An edit has a number to send, so it is sent back to the number the member
+/// holds. A merge has none: the survivor serves what the duplicate held, so two
+/// numbered members cannot be folded into one, and a numbered member cannot be
+/// folded out of its collection. The ways that work for a merge are the two that
+/// leave no number to lose: take back the claim that gave one of the numbers
+/// (a retraction is not held to the numbering) and merge again, or archive the
+/// duplicate, which keeps its number.
+fn number_freed_advice(
+    verb: &str,
+    reads: &str,
+    collection: &str,
+    holder: &str,
+    number: u64,
+) -> String {
+    let head = format!(
+        "Nothing was written: {reads}. A number names one member for ever, so it stays with \
+         {holder} while it is a member of {collection}, and no token overrides this."
+    );
+    let tail = format!("To read the holder, recall {collection}/{number}.");
+    match verb {
+        "merge_entities" => format!(
+            "{head} A merge makes the survivor serve what the duplicate held, so it cannot \
+             carry two numbers, and it cannot carry a number out of {collection}. Two ways go \
+             on. Take back the claim that gave one of the numbers with retract (a retraction \
+             is allowed, and the number is free again), then send the merge again. Or leave \
+             the duplicate unmerged and archive it with archive_entity: an archived member \
+             keeps its number. {tail}"
+        ),
+        _ => format!(
+            "{head} Send the number it holds, or change something else. An archived member \
+             keeps its number. A number given by mistake is taken back by retracting the \
+             claim that gave it, and then the right one can be given. {tail}"
+        ),
+    }
+}
+
 /// **A miss and a block speak one shape.** An id, handle or address that names
 /// nothing is not a malformed call and not a server failure: it is jojobot
 /// declining because what the caller named is not there — the same answer the
@@ -932,14 +971,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         } => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
-            format!(
-                "Nothing was written: {e}. A number names one member for ever, so it stays \
-                 with {holder} while it is a member of {collection}, and no token overrides \
-                 this. Send the number it holds, or change something else. An archived \
-                 member keeps its number. A number given by mistake is taken back by \
-                 retracting the claim that gave it, and then the right one can be given. To \
-                 read the holder, recall {collection}/{number}."
-            ),
+            number_freed_advice(verb, &e.to_string(), collection, holder, number),
         )),
         MemoryError::NotANumber { ref collection, .. } => Ok(blocked_body(
             &EntityId(String::new()),
@@ -2702,6 +2734,54 @@ pub(crate) mod tests {
             );
         }
         assert!(!how.contains("the other document"), "{how}");
+    }
+
+    /// **A number a write would free is answered in the words of the verb that
+    /// asked.** An edit is sent back to the number the member holds. A merge has
+    /// no number to send, so it is told the two ways that work, each by a verb the
+    /// surface serves. The two answers read the same facts, so they name the same
+    /// collection, holder and number.
+    #[test]
+    fn a_number_a_write_would_free_is_answered_in_the_words_of_the_verb() {
+        let freed = || MemoryError::NumberFreed {
+            collection: "topic:widgets".into(),
+            key: "number".into(),
+            number: 2,
+            holder: "thing:handcart".into(),
+        };
+        let advice = |verb: &'static str| {
+            json_of(&memory_declined(verb, freed()).expect("a blocked answer"))["how_to_proceed"]
+                .as_str()
+                .expect("advice")
+                .to_string()
+        };
+        let (merge, edit) = (advice("merge_entities"), advice("capture"));
+        for how in [&merge, &edit] {
+            assert!(
+                how.contains("topic:widgets/2") && how.contains("thing:handcart"),
+                "{how}"
+            );
+        }
+        let served: Vec<String> = crate::Jojobot::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        for verb in ["retract", "archive_entity"] {
+            assert!(
+                merge.contains(verb),
+                "the merge advice does not name {verb}"
+            );
+            assert!(
+                served.iter().any(|name| name == verb),
+                "{verb} is not served"
+            );
+        }
+        assert!(
+            !edit.contains("archive_entity"),
+            "an edit is not told to archive: {edit}"
+        );
+        assert_eq!(advice("update_fact"), edit, "the edit verbs share one text");
     }
 
     /// **A thought too long is moved, never compressed.** Both refusals that
