@@ -992,19 +992,32 @@ impl IndexedMailboxes {
     /// held the whole board before the verb and the verb is the only change the
     /// port has counted since (`before` was read under the same hold). Any other
     /// state leaves the count where it is, and the next refresh reads the board.
-    fn settle(
-        &self,
-        before: Option<u64>,
-        indexed: Result<(), MailboxError>,
-    ) -> Result<(), MailboxError> {
-        indexed?;
+    ///
+    /// **A failure of the index is not the verb failing.** The board took the
+    /// change and read it back; what could not be done is putting it in a
+    /// projection. Failing the verb for that tells the caller nothing was written,
+    /// and a caller who obeys posts the message twice or never marks a delivery it
+    /// already holds. So the verb is answered as what it is, and the index is
+    /// marked behind, which makes mail search say so on every answer until a board
+    /// read lands. The count stays where it is.
+    fn settle(&self, before: Option<u64>, indexed: Result<(), MailboxError>) {
+        if let Err(e) = indexed {
+            self.index.mail_refresh_failed();
+            tracing::warn!(
+                error = %e,
+                "SEARCH INDEX BEHIND — a mail verb's change landed and the index could not \
+                 take it, so mail search serves the board before that change and reports \
+                 itself stale until a board read lands. The verb itself landed; the mailbox \
+                 verbs are unaffected."
+            );
+            return;
+        }
         if let (Some(before), Some(now)) = (before, self.inner.changes())
             && now == before.wrapping_add(1)
             && self.board_seen_at.load(std::sync::atomic::Ordering::SeqCst) == before
         {
             self.publish(Some(now), None);
         }
-        Ok(())
     }
 }
 
@@ -1276,7 +1289,7 @@ impl Mailboxes for IndexedMailboxes {
             }
             _ => Ok(()),
         };
-        self.settle(before, indexed)?;
+        self.settle(before, indexed);
         Ok(written)
     }
 
@@ -1298,7 +1311,7 @@ impl Mailboxes for IndexedMailboxes {
             }
             _ => Ok(()),
         };
-        self.settle(before, indexed)?;
+        self.settle(before, indexed);
         Ok(delivered)
     }
 
@@ -1315,7 +1328,7 @@ impl Mailboxes for IndexedMailboxes {
         let before = self.inner.changes();
         let delivered = self.inner.read_message(id, acting).await?;
         let indexed = self.reindex(&[&delivered.message]).await;
-        self.settle(before, indexed)?;
+        self.settle(before, indexed);
         Ok(delivered)
     }
 
@@ -1333,7 +1346,7 @@ impl Mailboxes for IndexedMailboxes {
         let before = self.inner.changes();
         let processed = self.inner.mark_processed(id, notes, acting).await?;
         let indexed = self.reindex(&[&processed]).await;
-        self.settle(before, indexed)?;
+        self.settle(before, indexed);
         Ok(processed)
     }
 

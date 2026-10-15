@@ -7578,6 +7578,118 @@ async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
     );
 }
 
+/// **A mail verb whose store write committed is answered as done when only the
+/// index could not take it** (rule 130). The index is a projection of the board;
+/// a caller told the write failed because the projection did posts the message
+/// twice or never marks the delivery it already holds. The index is marked
+/// behind instead, which is what makes mail search say so afterwards. Each case
+/// reads the stored state in the same case, so an answer of success cannot be a
+/// write that never landed.
+async fn a_board_whose_index_fails_the_next_commit() -> (
+    Arc<InMemoryMailboxes>,
+    Arc<FullTextIndex>,
+    IndexedMailboxes,
+    jojobot_domain::mailbox::Message,
+) {
+    jojobot_domain::memory::kinds::load_shipped();
+    let board = Arc::new(InMemoryMailboxes::new());
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = IndexedMailboxes::new(board.clone(), index.clone());
+    mail_contract::create(&mail, "pm").await;
+    let posted = mail_contract::post(&mail, "pm", "dev", "the damper is still hand-cut", 0).await;
+    mail.rebuild().await.expect("rebuild");
+    assert_eq!(
+        index.mail_coverage(),
+        Coverage::Loaded,
+        "the index holds the board before the fault, so Stale below is the fault's"
+    );
+    (board, index, mail, posted)
+}
+
+#[tokio::test]
+async fn a_message_posted_while_the_index_fails_answers_landed_and_marks_the_index_behind() {
+    let (board, index, mail, _first) = a_board_whose_index_fails_the_next_commit().await;
+    index.fail_next_commit();
+    let posted = mail
+        .post_message(jojobot_domain::mailbox::NewMessage {
+            mailbox: MailboxName("pm".into()),
+            body: "the second pass is a gloss coat".to_string(),
+            subject: None,
+            sender: "dev".to_string(),
+            sent_at: jiff::Timestamp::UNIX_EPOCH,
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: None,
+        })
+        .await
+        .expect("a post that landed is not a failure")
+        .written()
+        .expect("the guard waves the post through");
+    let stored = board.message_by_id(&posted.id).await.expect("read");
+    assert!(stored.is_some(), "the message is on the board");
+    assert_eq!(
+        index.mail_coverage(),
+        Coverage::Partial(Behind::Stale),
+        "the index says it is behind"
+    );
+}
+
+#[tokio::test]
+async fn a_box_read_while_the_index_fails_answers_delivered_and_marks_the_index_behind() {
+    let (board, index, mail, posted) = a_board_whose_index_fails_the_next_commit().await;
+    index.fail_next_commit();
+    let delivery = mail
+        .read_mailbox(
+            &MailboxName("pm".into()),
+            jojobot_domain::mailbox::TakenBy::Reading,
+            jojobot_domain::mailbox::Acting::anyone_anytime(),
+        )
+        .await
+        .expect("a delivery that landed is not a failure")
+        .written()
+        .expect("the box is read");
+    assert_eq!(
+        delivery.messages.len(),
+        1,
+        "the delivery carries the message"
+    );
+    let stored = board.message_by_id(&posted.id).await.expect("read");
+    assert_eq!(stored.map(|m| m.state), Some(MessageState::Read));
+    assert_eq!(index.mail_coverage(), Coverage::Partial(Behind::Stale));
+}
+
+#[tokio::test]
+async fn a_message_read_while_the_index_fails_answers_delivered_and_marks_the_index_behind() {
+    let (board, index, mail, posted) = a_board_whose_index_fails_the_next_commit().await;
+    index.fail_next_commit();
+    mail.read_message(
+        &posted.id,
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("a delivery that landed is not a failure");
+    let stored = board.message_by_id(&posted.id).await.expect("read");
+    assert_eq!(stored.map(|m| m.state), Some(MessageState::Read));
+    assert_eq!(index.mail_coverage(), Coverage::Partial(Behind::Stale));
+}
+
+#[tokio::test]
+async fn a_message_processed_while_the_index_fails_answers_done_and_marks_the_index_behind() {
+    let (board, index, mail, posted) = a_board_whose_index_fails_the_next_commit().await;
+    index.fail_next_commit();
+    mail.mark_processed(
+        &posted.id,
+        Some("filed"),
+        jojobot_domain::mailbox::Acting::anyone_anytime(),
+    )
+    .await
+    .expect("a processing that landed is not a failure");
+    let stored = board.message_by_id(&posted.id).await.expect("read");
+    assert_eq!(stored.map(|m| m.state), Some(MessageState::Processed));
+    assert_eq!(index.mail_coverage(), Coverage::Partial(Behind::Stale));
+}
+
 /// **A store that says how often the boxes were listed, and can stop listing
 /// them** while everything else works. `list_mailboxes` hands back every box
 /// with its counts, so how many times one verb reaches for it is the difference
@@ -8203,7 +8315,10 @@ async fn a_post_whose_reindex_failed_is_read_from_the_board_after_a_post_that_ov
         second.await
     };
     let (failed, _) = tokio::join!(failing, overlapping);
-    assert!(failed.is_err(), "the injected fault must surface");
+    failed
+        .expect("a post that landed is answered as landed though its re-index failed")
+        .written()
+        .expect("the guard waves the post through");
     mail.refresh().await;
 
     assert_eq!(
