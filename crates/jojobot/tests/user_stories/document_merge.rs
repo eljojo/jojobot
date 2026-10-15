@@ -347,3 +347,95 @@ async fn a_restore_under_a_former_name_puts_the_document_back_as_it_stood() {
     );
     story.finish().await;
 }
+
+const BETA_SHORT: &str =
+    "# Beta one\n\nfirst body\n\n# Beta two\n\nsecond body\n\n# Beta three\n\nthird body\n";
+
+/// **A document restored to a day before it absorbed another reads as it did
+/// that day, whatever order keys the folded sections kept.** Beta had a section
+/// archived before the merge, and that section keeps the order key it had on
+/// beta. The restore must not bring it back among alpha's own.
+#[tokio::test]
+async fn a_restore_to_a_day_before_a_merge_does_not_bring_back_the_folded_archived_section() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let s = story.session().await;
+    s.add("document:alpha", "Alpha notes").await;
+    s.add("document:beta", "Beta notes").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:alpha", "markdown": ALPHA}),
+    )
+    .await;
+    s.call(
+        "put_document",
+        json!({"document": "document:beta", "markdown": BETA_SHORT}),
+    )
+    .await;
+    clock.stating(SEPTEMBER.parse().expect("a day"));
+    let beta_two = records_of(&s, "document:beta")
+        .await
+        .into_iter()
+        .find(|fact| fact["content"] == "# Beta two")
+        .and_then(|fact| fact["address"].as_str().map(str::to_string))
+        .expect("beta's second section");
+    s.call(
+        "update_fact",
+        json!({"address": beta_two, "status": "archived"}),
+    )
+    .await;
+    clock.stating(OCTOBER.parse().expect("a day"));
+    s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
+        .await;
+    // The positive the restore is read against: the sections that stood on beta
+    // follow alpha's, and the one archived before the merge does not.
+    let merged = read_whole(&s, "document:alpha", None).await;
+    assert_eq!(
+        merged,
+        format!("{ALPHA}# Beta one\n\nfirst body\n\n# Beta three\n\nthird body\n"),
+        "the folded sections that stand follow alpha's own"
+    );
+    // The case reaches the branch it is about: the archived section kept the key
+    // it had on beta, and an active section of alpha holds the same one.
+    let held = records_of(&s, "document:alpha").await;
+    let key_of = |content: &str| {
+        held.iter()
+            .find(|fact| fact["content"] == content)
+            .and_then(|fact| fact["fields"]["order"].as_str().map(str::to_string))
+            .unwrap_or_else(|| panic!("a record {content} with an order key: {held:?}"))
+    };
+    assert_eq!(
+        key_of("# Beta two"),
+        key_of("# Alpha two"),
+        "the archived folded section kept a key an active section holds"
+    );
+    // The document before the merge is alpha's own text, so a restore to it has
+    // nothing of beta to bring back.
+    assert_eq!(read_whole(&s, "document:alpha", Some(AUGUST)).await, ALPHA);
+    let restored = s
+        .call(
+            "put_document",
+            json!({"document": "document:alpha", "restore_to": AUGUST}),
+        )
+        .await
+        .json();
+    assert_ne!(restored["status"], "blocked", "{restored}");
+    assert_eq!(
+        restored["restored"]["recreated"].as_array().map(Vec::len),
+        Some(0),
+        "no section is brought back: {restored}"
+    );
+    assert_eq!(read_whole(&s, "document:alpha", None).await, ALPHA);
+    let after = records_of(&s, "document:alpha").await;
+    let active_keys: Vec<&str> = after
+        .iter()
+        .filter(|fact| fact["status"] == "active" && fact["fields"]["order"].is_string())
+        .filter_map(|fact| fact["fields"]["order"].as_str())
+        .collect();
+    let distinct: std::collections::BTreeSet<&str> = active_keys.iter().copied().collect();
+    assert_eq!(
+        active_keys.len(),
+        distinct.len(),
+        "no two active sections share an order key: {active_keys:?}"
+    );
+    story.finish().await;
+}
