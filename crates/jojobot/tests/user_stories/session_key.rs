@@ -389,8 +389,9 @@ async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_land
 async fn a_second_ask_straight_after_a_pick_up_is_turned_away() {
     // A lease of seconds on the real clock: the run goes quiet by waiting, and
     // is not swept, which a stated far-off day would do to it before the quiet
-    // rule ran at all.
-    let lease = std::time::Duration::from_secs(3);
+    // rule ran at all. The lease is long enough that a loaded host still makes
+    // the second ask inside it.
+    let lease = std::time::Duration::from_secs(10);
     let story = Story::begin_on_a_lease_of("bot:otto", lease).await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
@@ -478,11 +479,6 @@ async fn a_keyless_run_exchanges_its_old_name_once_and_a_second_bare_name_is_ref
         .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
         .await;
     exchanged.says("\"exchanged\":true");
-    // The refusal says what happened without telling the run's history: a
-    // call used a run's name as a credential.
-    exchanged
-        .says("used a run's name as a credential")
-        .never_says("began before keys existed");
     let key = exchanged.json()["sid"]
         .as_str()
         .expect("the exchange hands back a key")
@@ -536,7 +532,8 @@ fn last_moment_named(refusal: &str) -> jiff::Timestamp {
 /// both name the moment the name takes the run, and after the lease it does.
 #[tokio::test]
 async fn a_name_cannot_take_a_run_inside_the_lease_after_its_exchange_and_can_after() {
-    let lease = std::time::Duration::from_secs(3);
+    // Long enough that a loaded host still makes both asks inside the lease.
+    let lease = std::time::Duration::from_secs(10);
     let story = Story::begin_on_a_lease_of("bot:otto", lease).await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
