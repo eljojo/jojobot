@@ -168,19 +168,38 @@ pub fn numbered_by(
     }
 }
 
-/// **The key a write would number a thing by, when that is news**: the
-/// `numbers_by` the thing holds after the write, when it is not the one it holds
-/// now. A write that sends the key it already has founds nothing.
-pub fn new_numbers_by(
+/// **What a write does to the key a thing numbers by.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyChange {
+    /// The thing numbers by this key after the write, and did not before: it
+    /// becomes a collection, or numbers by another key.
+    By(String),
+    /// The thing numbered before the write and numbers nothing after it.
+    Off,
+}
+
+/// **The change a write makes to the key a thing numbers by, when it makes
+/// one**: the `numbers_by` the thing holds after the write, against the one it
+/// holds now. A write that sends the key it already has changes nothing, and a
+/// write on a thing that never numbered and still does not changes nothing.
+pub fn numbering_change(
     now: Option<&BTreeMap<String, String>>,
     after: &BTreeMap<String, String>,
-) -> Option<String> {
-    let wanted = after.get(NUMBERS_BY)?.trim();
-    if wanted.is_empty() {
-        return None;
+) -> Option<KeyChange> {
+    let key = |fields: &BTreeMap<String, String>| {
+        fields
+            .get(NUMBERS_BY)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let held = now.and_then(key);
+    let wanted = key(after);
+    match (held, wanted) {
+        (Some(held), Some(wanted)) if held == wanted => None,
+        (_, Some(wanted)) => Some(KeyChange::By(wanted)),
+        (Some(_), None) => Some(KeyChange::Off),
+        (None, None) => None,
     }
-    let held = now.and_then(|f| f.get(NUMBERS_BY)).map(|v| v.trim());
-    (held != Some(wanted)).then(|| wanted.to_string())
 }
 
 /// **Every numbered collection a thing sits under**, nearest first: the
@@ -285,44 +304,49 @@ pub struct Reach {
     pub founded: Vec<Founding>,
 }
 
-/// **A thing the write makes a collection**, or moves to another key.
+/// **A thing the write makes a collection**, moves to another key or stops
+/// numbering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Founding {
     /// The collection as it numbers now, when it numbers already.
     pub old: Option<Numbered>,
     /// The collection as the write would have it: the thing, the new key and
-    /// what every descendant holds under that key.
-    pub new: Numbered,
+    /// what every descendant holds under that key. `None` when the write takes
+    /// the key off.
+    pub new: Option<Numbered>,
 }
 
 impl Founding {
     /// **Refuse a collection whose members already break its promise.** Asked
-    /// in this order: a key change frees every number held under the old key;
-    /// then the members are asked for one whole number each and no number twice.
-    /// A member that holds nothing under the key is welcome.
+    /// in this order: a key change, or the key taken off, frees every number
+    /// held under the old key; then the members are asked for one whole number
+    /// each and no number twice. A member that holds nothing under the key is
+    /// welcome. **Which member a refusal names does not depend on the order a
+    /// store walks them in**: the lowest handle.
     fn refuses(&self) -> Option<MemoryError> {
-        if let Some(old) = &self.old {
-            for member in &old.members {
-                let Some(number) = member.value.as_deref().and_then(whole_number) else {
-                    continue;
-                };
-                return Some(MemoryError::NumberFreed {
-                    collection: old.collection.to_string(),
-                    key: old.key.clone(),
-                    number,
-                    holder: member.handle.to_string(),
-                });
-            }
+        if let Some(old) = &self.old
+            && let Some((member, number)) = old
+                .members
+                .iter()
+                .filter_map(|m| Some((m, whole_number(m.value.as_deref()?)?)))
+                .min_by(|a, b| a.0.handle.cmp(&b.0.handle))
+        {
+            return Some(MemoryError::NumberFreed {
+                collection: old.collection.to_string(),
+                key: old.key.clone(),
+                number,
+                holder: member.handle.to_string(),
+            });
         }
+        let new = self.new.as_ref()?;
         let held = |m: &Member| m.value.as_deref().and_then(whole_number);
         let mut unfit: Vec<String> = Vec::new();
-        for member in &self.new.members {
+        for member in &new.members {
             let Some(raw) = member.value.as_deref() else {
                 continue;
             };
             let twice = held(member).is_some_and(|number| {
-                self.new
-                    .members
+                new.members
                     .iter()
                     .any(|other| other.handle != member.handle && held(other) == Some(number))
             });
@@ -333,9 +357,10 @@ impl Founding {
         if unfit.is_empty() {
             return None;
         }
+        unfit.sort();
         Some(MemoryError::MembersBreakNumbering {
-            collection: self.new.collection.to_string(),
-            key: self.new.key.clone(),
+            collection: new.collection.to_string(),
+            key: new.key.clone(),
             members: unfit,
         })
     }
@@ -537,12 +562,15 @@ pub fn reach_of(
         }
     }
     for (handle, after) in change.founds() {
-        if let Some(key) = new_numbers_by(fields.get(handle), after) {
-            reach.founded.push(Founding {
-                old: collection_of(handle, entities, fields),
-                new: numbered_by(handle, &key, entities, fields),
-            });
-        }
+        let new = match numbering_change(fields.get(handle), after) {
+            Some(KeyChange::By(key)) => Some(numbered_by(handle, &key, entities, fields)),
+            Some(KeyChange::Off) => None,
+            None => continue,
+        };
+        reach.founded.push(Founding {
+            old: collection_of(handle, entities, fields),
+            new,
+        });
     }
     if let Some(parent) = under {
         let mut above = scopes_of(parent, entities, fields);

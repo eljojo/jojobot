@@ -11,6 +11,10 @@
 //! never refused for what the record gave. "Never reused" is about a member
 //! that is retired, which is archived and keeps its number.
 //!
+//! A fourth guard asks the collection itself: **founding** (a write that gives a
+//! thing `numbers_by`, another key or none is judged over the members it already
+//! has).
+//!
 //! The table below is every write path against every guard. [`attempt`] matches
 //! the pair with no wildcard, so a new path or a new guard is a compile error
 //! until its cells are written, and a cell that is not a refusal says why.
@@ -44,9 +48,15 @@ enum Guard {
     OneHolder,
     KeepsNumber,
     KindFloor,
+    Founding,
 }
 
-const GUARDS: [Guard; 3] = [Guard::OneHolder, Guard::KeepsNumber, Guard::KindFloor];
+const GUARDS: [Guard; 4] = [
+    Guard::OneHolder,
+    Guard::KeepsNumber,
+    Guard::KindFloor,
+    Guard::Founding,
+];
 
 /// What one cell of the table did.
 enum Cell {
@@ -84,6 +94,11 @@ struct World {
     elsewhere: EntityId,
     /// Parking's own claim, the one that gives it 2.
     parking_claim: FactAddress,
+    /// The collection's own claim, the one that gives it `numbers_by`.
+    collection_claim: FactAddress,
+    /// A second collection with one numbered member, whose key a retraction takes
+    /// off.
+    annals_claim: FactAddress,
     /// A promise in the collection that holds its day, the key its kind requires.
     pledge: EntityId,
     pledge_claim: FactAddress,
@@ -204,8 +219,29 @@ async fn the_world<M: Memory>(store: &M) -> World {
         .find(|f| f.fields.contains_key("number"))
         .expect("parking holds a claim that gives it a number")
         .address();
+    let collection_claim = store
+        .recall(&o.collection)
+        .await
+        .expect("the collection reads")
+        .into_iter()
+        .find(|f| f.fields.contains_key("numbers_by"))
+        .expect("the collection holds a claim that gives it its key")
+        .address();
+    let annals = handle("topic:contract-ordinance-paths-annals");
+    let entry = handle("decision:contract-ordinance-paths-entry");
+    add(
+        store,
+        NewEntity::new(annals.clone(), "Pathways annals", "contract-fixture"),
+    )
+    .await;
+    let annals_fact =
+        claim_about(store, &annals, "annals number", &[("numbers_by", "number")]).await;
+    add(store, member(&annals, &entry, "Pathways entry")).await;
+    claim_about(store, &entry, "entry is one", &[("number", "1")]).await;
     World {
         o,
+        collection_claim,
+        annals_claim: annals_fact.address(),
         signs,
         banner,
         banner_claim: banner_fact.address(),
@@ -393,6 +429,24 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
             "promised_by",
         ),
 
+        // The collection's numbers belong to its members, so a key to number them
+        // by is judged against them: another key frees every number held.
+        (Path::Capture, Guard::Founding) => refused(
+            landed(
+                store
+                    .capture(state(NewFact {
+                        fields: BTreeMap::from([("numbers_by".to_string(), "ordinal".to_string())]),
+                        ..NewFact::about(
+                            w.o.collection.clone(),
+                            "numbers by ordinal",
+                            date(2026, 6, 2),
+                        )
+                    }))
+                    .await,
+            ),
+            &w.banner,
+        ),
+
         (Path::UpdateFact, Guard::OneHolder) => refused(
             update(store, &w.rider_claim, state_patch_of("number", "1")).await,
             &w.o.curfew,
@@ -422,6 +476,20 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
             "promised_by",
         ),
 
+        // Taking the key off frees every number held under it.
+        (Path::UpdateFact, Guard::Founding) => refused(
+            update(
+                store,
+                &w.collection_claim,
+                FactPatch {
+                    clear_fields: vec!["numbers_by".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await,
+            &w.banner,
+        ),
+
         // The outsider holds 2 and parking holds 2: signs, which holds none,
         // would serve the outsider's 2 and the collection would have two holders.
         (Path::Merge, Guard::OneHolder) => {
@@ -436,6 +504,10 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
             refused_key(merge(store, &w.former, &w.pledge).await, "promised_by")
         }
 
+        (Path::Merge, Guard::Founding) => {
+            Cell::CannotReach("a merge reads its survivor through the fold and founds nothing")
+        }
+
         (Path::Reparent, Guard::OneHolder) => refused(
             reparent(store, &w.outsider, &w.o.collection).await,
             &w.o.parking,
@@ -446,6 +518,10 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
         ),
         (Path::Reparent, Guard::KindFloor) => {
             Cell::CannotReach("a reparent writes no field, so no key can leave the thing")
+        }
+
+        (Path::Reparent, Guard::Founding) => {
+            Cell::CannotReach("a reparent writes no field, so no numbers_by is set or taken off")
         }
 
         // **A retraction is served on purpose, by all three guards**: it says the
@@ -465,6 +541,10 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
             result: retract(store, &w.pledge_claim).await,
             why: "a retraction takes a record back and is never held back by a floor",
         },
+        (Path::Retract, Guard::Founding) => Cell::ServedOnPurpose {
+            result: retract(store, &w.annals_claim).await,
+            why: "a key given by mistake must be takeable back",
+        },
     }
 }
 
@@ -483,6 +563,10 @@ fn is_the_refusal_of(guard: Guard, error: &MemoryError) -> bool {
         Guard::KindFloor => matches!(
             error,
             MemoryError::BreaksFit { .. } | MemoryError::BreaksType { .. }
+        ),
+        Guard::Founding => matches!(
+            error,
+            MemoryError::NumberFreed { .. } | MemoryError::MembersBreakNumbering { .. }
         ),
     }
 }
@@ -550,9 +634,10 @@ pub async fn no_write_path_skips_a_numbering_guard_except_a_retraction_by_design
         [
             "Retract x OneHolder",
             "Retract x KeepsNumber",
-            "Retract x KindFloor"
+            "Retract x KindFloor",
+            "Retract x Founding"
         ],
-        "the only path left unguarded on purpose is a retraction, for all three"
+        "the only path left unguarded on purpose is a retraction, for all four"
     );
     // **A number under a member that moves is held with it.** The annex holds no
     // number; what is under it does. Folding the annex into a thing outside the

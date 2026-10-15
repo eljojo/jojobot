@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 
 use jojobot_domain::memory::guard::EntityMatch;
 use jojobot_domain::memory::numbered::{
-    Change, Founding, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, Reach, new_numbers_by,
-    numbered_handle,
+    Change, Founding, KeyChange, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, Reach,
+    numbered_handle, numbering_change,
 };
 
 use super::*;
@@ -270,24 +270,40 @@ impl DoltMemory {
                 push(scope, &mut reach);
             }
         }
-        // **A write that gives a thing `numbers_by`, or another one, makes it a
-        // collection over the descendants it already has**, which the scopes above
-        // cannot see: the thing is never its own scope. Asked only of a change that
-        // holds the key, so a write on anything else pays no query.
+        // **A write that gives a thing `numbers_by`, another one or none makes it
+        // a collection over the descendants it already has, or ends it as one**,
+        // which the scopes above cannot see: the thing is never its own scope.
+        // Asked of a change whose thing holds the key after the write, or has
+        // written it before; any other write pays one indexed lookup.
         for (handle, after) in change.founds() {
-            if !after.contains_key(NUMBERS_BY) {
-                continue;
-            }
             let Some((key, handle)) = self.resolve(tx, handle).await? else {
                 continue;
             };
-            let now = Self::held_by(tx, &key).await?;
-            if let Some(by) = new_numbers_by(Some(&now), after) {
-                reach.founded.push(Founding {
-                    old: Self::collection_at(tx, &handle, &key).await?,
-                    new: Self::collection_numbering(tx, &handle, &key, by).await?,
-                });
+            if !after.contains_key(NUMBERS_BY) {
+                let wrote: Option<i64> = sqlx::query_scalar(
+                    "SELECT 1 FROM field_write WHERE entity = ? AND `key` = ? LIMIT 1",
+                )
+                .bind(key.as_str())
+                .bind(NUMBERS_BY)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+                if wrote.is_none() {
+                    continue;
+                }
             }
+            let now = Self::held_by(tx, &key).await?;
+            let new = match numbering_change(Some(&now), after) {
+                Some(KeyChange::By(by)) => {
+                    Some(Self::collection_numbering(tx, &handle, &key, by).await?)
+                }
+                Some(KeyChange::Off) => None,
+                None => continue,
+            };
+            reach.founded.push(Founding {
+                old: Self::collection_at(tx, &handle, &key).await?,
+                new,
+            });
         }
         if let Some(parent) = under
             && let Some((key, handle)) = self.resolve(tx, parent).await?

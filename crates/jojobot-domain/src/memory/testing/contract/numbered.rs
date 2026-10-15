@@ -822,6 +822,44 @@ pub async fn a_collection_is_founded_only_over_members_that_already_keep_its_pro
         matches!(&freed, Err(MemoryError::NumberFreed { key, .. }) if key == "number"),
         "a member holds a number under the old key: {freed:?}"
     );
+    // **Taking the key off frees the numbers just as another key does.** The
+    // collection's own claim gives it `numbers_by`; clearing the key on it is
+    // refused while a member holds a number, and nothing is written.
+    let gave_key = store
+        .recall(&rekey.collection)
+        .await
+        .expect("the collection reads")
+        .into_iter()
+        .find(|fact| fact.fields.contains_key("numbers_by"))
+        .expect("a claim gives the collection its key")
+        .address();
+    let dropped = store
+        .update_fact(
+            &gave_key,
+            state_patch(FactPatch {
+                clear_fields: vec!["numbers_by".to_string()],
+                ..FactPatch::default()
+            }),
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(&dropped, Err(MemoryError::NumberFreed { key, .. }) if key == "number"),
+        "a member holds a number under the key being taken off: {dropped:?}"
+    );
+    assert!(
+        store
+            .numbering_of(&rekey.collection)
+            .await
+            .expect("reads")
+            .is_some(),
+        "a refused removal leaves the collection numbering"
+    );
+    let still = store
+        .fields(&numbered(&rekey.collection, 2))
+        .await
+        .expect("a number still names its member");
+    assert_eq!(still.get("title").map(String::as_str), Some("Parking"));
     // With no member holding a number under the old key, the key may change.
     let (open, _) = plain_collection(store, "topic:contract-founding-open").await;
     capture(
@@ -841,6 +879,32 @@ pub async fn a_collection_is_founded_only_over_members_that_already_keep_its_pro
         }),
     )
     .await;
+
+    // A collection no member holds a number in can take the key off.
+    let (bare, bare_claim) = plain_collection(store, "topic:contract-founding-bare").await;
+    member_of(store, &bare, "decision:contract-fm-bare-empty", None).await;
+    edit(
+        store,
+        &bare_claim,
+        state_patch(FactPatch {
+            fields: numbers_by("number"),
+            ..FactPatch::default()
+        }),
+    )
+    .await;
+    edit(
+        store,
+        &bare_claim,
+        state_patch(FactPatch {
+            clear_fields: vec!["numbers_by".to_string()],
+            ..FactPatch::default()
+        }),
+    )
+    .await;
+    assert!(
+        store.numbering_of(&bare).await.expect("reads").is_none(),
+        "with no number held, the key came off and the thing numbers nothing"
+    );
 }
 
 /// Every spec above, in one call — see [`base::run_all`].
