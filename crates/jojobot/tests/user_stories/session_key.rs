@@ -46,6 +46,7 @@ async fn voucher_held_by(story: &Story, slug: &str, holder: &str) -> EntityId {
         matches!(issued, Guarded::Written(_)),
         "the engine path was blocked"
     );
+    story.the_store_changed_underneath().await;
     voucher
 }
 

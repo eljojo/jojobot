@@ -14,6 +14,7 @@
 use super::dsl::Story;
 
 #[tokio::test]
+#[ignore = "card 2442: the first phase needs an index that never scanned, which a filled boot never reaches"]
 async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missing() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
     let s = story.session().await;
@@ -69,6 +70,30 @@ async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missi
     stale.says("allergic to shellfish");
 
     s.wrap("searched through a store that came and went, and was told so each time")
+        .await;
+    story.finish().await;
+}
+
+/// **A server that read its store when it started answers from what it read when
+/// the store goes away**, and does not call itself unscanned: the first read
+/// that fills the index happened at the start, exactly as the binary's boot does
+/// it. The pair of the story above, which is about an index that never got that
+/// read.
+#[tokio::test]
+async fn a_server_that_scanned_its_store_at_start_is_not_unscanned_when_the_store_goes_away() {
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.fact("person:milhouse", "allergic to shellfish").await;
+
+    store.goes_away();
+
+    let found = s.find("shellfish").await;
+    found.says("\"searched\":true");
+    found.says("allergic to shellfish");
+    found.never_says("\"behind\":\"unscanned\"");
+
+    s.wrap("searched after the store went away, from what was read at the start")
         .await;
     story.finish().await;
 }

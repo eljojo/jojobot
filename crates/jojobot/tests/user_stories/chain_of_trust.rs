@@ -64,6 +64,7 @@ async fn issue_through_the_store(story: &Story, voucher: &EntityId) -> String {
     let Guarded::Written((_, claim)) = issued else {
         panic!("the engine path was blocked");
     };
+    story.the_store_changed_underneath().await;
     claim.address().to_string()
 }
 

@@ -327,6 +327,41 @@ pub struct Booted {
     pub clock: Clock,
 }
 
+/// **The fill a server makes before it serves**: the fold takes a full read of
+/// the store, then the search index takes a full scan. The binary's boot and the
+/// story harness both call this, so a story serves from the image the operator's
+/// server serves from. A failed read is not fatal: the store is the truth, and
+/// refusing to start because a projection could not be built is worse than a thin
+/// `search`. It says so loudly instead.
+pub async fn fill_memory(folded: &Folded, indexed: &IndexedMemory) {
+    let filling = std::time::Instant::now();
+    match folded.rebuild().await {
+        Ok(things) => tracing::info!(
+            things,
+            elapsed_ms = filling.elapsed().as_millis() as u64,
+            "fold: everything the memory verbs read is held in memory, from a full read"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "FOLD EMPTY — the boot read failed, so every memory read goes to the store until a \
+             write through this process fills it again. Nothing is wrong; every read stays \
+             correct and only slower until then."
+        ),
+    }
+    match indexed.rebuild_scanned().await {
+        Ok(scan) => {
+            tracing::info!(docs = scan.len(), "search: index built from a full scan");
+            report_stored_records_over_the_ceiling(&scan);
+        }
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SEARCH INDEX EMPTY — the boot scan failed, so `search` sees only what this process \
+             writes from here on. The memory verbs are unaffected; restart once the store is \
+             reachable to get a full index."
+        ),
+    }
+}
+
 /// **Name the records the store already holds over the ceiling**, from the scan
 /// the boot just indexed: no second read of the store. The write refusal keeps a
 /// new record from exceeding one answer and nothing else finds the ones that
@@ -714,32 +749,7 @@ pub async fn boot_store_pushing(
     // because a projection couldn't be built is worse than a thin `search`.
     // It says so loudly instead.
     let (folded, indexed) = assemble_memory(resolved)?;
-    let filling = std::time::Instant::now();
-    match folded.rebuild().await {
-        Ok(things) => tracing::info!(
-            things,
-            elapsed_ms = filling.elapsed().as_millis() as u64,
-            "fold: everything the memory verbs read is held in memory, from a full read"
-        ),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "FOLD EMPTY — the boot read failed, so every memory read goes to the store until a \
-             write through this process fills it again. Nothing is wrong; every read stays \
-             correct and only slower until then."
-        ),
-    }
-    match indexed.rebuild_scanned().await {
-        Ok(scan) => {
-            tracing::info!(docs = scan.len(), "search: index built from a full scan");
-            report_stored_records_over_the_ceiling(&scan);
-        }
-        Err(e) => tracing::warn!(
-            error = %e,
-            "SEARCH INDEX EMPTY — the boot scan failed, so `search` sees only what this process \
-             writes from here on. The memory verbs are unaffected; restart once the store is \
-             reachable to get a full index."
-        ),
-    }
+    fill_memory(&folded, &indexed).await;
 
     // **The ports mail and sessions are served from.** Rows in the SQL store,
     // both over the one pool.

@@ -217,6 +217,7 @@ async fn the_limit_for_a_claim_is_where_a_read_of_it_stops_fitting() {
             fact.details = Some(text(len));
             let written = memory.capture(fact).await;
             assert!(matches!(written, Ok(Guarded::Written(_))), "{written:?}");
+            story.the_store_changed_underneath().await;
             otto.answer_and_size("recall", json!({"subject": id.as_str(), "facts": true}))
                 .await
                 .1

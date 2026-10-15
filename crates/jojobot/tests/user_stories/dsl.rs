@@ -36,11 +36,14 @@ pub struct Story {
     store: Arc<dyn jojobot_domain::memory::Memory>,
     mail: Arc<InMemoryMailboxes>,
     runs: Arc<InMemorySessions>,
-    /// **The images of the board and of the runs this server answers from**
-    /// (decision log 292). A change made to `mail` or `runs` past them is not
-    /// seen until [`Story::the_store_changed_underneath`], as a restart would.
+    /// **The images of the board, of the runs and of memory this server
+    /// answers from** (decision log 292). A change made to `store`, `mail` or
+    /// `runs` past them is not seen until [`Story::the_store_changed_underneath`],
+    /// as a restart would.
     mail_image: Arc<jojobot_adapters::fold::mail::FoldedMailboxes>,
     runs_image: Arc<jojobot_adapters::fold::sessions::FoldedSessions>,
+    memory_fold: Arc<jojobot_adapters::fold::Folded>,
+    memory_index: Arc<jojobot_adapters::search::IndexedMemory>,
     /// **The task that pushes the operator's mail**, when this server was set
     /// up to push. Kept so a story can stop it, as stopping the process would.
     runner: Option<Arc<jojobot::push::Runner>>,
@@ -410,7 +413,6 @@ impl Story {
             mail,
             runs,
             jojobot_domain::clock::Clock::default(),
-            false,
             Some((notifier, policy)),
         )
         .await;
@@ -441,7 +443,6 @@ impl Story {
             self.mail.clone(),
             self.runs.clone(),
             jojobot_domain::clock::Clock::default(),
-            true,
             Some((notifier, policy)),
         )
         .await
@@ -464,7 +465,6 @@ impl Story {
             mail,
             runs,
             jojobot_domain::clock::Clock::default(),
-            false,
             None,
         )
         .await
@@ -564,7 +564,6 @@ impl Story {
                 clock: jojobot_domain::clock::Clock::default(),
                 quiet_after: None,
             },
-            false,
             None,
         )
         .await;
@@ -591,7 +590,6 @@ impl Story {
                     jiff::SignedDuration::try_from(lease).expect("a lease is a duration"),
                 ),
             },
-            false,
             None,
         )
         .await;
@@ -615,12 +613,13 @@ impl Story {
     }
 
     /// **Read the stores again, as a restart would.** A story that wrote to the
-    /// raw stores past the server (`sessions_store`, `mail_store`) changed
+    /// raw stores past the server (`memory_store`, `sessions_store`, `mail_store`) changed
     /// something this server holds in memory and did not see; this is the one
     /// way to say that happened.
     pub async fn the_store_changed_underneath(&self) {
         self.runs_image.rebuild().await.expect("the runs load");
         self.mail_image.rebuild().await.expect("the board loads");
+        jojobot::wiring::fill_memory(&self.memory_fold, &self.memory_index).await;
     }
 
     /// The mailbox store under this story's server, for the same reason.
@@ -638,7 +637,6 @@ impl Story {
             self.mail.clone(),
             self.runs.clone(),
             jojobot_domain::clock::Clock::default(),
-            true,
             None,
         )
         .await
@@ -661,7 +659,6 @@ impl Story {
             self.mail.clone(),
             self.runs.clone(),
             clock,
-            true,
             None,
         )
         .await
@@ -682,7 +679,6 @@ impl Story {
                 clock,
                 quiet_after: None,
             },
-            true,
             None,
         )
         .await
@@ -704,7 +700,6 @@ impl Story {
                     jiff::SignedDuration::try_from(lease).expect("a lease is a duration"),
                 ),
             },
-            true,
             None,
         )
         .await
@@ -726,7 +721,7 @@ impl Story {
         // restart can be served over the same three stores.
         let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let runs = Arc::new(InMemorySessions::new());
-        let story = Self::spawn(bot, store, mail, runs, clock, false, None).await;
+        let story = Self::spawn(bot, store, mail, runs, clock, None).await;
         story.stand_up_the_bot().await;
         story
     }
@@ -743,7 +738,6 @@ impl Story {
         mail_store: Arc<InMemoryMailboxes>,
         runs: Arc<InMemorySessions>,
         clock: jojobot_domain::clock::Clock,
-        inherited: bool,
         push: Option<(
             Arc<dyn jojobot_domain::push::Notifier>,
             jojobot_domain::push::Policy,
@@ -758,7 +752,6 @@ impl Story {
                 clock,
                 quiet_after: Some(jiff::SignedDuration::ZERO),
             },
-            inherited,
             push,
         )
         .await
@@ -772,11 +765,6 @@ impl Story {
         mail_store: Arc<InMemoryMailboxes>,
         runs: Arc<InMemorySessions>,
         timing: Timing,
-        // **Whether this server INHERITS a world.** A restart scans the store
-        // it was handed, exactly as the binary's boot does; a first boot over
-        // an empty store does not, because a story about what a search says of
-        // its own coverage is about a server that has not scanned yet.
-        inherited: bool,
         // **Where pushes to the operator go**, when this server is set up to
         // push: the sender, and how long a failed push is chased.
         push: Option<(
@@ -798,12 +786,10 @@ impl Story {
         // functions the binary calls is what stops that from being possible
         // to write by accident.
         let (folded, indexed) = jojobot::wiring::assemble_memory(store).expect("index opens");
-        if inherited {
-            let _ = folded.rebuild().await;
-            let _ = indexed.rebuild().await;
-        }
+        jojobot::wiring::fill_memory(&folded, &indexed).await;
         let indexed_for_seed = indexed.clone();
         let index = indexed.index();
+        let (memory_fold, memory_index) = (folded.clone(), indexed.clone());
         let wired = jojobot::wiring::assemble_ports(
             indexed.clone(),
             mail_store.clone(),
@@ -915,6 +901,8 @@ impl Story {
             runs,
             mail_image,
             runs_image,
+            memory_fold,
+            memory_index,
             runner,
             index,
         }

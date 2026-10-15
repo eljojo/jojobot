@@ -689,6 +689,7 @@ async fn a_section_resting_on_an_unstamped_write_is_named_as_one_the_read_could_
     );
 
     store.forgets_when_its_writes_happened();
+    story.the_store_changed_underneath().await;
     let unstamped = session
         .call(
             "read_document",
