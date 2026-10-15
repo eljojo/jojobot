@@ -86,8 +86,9 @@ impl Jojobot {
                        blocked with nothing moved, and the answer says why and who may: one \
                        handle named as both sides; a thing folded into its own descendant; \
                        a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a \
-                       thought room or thought ceiling the merge would break; or a result \
-                       that could not be read back whole in one answer. The receipt's \
+                       thought room or thought ceiling the merge would break; a number the \
+                       merge would lose; or a result that could not be read back whole in \
+                       one answer. The receipt's \
                        `changed` lists what this call changed, or says nothing. Each \
                        argument's own description holds the rest. A `request_id` makes a \
                        resend safe: a repeat returns the first receipt and writes nothing."

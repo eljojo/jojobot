@@ -832,6 +832,15 @@ fn merge_entities_lists_the_refusal_for_a_fold_into_a_descendant() {
     assert!(text.contains("descendant"), "{text}");
 }
 
+/// **`merge_entities` lists the refusal for a number the merge would lose**,
+/// beside the other refusals a merge can meet. The word is the one the list
+/// adds, so a description that loses the item fails here.
+#[test]
+fn merge_entities_lists_the_refusal_for_a_number_the_merge_would_lose() {
+    let text = served_text("merge_entities", None);
+    assert!(text.contains("lose"), "{text}");
+}
+
 /// **`start_here`'s `compacted` says a `skill` or a `section` beside it is
 /// refused**, which is what the verb does.
 #[test]

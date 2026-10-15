@@ -311,3 +311,83 @@ async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_wo
     s.recall(&format!("{COLLECTION}/4")).await.says(FIREWORKS);
     story.finish().await;
 }
+
+/// **A move refused for a number is told the member can stay or be archived,
+/// and the edit and the merge keep their own advice.** Moving a numbered member
+/// out of its collection would free its number, so a move with a new `parent` is
+/// refused. An edit is sent back to the number the member holds and a merge is
+/// told to retract or archive, and neither is a way a move can go on. The move's
+/// advice names the `parent` to leave off and `archive_entity`, and both are
+/// followed here.
+#[tokio::test]
+async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_works() {
+    const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(COLLECTION, "Town ordinances").await;
+    s.call(
+        "capture",
+        json!({"subject": COLLECTION, "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    for (handle, name, number) in [(CURFEW, "Curfew", "1"), (PARKING, "Parking", "2")] {
+        let (kind, slug) = handle.split_once(':').expect("a handle");
+        s.call(
+            "add_entity",
+            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named",
+                   "parent": COLLECTION, "sets": {"number": number}}),
+        )
+        .await;
+    }
+    s.add(OUTSIDER, "Someone elsewhere").await;
+
+    // ── the move: told to leave the member where it is, or to archive it ────
+    let moved = s
+        .refused(
+            "rename_entity",
+            json!({"handle": PARKING, "to": PARKING, "parent": OUTSIDER}),
+        )
+        .await;
+    moved
+        .says(&format!("{COLLECTION}/2"))
+        .says("parent")
+        .says("archive_entity")
+        .never_says("retract");
+
+    // ── beside it, the edit and the merge keep theirs ───────────────────────
+    s.refused(
+        "capture",
+        json!({"subject": PARKING, "content": "renumbered", "provenance": "testimony",
+               "sets": {"number": "9"}}),
+    )
+    .await
+    .says(&format!("{COLLECTION}/2"))
+    .never_says("archive_entity")
+    .never_says("parent");
+    s.refused(
+        "merge_entities",
+        json!({"duplicate": PARKING, "survivor": CURFEW, "reason": "the same ordinance"}),
+    )
+    .await
+    .says("retract")
+    .says("archive_entity")
+    .never_says("parent");
+
+    // ── leaving it where it is: nothing moved, and the member takes writes ──
+    s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
+    s.call(
+        "capture",
+        json!({"subject": PARKING, "content": "no parking after ten", "provenance": "testimony"}),
+    )
+    .await;
+
+    // ── archiving it: the number still names it ─────────────────────────────
+    s.call(
+        "archive_entity",
+        json!({"handle": PARKING, "reason": "no longer in force"}),
+    )
+    .await;
+    s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
+    story.finish().await;
+}

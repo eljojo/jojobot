@@ -457,10 +457,12 @@ pub(crate) fn memory_declined(
 }
 
 /// **What to do about a number a write would free**, in the words of the verb
-/// that asked. One place decides the text, so the two verbs cannot drift.
+/// that asked. One place decides the text, so the verbs cannot drift.
 ///
 /// An edit has a number to send, so it is sent back to the number the member
-/// holds. A merge has none: the survivor serves what the duplicate held, so two
+/// holds. A move out of the collection has none, and it is told to leave the
+/// member where it is or to archive it, which keeps its number. Only a rename
+/// with a new parent reaches the numbering guard that frees a number by a move. A merge has none: the survivor serves what the duplicate held, so two
 /// numbered members cannot be folded into one, and a numbered member cannot be
 /// folded out of its collection. The ways that work for a merge are the two that
 /// leave no number to lose: take back the claim that gave one of the numbers
@@ -486,6 +488,13 @@ fn number_freed_advice(
              is allowed, and the number is free again), then send the merge again. Or leave \
              the duplicate unmerged and archive it with archive_entity: an archived member \
              keeps its number. {tail}"
+        ),
+        "rename_entity" => format!(
+            "{head} A move with a new `parent` takes {holder} out of {collection}, and a \
+             number stays with a member only while it is a member. Two ways go on. Leave it \
+             where it is: send the rename again without the new `parent`. Or, if it is \
+             retired, archive it with archive_entity: an archived member keeps its number \
+             and stays in {collection}. {tail}"
         ),
         _ => format!(
             "{head} Send the number it holds, or change something else. An archived member \
@@ -2779,8 +2788,12 @@ pub(crate) mod tests {
                 .expect("advice")
                 .to_string()
         };
-        let (merge, edit) = (advice("merge_entities"), advice("capture"));
-        for how in [&merge, &edit] {
+        let (merge, edit, moved) = (
+            advice("merge_entities"),
+            advice("capture"),
+            advice("rename_entity"),
+        );
+        for how in [&merge, &edit, &moved] {
             assert!(
                 how.contains("topic:widgets/2") && how.contains("thing:handcart"),
                 "{how}"
@@ -2801,6 +2814,16 @@ pub(crate) mod tests {
                 "{verb} is not served"
             );
         }
+        // A move leaves the member where it is or archives it; it is not told to
+        // retract, and it names the `parent` to leave off.
+        assert!(
+            moved.contains("archive_entity") && moved.contains("`parent`"),
+            "the move advice does not name archive_entity and the parent: {moved}"
+        );
+        assert!(
+            !moved.contains("retract"),
+            "a move is not told to retract: {moved}"
+        );
         assert!(
             !edit.contains("archive_entity"),
             "an edit is not told to archive: {edit}"
