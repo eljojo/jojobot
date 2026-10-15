@@ -769,11 +769,7 @@ impl Memory for Folded {
             {
                 return Ok(written);
             }
-            self.reload().await.map_err(|source| {
-                MemoryError::Store(format!(
-                    "declare_type landed, but the fold could not rebuild to reflect it: {source}"
-                ))
-            })?;
+            Self::follow("declare_type", self.reload().await);
             Ok(written)
         })
         .await
@@ -802,11 +798,8 @@ impl Memory for Folded {
         let _gate = self.writing.lock().await;
         self.scoped(async {
             self.inner.declare_kind(token, origin, fields).await?;
-            self.reload().await.map_err(|source| {
-                MemoryError::Store(format!(
-                    "declare_kind landed, but the fold could not rebuild to reflect it: {source}"
-                ))
-            })
+            Self::follow("declare_kind", self.reload().await);
+            Ok(())
         })
         .await
     }
@@ -825,11 +818,8 @@ impl Memory for Folded {
         let _gate = self.writing.lock().await;
         self.scoped(async {
             self.inner.reclaim_kind(token).await?;
-            self.reload().await.map_err(|source| {
-                MemoryError::Store(format!(
-                    "reclaim_kind landed, but the fold could not rebuild to reflect it: {source}"
-                ))
-            })
+            Self::follow("reclaim_kind", self.reload().await);
+            Ok(())
         })
         .await
     }
@@ -1526,6 +1516,74 @@ mod tests {
             recalled.iter().any(|f| f.id == fact.id),
             "the write must be visible in the store even though the fold refresh failed: \
              {recalled:?}",
+        );
+    }
+
+    /// **A declaration that landed is never answered as a failure, whatever the
+    /// fold's re-read did** (rule 130). Each of the three verbs below changes how
+    /// every entity folds, so each reads the whole image again after it lands; the
+    /// double lets the write through and fails that read. The answer is success,
+    /// the store holds the declaration, and the image is gone so reads go to the
+    /// store (see [`Folded::follow`]). Paired with the store read in the same
+    /// case, so an answer of success cannot be a write that never landed.
+    async fn a_fold_whose_reread_fails_after_a_declaration() -> (Arc<InMemoryMemory>, Folded) {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let folded = Folded::new(Arc::new(WritesThenFailsToReadFields(inner.clone())));
+        folded.rebuild().await.expect("an empty store fills");
+        seeded(&folded, &alpha(), "Alpha").await;
+        (inner, folded)
+    }
+
+    #[tokio::test]
+    async fn a_type_declared_while_the_fold_cannot_reread_answers_landed_not_failed() {
+        let (inner, folded) = a_fold_whose_reread_fails_after_a_declaration().await;
+        let declared = folded
+            .declare_type(
+                types::DeclaredType::new(
+                    "fold-behind-type",
+                    vec![types::Field::new("laps", types::ValueType::Text)],
+                ),
+                None,
+            )
+            .await
+            .expect("a declaration that landed is not a failure");
+        assert_eq!(declared.name, "fold-behind-type");
+        let held = inner.declared_types().await.expect("types read");
+        assert!(
+            held.iter().any(|t| t.name == "fold-behind-type"),
+            "the declaration is in the store: {held:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_kind_declared_while_the_fold_cannot_reread_answers_landed_not_failed() {
+        let (inner, folded) = a_fold_whose_reread_fails_after_a_declaration().await;
+        folded
+            .declare_kind("theta", types::Origin::Declared, Vec::new())
+            .await
+            .expect("a declaration that landed is not a failure");
+        let held = inner.declared_kinds().await.expect("kinds read");
+        assert!(
+            held.iter().any(|(token, _)| token == "theta"),
+            "the kind is in the store: {held:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_kind_reclaimed_while_the_fold_cannot_reread_answers_landed_not_failed() {
+        let (inner, folded) = a_fold_whose_reread_fails_after_a_declaration().await;
+        inner
+            .declare_kind("theta", types::Origin::Shipped, Vec::new())
+            .await
+            .expect("the kind is shipped into the store");
+        folded
+            .reclaim_kind("theta")
+            .await
+            .expect("a reclaim that landed is not a failure");
+        let held = inner.declared_kinds().await.expect("kinds read");
+        assert!(
+            held.iter().all(|(token, _)| token != "theta"),
+            "the kind is gone from the store: {held:?}"
         );
     }
 
