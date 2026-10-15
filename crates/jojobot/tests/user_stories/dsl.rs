@@ -2413,6 +2413,22 @@ impl Answer {
             .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body))
     }
 
+    /// **What the answer taught, as the lines it carried under `teaching`.**
+    /// Empty when the key is absent. A story reads a teaching as structure:
+    /// a first answer's lines are the reference, and a later answer either
+    /// carries those same lines again or carries none.
+    pub fn teachings(&self) -> Vec<String> {
+        self.json()["teaching"]
+            .as_array()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.as_str().expect("a teaching is text").to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The assertion that can actually fail on a correction: the old wording is
     /// GONE, not merely outnumbered.
     pub fn never_says(&self, needle: &str) -> &Self {

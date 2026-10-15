@@ -23,10 +23,6 @@ async fn wait_out_the_lease() {
     tokio::time::sleep(LEASE + Duration::from_millis(600)).await;
 }
 
-/// The teaching about claims, whose words are not asserted: it rides a
-/// capture's receipt under `teaching`, and what is read is its subject.
-const CLAIMS_TEACHING: &str = "does not destroy the one already there";
-
 async fn capture(who: &Session, content: &str) -> super::dsl::Answer {
     who.call(
         "capture",
@@ -82,16 +78,21 @@ async fn a_pick_up_by_name_is_taught_afresh_and_a_wrap_code_reopen_is_not() {
     // ── the old sitting is taught once, and the live key is not taught again ──
     let gamma = story.as_bot("bot:gamma").await;
     let (name, key) = (gamma.run().to_string(), gamma.sid().to_string());
-    capture(&gamma, "orders the pie")
-        .await
-        .says(CLAIMS_TEACHING);
-    capture(&gamma, "orders the pie again")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    // A first capture carries the teaching about claims under `teaching`; its
+    // lines are the reference every later answer is held to.
+    let taught = capture(&gamma, "orders the pie").await.teachings();
+    assert!(!taught.is_empty(), "a first capture teaches");
+    assert!(
+        capture(&gamma, "orders the pie again")
+            .await
+            .teachings()
+            .is_empty()
+    );
     let delta = story.as_bot("bot:delta").await;
-    capture(&delta, "orders the donut")
-        .await
-        .says(CLAIMS_TEACHING);
+    assert_eq!(
+        capture(&delta, "orders the donut").await.teachings(),
+        taught
+    );
 
     // ── the same sitting coming back by its wrap code is not taught again ────
     let (reopened_boot, reopened) = reopen_by_code(&story, &delta, "delta").await;
@@ -101,9 +102,12 @@ async fn a_pick_up_by_name_is_taught_afresh_and_a_wrap_code_reopen_is_not() {
         "a reopen forgets nothing and does not say it did: {}",
         reopened_boot.json()
     );
-    capture(&reopened, "orders the donut once more")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    assert!(
+        capture(&reopened, "orders the donut once more")
+            .await
+            .teachings()
+            .is_empty()
+    );
 
     // ── a different agent taking a quiet run by its name is taught afresh ────
     wait_out_the_lease().await;
@@ -115,13 +119,19 @@ async fn a_pick_up_by_name_is_taught_afresh_and_a_wrap_code_reopen_is_not() {
         "the pick-up says what it forgot: {}",
         taken.json()
     );
-    capture(&taker, "orders the pie, taken over")
-        .await
-        .says(CLAIMS_TEACHING);
+    assert_eq!(
+        capture(&taker, "orders the pie, taken over")
+            .await
+            .teachings(),
+        taught
+    );
     // The new agent is taught once like any session, not on every call.
-    capture(&taker, "and the pie again")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    assert!(
+        capture(&taker, "and the pie again")
+            .await
+            .teachings()
+            .is_empty()
+    );
 
     story.finish().await;
 }

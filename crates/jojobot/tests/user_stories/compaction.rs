@@ -12,10 +12,6 @@ use serde_json::json;
 
 use super::dsl::{Session, Story};
 
-/// The teaching about claims, whose words are not asserted: it rides a
-/// capture's receipt under `teaching`, and what is read is its subject.
-const CLAIMS_TEACHING: &str = "does not destroy the one already there";
-
 async fn capture(who: &Session, content: &str) -> super::dsl::Answer {
     who.call(
         "capture",
@@ -35,18 +31,26 @@ async fn a_run_that_reports_compaction_is_taught_again_and_keeps_its_key() {
     let first = story.as_bot("bot:gamma").await;
     let second = story.as_bot("bot:gamma").await;
     let (run, key) = (first.run().to_string(), first.sid().to_string());
-    capture(&first, "orders the pie")
-        .await
-        .says(CLAIMS_TEACHING);
-    capture(&first, "orders the pie again")
-        .await
-        .never_says(CLAIMS_TEACHING);
-    capture(&second, "orders the donut")
-        .await
-        .says(CLAIMS_TEACHING);
-    capture(&second, "orders the donut again")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    // The first capture of a run carries the teaching about claims under
+    // `teaching`; its lines are the reference every later answer is held to.
+    let taught = capture(&first, "orders the pie").await.teachings();
+    assert!(!taught.is_empty(), "a first capture teaches");
+    assert!(
+        capture(&first, "orders the pie again")
+            .await
+            .teachings()
+            .is_empty()
+    );
+    assert_eq!(
+        capture(&second, "orders the donut").await.teachings(),
+        taught
+    );
+    assert!(
+        capture(&second, "orders the donut again")
+            .await
+            .teachings()
+            .is_empty()
+    );
 
     // ── the first run reports a compaction, asking for the brief boot ────────
     let reported = first
@@ -68,15 +72,24 @@ async fn a_run_that_reports_compaction_is_taught_again_and_keeps_its_key() {
     assert!(body["session"]["shown_and_taught"].is_string(), "{body}");
 
     // ── the run is taught again, once; the other run is untouched ───────────
-    capture(&first, "orders the pie after the compaction")
-        .await
-        .says(CLAIMS_TEACHING);
-    capture(&first, "and the pie once more")
-        .await
-        .never_says(CLAIMS_TEACHING);
-    capture(&second, "orders the donut once more")
-        .await
-        .never_says(CLAIMS_TEACHING);
+    assert_eq!(
+        capture(&first, "orders the pie after the compaction")
+            .await
+            .teachings(),
+        taught
+    );
+    assert!(
+        capture(&first, "and the pie once more")
+            .await
+            .teachings()
+            .is_empty()
+    );
+    assert!(
+        capture(&second, "orders the donut once more")
+            .await
+            .teachings()
+            .is_empty()
+    );
 
     // ── the key still works, and the chronology carries the mark ────────────
     // The read returns every run of the bot, so each is looked up by its name.

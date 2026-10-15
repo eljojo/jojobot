@@ -82,26 +82,32 @@ async fn a_session_that_reads_first_is_taught_on_its_first_read_of_a_claim() {
         .never_says("\"teaching\"");
 
     // ── the first read that shows a claim carries it ─────────────────────────
-    reader
+    let first = reader
         .call("recall", json!({"subject": "person:lisa", "facts": true}))
-        .await
-        .says("likes the diner")
-        .says("\"teaching\"")
-        .says("does not destroy the one already there");
+        .await;
+    first.says("likes the diner");
+    let taught = first.teachings();
+    assert!(!taught.is_empty(), "the first read of a claim teaches");
 
     // ── and no later answer does, whichever verb comes next ──────────────────
-    reader
-        .call("search", json!({"query": "diner"}))
-        .await
-        .says("likes the diner")
-        .never_says("\"teaching\"");
-    reader
+    let found = reader.call("search", json!({"query": "diner"})).await;
+    found.says("likes the diner");
+    found.never_says("\"teaching\"");
+    // A capture may carry teachings of its own; the claims teaching is not among
+    // them.
+    let written = reader
         .call(
             "capture",
             json!({"subject": "person:lisa", "content": "orders the pie", "provenance": "testimony"}),
         )
-        .await
-        .never_says("does not destroy the one already there");
+        .await;
+    for line in &taught {
+        assert!(
+            !written.teachings().contains(line),
+            "a session taught about claims is not taught again: {}",
+            written.raw()
+        );
+    }
 
     story.finish().await;
 }
@@ -118,16 +124,38 @@ async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
     writer.add("bot:sigma", "Sigma").await;
     let reader = story.as_bot("bot:sigma").await;
 
-    reader
-        .call("search", json!({"query": "diner"}))
+    // The teaching about claims, as a session that meets a claim by recall
+    // first is handed it: the reference this search is held to.
+    writer.add("bot:tau", "Tau").await;
+    let claims = story
+        .as_bot("bot:tau")
         .await
-        .says("likes the diner")
-        .says("does not destroy the one already there");
-    reader
         .call("recall", json!({"subject": "person:lisa", "facts": true}))
         .await
-        .says("likes the diner")
-        .never_says("does not destroy the one already there");
+        .teachings();
+    assert!(!claims.is_empty(), "a first read of a claim teaches");
+
+    let found = reader.call("search", json!({"query": "diner"})).await;
+    found.says("likes the diner");
+    let taught = found.teachings();
+    for line in &claims {
+        assert!(
+            taught.contains(line),
+            "the first search to show a claim carries the teaching about claims: {}",
+            found.raw()
+        );
+    }
+    let recalled = reader
+        .call("recall", json!({"subject": "person:lisa", "facts": true}))
+        .await;
+    recalled.says("likes the diner");
+    for line in &claims {
+        assert!(
+            !recalled.teachings().contains(line),
+            "the recall that follows is not taught again: {}",
+            recalled.raw()
+        );
+    }
 
     story.finish().await;
 }
