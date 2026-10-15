@@ -14,6 +14,19 @@ fn creation(kind: &str, handle: &str, name: &str) -> serde_json::Value {
     json!({"kind": kind, "handle": handle, "name": name, "source": "user-named"})
 }
 
+/// The handles of every thing of `kind`, as a listing names them.
+async fn handles_of_kind(s: &super::dsl::Session, kind: &str) -> Vec<String> {
+    let listed = s
+        .shape(&format!("every {kind}"), json!({ "kind": kind }))
+        .await;
+    listed.json()["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a recall answers with objects: {}", listed.raw()))
+        .iter()
+        .filter_map(|o| o["id"].as_str().map(str::to_string))
+        .collect()
+}
+
 fn with(mut call: serde_json::Value, extra: serde_json::Value) -> serde_json::Value {
     let (call, extra) = (call.as_object_mut().unwrap(), extra.as_object().unwrap());
     for (key, value) in extra {
@@ -51,9 +64,26 @@ async fn two_shared_words_are_refused_and_land_with_a_reason_and_the_reason_is_k
     .await
     .says("override_reason")
     .says("place:springfield-nuclear-plant");
-    s.recall("place:contract-nuclear-plant-tours")
-        .await
-        .never_says("Nuclear Plant Tours");
+    // Nothing was made: the handle names nothing, and no place holds it. The
+    // plant is in the same listing, so the listing is the one that would show it.
+    s.refused(
+        "recall",
+        json!({"subject": "place:contract-nuclear-plant-tours"}),
+    )
+    .await;
+    let places = handles_of_kind(&s, "place").await;
+    assert!(
+        places
+            .iter()
+            .any(|h| h == "place:springfield-nuclear-plant"),
+        "{places:?}"
+    );
+    assert!(
+        !places
+            .iter()
+            .any(|h| h == "place:contract-nuclear-plant-tours"),
+        "{places:?}"
+    );
 
     s.call(
         "add_entity",
@@ -67,6 +97,13 @@ async fn two_shared_words_are_refused_and_land_with_a_reason_and_the_reason_is_k
     )
     .await
     .says("place:contract-nuclear-plant-tours");
+    assert!(
+        handles_of_kind(&s, "place")
+            .await
+            .iter()
+            .any(|h| h == "place:contract-nuclear-plant-tours"),
+        "the place landed with the reason"
+    );
     s.recall("place:contract-nuclear-plant-tours")
         .await
         .says("told_apart_by")

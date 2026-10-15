@@ -13,6 +13,19 @@ fn creation(kind: &str, handle: &str, name: &str) -> serde_json::Value {
     json!({"kind": kind, "handle": handle, "name": name, "source": "user-named"})
 }
 
+/// The handles of every thing of `kind`, as a listing names them.
+async fn handles_of_kind(s: &super::dsl::Session, kind: &str) -> Vec<String> {
+    let listed = s
+        .shape(&format!("every {kind}"), json!({ "kind": kind }))
+        .await;
+    listed.json()["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a recall answers with objects: {}", listed.raw()))
+        .iter()
+        .filter_map(|o| o["id"].as_str().map(str::to_string))
+        .collect()
+}
+
 fn with(mut call: serde_json::Value, extra: serde_json::Value) -> serde_json::Value {
     let (call, extra) = (call.as_object_mut().unwrap(), extra.as_object().unwrap());
     for (key, value) in extra {
@@ -45,7 +58,16 @@ async fn a_short_form_beside_its_full_name_lands_only_with_a_reason_and_keeps_it
     .await
     .says("override_reason")
     .says("person:bartholomew");
-    s.recall("person:bart").await.never_says("Bart");
+    // Nothing was made: the handle names nothing, and no person holds it. The
+    // long form is in the same listing, so the listing is the one that would
+    // show it.
+    s.refused("recall", json!({"subject": "person:bart"})).await;
+    let people = handles_of_kind(&s, "person").await;
+    assert!(
+        people.iter().any(|h| h == "person:bartholomew"),
+        "{people:?}"
+    );
+    assert!(!people.iter().any(|h| h == "person:bart"), "{people:?}");
 
     // Token and reason: it lands, and the reason reads back on the thing.
     s.call(
@@ -60,6 +82,13 @@ async fn a_short_form_beside_its_full_name_lands_only_with_a_reason_and_keeps_it
     )
     .await
     .says("person:bart");
+    assert!(
+        handles_of_kind(&s, "person")
+            .await
+            .iter()
+            .any(|h| h == "person:bart"),
+        "the short form landed with the reason"
+    );
     s.recall("person:bart")
         .await
         .says("told_apart_by")
