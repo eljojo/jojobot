@@ -256,16 +256,10 @@ fn plan_restore(
     // it there and has nothing to do. An archived claim has no un-archive, which is
     // why the copy is a record of its own.
     //
-    // **The mark is the only thing read on a record that has it.** A record written
-    // before the mark existed has none, and is a copy only if it names the version
-    // in `derived_from` AND reads as that version did: `derived_from` is also how a
-    // writer says a record was worked out from another, and such a record reads
-    // otherwise. A marked copy of a version always wins over an unmarked one.
-    let then_by_address: std::collections::HashMap<String, &Held<'_>> = then
-        .iter()
-        .map(|held| (held.fact.address().to_string(), held))
-        .collect();
-    let mut now_by_origin: std::collections::HashMap<String, usize> = now
+    // **Only that mark makes a record a restore's copy.** `derived_from` is also how a
+    // writer says a record was worked out from another, so a record that names a
+    // version there and carries no mark is never taken for its copy.
+    let now_by_origin: std::collections::HashMap<String, usize> = now
         .iter()
         .enumerate()
         .filter_map(|(at, held)| {
@@ -275,20 +269,6 @@ fn plan_restore(
                 .map(|from| (from.clone(), at))
         })
         .collect();
-    for (at, held) in now.iter().enumerate() {
-        if held.fact.fields.contains_key(document::RESTORED_FROM) {
-            continue;
-        }
-        let Some(from) = held.fact.derived_from.as_ref().map(ToString::to_string) else {
-            continue;
-        };
-        if then_by_address
-            .get(&from)
-            .is_some_and(|was| same_section(was.fact, held.fact))
-        {
-            now_by_origin.entry(from).or_insert(at);
-        }
-    }
     let counterpart = |was: &Held<'_>| -> Option<usize> {
         now_by_id
             .get(was.fact.id.0.as_str())

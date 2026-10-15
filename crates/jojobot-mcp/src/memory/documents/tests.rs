@@ -1796,14 +1796,17 @@ async fn a_put_lists_one_created_entry_per_section_it_wrote() {
     assert_ne!(changed[0]["on"], first["last"], "{more}");
 }
 
-/// **A copy written before the mark existed is still found, and only when it
-/// reads as the version it names.** The plan is worked out from the records alone.
-/// The closing stands under another record that names it in `derived_from` and
-/// carries no `restored_from`: a copy by the old rule, so nothing is written.
-/// **Paired**: the same record with other words was worked out from the closing for
-/// another reason, so the plan archives it and writes the closing again.
+/// **A record that names a version in `derived_from` and carries no mark is never
+/// taken for that version's restored copy**, however it reads. The plan is worked
+/// out from the records alone. The closing stands under another record that names
+/// it in `derived_from`, once with the closing's own words and once with others:
+/// both are sections made since, so the plan archives each and writes the closing
+/// again.
+///
+/// **Paired**: the same record carrying the mark IS the copy, and the plan writes
+/// nothing.
 #[tokio::test]
-async fn an_unmarked_record_is_a_restored_copy_only_when_it_reads_as_the_version_it_names() {
+async fn an_unmarked_record_derived_from_a_version_is_never_taken_for_its_restored_copy() {
     let jojobot = handler();
     put_ok(
         &jojobot,
@@ -1839,31 +1842,43 @@ async fn an_unmarked_record_is_a_restored_copy_only_when_it_reads_as_the_version
             jiff::civil::date(2026, 10, 8),
         )
     };
-    let mut copy = closing.clone();
-    copy.id = FactId("f99".into());
-    copy.derived_from = Some(closing.address());
+    let mut record = closing.clone();
+    record.id = FactId("f99".into());
+    record.derived_from = Some(closing.address());
     assert!(
-        !copy.fields.contains_key(document::RESTORED_FROM),
-        "a copy from before the mark has none"
+        !record.fields.contains_key(document::RESTORED_FROM),
+        "a record from before the mark has none"
     );
-    assert!(
-        plan_with(copy.clone()).steps.is_empty(),
-        "the copy is found, nothing to write"
-    );
+    for details in [
+        closing.details.clone(),
+        Some("Something else entirely.".into()),
+    ] {
+        record.details = details;
+        let plan = plan_with(record.clone());
+        assert!(
+            plan.steps.iter().any(|step| matches!(
+                step,
+                Step::Archive { address } if *address == record.address()
+            )),
+            "unmarked, it is archived as a section made since: {:?}",
+            record.details
+        );
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| matches!(step, Step::Recreate { .. })),
+            "…and the closing is written again: {:?}",
+            record.details
+        );
+    }
 
-    copy.details = Some("Something else entirely.".into());
-    let plan = plan_with(copy.clone());
-    assert!(
-        plan.steps.iter().any(|step| matches!(
-            step,
-            Step::Archive { address } if *address == copy.address()
-        )),
-        "worked out from the closing for another reason: it is archived, not the copy"
+    record.details = closing.details.clone();
+    record.fields.insert(
+        document::RESTORED_FROM.to_string(),
+        closing.address().to_string(),
     );
     assert!(
-        plan.steps
-            .iter()
-            .any(|step| matches!(step, Step::Recreate { .. })),
-        "…and the closing is written again"
+        plan_with(record).steps.is_empty(),
+        "marked, it is the copy and nothing is written"
     );
 }
