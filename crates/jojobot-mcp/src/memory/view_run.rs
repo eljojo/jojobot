@@ -91,7 +91,14 @@ impl Question {
     /// view's `shows` says what of each one comes back on a read, and a
     /// listing of the answer needs none of it. `today` is the day a relative
     /// date in `where` and an overdue ask are read against.
+    ///
+    /// **A view that asks what is ready, with no kind, is asked of work**, as the
+    /// verb asks it: only work is ready or blocked. **A view that narrows nothing
+    /// is refused** with [`MemoryError::ViewNarrowsNothing`], decided by the same
+    /// [`graph::Selection::narrows_nothing`] the verb asks, so a view the verb
+    /// answers alone is answered here and one it refuses alone is refused here.
     pub fn of_view(
+        view: &EntityId,
         asked: &graph::Asked,
         kind: Option<EntityKind>,
         answers_type: Option<DeclaredType>,
@@ -99,6 +106,7 @@ impl Question {
         today: jiff::civil::Date,
     ) -> Result<Question, MemoryError> {
         let (fields, order) = (asked.filters(today)?, asked.ordering()?);
+        let kind = kind.or_else(|| asked.ready.is_some().then_some(EntityKind::WORK));
         let mut question = Question::new(
             graph::Selection {
                 kind,
@@ -131,6 +139,11 @@ impl Question {
             measure_from: asked.overdue.then_some(today),
             ready: asked.ready.map(|ask| Readiness { ask, named: None }),
         };
+        if question.query.select.narrows_nothing() {
+            return Err(MemoryError::ViewNarrowsNothing {
+                view: view.to_string(),
+            });
+        }
         Ok(question)
     }
 }
@@ -441,4 +454,21 @@ pub async fn keep_ready(
         verdicts: kept_verdicts,
         left_out,
     })
+}
+
+/// **What a view that narrows nothing is told**, as the verb answers it and the
+/// page shows it: the view, every key that would narrow it, and what else
+/// narrows the call. One function, so the page cannot word it differently
+/// (rule 498). A key written `$name` narrows only when its input is sent.
+pub fn narrows_nothing_words(view: &str) -> String {
+    let refused = MemoryError::ViewNarrowsNothing {
+        view: view.to_string(),
+    };
+    format!(
+        "Nothing was read: {refused}. A view narrows by one of these keys: {}. A key \
+         written `$name` narrows only when its input is sent. Or ask with a subject, \
+         kind, parent, answers_type or fields of your own beside the view, which win \
+         over it.",
+        graph::Narrowing::view_keys().join(", ")
+    )
 }

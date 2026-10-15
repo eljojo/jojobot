@@ -284,6 +284,7 @@ const ORDINARY: &[&str] = &[
     "view:plain-listing",
     "view:kind-listing",
     "view:bare-listing",
+    "view:atlas-children",
     "view:steps-startable",
     "view:steps-everything",
     "view:optional-listing",

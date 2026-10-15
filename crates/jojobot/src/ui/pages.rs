@@ -13,7 +13,7 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::view_inputs;
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention, readiness,
+    Entity, EntityId, EntityKind, Fact, FieldAges, MemoryError, graph, kinds, mention, readiness,
 };
 use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
@@ -761,9 +761,10 @@ async fn view_section(
     sent: &BTreeMap<String, String>,
 ) -> String {
     let asked = graph::asked_by_view(held, facts);
-    // **A view short of what it selects is a question nobody can ask**, and it
-    // says which key it lacks. Rendering it as an empty answer would send a
-    // reader looking for the records instead of for the key.
+    // **The kind a view selects, when it names one.** A view may narrow in other
+    // ways (a parent, a type, an overdue or readiness ask, a filter), so a view
+    // without `selects` is not refused here: whether it narrows anything is asked
+    // once the view is filled, of the same selection the verb asks it of.
     let selects = asked
         .selects
         .as_deref()
@@ -777,18 +778,11 @@ async fn view_section(
             // would be a second account of one refusal.
             Err(why) => return cannot_run(&escape(&why.to_string())),
         },
-        // **A view that asks what is overdue needs none**: the question already
-        // answers only the kinds that owe something.
-        None if asked.overdue => None,
-        None => {
-            return cannot_run(
-                "it holds no <code>selects</code>, so it does not say which kind it looks at.",
-            );
-        }
+        None => None,
     };
     // **Readiness is a question about work, and only work answers it** — the
     // refusal the verb gives a view that asks it of another kind.
-    if asked.ready.is_some() && kind != Some(EntityKind::WORK) {
+    if asked.ready.is_some() && kind.is_some_and(|kind| kind != EntityKind::WORK) {
         return cannot_run("it asks what is ready, which only work answers.");
     }
     // **The server's own day, in the instance's zone.** A browser states no
@@ -888,10 +882,19 @@ async fn view_section(
     // both. The objects are listed and nothing of each is asked for: a view's
     // `shows` says what of each one comes back on a READ, and a directory
     // listing lists.
-    let question = match view_run::Question::of_view(&asked, kind, answers_type, parent, today) {
-        Ok(question) => question,
-        Err(why) => return cannot_run(&escape(&why.to_string())),
-    };
+    let question =
+        match view_run::Question::of_view(view, &asked, kind, answers_type, parent, today) {
+            Ok(question) => question,
+            // **The verb's own refusal, in the verb's own words**, with the form still
+            // on the page: a key written `$name` narrows only when its input is sent.
+            Err(MemoryError::ViewNarrowsNothing { view }) => {
+                return format!(
+                    "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
+                    escape(&view_run::narrows_nothing_words(&view))
+                );
+            }
+            Err(why) => return cannot_run(&escape(&why.to_string())),
+        };
     // **The words the operator mapped**, so a status that means `done` here
     // finishes a thing exactly as it does in the verbs. Read only for a view
     // that asks what is owed.

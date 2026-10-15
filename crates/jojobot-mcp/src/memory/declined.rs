@@ -933,13 +933,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         MemoryError::ViewNarrowsNothing { ref view } => Ok(blocked_body(
             &EntityId(view.clone()),
             &[],
-            format!(
-                "Nothing was read: {e}. A view narrows by one of these keys: {}. A key \
-                 written `$name` narrows only when its input is sent. Or ask with a \
-                 subject, kind, parent, answers_type or fields of your own beside the view, \
-                 which win over it.",
-                jojobot_domain::memory::graph::Narrowing::view_keys().join(", ")
-            ),
+            super::view_run::narrows_nothing_words(view),
         )),
         // **The number is held and stays held**, archived or not, so the way
         // forward is a different number, and the refusal hands the caller the

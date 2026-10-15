@@ -731,3 +731,95 @@ async fn a_view_that_asks_what_is_ready_needs_no_kind_and_an_unsent_input_narrow
     .says("work:omega");
     story.finish().await;
 }
+
+/// **A view the operator saves shows on its page whenever `recall` can answer it,
+/// and the page refuses what `recall` refuses, in the verb's own words.** A view
+/// that narrows only by its parent lists its children on its page, as `recall` of
+/// it does; a view that holds only what it shows has nothing that narrows it, and
+/// its page says what the refusal says. Paired in one story, so a page that
+/// refused every view without a `selects` and a page that listed everything both
+/// go red.
+#[tokio::test]
+async fn a_views_page_answers_what_recall_answers_and_refuses_what_recall_refuses() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "Atlas").await;
+    s.add("project:the-move", "The Move").await;
+    for (slug, parent) in [("sigma", "project:atlas"), ("phi", "project:the-move")] {
+        s.call(
+            "add_entity",
+            json!({"kind": "work", "handle": slug, "name": slug, "parent": parent,
+                   "source": "user-named", "sets": {"status": "next"}}),
+        )
+        .await;
+    }
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "atlas-children", "name": "Atlas children",
+               "source": "user-named", "sets": {"parent": "project:atlas"}}),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "plain-listing", "name": "Plain listing",
+               "source": "user-named", "sets": {"shows": "facts"}}),
+    )
+    .await;
+
+    // ── a view that narrows only by its parent: recall lists the children, and
+    // so does the page ───────────────────────────────────────────────────────
+    s.call("recall", json!({"view": "atlas-children"}))
+        .await
+        .says("work:sigma")
+        .never_says("work:phi");
+    let page = story.page("view:atlas-children").await;
+    page.says("work:sigma")
+        .never_says("work:phi")
+        .never_says("cannot be run");
+
+    // ── a view that narrows nothing: recall refuses it, and the page says the
+    // same words ─────────────────────────────────────────────────────────────
+    let refused = s.refused("recall", json!({"view": "plain-listing"})).await;
+    let words = refused.json()["how_to_proceed"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the refusal carries its words: {}", refused.raw()))
+        .to_string();
+    let page = story.page("view:plain-listing").await;
+    page.says("cannot be run")
+        .says(&words.replace('\'', "&#39;"))
+        .never_says("work:sigma");
+    story.finish().await;
+}
+
+/// **A view that asks what is ready needs no `selects` on its page either.**
+/// Readiness is a question about work, so the page lists the work `recall` lists
+/// and not a person who stands on the same board.
+#[tokio::test]
+async fn a_views_page_asks_what_is_ready_of_work_as_recall_does() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("person:kenny", "Kenny").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "work", "handle": "omega", "name": "omega",
+               "source": "user-named", "sets": {"status": "now"}}),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "steps-startable", "name": "Steps startable",
+               "source": "user-named", "sets": {"asks": "ready"}}),
+    )
+    .await;
+    s.call("recall", json!({"view": "steps-startable"}))
+        .await
+        .says("work:omega")
+        .never_says("person:kenny");
+    story
+        .page("view:steps-startable")
+        .await
+        .says("work:omega")
+        .never_says("person:kenny")
+        .never_says("cannot be run");
+    story.finish().await;
+}
