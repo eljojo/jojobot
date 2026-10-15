@@ -1387,6 +1387,23 @@ fn entity_history_json(history: &graph::EntityHistory) -> serde_json::Value {
     body
 }
 
+/// **Why a view named in a call could not be filled.** A view the call
+/// cannot use is an answer about the call; a store that could not be read is
+/// an outage, and saying it is the call's fault sends the caller to change
+/// something that was fine (rule 130).
+enum ViewStop {
+    /// The refusal to hand back as the answer.
+    Said(Box<CallToolResult>),
+    /// A read the store could not serve.
+    Outage(MemoryError),
+}
+
+impl ViewStop {
+    fn said(answer: CallToolResult) -> Self {
+        Self::Said(Box::new(answer))
+    }
+}
+
 impl Jojobot {
     /// **Read a view and fill the call it was named in.**
     ///
@@ -1402,7 +1419,7 @@ impl Jojobot {
         named: &str,
         args: RecallArgs,
         today: jiff::civil::Date,
-    ) -> Result<ViewFilled, Box<CallToolResult>> {
+    ) -> Result<ViewFilled, ViewStop> {
         let handle = match named.trim().split_once(':') {
             Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
                 EntityId(named.trim().to_string())
@@ -1412,6 +1429,10 @@ impl Jojobot {
         let held = self.memory.fields(&handle).await;
         let held = match held {
             Ok(held) if !held.is_empty() => held,
+            // **A read the store could not serve is not "no such view".**
+            Err(e @ (MemoryError::Store(_) | MemoryError::StoredDamage { .. })) => {
+                return Err(ViewStop::Outage(e));
+            }
             // **No view under that name.** The candidates are the views that
             // exist, which is what a caller who guessed a name needs — and it
             // costs one read they were about to make anyway.
@@ -1420,7 +1441,7 @@ impl Jojobot {
                     .memory
                     .list_entities(Some(EntityKind::VIEW))
                     .await
-                    .unwrap_or_default();
+                    .map_err(ViewStop::Outage)?;
                 // **Every view, named in the sentence rather than as
                 // candidates.** A candidate carries a reason the guard flagged
                 // it, and none of these was flagged: they are simply what there
@@ -1434,7 +1455,7 @@ impl Jojobot {
                     .map(|e| e.id.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                return Err(Box::new(blocked_body(
+                return Err(ViewStop::said(blocked_body(
                     &handle,
                     &[],
                     match names.is_empty() {
@@ -1469,15 +1490,23 @@ impl Jojobot {
         // handle names nothing.
         let given = match inputs_as_text(args.inputs.as_ref()) {
             Ok(given) => given,
-            Err(words) => return Err(Box::new(blocked_body(&handle, &[], words))),
+            Err(words) => return Err(ViewStop::said(blocked_body(&handle, &[], words))),
         };
-        let known = self.memory.list_entities(None).await.unwrap_or_default();
-        let former = self.memory.former_handles().await.unwrap_or_default();
+        let known = self
+            .memory
+            .list_entities(None)
+            .await
+            .map_err(ViewStop::Outage)?;
+        let former = self
+            .memory
+            .former_handles()
+            .await
+            .map_err(ViewStop::Outage)?;
         let (asked, view_parent) =
             match asked.filled(handle.as_str(), &given, &known, &former, today) {
                 Ok(filled) => filled,
                 Err(refused) => {
-                    return Err(Box::new(blocked_body(
+                    return Err(ViewStop::said(blocked_body(
                         &handle,
                         &refused.nearest,
                         refused.words,
@@ -1498,7 +1527,7 @@ impl Jojobot {
             && let Some(line) = asked.expression.as_deref()
             && let Err(why) = filter::expression::reads_saved(line)
         {
-            return Err(Box::new(blocked_body(
+            return Err(ViewStop::said(blocked_body(
                 &handle,
                 &[],
                 format!(
@@ -1524,7 +1553,7 @@ impl Jojobot {
                 key: order.key,
             }),
             Err(why) => {
-                return Err(Box::new(blocked_body(
+                return Err(ViewStop::said(blocked_body(
                     &handle,
                     &[],
                     format!(
@@ -2505,7 +2534,8 @@ impl Jojobot {
                 let day = self.dated(None, args.sid.as_deref()).await?;
                 match self.asked_by_name(&named, args, day).await {
                     Ok(filled) => filled,
-                    Err(refused) => return Ok(*refused),
+                    Err(ViewStop::Said(refused)) => return Ok(*refused),
+                    Err(ViewStop::Outage(e)) => return memory_declined("recall", e),
                 }
             }
         };

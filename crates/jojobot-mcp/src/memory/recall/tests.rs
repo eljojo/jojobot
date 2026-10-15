@@ -10280,3 +10280,63 @@ async fn recall_refuses_records_beside_another_selection_or_with_none() {
         "the same list, sent alone, is served: {alone}"
     );
 }
+
+/// **A store that cannot be read is an outage, never "that names nothing"**
+/// (rule 130): a view bound by a handle reads the entity index to resolve it,
+/// and a failed read used to leave the index empty, so a handle that exists was
+/// refused as a miss and told to change. Two handlers over ONE store, the second
+/// unable to read the entity index. The healthy one binds the same handle and
+/// answers, so the outage is the second one's and the handle was good.
+#[tokio::test]
+async fn a_view_bound_by_a_handle_answers_an_outage_when_the_entity_index_cannot_be_read() {
+    let (healthy, blind) = healthy_and_down(Down::EntityIndex);
+    declared_view(
+        &healthy,
+        "my-board",
+        &[
+            ("selects", "work"),
+            ("inputs", "project: kind project"),
+            ("parent", "$project"),
+        ],
+    )
+    .await;
+    healthy
+        .add_entity(Parameters(add_args("project", "project:atlas", "Atlas")))
+        .await
+        .expect("add ok");
+    let acting = run_on(&healthy, "2026-03-15").await;
+
+    async fn ask(
+        jojobot: &Jojobot,
+        acting: &str,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("my-board".into()),
+                subject: None,
+                facts: None,
+                inputs: Some([("project".to_string(), serde_json::json!("project:atlas"))].into()),
+                sid: Some(acting.to_string()),
+                ..recall_args("work:phi")
+            }))
+            .await
+    }
+    let answered = json_of(
+        &ask(&healthy, &acting)
+            .await
+            .expect("the healthy handler answers"),
+    );
+    assert_ne!(
+        answered["status"], "blocked",
+        "the handle is good: {answered}"
+    );
+
+    let outage = ask(&blind, &acting)
+        .await
+        .expect_err("a failed read is an error, not an answer about the caller's handle");
+    assert_eq!(
+        outage.code,
+        rmcp::model::ErrorCode::INTERNAL_ERROR,
+        "{outage:?}"
+    );
+}
