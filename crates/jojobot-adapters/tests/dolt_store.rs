@@ -7706,10 +7706,12 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
 /// before a rename is brought to the handle the survivor wears now, once.**
 ///
 /// The old shape is written back by hand off the raw column: an older build
-/// renamed the survivor's own row and no other. A second fold whose survivor's
-/// old handle was taken by a different thing since cannot be told from the first
-/// and is listed and left, which keeps the pass open. The first case is the
-/// positive the second rests on.
+/// renamed the survivor's own row and no other. When a different thing has taken
+/// the handle the rename freed, the text names two things, and the order of two
+/// moments says which was meant: a row folded before the survivor left the handle
+/// meant the survivor, and a row folded after meant the thing that wears it. A
+/// handle nothing ever wore is listed and left, which keeps the pass open. The
+/// first case is the positive the others rest on.
 #[tokio::test]
 async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
     let scratch = Scratch::new("forward-names");
@@ -7797,7 +7799,8 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
     );
 
     // **The pair.** Another fold whose survivor's old handle a different thing
-    // has taken since: the handle names two things, and the pass does not guess.
+    // has taken since: the handle names two things, and the order of the fold and
+    // the survivor's rename says which one the row meant.
     let fourth = EntityId("thing:contract-lagged-fourth".into());
     let fifth = EntityId("thing:contract-lagged-fifth".into());
     let sixth = EntityId("thing:contract-lagged-sixth".into());
@@ -7866,15 +7869,95 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
         .execute(&pool)
         .await
         .expect("the marker is dropped");
+    // A fold made after the heir took the handle meant the heir.
+    let seventh = EntityId("thing:contract-lagged-seventh".into());
+    memory
+        .add_entity(NewEntity::new(
+            seventh.clone(),
+            "Lagged Seventh",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    memory
+        .merge(
+            &seventh,
+            &fifth,
+            None,
+            date(2026, 9, 6),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarding rows name the current handle'")
+        .execute(&pool)
+        .await
+        .expect("the marker is dropped");
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 0), "{report:?}");
+    assert_eq!(
+        forwards("thing:contract-lagged-fourth").await.as_deref(),
+        Some(sixth.as_str()),
+        "a row folded before the survivor left the handle meant the survivor",
+    );
+    assert_eq!(
+        forwards("thing:contract-lagged-seventh").await.as_deref(),
+        Some(fifth.as_str()),
+        "a row folded after the heir took the handle meant the heir",
+    );
+    assert!(
+        memory
+            .migrate_forward_names()
+            .await
+            .expect("a second pass runs")
+            .settled,
+        "a pass that placed every row is marked finished",
+    );
+
+    // **A handle nothing ever wore** cannot be placed, and is listed and left.
+    let stray = EntityId("thing:contract-lagged-stray".into());
+    let remnant = EntityId("thing:contract-lagged-remnant".into());
+    for (id, name) in [(&stray, "Lagged Stray"), (&remnant, "Lagged Remnant")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    memory
+        .merge(
+            &stray,
+            &remnant,
+            None,
+            date(2026, 9, 7),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind("thing:contract-lagged-nobody")
+        .bind(stray.as_str())
+        .execute(&pool)
+        .await
+        .expect("a handle nothing wore is written");
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarding rows name the current handle'")
+        .execute(&pool)
+        .await
+        .expect("the marker is dropped");
     let report = memory.migrate_forward_names().await.expect("the pass runs");
     assert_eq!((report.renamed, report.skipped.len()), (0, 1), "{report:?}");
     assert!(
-        report.skipped[0].contains("contract-lagged-fourth"),
+        report.skipped[0].contains("contract-lagged-stray"),
         "{report:?}"
     );
     assert_eq!(
-        forwards("thing:contract-lagged-fourth").await.as_deref(),
-        Some(fifth.as_str()),
+        forwards("thing:contract-lagged-stray").await.as_deref(),
+        Some("thing:contract-lagged-nobody"),
         "the row it could not place is left as it was",
     );
     assert!(
