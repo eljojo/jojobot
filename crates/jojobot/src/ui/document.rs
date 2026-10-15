@@ -25,7 +25,7 @@
 //! page's own `h1` is the listing and the document's name is the `h2`, and each
 //! gets an `id` so a section can be linked to.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use jojobot_domain::memory::{Entity, EntityId};
 use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, TextMergeStream};
@@ -77,7 +77,7 @@ pub fn render(markdown: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
 /// ones built here, from text that was escaped first.
 fn decided<'a>(events: Vec<Event<'a>>, by_id: &HashMap<&EntityId, &Entity>) -> Vec<Event<'a>> {
     let mut out: Vec<Event<'a>> = Vec::with_capacity(events.len());
-    let mut taken: BTreeMap<String, usize> = BTreeMap::new();
+    let mut taken = Anchors::default();
     // One entry per open link: whether the link was kept.
     let mut links: Vec<bool> = Vec::new();
     let mut in_code_block = false;
@@ -189,9 +189,19 @@ fn one_lower(level: HeadingLevel) -> HeadingLevel {
     }
 }
 
+/// **The ids already given in one document, and how often each wording was asked
+/// for.** A wording asked for again gets a number, and the number is tried until
+/// the id is one no heading holds, so an id given to a repeat is never given to a
+/// heading whose own wording spells it.
+#[derive(Default)]
+struct Anchors {
+    asked: BTreeMap<String, usize>,
+    given: BTreeSet<String>,
+}
+
 /// **The `id` of the heading that opens just before `rest`**: its words as a
 /// slug, kept apart from every id already given in this document by a number.
-fn anchor(rest: &[Event<'_>], taken: &mut BTreeMap<String, usize>) -> String {
+fn anchor(rest: &[Event<'_>], taken: &mut Anchors) -> String {
     let mut words = String::new();
     for event in rest {
         match event {
@@ -214,11 +224,50 @@ fn anchor(rest: &[Event<'_>], taken: &mut BTreeMap<String, usize>) -> String {
         "{ANCHOR_PREFIX}{}",
         if slug.is_empty() { "section" } else { slug }
     );
-    let seen = taken.entry(base.clone()).or_insert(0);
-    *seen += 1;
-    if *seen == 1 {
-        base
-    } else {
-        format!("{base}-{seen}")
+    let asked = taken.asked.entry(base.clone()).or_insert(0);
+    loop {
+        *asked += 1;
+        let id = if *asked == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{asked}")
+        };
+        if taken.given.insert(id.clone()) {
+            return id;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `id` of every heading in the rendered page, in order.
+    fn ids_of(markdown: &str) -> Vec<String> {
+        let html = render(markdown, &HashMap::new());
+        html.split("id=\"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().expect("a closing quote").to_string())
+            .collect()
+    }
+
+    /// **No two headings of one page get the same id**, including a heading
+    /// whose own wording is the number the repeat of another one was given.
+    /// Two `Notes` become `sec-notes` and `sec-notes-2`; a heading written
+    /// `Notes 2` would also read `sec-notes-2`, and a link to it would open the
+    /// repeat. **Paired**: with no such wording the repeat keeps `-2`.
+    #[test]
+    fn a_heading_never_takes_the_id_a_repeat_was_given() {
+        let ids = ids_of("## Notes\n\n## Notes\n\n## Notes 2\n\n## Notes 2\n");
+        let distinct: std::collections::BTreeSet<&String> = ids.iter().collect();
+        assert_eq!(ids.len(), 4, "{ids:?}");
+        assert_eq!(distinct.len(), ids.len(), "two headings share an id: {ids:?}");
+        assert_eq!(ids[0], "sec-notes", "{ids:?}");
+        assert_eq!(ids[1], "sec-notes-2", "{ids:?}");
+
+        assert_eq!(
+            ids_of("## Notes\n\n## Notes\n\n## Other\n"),
+            ["sec-notes", "sec-notes-2", "sec-other"]
+        );
     }
 }
