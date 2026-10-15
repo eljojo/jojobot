@@ -42,12 +42,23 @@ pub struct InMemorySessions {
     /// The moment a layer above holds for the write in flight, which this
     /// stamps with instead of counting.
     held: WriteStamp,
+    /// Set when this store keeps no list of its charter changes to hand over,
+    /// as a port that leaves [`Sessions::charter_changes`] at its default.
+    no_charter_list: bool,
 }
 
 impl InMemorySessions {
     /// An empty store.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// **A store that keeps no list of its charter changes**, as a port that does
+    /// not override [`Sessions::charter_changes`]: the list answers `None`, and a
+    /// bot's change is asked of [`Sessions::charter_change_of`] one bot at a time.
+    pub fn without_a_charter_list(mut self) -> Self {
+        self.no_charter_list = true;
+        self
     }
 
     /// **Strip a session's stored handle** — the shape of a card written by an
@@ -597,6 +608,9 @@ impl Sessions for InMemorySessions {
     async fn charter_changes(
         &self,
     ) -> Result<Option<std::collections::BTreeMap<EntityId, CharterChange>>, SessionError> {
+        if self.no_charter_list {
+            return Ok(None);
+        }
         Ok(Some(
             self.charter_changes
                 .lock()

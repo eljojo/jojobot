@@ -53,7 +53,10 @@ const SWITCHED_MAIL: &[&str] = &[
 const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
 
 async fn session_walk(switched: &[&str]) {
-    let store = Arc::new(InMemorySessions::new());
+    session_walk_over(Arc::new(InMemorySessions::new()), switched).await;
+}
+
+async fn session_walk_over(store: Arc<InMemorySessions>, switched: &[&str]) {
     let counted = Arc::new(CountedSessions::new(store.clone()));
     let folded = FoldedSessions::new(counted.clone(), store.write_stamp(), Clock::Real);
     folded.rebuild().await.expect("the image loads");
@@ -111,6 +114,21 @@ async fn the_mail_battery_agrees_with_an_image_that_serves_nothing_from_memory()
 #[tokio::test]
 async fn the_teaching_battery_agrees_with_an_image_that_serves_nothing_from_memory() {
     teaching_walk(&[]).await;
+}
+
+/// **A store that keeps no list of its charter changes still has its runs in
+/// memory.** The image holds the runs and their histories whatever the store can
+/// list, so a write refills nothing and every switched read but the charter
+/// change, which is asked of the store bot by bot, makes no call to the store.
+#[tokio::test]
+async fn a_store_with_no_charter_list_still_serves_the_other_session_reads_from_memory() {
+    let store = Arc::new(InMemorySessions::new().without_a_charter_list());
+    let switched: Vec<&str> = SWITCHED_SESSIONS
+        .iter()
+        .copied()
+        .filter(|read| *read != "charter_change_of")
+        .collect();
+    session_walk_over(store, &switched).await;
 }
 
 /// **After startup the switched reads make no call to the store, and answer as

@@ -39,15 +39,18 @@ use jojobot_domain::session::{
     SessionState, SessionSummary, Sessions, WrapWindow, validate_session_id,
 };
 
-/// The runs and the charter ledger, as the store holds them.
+/// The runs, their histories and the charter ledger when the store lists one, as
+/// the store holds them.
 struct Image {
     /// Every run, in the store's order: newest start first, the id breaking a
     /// tie.
     runs: Vec<Session>,
     /// Where each run sits in `runs`.
     at: BTreeMap<SessionId, usize>,
-    /// The newest charter change another identity made to each bot.
-    charter_changes: BTreeMap<EntityId, CharterChange>,
+    /// The newest charter change another identity made to each bot. `None` when
+    /// the store keeps no list to hand over: a bot's change is then asked of the
+    /// store, and everything else stays in memory.
+    charter_changes: Option<BTreeMap<EntityId, CharterChange>>,
     /// Every change of every run that has any, oldest first.
     changes: BTreeMap<SessionId, Vec<SessionChange>>,
     /// Every wording of every entry that has any, oldest first.
@@ -57,7 +60,7 @@ struct Image {
 impl Image {
     fn of(
         mut runs: Vec<Session>,
-        charter_changes: BTreeMap<EntityId, CharterChange>,
+        charter_changes: Option<BTreeMap<EntityId, CharterChange>>,
         histories: SessionHistories,
     ) -> Self {
         runs.sort_by(order);
@@ -187,8 +190,9 @@ impl FoldedSessions {
     }
 
     /// Fill the image from a full read of the store — the boot path. Returns
-    /// how many runs were held. A store that cannot list its charter changes,
-    /// or a row it cannot read, leaves no image: the reads go to the store.
+    /// how many runs were held. A row the store cannot read leaves no image: the
+    /// reads go to the store. A store that keeps no list of its charter changes
+    /// still fills the image; only a bot's charter change is asked of the store.
     pub async fn rebuild(&self) -> Result<usize, SessionError> {
         let _gate = self.writing.lock().await;
         // **Wanted from the first attempt, whether or not it succeeds**: a fill that
@@ -206,14 +210,10 @@ impl FoldedSessions {
         }
         .await;
         match read {
-            Ok((runs, Some(changes), histories)) => {
+            Ok((runs, changes, histories)) => {
                 let held = runs.len();
                 *self.image.write().expect("fold lock") = Some(Image::of(runs, changes, histories));
                 Ok(held)
-            }
-            Ok((_, None, _)) => {
-                *self.image.write().expect("fold lock") = None;
-                Ok(0)
             }
             Err(e) => {
                 *self.image.write().expect("fold lock") = None;
@@ -698,8 +698,10 @@ impl Sessions for FoldedSessions {
             self.follow("note_charter_change", |image| {
                 // The store keeps a bot's own rewrite apart from the change the
                 // reads answer with, and the image follows the store.
-                if change.by != *bot {
-                    image.charter_changes.insert(bot.clone(), change);
+                if change.by != *bot
+                    && let Some(held) = image.charter_changes.as_mut()
+                {
+                    held.insert(bot.clone(), change);
                 }
                 true
             })
@@ -713,9 +715,15 @@ impl Sessions for FoldedSessions {
         &self,
         bot: &EntityId,
     ) -> Result<Option<CharterChange>, SessionError> {
-        match self.held(|image| image.charter_changes.get(bot).cloned()) {
-            Some(change) => Ok(change),
-            None => self.inner.charter_change_of(bot).await,
+        // A store that lists no changes is asked bot by bot, image or not.
+        match self.held(|image| {
+            image
+                .charter_changes
+                .as_ref()
+                .map(|held| held.get(bot).cloned())
+        }) {
+            Some(Some(change)) => Ok(change),
+            _ => self.inner.charter_change_of(bot).await,
         }
     }
 
