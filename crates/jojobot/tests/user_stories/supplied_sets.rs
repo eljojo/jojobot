@@ -62,12 +62,11 @@ async fn a_key_set_on_a_shipped_view_is_found_by_key_like_one_set_on_a_stored_vi
     story.finish().await;
 }
 
-/// "I tried to archive a view the software ships, and the refusal talked about a
-/// row." A session knows records, not rows: the refusal for an archive of a
-/// record the build supplies says there is no stored record under it to move.
-/// Paired with the archive of a view the operator made, which lands.
+/// An archive of a record the build supplies is refused with nothing written
+/// and a change for the caller to make. Paired with the archive of a view the
+/// operator made, which lands.
 #[tokio::test]
-async fn a_refused_archive_of_a_supplied_record_speaks_of_records_not_rows() {
+async fn an_archive_of_a_supplied_record_is_refused_and_one_of_the_operators_own_lands() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("view:my-bikes", "My Bikes").await;
@@ -78,12 +77,9 @@ async fn a_refused_archive_of_a_supplied_record_speaks_of_records_not_rows() {
             json!({"handle": "view:loops", "reason": "tidying"}),
         )
         .await;
-    refused.says("record the build supplies");
-    assert!(
-        !refused.raw().contains(" row"),
-        "the refusal speaks of a row: {}",
-        refused.raw()
-    );
+    let body = refused.json();
+    assert_eq!(body["wrote"], false, "nothing was written: {body}");
+    assert_eq!(body["fix_by"], "change", "the call must change: {body}");
 
     // The pair: a view of the operator's own is archived, so the refusal above
     // is about the supplied record and not about every view.

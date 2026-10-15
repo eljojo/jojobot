@@ -10,37 +10,14 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// **The route that works comes first, in a sentence of its own.** A refusal of a
-/// setting named as an own field says what the call should have sent: the key
-/// under `sets`. Only a later sentence offers the move through `clear_fields`.
-/// Read as structure: the first sentence that names `sets` holds the key, and
-/// comes before the first that names `clear_fields`.
-fn names_the_sets_route_first(refusal: &super::dsl::Answer, key: &str) {
+/// **A refusal of a setting named as an own field is one the caller changes.**
+/// Read as structure: it names the key it turned back, says nothing was written
+/// and says the call itself must change.
+fn names_the_key_and_the_change(refusal: &super::dsl::Answer, key: &str) {
     let body = refusal.json();
-    let text = body["how_to_proceed"].as_str().expect("a way on");
-    let sentences: Vec<&str> = text.split(". ").collect();
-    let names = |sentence: &str, word: &str| {
-        sentence
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .any(|w| w == word)
-    };
-    let route = sentences
-        .iter()
-        .position(|s| names(s, "sets"))
-        .unwrap_or_else(|| panic!("no sentence names `sets`: {text}"));
-    let mv = sentences
-        .iter()
-        .position(|s| names(s, "clear_fields"))
-        .unwrap_or_else(|| panic!("no sentence names `clear_fields`: {text}"));
-    assert!(route < mv, "`sets` comes before `clear_fields`: {text}");
-    assert!(
-        sentences[route].contains(key),
-        "the sentence naming `sets` names the key {key:?}: {text}"
-    );
-    assert!(
-        !names(sentences[route], "clear_fields"),
-        "the route and the move are not one sentence: {text}"
-    );
+    assert_eq!(body["attempted"], key, "the refusal names the key: {body}");
+    assert_eq!(body["wrote"], false, "nothing was written: {body}");
+    assert_eq!(body["fix_by"], "change", "the call must change: {body}");
 }
 
 /// **One capture records the claim and sets the thing.** The thing holds the key
@@ -141,7 +118,7 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
         )
         .await;
     refusal.says("blocked").says("colour").says("clear_fields");
-    names_the_sets_route_first(&refusal, "colour");
+    names_the_key_and_the_change(&refusal, "colour");
     // **The route it names works**: the same call with the key under `sets`
     // lands, and the thing reads it back.
     s.call(
@@ -228,7 +205,7 @@ async fn a_thing_made_with_settings_holds_them_as_settings() {
         )
         .await;
     refusal.says("blocked").says("colour");
-    names_the_sets_route_first(&refusal, "colour");
+    names_the_key_and_the_change(&refusal, "colour");
     s.call(
         "update_fact",
         json!({"address": claim, "sets": {"colour": "black"}}),
@@ -614,7 +591,7 @@ async fn a_role_holding_agent_as_a_setting_is_edited_through_sets() {
         )
         .await;
     refusal.says("blocked").says("agent");
-    names_the_sets_route_first(&refusal, "agent");
+    names_the_key_and_the_change(&refusal, "agent");
 
     s.call(
         "update_fact",
