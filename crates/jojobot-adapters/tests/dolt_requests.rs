@@ -647,3 +647,89 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
 
     server.stop().await;
 }
+
+/// **A request id answers as a repeat exactly while the ledger keeps it.** A row
+/// older than the keep window is not read: the dispatch finds no spent id, and a
+/// different write under the same id writes. A resend inside the window still
+/// answers, in the same case, so the window check is not a ledger that forgets
+/// everything.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_id_is_a_repeat_only_while_it_is_kept() {
+    use jojobot_domain::clock::Clock;
+    use jojobot_domain::request::KEPT_FOR;
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-window-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_window")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+
+    let written_on = date(2026, 3, 1);
+    let at = |days: i8| {
+        Clock::stating(
+            written_on
+                .checked_add(jiff::Span::new().days(days))
+                .unwrap(),
+        )
+    };
+    let memory = DoltMemory::open(pool.clone()).on_clock(at(0));
+    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+
+    let first = request("bot:sigma", "r1");
+    assert_eq!(
+        captured(
+            &memory,
+            first.clone(),
+            claim_about(&milhouse, "wears glasses")
+        )
+        .await,
+        (true, true),
+        "the first call stores the claim and spends the id"
+    );
+
+    // ── inside the window: two days on, the id is still a repeat ────────────
+    let two_days_on = DoltRequests::new(pool.clone()).on_clock(at(2));
+    assert!(
+        two_days_on
+            .lookup(&first.bot, &first.id)
+            .await
+            .expect("the ledger is readable")
+            .is_some(),
+        "an id inside {KEPT_FOR:?} is spent"
+    );
+
+    // ── past the window, with no other write: the id is no repeat ───────────
+    let four_days_on = DoltRequests::new(pool.clone()).on_clock(at(4));
+    assert!(
+        four_days_on
+            .lookup(&first.bot, &first.id)
+            .await
+            .expect("the ledger is readable")
+            .is_none(),
+        "an id older than {KEPT_FOR:?} still answers as a repeat"
+    );
+
+    // ── and a different write under the same id writes ──────────────────────
+    let later = DoltMemory::open(pool.clone()).on_clock(at(4));
+    assert_eq!(
+        captured(
+            &later,
+            first.clone(),
+            claim_about(&milhouse, "plays the saxophone")
+        )
+        .await,
+        (true, true),
+        "a different write under an id past the window stores and spends it again"
+    );
+    assert_eq!(later.recall(&milhouse).await.expect("recall").len(), 2);
+
+    server.stop().await;
+}

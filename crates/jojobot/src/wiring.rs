@@ -1093,9 +1093,9 @@ pub async fn boot_store_pushing(
         sessions,
         teachings,
         registry,
-        requests: Arc::new(jojobot_adapters::dolt::requests::DoltRequests::new(
-            requests_pool,
-        )),
+        requests: Arc::new(
+            jojobot_adapters::dolt::requests::DoltRequests::new(requests_pool).on_clock(clock),
+        ),
         clock,
     })
 }

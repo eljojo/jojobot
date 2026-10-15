@@ -52,11 +52,24 @@ async fn bot_key(
 #[derive(Clone)]
 pub struct DoltRequests {
     pool: MySqlPool,
+    /// The clock a lookup measures the keep window against.
+    clock: Clock,
 }
 
 impl DoltRequests {
     pub fn new(pool: MySqlPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            clock: Clock::default(),
+        }
+    }
+
+    /// **The ledger, told which clock it measures the keep window with.** The
+    /// real one unless the server acts out a day, and the same clock the writes
+    /// stamp their rows with.
+    pub fn on_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
     }
 }
 
@@ -67,12 +80,16 @@ impl Requests for DoltRequests {
         let Some(key) = bot_key(&mut conn, bot).await.map_err(store)? else {
             return Ok(None);
         };
+        // **A row older than the keep window is not a spent id**, whether or not a
+        // later write has removed it yet: the id answers as a repeat exactly while
+        // the ledger keeps it.
         let row = sqlx::query(
             "SELECT verb, args_digest, landed, receipt FROM request_receipt \
-             WHERE bot_key = ? AND request_id = ?",
+             WHERE bot_key = ? AND request_id = ? AND written_at >= ?",
         )
         .bind(&key)
         .bind(id.as_str())
+        .bind(stamp(self.clock.now() - KEPT_FOR))
         .fetch_optional(&mut *conn)
         .await
         .map_err(store)?;
