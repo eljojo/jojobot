@@ -1660,7 +1660,10 @@ async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
 
 #[tokio::test]
 async fn fake_holds_every_write_path_to_every_numbering_guard() {
-    contract::no_write_path_skips_a_numbering_guard(&InMemoryMemory::booted()).await;
+    contract::no_write_path_skips_a_numbering_guard_except_a_retraction_by_design(
+        &InMemoryMemory::booted(),
+    )
+    .await;
 }
 
 #[tokio::test]

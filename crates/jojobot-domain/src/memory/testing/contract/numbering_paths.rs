@@ -5,8 +5,11 @@
 //! keep that true: **one holder** (no two members hold a number), **keeps its
 //! number** (a number held before a write is held after it) and **the kind
 //! floor** (a write may not take a required key off a thing that held it).
-//! Capture and update_fact met all three; merge, a reparent and a retraction
-//! changed what a collection holds with none of them.
+//! Capture and update_fact met all three; merge and a reparent changed what a
+//! collection holds with none of them. **A retraction is held to none of them
+//! on purpose**: it says the record should never have been written, so it is
+//! never refused for what the record gave. "Never reused" is about a member
+//! that is retired, which is archived and keeps its number.
 //!
 //! The table below is every write path against every guard. [`attempt`] matches
 //! the pair with no wildcard, so a new path or a new guard is a compile error
@@ -438,17 +441,19 @@ async fn attempt<M: Memory>(store: &M, w: &World, path: Path, guard: Guard) -> C
             Cell::CannotReach("a reparent writes no field, so no key can leave the thing")
         }
 
-        // Banner's older claim says 7, which the rider holds now.
-        (Path::Retract, Guard::OneHolder) => {
-            refused(retract(store, &w.banner_second).await, &w.rider)
-        }
-        // Parking's only claim of its number.
-        (Path::Retract, Guard::KeepsNumber) => {
-            refused(retract(store, &w.parking_claim).await, &w.o.parking)
-        }
-        // **A retraction is served on purpose**: it says the claim should never
-        // have been written, so a claim somebody wants taken back is never held
-        // back by a kind's floor. The floor guards the ordinary writes.
+        // **A retraction is served on purpose, by all three guards**: it says the
+        // claim should never have been written, so a claim somebody wants taken
+        // back is never held back by what it gave (the floor of a kind, a number).
+        // The guards are for the ordinary writes. Banner's older claim says 7,
+        // which the rider holds now; parking's only claim gives it 2.
+        (Path::Retract, Guard::OneHolder) => Cell::ServedOnPurpose {
+            result: retract(store, &w.banner_second).await,
+            why: "a retraction takes back a record that should never have been written",
+        },
+        (Path::Retract, Guard::KeepsNumber) => Cell::ServedOnPurpose {
+            result: retract(store, &w.parking_claim).await,
+            why: "a number given by mistake must be takeable back; a retired member is archived",
+        },
         (Path::Retract, Guard::KindFloor) => Cell::ServedOnPurpose {
             result: retract(store, &w.pledge_claim).await,
             why: "a retraction takes a record back and is never held back by a floor",
@@ -476,13 +481,18 @@ fn is_the_refusal_of(guard: Guard, error: &MemoryError) -> bool {
 }
 
 /// **Every write path is held to every guard, and a refusal writes nothing.**
+/// The one exception is a retraction, and the table says so in three cells: it
+/// is never refused for what the record gave, because it says the record should
+/// never have been written (the comment on `guard_fit`).
 ///
 /// A cell is a refusal by that guard's own error, naming the member or the key,
 /// with the world exactly as it was before the attempt. A cell that is not a
 /// refusal says why, so a path that quietly skips a guard cannot hide as one.
 /// **Paired** by [`a_write_that_keeps_every_number_with_one_holder_still_lands`]:
 /// the refusals are about the numbers, not about merging, moving or retracting.
-pub async fn no_write_path_skips_a_numbering_guard<M: Memory>(store: &M) {
+pub async fn no_write_path_skips_a_numbering_guard_except_a_retraction_by_design<M: Memory>(
+    store: &M,
+) {
     let w = the_world(store).await;
     let mut served_on_purpose = Vec::new();
     // **Every cell is attempted and every failure is named**, so a path that
@@ -530,8 +540,12 @@ pub async fn no_write_path_skips_a_numbering_guard<M: Memory>(store: &M) {
     );
     assert_eq!(
         served_on_purpose,
-        ["Retract x KindFloor"],
-        "the only path held back from a guard on purpose"
+        [
+            "Retract x OneHolder",
+            "Retract x KeepsNumber",
+            "Retract x KindFloor"
+        ],
+        "the only path left unguarded on purpose is a retraction, for all three"
     );
     // **A number under a member that moves is held with it.** The annex holds no
     // number; what is under it does. Folding the annex into a thing outside the
@@ -548,6 +562,31 @@ pub async fn no_write_path_skips_a_numbering_guard<M: Memory>(store: &M) {
         );
     }
     assert_eq!(held(store, &w).await, before, "the refusals wrote nothing");
+
+    // **What "never reused" means**: a member that is retired is archived and
+    // keeps its number, so nobody else takes it. Leaves is archived; the 3 it holds
+    // is refused, naming it. A number a retraction took back is free, as it was
+    // before anyone gave it: parking's 2 above.
+    let refused = store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), "3".to_string())]),
+            ..NewFact::about(w.signs.clone(), "signs take three", date(2026, 6, 3))
+        }))
+        .await;
+    assert!(
+        matches!(&refused, Err(MemoryError::NumberTaken { holder, .. })
+            if holder == &w.o.leaves.to_string()),
+        "a retired member keeps its number: {refused:?}"
+    );
+    store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), "2".to_string())]),
+            ..NewFact::about(w.signs.clone(), "signs take two", date(2026, 6, 3))
+        }))
+        .await
+        .expect("a number a retraction took back is free")
+        .written()
+        .expect("not blocked");
 }
 
 /// **A write that keeps every number with one holder lands, and the number keeps

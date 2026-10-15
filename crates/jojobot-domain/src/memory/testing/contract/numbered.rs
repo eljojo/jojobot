@@ -462,7 +462,10 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(store).await;
     a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(store).await;
     a_numbered_handle_is_never_given_to_a_new_thing(store).await;
-    super::numbering_paths::no_write_path_skips_a_numbering_guard(store).await;
+    super::numbering_paths::no_write_path_skips_a_numbering_guard_except_a_retraction_by_design(
+        store,
+    )
+    .await;
     super::numbering_paths::a_write_that_keeps_every_number_with_one_holder_still_lands(store)
         .await;
 }

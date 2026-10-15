@@ -106,14 +106,15 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
     story.finish().await;
 }
 
-/// **A number names one member for good, whatever verb is used on the
-/// collection.** Folding a numbered member into a thing outside, moving it out
-/// and taking back the claim that gives it the number would each free the
-/// number, so each is refused and says which number and whose. Paired: folding
-/// an unnumbered member into a numbered one, and taking back a claim that sets
-/// no number, change nothing about the numbers and land.
+/// **A number names one member for good, whatever verb moves the member.**
+/// Folding a numbered member into a thing outside and moving it out would each
+/// free the number, so each is refused and says which number and whose. Paired:
+/// folding an unnumbered member into a numbered one, and taking back a claim
+/// that sets no number, change nothing about the numbers and land. **A
+/// retraction of the claim that gives the number is served on purpose**: it says
+/// the claim should never have been written, so the number is free again.
 #[tokio::test]
-async fn a_number_stays_with_its_member_through_a_fold_a_move_and_a_retraction() {
+async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retraction_is_served() {
     const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -158,18 +159,6 @@ async fn a_number_stays_with_its_member_through_a_fold_a_move_and_a_retraction()
     .await
     .says(PARKING)
     .says(&format!("{COLLECTION}/2"));
-    // ── taking back the claim that gives it the number ──────────────────────
-    let parking = s.recall(PARKING).await.json();
-    let gives_two = parking["objects"][0]["facts"][0]["address"]
-        .as_str()
-        .expect("the member's first claim has an address")
-        .to_string();
-    s.refused(
-        "retract",
-        json!({"address": gives_two, "reason": "written in error"}),
-    )
-    .await
-    .says(&format!("{COLLECTION}/2"));
     // Nothing moved: 2 still names parking, and the next number is where it was.
     s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
     let collection = s.recall(COLLECTION).await.json();
@@ -191,5 +180,24 @@ async fn a_number_stays_with_its_member_through_a_fold_a_move_and_a_retraction()
     )
     .await;
     s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
+
+    // ── a retraction is served on purpose ───────────────────────────────────
+    // It says the claim should never have been written, so a number given by
+    // mistake can always be taken back; the number is then free, as it was
+    // before anybody gave it. A member that is retired is archived and keeps its
+    // number, which is what "never reused" means.
+    let parking = s.recall(PARKING).await.json();
+    let gives_two = parking["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("the member's first claim has an address")
+        .to_string();
+    s.call(
+        "retract",
+        json!({"address": gives_two, "reason": "written in error"}),
+    )
+    .await;
+    s.refused("recall", json!({"subject": format!("{COLLECTION}/2")}))
+        .await
+        .says(&format!("{COLLECTION}/1"));
     story.finish().await;
 }

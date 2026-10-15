@@ -6955,17 +6955,6 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
-        // **A retraction may leave a member without the number its claim gave
-        // it**, or hand it an older claim's number another member holds.
-        self.guard_numbering(
-            &mut tx,
-            &jojobot_domain::memory::numbered::Change {
-                holds: vec![(handle.clone(), after_fold.clone())],
-                ..Default::default()
-            },
-            None,
-        )
-        .await?;
         let retracted_on_disk = Self::as_stored(&mut tx, &retracted).await?;
         Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session).await?;
         Self::write_fact(&mut tx, &record, &self.clock, session).await?;

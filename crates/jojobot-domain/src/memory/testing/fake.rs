@@ -4494,17 +4494,6 @@ impl Memory for InMemoryMemory {
         ) {
             return Err(err);
         }
-        // **A retraction may leave a member without the number its claim gave
-        // it**, or hand it an older claim's number another member holds.
-        self.guards_numbering(
-            &super::super::numbered::Change {
-                holds: vec![(handle.clone(), after_fold.clone())],
-                ..Default::default()
-            },
-            None,
-            &index,
-            &facts,
-        )?;
         self.spend_request(|| format!("{{\"address\":\"{address}\"}}"))?;
         self.rewrite_stored(
             &FactAddress::new(key.clone(), address.local.clone()),

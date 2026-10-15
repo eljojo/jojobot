@@ -317,10 +317,13 @@ impl Reach {
 /// after the write, naming the one the write did not touch; a number held before
 /// and held by nobody after. The last is how a number keeps naming one member
 /// for ever: a member that left the collection, was merged into a thing outside
-/// it, lost the claim that gave it the number or had the key taken off all free
-/// a number, and `next` could hand it to a different member. A member that
-/// *replaces* its number with another through a write that names it is the one
-/// way a number goes, and it is the writer's.
+/// it or had the key taken off frees a number, and `next` could hand it to a
+/// different member. A member that *replaces* its number with another through a
+/// write that names it is the one way a number goes, and it is the writer's.
+/// **A retraction never asks this**: it says the record should never have been
+/// written, so a number given by mistake can always be taken back, and a number
+/// that was never given is free. "Never reused" is about a member that is
+/// retired, which is archived and keeps its number.
 pub fn refuses_numbering(before: &Numbered, edits: &[Edit]) -> Option<MemoryError> {
     let mut after = before.members.clone();
     let mut touched: BTreeSet<&EntityId> = BTreeSet::new();
