@@ -53,7 +53,7 @@ async fn a_quote_of_a_testimony_record_lands_with_the_words_and_the_citation() {
     let (story, s, said) = with_an_operator().await;
 
     let id = post_to_the_operator(&s, &format!("As you said, @{said}. Is that still right?")).await;
-    story.retire_in_the_store(&id).await;
+    story.mark_processed_on_the_page("person:lisa", &id).await;
     story
         .page("person:lisa")
         .await
@@ -133,7 +133,9 @@ async fn an_address_shown_in_code_is_posted_as_written_and_the_same_address_outs
     // spliced in
     let fenced =
         post_to_the_operator(&s, &format!("The form:\n```\n@{said}\n```\nIs that clear?")).await;
-    story.retire_in_the_store(&fenced).await;
+    story
+        .mark_processed_on_the_page("person:lisa", &fenced)
+        .await;
     story
         .page("person:lisa")
         .await
@@ -143,7 +145,9 @@ async fn an_address_shown_in_code_is_posted_as_written_and_the_same_address_outs
 
     // ── the pair: the same address outside code is quoted ────────────────────
     let quoted = post_to_the_operator(&s, &format!("As you said, @{said}.")).await;
-    story.retire_in_the_store(&quoted).await;
+    story
+        .mark_processed_on_the_page("person:lisa", &quoted)
+        .await;
     story.page("person:lisa").await.says(WORDS);
 
     story.finish().await;
@@ -160,7 +164,7 @@ async fn a_source_corrected_after_the_post_leaves_the_message_as_it_was() {
     )
     .await
     .says("saffron");
-    story.retire_in_the_store(&id).await;
+    story.mark_processed_on_the_page("person:lisa", &id).await;
     story
         .page("person:lisa")
         .await
@@ -201,7 +205,7 @@ async fn an_archived_source_keeps_its_archived_mark_in_the_quote() {
     .await;
 
     let id = post_to_the_operator(&s, &format!("You once said @{said}.")).await;
-    story.retire_in_the_store(&id).await;
+    story.mark_processed_on_the_page("person:lisa", &id).await;
     story.page("person:lisa").await.says(WORDS).says("archived");
 
     story.finish().await;

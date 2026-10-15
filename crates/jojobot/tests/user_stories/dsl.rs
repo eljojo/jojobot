@@ -1075,9 +1075,52 @@ impl Story {
         );
     }
 
-    /// **Retire a message in the store itself**, the way the operator's own
-    /// reading surface will: no verb on the served surface does this for a
-    /// message in a person's box, so the story reaches past it.
+    /// **Do the operator's act on a message: submit the Mark processed form on
+    /// their page.** The form is read off the page as served, found by the id it
+    /// carries and by its button, and posted to the action it names, from this
+    /// server's own origin. The operator's page is how a person marks mail
+    /// processed, and no verb does it for a message in a person's box.
+    pub async fn mark_processed_on_the_page(&self, owner: &str, id: &str) {
+        let path = format!("/{owner}/");
+        let client = crate::support::browser();
+        let cookie = crate::support::log_in(&client, self.addr, &path).await;
+        let page = client
+            .get(format!("http://{}{path}", self.addr))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .expect("the page answers")
+            .text()
+            .await
+            .expect("the page is text");
+        let marker = format!("name=\"id\" value=\"{id}\"");
+        let form = page
+            .split("<form ")
+            .find(|form| form.contains(&marker) && form.contains("Mark processed"))
+            .unwrap_or_else(|| panic!("the page has no Mark processed form for {id}: {page}"));
+        let action = form
+            .split("action=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("the form names no action: {form}"));
+        let marked = client
+            .post(format!("http://{}{action}", self.addr))
+            .header(reqwest::header::COOKIE, &cookie)
+            .header(reqwest::header::ORIGIN, format!("http://{}", self.addr))
+            .form(&[("id", id), ("note", "")])
+            .send()
+            .await
+            .expect("the form answers");
+        assert!(
+            marked.status().is_redirection(),
+            "the page's own Mark processed form was not taken: {}",
+            marked.status()
+        );
+    }
+
+    /// **Retire a message in the store itself**, past the page: for a story
+    /// whose subject is the mail rail and not the operator's act. A story about
+    /// what the operator does uses [`Story::mark_processed_on_the_page`].
     pub async fn retire_in_the_store(&self, id: &str) {
         use jojobot_domain::mailbox::Mailboxes;
         self.mail_image
