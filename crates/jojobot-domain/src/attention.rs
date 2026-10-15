@@ -828,19 +828,45 @@ pub fn unreadable_because(
         .and_then(|carrier| carrier.unreadable_because(fields))
 }
 
+/// **What a thing of this kind owes, and why it owes nothing when it owes
+/// nothing.** This is the one place that decides a finished work item or project
+/// owes nothing whatever its dates say; [`owed_as`] and every reader of the
+/// reason go through it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Owes {
+    /// A finished work item or project. Its date stays on the record; it is no
+    /// longer asked for.
+    Finished,
+    /// Anything else owes what its carrier says.
+    Due(Due),
+}
+
+/// **What a thing of this kind owes**: [`Owes::Finished`] for a finished work
+/// item or project, and [`owed`] for every other thing.
+pub fn owes_as(
+    kind: &str,
+    carriers: &[&dyn Carrier],
+    fields: &BTreeMap<String, String>,
+    instance: &BTreeMap<String, String>,
+) -> Owes {
+    if crate::memory::kinds::is_finished(kind, fields, instance) {
+        return Owes::Finished;
+    }
+    Owes::Due(owed(carriers, fields))
+}
+
 /// **What is owed by a thing of this kind**: [`owed`], except that a finished
-/// work item or project owes nothing. Its date stays on the record; it is no
-/// longer asked for.
+/// work item or project owes nothing ([`owes_as`]).
 pub fn owed_as(
     kind: &str,
     carriers: &[&dyn Carrier],
     fields: &BTreeMap<String, String>,
     instance: &BTreeMap<String, String>,
 ) -> Due {
-    if crate::memory::kinds::is_finished(kind, fields, instance) {
-        return Due::Never;
+    match owes_as(kind, carriers, fields, instance) {
+        Owes::Finished => Due::Never,
+        Owes::Due(due) => due,
     }
-    owed(carriers, fields)
 }
 
 /// **Whether the day a thing falls due is jojobot's own arithmetic**, read off

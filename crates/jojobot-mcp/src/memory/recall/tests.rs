@@ -10035,6 +10035,124 @@ async fn a_view_whose_input_has_no_default_still_drops_its_term() {
     );
 }
 
+/// **A due view that left things out says why, by kind, and the call that
+/// lists them; following that call returns them.**
+///
+/// The shipped view names no kind, so the count of what it left out is every
+/// other thing in the store. The note groups those by why (not due yet, nothing
+/// that falls due, finished) and by kind, so a caller can tell a quiet loop from
+/// a person who owes nothing, and the counts add up to `overdue_excluded`.
+#[tokio::test]
+async fn a_due_view_names_why_it_left_things_out_and_the_call_that_lists_them() {
+    let jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&jojobot, "2026-03-15").await;
+    a_rhythm(&jojobot, "descale", "7", "2026-03-01").await;
+    a_rhythm(&jojobot, "deep-clean", "90", "2026-03-01").await;
+    a_promise_due(&jojobot, "delta", "2026-06-18").await;
+    ensure(&jojobot, "person:milhouse").await;
+    work_with(
+        &jojobot,
+        "work:sigma",
+        &[("status", "done"), ("decide_by", "2026-03-01")],
+    )
+    .await;
+    // A cadence with no day to count from is a loop never checked in. A
+    // rhythm cannot be left so, but any other kind carrying the keys can.
+    let unopened = jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            sets: Some(
+                [
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "due_date".to_string()),
+                ]
+                .into(),
+            ),
+            ..add_args("thing", "fern", "fern")
+        }))
+        .await
+        .expect("add ok");
+    assert_ne!(
+        json_of(&unopened)["status"],
+        "blocked",
+        "{}",
+        json_of(&unopened)
+    );
+
+    let due = view_asked(&jojobot, "due", &acting, &[("by", "2026-03-22")]).await;
+    assert_eq!(handles(&due), ["rhythm:descale"], "{due}");
+    let because = &due["overdue_excluded_because"];
+    let reasons = because["reasons"]
+        .as_object()
+        .unwrap_or_else(|| panic!("the left-out things are grouped by why: {due}"));
+    assert_eq!(
+        reasons["not_due_yet"],
+        serde_json::json!({"count": 2, "kinds": {"rhythm": 1, "promise": 1}}),
+        "{due}",
+    );
+    assert_eq!(
+        reasons["finished"],
+        serde_json::json!({"count": 1, "kinds": {"work": 1}}),
+        "{due}",
+    );
+    assert_eq!(
+        reasons["not_yet_opened"],
+        serde_json::json!({"count": 1, "kinds": {"thing": 1}}),
+        "{due}",
+    );
+    assert_eq!(
+        reasons["no_schedule"]["kinds"]["person"], 1,
+        "a person carries nothing that falls due: {due}",
+    );
+    let grouped: u64 = reasons
+        .values()
+        .map(|reason| reason["count"].as_u64().expect("each reason has a count"))
+        .sum();
+    assert_eq!(
+        grouped, due["overdue_excluded"],
+        "the groups add up to the count, which is unchanged: {due}",
+    );
+    let how = because["how_to_read"].as_str().expect("the call is named");
+    assert!(
+        how.contains("overdue") && how.contains("kind"),
+        "it names the argument to leave out and the one that narrows: {how}",
+    );
+    assert!(
+        !how.contains("  ") && !how.contains('\n'),
+        "the call is one line a reader can read: {how:?}",
+    );
+
+    // **Following the call.** A recall of a kind named in the note, with no
+    // overdue question, returns the things the note counted.
+    let rhythms = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("rhythm".into()),
+                sid: Some(acting.clone()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(
+        handles(&rhythms).len(),
+        2,
+        "both loops come back, the late one and the one left out: {rhythms}",
+    );
+    assert_eq!(rhythms["overdue_excluded"], serde_json::Value::Null);
+    assert!(rhythms["overdue_excluded_because"].is_null(), "{rhythms}");
+    let people = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("person".into()),
+                sid: Some(acting),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(handles(&people), ["person:milhouse"], "{people}");
+}
+
 /// The call that reads records by address: no subject, no facts, only the list.
 fn of_records(addresses: &[&str]) -> RecallArgs {
     RecallArgs {

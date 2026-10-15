@@ -3356,9 +3356,16 @@ impl Jojobot {
         // count of zero and an absent count are different claims. A total,
         // never a breakdown, the same shape as `near_unplaced` and
         // `withheld`: "not in this list" is a disjunction — not due yet,
-        // never opened, unreadable, or a kind no carrier speaks for — and
-        // this says how many, not which.
+        // never opened, finished, or a kind no carrier speaks for — and
+        // this says how many. **`overdue_excluded_because` is the breakdown,
+        // served beside it**, and counts none of them differently.
         let mut overdue_excluded: Option<usize> = None;
+        let mut overdue_excluded_because: Option<
+            std::collections::BTreeMap<
+                view_run::LeftOut,
+                std::collections::BTreeMap<String, usize>,
+            >,
+        > = None;
         // **How many days past the day asked about each object fell due**,
         // aligned with `found` in its final, already-sorted order. `None`
         // when the call asked no overdue question at all, exactly as
@@ -3418,6 +3425,7 @@ impl Jojobot {
         };
         if let Some(pass) = narrowed.owed {
             overdue_excluded = Some(pass.excluded);
+            overdue_excluded_because = Some(pass.excluded_because);
             overdue_by_days = Some(pass.by_days);
             unreadable_because = Some(pass.unreadable_because);
         }
@@ -3623,6 +3631,26 @@ impl Jojobot {
             // day is one nobody can check.
             "overdue_as_of": as_of.map(|d| d.to_string()),
             "overdue_excluded": overdue_excluded,
+            // **Why those were left out, by kind, and the call that lists them.**
+            // Absent when nothing was left out. The groups add up to the count.
+            "overdue_excluded_because": overdue_excluded_because
+                .filter(|because| !because.is_empty())
+                .map(|because| serde_json::json!({
+                    "reasons": because
+                        .iter()
+                        .map(|(why, kinds)| (
+                            why.token().to_string(),
+                            serde_json::json!({
+                                "count": kinds.values().sum::<usize>(),
+                                "kinds": kinds,
+                            }),
+                        ))
+                        .collect::<serde_json::Map<_, _>>(),
+                    "how_to_read": "recall again with kind set to one of the kinds named and \
+                                    with no overdue question and no view, to list those things; \
+                                    the not_due_yet ones also come back from this same call \
+                                    asked about a later day",
+                })),
             // **How many pieces of work the ready question left out, and the
             // call that says why.** Absent when no readiness was asked, and
             // when nothing was left out.

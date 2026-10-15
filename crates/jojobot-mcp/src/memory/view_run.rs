@@ -272,12 +272,64 @@ pub(crate) fn owed_by(
 pub struct OwedPass {
     /// How many objects the pass dropped.
     pub excluded: usize,
+    /// **Why the dropped objects were dropped, and of what kind.** The counts
+    /// add up to [`OwedPass::excluded`]: this groups the same objects and
+    /// counts none of them differently.
+    pub excluded_because: BTreeMap<LeftOut, BTreeMap<String, usize>>,
     /// How many days past the day it is measured from each kept object fell
     /// due (below zero: how many days ahead), read off the same `Due` the order
     /// came from, so the number cannot disagree with the position it is in.
     pub by_days: Vec<Option<i64>>,
     /// Why each kept object that cannot say when it falls due cannot.
     pub unreadable_because: Vec<Option<attention::Unreadable>>,
+}
+
+/// **Why the owed pass left an object out.** An object is in exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LeftOut {
+    /// It has a due day and the day is after the day asked about.
+    NotDueYet,
+    /// It has a cadence and has never been checked in, so its first cycle has
+    /// not started.
+    NotYetOpened,
+    /// A work item or project that is finished owes nothing.
+    Finished,
+    /// Its carrier answers that nothing falls due: it carries none of the keys a
+    /// due day is worked out from, or its kind has no carrier.
+    NoSchedule,
+}
+
+impl LeftOut {
+    /// The word a served answer uses for this reason.
+    pub fn token(self) -> &'static str {
+        match self {
+            LeftOut::NotDueYet => "not_due_yet",
+            LeftOut::NotYetOpened => "not_yet_opened",
+            LeftOut::Finished => "finished",
+            LeftOut::NoSchedule => "no_schedule",
+        }
+    }
+}
+
+/// **Why this object owes nothing on the day asked about.** Asked of the
+/// objects the pass dropped only; the finished decision is
+/// [`attention::owes_as`]'s, the same one the pass itself went through.
+fn left_out_because(
+    carriers: &[&dyn attention::Carrier],
+    object: &graph::Object,
+    instance: &BTreeMap<String, String>,
+) -> LeftOut {
+    let kind = object.entity.kind.as_token();
+    match attention::owes_as(kind, carriers, &object.fields, instance) {
+        attention::Owes::Finished => LeftOut::Finished,
+        attention::Owes::Due(attention::Due::On(_)) => LeftOut::NotDueYet,
+        attention::Owes::Due(attention::Due::NotYetOpened) => LeftOut::NotYetOpened,
+        attention::Owes::Due(attention::Due::Never) => LeftOut::NoSchedule,
+        // `owed_on` keeps an unreadable thing, so the pass never drops one.
+        attention::Owes::Due(attention::Due::Unreadable) => {
+            unreachable!("an unreadable schedule is owed, so it is never left out")
+        }
+    }
 }
 
 /// **Keep what is owed on `as_of`, oldest due first.**
@@ -295,7 +347,18 @@ pub fn keep_owed(
     measured_from: jiff::civil::Date,
 ) -> OwedPass {
     let before = found.len();
-    found.retain(|object| owed_by(carriers, object, instance).owed_on(as_of));
+    let mut excluded_because: BTreeMap<LeftOut, BTreeMap<String, usize>> = BTreeMap::new();
+    found.retain(|object| {
+        let owed = owed_by(carriers, object, instance).owed_on(as_of);
+        if !owed {
+            *excluded_because
+                .entry(left_out_because(carriers, object, instance))
+                .or_default()
+                .entry(object.entity.kind.as_token().to_string())
+                .or_default() += 1;
+        }
+        owed
+    });
     let excluded = before - found.len();
     found.sort_by_key(|object| owed_by(carriers, object, instance).staleness());
     let by_days = found
@@ -315,6 +378,7 @@ pub fn keep_owed(
         .collect();
     OwedPass {
         excluded,
+        excluded_because,
         by_days,
         unreadable_because,
     }

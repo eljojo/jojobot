@@ -288,6 +288,30 @@ async fn a_session_asks_the_due_view_what_is_coming_and_what_is_late() {
     assert_eq!(objects[0]["overdue_by_days"], 7, "{}", week.raw());
     assert_eq!(objects[1]["due_in_days"], 3, "{}", week.raw());
 
+    // ── what the view left out says why, by kind, and the call that lists it ─
+    let because = &week.json()["overdue_excluded_because"];
+    assert_eq!(
+        because["reasons"]["not_due_yet"]["kinds"]["promise"],
+        1,
+        "the far promise is left out because it is not due yet: {}",
+        week.raw()
+    );
+    assert!(
+        because["how_to_read"]
+            .as_str()
+            .is_some_and(|how| how.contains("kind")),
+        "{}",
+        week.raw()
+    );
+    let promises = s.call("recall", json!({"kind": "promise"})).await;
+    let mut promises = listed(&promises);
+    promises.sort();
+    assert_eq!(
+        promises,
+        ["promise:delta", "promise:gamma"],
+        "the kind the note names lists the far promise too"
+    );
+
     // ── asked as of a later day, the far promise joins them ─────────────────
     let later = s
         .call(
