@@ -1899,6 +1899,7 @@ async fn an_unmarked_record_derived_from_a_version_is_never_taken_for_its_restor
             &EntityId("document:homer".into()),
             &then,
             &now,
+            &std::collections::HashMap::new(),
             "s",
             jiff::civil::date(2026, 10, 8),
         )

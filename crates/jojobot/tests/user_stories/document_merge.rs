@@ -243,3 +243,107 @@ async fn a_read_as_of_before_the_merge_returns_only_the_survivors_own_sections()
     }
     story.finish().await;
 }
+
+/// **A read as of a day, sent under a name the document no longer wears, reads
+/// what the same read under its current name reads.** Alpha and beta are written
+/// in August, beta is merged into alpha in October, and alpha is renamed in
+/// November. As of September the document held alpha's own sections whichever
+/// name asks; the folded sections arrived in October and read under both names
+/// from then on. **Paired**: the read as of October holds both documents' sections
+/// under the old name, so the September read is short of them because of the date
+/// and not because of the name.
+#[tokio::test]
+async fn a_read_as_of_under_a_former_name_matches_the_current_names() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let s = story.session().await;
+    s.add("document:alpha", "Alpha notes").await;
+    s.add("document:beta", "Beta notes").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:alpha", "markdown": ALPHA}),
+    )
+    .await;
+    let betas = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
+    s.call(
+        "put_document",
+        json!({"document": "document:beta", "markdown": betas}),
+    )
+    .await;
+    clock.stating(OCTOBER.parse().expect("a day"));
+    s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
+        .await;
+    clock.stating("2026-11-02".parse().expect("a day"));
+    s.call(
+        "rename_entity",
+        json!({"handle": "document:alpha", "to": "document:marge"}),
+    )
+    .await;
+
+    for name in ["document:marge", "document:alpha"] {
+        assert_eq!(
+            read_whole(&s, name, Some(OCTOBER)).await,
+            format!("{ALPHA}{betas}"),
+            "as of the merge day {name} holds both documents' sections"
+        );
+        assert_eq!(
+            read_whole(&s, name, Some(SEPTEMBER)).await,
+            ALPHA,
+            "as of September {name} holds the survivor's own sections alone"
+        );
+    }
+    story.finish().await;
+}
+
+/// **A restore sent under a name the document no longer wears puts it back as
+/// the current name would.** Alpha and beta are written in August, beta is merged
+/// into alpha in October and alpha is renamed in November. A restore to September
+/// under the old name archives the sections that arrived by the merge, because
+/// alpha did not hold them then. **Paired**: before the restore the document holds
+/// both documents' sections, so the archive is the restore's doing.
+#[tokio::test]
+async fn a_restore_under_a_former_name_puts_the_document_back_as_it_stood() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let s = story.session().await;
+    s.add("document:alpha", "Alpha notes").await;
+    s.add("document:beta", "Beta notes").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:alpha", "markdown": ALPHA}),
+    )
+    .await;
+    let betas = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
+    s.call(
+        "put_document",
+        json!({"document": "document:beta", "markdown": betas}),
+    )
+    .await;
+    clock.stating(OCTOBER.parse().expect("a day"));
+    s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
+        .await;
+    clock.stating("2026-11-02".parse().expect("a day"));
+    s.call(
+        "rename_entity",
+        json!({"handle": "document:alpha", "to": "document:marge"}),
+    )
+    .await;
+    assert_eq!(
+        read_whole(&s, "document:marge", None).await,
+        format!("{ALPHA}{betas}"),
+        "the merged sections stand before the restore"
+    );
+
+    let restored = s
+        .call(
+            "put_document",
+            json!({"document": "document:alpha", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_ne!(restored["status"], "blocked", "{restored}");
+    assert_eq!(
+        read_whole(&s, "document:marge", None).await,
+        ALPHA,
+        "the September page: {restored}"
+    );
+    story.finish().await;
+}

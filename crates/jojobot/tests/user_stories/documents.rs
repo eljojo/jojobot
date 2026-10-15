@@ -1367,3 +1367,64 @@ async fn an_edited_restored_copy_is_found_by_its_mark_and_put_back_in_place() {
     );
     assert_eq!(closings[0]["fields"]["restored_from"], closing);
 }
+
+/// **A restore sent again after the document was renamed finds the copy the
+/// first one made.** The closing is archived and restored under the name the
+/// document wore then; the document is renamed and the same restore is sent under
+/// the new name. The copy names the version it reproduces by an address that
+/// carries the old name, and the second restore has to read that address as the
+/// version it stands for now. **Paired**: the first restore wrote, so the second
+/// writing nothing is the rename being read and not a restore with nothing to do.
+#[tokio::test]
+async fn a_restore_sent_again_after_a_rename_finds_the_copy_it_made() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let closing = manual_addresses(&session).await[2].clone();
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({"address": closing, "status": "archived"}),
+        )
+        .await;
+    let first = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_eq!(first["restored"]["changed"], 1, "{first}");
+
+    clock.stating("2026-11-02".parse().expect("a day"));
+    session
+        .call(
+            "rename_entity",
+            json!({"handle": "document:homer", "to": "document:marge"}),
+        )
+        .await;
+    let again = session
+        .call(
+            "put_document",
+            json!({"document": "document:marge", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_ne!(again["status"], "blocked", "{again}");
+    assert_eq!(
+        again["restored"]["changed"], 0,
+        "the copy was found, so nothing is written: {again}"
+    );
+    let read = session
+        .call("read_document", json!({"document": "document:marge"}))
+        .await
+        .json();
+    assert_eq!(read["markdown"], MANUAL, "{read}");
+}

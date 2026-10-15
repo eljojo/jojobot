@@ -70,6 +70,10 @@ impl Jojobot {
                 )),
             );
         }
+        let subject = match self.current_handle(&subject).await {
+            Ok(subject) => subject,
+            Err(e) => return memory_declined("read_document", e),
+        };
         let as_of = match args.as_of.as_deref() {
             None => None,
             Some(asked) => {

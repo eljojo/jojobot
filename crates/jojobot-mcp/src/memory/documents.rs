@@ -243,6 +243,7 @@ fn plan_restore(
     subject: &EntityId,
     then: &[Held<'_>],
     now: &[Held<'_>],
+    marks: &std::collections::HashMap<String, String>,
     session: &str,
     day: Date,
 ) -> RestorePlan {
@@ -266,7 +267,7 @@ fn plan_restore(
             held.fact
                 .fields
                 .get(document::RESTORED_FROM)
-                .map(|from| (from.clone(), at))
+                .map(|from| (marks.get(from).unwrap_or(from).clone(), at))
         })
         .collect();
     let counterpart = |was: &Held<'_>| -> Option<usize> {
@@ -466,6 +467,12 @@ impl Jojobot {
         day: Date,
         caller: &crate::caller::Caller,
     ) -> Result<CallToolResult, McpError> {
+        // **The document is read and written under the handle it wears now**, so a
+        // caller holding a name it wore once restores the same records.
+        let subject = &match self.current_handle(subject).await {
+            Ok(subject) => subject,
+            Err(e) => return memory_declined("put_document", e),
+        };
         let refuse = |why: String| memory_declined("put_document", MemoryError::InvalidFact(why));
         let moment = match self.moment_of(asked, Some(caller)).await {
             Ok(moment) => moment,
@@ -494,7 +501,30 @@ impl Jojobot {
             ));
         }
         let now_live = live_sections(&now_facts);
-        let plan = plan_restore(subject, &then_live, &now_live, caller.sid.as_str(), day);
+        // **A mark names a version by the address it had when the copy was made.**
+        // A rename or a merge since then moved that version, so each mark is read
+        // to where its version is served now before a copy is looked for.
+        let mut marks = std::collections::HashMap::new();
+        for held in &now_live {
+            let Some(mark) = held.fact.fields.get(document::RESTORED_FROM) else {
+                continue;
+            };
+            let Ok(address) = FactAddress::parse(mark) else {
+                continue;
+            };
+            match self.served_address(&address).await {
+                Ok(served) => marks.insert(mark.clone(), served.to_string()),
+                Err(e) => return memory_declined("put_document", e),
+            };
+        }
+        let plan = plan_restore(
+            subject,
+            &then_live,
+            &now_live,
+            &marks,
+            caller.sid.as_str(),
+            day,
+        );
 
         let unplaced: Vec<String> = plan
             .touched
@@ -647,6 +677,9 @@ impl Jojobot {
     /// newest write at or before it. A record with no write by then did not exist
     /// and is left out; a record whose write by then was an archive is present
     /// and archived. A write with no moment is older than every write with one.
+    ///
+    /// **`subject` is the handle the document wears now**: the merge events name a
+    /// survivor by it, so both callers resolve what a caller sent first.
     pub(crate) async fn facts_as_of(
         &self,
         subject: &EntityId,
