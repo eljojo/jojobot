@@ -10559,3 +10559,57 @@ fn a_part_the_ceiling_cuts_keeps_the_wording_written_last() {
     assert_eq!(history["not_shown"]["offset"], 1, "{history}");
     assert_eq!(history["not_shown"]["count"], 3, "{history}");
 }
+
+/// **The write guard's envelope names every key a recall answer can add.** The
+/// guard measures a record against the answer a read of its thing would serve,
+/// and the envelope of that answer is a list written apart from the one the
+/// verb builds. A key the verb adds and the list lacks is room the guard does not
+/// keep back, so a record it lets through can be served over the ceiling. The
+/// answers below are the two that add the most: a due view that left things out
+/// with its reasons, and a ready view that left work out with its note.
+#[tokio::test]
+async fn the_write_guards_envelope_names_every_key_a_recall_can_add() {
+    let due_jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&due_jojobot, "2026-03-15").await;
+    a_rhythm(&due_jojobot, "descale", "7", "2026-03-01").await;
+    a_promise_due(&due_jojobot, "delta", "2026-06-18").await;
+    let due = view_asked(&due_jojobot, "due", &acting, &[("by", "2026-03-22")]).await;
+
+    let ready_jojobot = crate::harness::handler_shipped();
+    work_with(&ready_jojobot, "work:sigma", &[("status", "done")]).await;
+    work_with(
+        &ready_jojobot,
+        "work:phi",
+        &[("status", "next"), ("depends_on", "work:sigma")],
+    )
+    .await;
+    work_with(&ready_jojobot, "work:loop-check-in", &[("status", "now")]).await;
+    work_with(
+        &ready_jojobot,
+        "work:first-mix",
+        &[("status", "next"), ("depends_on", "work:loop-check-in")],
+    )
+    .await;
+    let ready = ready_view(&ready_jojobot, None).await;
+
+    let envelope = crate::memory::claim_room::read_envelope("work");
+    let named = envelope.as_object().expect("the envelope is an object");
+    for (what, answer) in [("a due view", &due), ("a ready view", &ready)] {
+        let carried = answer.as_object().expect("an answer is an object");
+        // The three keys that appear only when something is cut or something
+        // is owed are measured by their own widest block, not by this list.
+        let missing: Vec<&String> = carried
+            .keys()
+            .filter(|key| !named.contains_key(*key))
+            .filter(|key| !matches!(key.as_str(), "status_bar" | "not_shown"))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{what} carries keys the guard's envelope does not count: {missing:?}\n{answer}"
+        );
+    }
+    // The fixtures reach the keys this case exists for.
+    assert!(due["overdue_excluded_because"].is_object(), "{due}");
+    assert!(ready["ready_left_out"].is_object(), "{ready}");
+    assert!(ready["ready_note"].is_string(), "{ready}");
+}

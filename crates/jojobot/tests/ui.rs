@@ -3313,6 +3313,35 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         }))
         .await
         .expect("the question is written");
+    // A question whose selection finds a loop that is not due, so its answer is
+    // empty and the page has something to say about why.
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:nothing-owed".into()),
+            "Nothing Owed",
+            "the operator",
+        ))
+        .await
+        .expect("the view is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), "rhythm".to_string()),
+                ("asks".to_string(), "overdue".to_string()),
+                ("where".to_string(), "counts_from = 2400-01-06".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:nothing-owed".into()),
+                "the loops counted from a far day",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
     memory
         .add_entity(NewEntity::new(
             EntityId("view:matches-nothing".into()),
@@ -4904,6 +4933,105 @@ async fn a_view_holding_an_empty_type_cannot_be_run_by_the_page_or_the_verb() {
     assert!(
         !page.contains("id=\"answer\""),
         "…and the page lists nothing, as the verb does: {page}"
+    );
+    ct.cancel();
+}
+
+/// **The count a page line carries**, taken from its attribute: the structure a
+/// reader of the markup and a test both take the number from.
+fn left_out_on(page: &str, id: &str) -> Option<u64> {
+    let tag = page
+        .split_once(&format!("<p id=\"{id}\" data-left-out=\""))?
+        .1;
+    tag.split_once('"')?.0.parse().ok()
+}
+
+/// **A view's page says what it left out, as the served `recall` of the view
+/// says it.** The overdue view and the ready view each leave things out. The
+/// page carries each count and the call that lists them, taken from the notes
+/// `recall` serves, and the two agree: the same count, the same reasons and the
+/// same reading instruction.
+#[tokio::test]
+async fn a_views_page_says_what_it_left_out_as_recall_does() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let week = read(&client, addr, "/view:my-week/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let served = recall_body_of_view(addr, "my-week").await;
+    let because = &served["overdue_excluded_because"];
+    assert!(
+        because["reasons"].is_object(),
+        "the fixture leaves things out: {served}"
+    );
+    assert_eq!(
+        left_out_on(&week, "left-out-owed"),
+        served["overdue_excluded"].as_u64(),
+        "the page carries the count recall serves: {week}"
+    );
+    let how_to_read = because["how_to_read"].as_str().expect("the call to read");
+    assert!(
+        week.contains(how_to_read),
+        "the page serves recall's reading instruction: {week}"
+    );
+    for reason in because["reasons"].as_object().expect("reasons").keys() {
+        assert!(
+            week.contains(reason),
+            "{reason} is named on the page: {week}"
+        );
+    }
+
+    let ready = read(&client, addr, "/view:ready/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let served = recall_body_of_view(addr, "ready").await;
+    assert!(
+        served["ready_left_out"]["count"].as_u64() > Some(0),
+        "the fixture leaves work out: {served}"
+    );
+    assert_eq!(
+        left_out_on(&ready, "left-out-ready"),
+        served["ready_left_out"]["count"].as_u64(),
+        "the page carries the count recall serves: {ready}"
+    );
+    let how_to_read = served["ready_left_out"]["how_to_read"]
+        .as_str()
+        .expect("the call to read");
+    assert!(
+        ready.contains(how_to_read),
+        "the page serves recall's reading instruction: {ready}"
+    );
+
+    // An answer with nothing in it still says what the view left out.
+    let empty = read(&client, addr, "/view:nothing-owed/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        empty.contains("This view matches nothing") && !empty.contains("cannot be run"),
+        "the view answers empty: {empty}"
+    );
+    assert_eq!(left_out_on(&empty, "left-out-owed"), Some(1), "{empty}");
+
+    // The positive beside the negative: a view that left nothing out says
+    // nothing about it.
+    let colleagues = read(&client, addr, "/view:colleagues/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !colleagues.contains("data-left-out"),
+        "a view that left nothing out has no such line: {colleagues}"
     );
     ct.cancel();
 }

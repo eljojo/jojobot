@@ -13,10 +13,10 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::view_inputs;
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention,
+    Entity, EntityId, EntityKind, Fact, FieldAges, graph, kinds, mention, readiness,
 };
 use jojobot_domain::text;
-use jojobot_mcp::memory::view_run;
+use jojobot_mcp::memory::{left_out, view_run};
 
 use crate::AppState;
 use crate::ui::tree;
@@ -908,8 +908,14 @@ async fn view_section(
         carriers: &carriers,
         instance: &instance,
     };
-    let found = match view_run::answer(&*state.memory, &question, &context).await {
-        Ok(answered) => answered.selected.objects,
+    let (found, omitted) = match view_run::answer(&*state.memory, &question, &context).await {
+        Ok(answered) => (
+            answered.selected.objects,
+            left_out_lines(
+                &answered.narrowed,
+                question.asks.ready.as_ref().map(|asked| asked.ask),
+            ),
+        ),
         Err(view_run::Failed::Selection(err)) => {
             return blind(
                 "What this view answers",
@@ -929,7 +935,7 @@ async fn view_section(
         return format!(
             "<h2>What this view answers</h2>\n{form}\
              <p>This view matches nothing today. The question is a good one; \
-             nothing here answers it.</p>\n"
+             nothing here answers it.</p>\n{omitted}"
         );
     }
     // **The keys the view says it shows**, a column each, as `recall` narrows an
@@ -951,6 +957,49 @@ async fn view_section(
         out.push_str(&row_with(&object.entity, by_id, &cells));
     }
     out.push_str("</table>\n");
+    out.push_str(&omitted);
+    out
+}
+
+/// **The lines a view's page ends with when its questions left things out**, one
+/// for what is owed and one for what is ready. The count and the call that lists
+/// what was left out are the ones `recall` serves, built by the same functions.
+fn left_out_lines(narrowed: &view_run::Narrowed, ask: Option<readiness::Ask>) -> String {
+    let mut out = String::new();
+    let because = narrowed
+        .owed
+        .as_ref()
+        .and_then(|pass| left_out::overdue_excluded_because(&pass.excluded_because));
+    if let Some(note) = because {
+        let reasons = note["reasons"].as_object().expect("reasons are an object");
+        let total: u64 = reasons
+            .values()
+            .map(|reason| reason["count"].as_u64().unwrap_or(0))
+            .sum();
+        let by_reason: Vec<String> = reasons
+            .iter()
+            .map(|(why, reason)| format!("{why} {}", reason["count"]))
+            .collect();
+        out.push_str(&left_out_line(
+            "left-out-owed",
+            usize::try_from(total).unwrap_or(usize::MAX),
+            "things",
+            &format!(
+                "By reason: {}. {}",
+                escape(&by_reason.join(", ")),
+                escape(note["how_to_read"].as_str().unwrap_or_default())
+            ),
+        ));
+    }
+    let left = narrowed.ready.as_ref().map(|pass| pass.left_out);
+    if let Some(note) = left.and_then(|left| left_out::ready_left_out(left, ask)) {
+        out.push_str(&left_out_line(
+            "left-out-ready",
+            usize::try_from(note["count"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
+            "pieces of work",
+            &escape(note["how_to_read"].as_str().unwrap_or_default()),
+        ));
+    }
     out
 }
 

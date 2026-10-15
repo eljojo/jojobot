@@ -38,6 +38,9 @@ pub enum Ask {
 }
 
 impl Ask {
+    /// Every ask there is.
+    pub const ALL: [Ask; 2] = [Ask::Ready, Ask::Plan];
+
     /// The ask a view's `asks` key names, when it names this question.
     pub fn named(word: &str) -> Option<Ask> {
         match word {

@@ -347,7 +347,18 @@ fn read_of_a_thing(entity: &Entity, folded: &Fold) -> (usize, usize, usize) {
     object["as_of"] = "9999-12-31".into();
     object["facts"] = serde_json::json!([]);
     let skeleton = object.to_string().chars().count() + 1;
-    let envelope = serde_json::json!({
+    let envelope = read_envelope(entity.kind.as_token());
+    let rest = envelope.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+    let widest = crate::answer::widest_not_shown("objects");
+    (skeleton, rest, widest)
+}
+
+/// **The answer of a read of one thing, less the thing**: every key `recall` can
+/// add to an answer beside its objects, each at the width it can grow to. The
+/// guard keeps this much back, so a key `recall` adds and this lacks is room the
+/// guard does not keep.
+pub(crate) fn read_envelope(kind: &str) -> serde_json::Value {
+    serde_json::json!({
         "count": 1,
         "objects": [],
         "built_on": null,
@@ -355,6 +366,10 @@ fn read_of_a_thing(entity: &Entity, folded: &Fold) -> (usize, usize, usize) {
         "values": null,
         "overdue_as_of": null,
         "overdue_excluded": null,
+        "overdue_excluded_because": crate::memory::left_out::widest_overdue_excluded_because(kind),
+        "ready_note": crate::memory::left_out::widest_ready_note(),
+        "ready_left_out": crate::memory::left_out::widest_ready_left_out(),
+        "candidates_capped": false,
         "near_day": null,
         "near_within_days": null,
         "near_clock": null,
@@ -363,10 +378,7 @@ fn read_of_a_thing(entity: &Entity, folded: &Fold) -> (usize, usize, usize) {
         "archived_excluded": 0,
         "merged_excluded": 0,
         "teaching": [crate::teaching::CLAIMS_TEACHING],
-    });
-    let rest = envelope.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
-    let widest = crate::answer::widest_not_shown("objects");
-    (skeleton, rest, widest)
+    })
 }
 
 /// **A record measured as a read of its thing would serve it**, and the room one
@@ -490,6 +502,44 @@ mod tests {
     use super::*;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{Memory, NewEntity};
+
+    /// **The guard keeps back room for every note a read adds about what it left
+    /// out, at the width the note can grow to.** A note a read of one thing can
+    /// carry, built by the one function the verb builds it with, fits inside
+    /// what the envelope holds for it, so a record the guard lets through is
+    /// still served under the ceiling beside the note.
+    #[test]
+    fn the_envelope_holds_room_for_the_notes_about_what_a_read_left_out() {
+        use crate::memory::{left_out, view_run::LeftOut};
+        use jojobot_domain::memory::readiness::Ask;
+
+        let envelope = read_envelope("work");
+        let held = |key: &str| envelope[key].to_string().chars().count();
+
+        // A read of one thing leaves that thing out for exactly one reason.
+        for why in LeftOut::ALL {
+            let because = std::collections::BTreeMap::from([(
+                why,
+                std::collections::BTreeMap::from([("work".to_string(), usize::MAX)]),
+            )]);
+            let owed = left_out::overdue_excluded_because(&because).expect("a note");
+            assert!(held("overdue_excluded_because") >= owed.to_string().chars().count());
+        }
+
+        for ask in Ask::ALL {
+            assert!(
+                held("ready_note")
+                    >= serde_json::json!(left_out::ready_note(ask))
+                        .to_string()
+                        .chars()
+                        .count()
+            );
+        }
+        for ask in [None, Some(Ask::Ready), Some(Ask::Plan)] {
+            let note = left_out::ready_left_out(250, ask).expect("a note");
+            assert!(held("ready_left_out") >= note.to_string().chars().count());
+        }
+    }
 
     /// **The row a merge is measured as is the row a read serves after it.** The
     /// estimate is compared with the survivor the fake lists once the merge has

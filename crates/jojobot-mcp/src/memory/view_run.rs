@@ -300,6 +300,14 @@ pub enum LeftOut {
 }
 
 impl LeftOut {
+    /// Every reason there is.
+    pub const ALL: [LeftOut; 4] = [
+        LeftOut::NotDueYet,
+        LeftOut::NotYetOpened,
+        LeftOut::Finished,
+        LeftOut::NoSchedule,
+    ];
+
     /// The word a served answer uses for this reason.
     pub fn token(self) -> &'static str {
         match self {

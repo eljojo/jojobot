@@ -10,7 +10,7 @@
 use jojobot_domain::attention;
 
 use super::*;
-use crate::memory::view_run;
+use crate::memory::{left_out, view_run};
 use crate::session::session_declined;
 use jojobot_domain::memory::search::{Coverage, HeldField};
 use jojobot_domain::memory::types::Compare;
@@ -3634,53 +3634,16 @@ impl Jojobot {
             // **Why those were left out, by kind, and the call that lists them.**
             // Absent when nothing was left out. The groups add up to the count.
             "overdue_excluded_because": overdue_excluded_because
-                .filter(|because| !because.is_empty())
-                .map(|because| serde_json::json!({
-                    "reasons": because
-                        .iter()
-                        .map(|(why, kinds)| (
-                            why.token().to_string(),
-                            serde_json::json!({
-                                "count": kinds.values().sum::<usize>(),
-                                "kinds": kinds,
-                            }),
-                        ))
-                        .collect::<serde_json::Map<_, _>>(),
-                    "how_to_read": "recall again with kind set to one of the kinds named and \
-                                    with no overdue question and no view, to list those things; \
-                                    the not_due_yet ones also come back from this same call \
-                                    asked about a later day",
-                })),
+                .as_ref()
+                .and_then(left_out::overdue_excluded_because),
             // **How many pieces of work the ready question left out, and the
             // call that says why.** Absent when no readiness was asked, and
             // when nothing was left out.
             // **One line beside the ready list**, on the ready view and nowhere
             // else: what ready means, and the argument that narrows it.
-            "ready_note": readiness_asked.map(|ask| match ask {
-                readiness::Ask::Ready => {
-                    "ready means unblocked and not finished, so work already under way is in \
-                     this list; where narrows it to your board's not-started status, for \
-                     example where: \"status = next\""
-                }
-                readiness::Ask::Plan => {
-                    "ready says whether a piece of work can be started and, when it cannot, \
-                     blocked_by says what stops it; the work here is not finished, except a \
-                     piece you name with subject, which comes back whatever its state"
-                }
-            }),
-            "ready_left_out": ready_left_out.filter(|left| *left > 0).map(|left| serde_json::json!({
-                "count": left,
-                "how_to_read": match readiness_asked {
-                    Some(readiness::Ask::Plan) => {
-                        "these pieces of work are finished or archived, so they are not in the \
-                         plan; recall one by handle to read it"
-                    }
-                    _ => {
-                        "recall again with this view and subject set to one piece of work: it \
-                         comes back with ready: false and blocked_by naming what stops it"
-                    }
-                },
-            })),
+            "ready_note": readiness_asked.map(left_out::ready_note),
+            "ready_left_out": ready_left_out
+                .and_then(|left| left_out::ready_left_out(left, readiness_asked)),
             // **The day, the window and the clock this read used**, and null
             // when it asked about no day. A caller that let jojobot supply
             // today has no other way to learn which day that was.
