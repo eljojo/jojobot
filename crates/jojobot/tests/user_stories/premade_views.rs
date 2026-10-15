@@ -1,4 +1,4 @@
-//! "What is on this project's board, and what can it start next?"
+//! "What is on the shed's board, and what can it start next?"
 //!
 //! The software ships the questions a session asks about work, and each takes the
 //! project it is about. This session has never sent a `where`: it names a view
@@ -27,18 +27,19 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
 
-    s.add("project:atlas", "Atlas").await;
-    s.add("project:the-move", "The Move").await;
+    s.add("project:the-shed", "The shed").await;
+    s.add("project:kitchen-floor", "The kitchen floor").await;
     s.add("person:bart", "Bart").await;
-    let work = |slug: &str, parent: &str, sets: serde_json::Value| {
-        json!({"kind": "work", "handle": slug, "name": slug, "parent": parent,
+    let work = |slug: &str, name: &str, parent: &str, sets: serde_json::Value| {
+        json!({"kind": "work", "handle": slug, "name": name, "parent": parent,
                "source": "user-named", "sets": sets})
     };
     s.call(
         "add_entity",
         work(
-            "sigma",
-            "project:atlas",
+            "frame-the-walls",
+            "Frame the walls",
+            "project:the-shed",
             json!({"status": "now", "owner": "person:bart", "effort": "large"}),
         ),
     )
@@ -46,20 +47,31 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     s.call(
         "add_entity",
         work(
-            "tau",
-            "project:atlas",
-            json!({"status": "next", "depends_on": "work:sigma"}),
+            "build-the-roof",
+            "Build the roof",
+            "project:the-shed",
+            json!({"status": "next", "depends_on": "work:frame-the-walls"}),
         ),
     )
     .await;
     s.call(
         "add_entity",
-        work("omega", "project:atlas", json!({"status": "done"})),
+        work(
+            "pour-the-slab",
+            "Pour the slab",
+            "project:the-shed",
+            json!({"status": "done"}),
+        ),
     )
     .await;
     s.call(
         "add_entity",
-        work("phi", "project:the-move", json!({"status": "now"})),
+        work(
+            "lay-the-tiles",
+            "Lay the tiles",
+            "project:kitchen-floor",
+            json!({"status": "now"}),
+        ),
     )
     .await;
 
@@ -67,38 +79,47 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     let board = s
         .call(
             "recall",
-            json!({"view": "board", "inputs": {"project": "project:atlas"}}),
+            json!({"view": "board", "inputs": {"project": "project:the-shed"}}),
         )
         .await;
     assert_eq!(
         listed(&board),
-        ["work:omega", "work:tau", "work:sigma"],
+        [
+            "work:pour-the-slab",
+            "work:build-the-roof",
+            "work:frame-the-walls"
+        ],
         "{}",
         board.raw()
     );
     // It shows the three keys a board is read by, and says what it left out.
-    let sigma = board.json()["objects"]
+    let walls = board.json()["objects"]
         .as_array()
         .expect("objects")
         .iter()
-        .find(|o| o["id"] == "work:sigma")
-        .expect("sigma")
+        .find(|o| o["id"] == "work:frame-the-walls")
+        .expect("the walls")
         .clone();
-    assert_eq!(sigma["fields"]["status"], "now", "{}", board.raw());
-    assert_eq!(sigma["fields"]["owner"], "person:bart", "{}", board.raw());
-    assert!(sigma["fields"].get("effort").is_none(), "{}", board.raw());
+    assert_eq!(walls["fields"]["status"], "now", "{}", board.raw());
+    assert_eq!(walls["fields"]["owner"], "person:bart", "{}", board.raw());
+    assert!(walls["fields"].get("effort").is_none(), "{}", board.raw());
     // The third key a board is read by: what a piece waits on, on the piece that
     // waits.
-    let tau = board.json()["objects"]
+    let roof = board.json()["objects"]
         .as_array()
         .expect("objects")
         .iter()
-        .find(|o| o["id"] == "work:tau")
-        .expect("tau")
+        .find(|o| o["id"] == "work:build-the-roof")
+        .expect("the roof")
         .clone();
-    assert_eq!(tau["fields"]["depends_on"], "work:sigma", "{}", board.raw());
+    assert_eq!(
+        roof["fields"]["depends_on"],
+        "work:frame-the-walls",
+        "{}",
+        board.raw()
+    );
     assert!(
-        sigma["fields_left_out"]
+        walls["fields_left_out"]
             .as_str()
             .is_some_and(|said| said.contains("effort")),
         "{}",
@@ -106,7 +127,7 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     );
 
     // ── what it must not include ────────────────────────────────────────────
-    board.never_says("work:phi");
+    board.never_says("work:lay-the-tiles");
 
     // ── the project is required ─────────────────────────────────────────────
     s.refused("recall", json!({"view": "board", "inputs": {}}))
@@ -121,29 +142,40 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
 
-    s.add("project:atlas", "Atlas").await;
-    s.add("project:the-move", "The Move").await;
-    let work = |slug: &str, parent: &str, sets: serde_json::Value| {
-        json!({"kind": "work", "handle": slug, "name": slug, "parent": parent,
+    s.add("project:the-shed", "The shed").await;
+    s.add("project:kitchen-floor", "The kitchen floor").await;
+    let work = |slug: &str, name: &str, parent: &str, sets: serde_json::Value| {
+        json!({"kind": "work", "handle": slug, "name": name, "parent": parent,
                "source": "user-named", "sets": sets})
     };
     s.call(
         "add_entity",
-        work("sigma", "project:atlas", json!({"status": "now"})),
-    )
-    .await;
-    s.call(
-        "add_entity",
         work(
-            "tau",
-            "project:atlas",
-            json!({"status": "next", "depends_on": "work:sigma"}),
+            "frame-the-walls",
+            "Frame the walls",
+            "project:the-shed",
+            json!({"status": "now"}),
         ),
     )
     .await;
     s.call(
         "add_entity",
-        work("phi", "project:the-move", json!({"status": "next"})),
+        work(
+            "build-the-roof",
+            "Build the roof",
+            "project:the-shed",
+            json!({"status": "next", "depends_on": "work:frame-the-walls"}),
+        ),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work(
+            "lay-the-tiles",
+            "Lay the tiles",
+            "project:kitchen-floor",
+            json!({"status": "next"}),
+        ),
     )
     .await;
 
@@ -155,30 +187,40 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
     let plan = s
         .call(
             "recall",
-            json!({"view": "plan", "inputs": {"project": "project:atlas"}}),
+            json!({"view": "plan", "inputs": {"project": "project:the-shed"}}),
         )
         .await;
-    assert_eq!(listed(&plan), ["work:sigma", "work:tau"], "{}", plan.raw());
-    // The blocked piece is in the plan with what stops it.
-    let tau = &plan.json()["objects"][1];
-    assert_eq!(tau["ready"], false, "{}", plan.raw());
     assert_eq!(
-        tau["blocked_by"],
-        json!([{"blocker": "dependency", "handle": "work:sigma", "why": "unfinished"}]),
+        listed(&plan),
+        ["work:build-the-roof", "work:frame-the-walls"],
+        "{}",
+        plan.raw()
+    );
+    // The blocked piece is in the plan with what stops it.
+    let roof = &plan.json()["objects"][0];
+    assert_eq!(roof["ready"], false, "{}", plan.raw());
+    assert_eq!(
+        roof["blocked_by"],
+        json!([{"blocker": "dependency", "handle": "work:frame-the-walls",
+                "why": "unfinished"}]),
         "{}",
         plan.raw()
     );
     // The piece that waits on nothing is ready and names no blocker.
-    let sigma = &plan.json()["objects"][0];
-    assert_eq!(sigma["ready"], true, "{}", plan.raw());
-    assert!(sigma.get("blocked_by").is_none(), "{}", plan.raw());
-    plan.never_says("work:phi");
+    let walls = &plan.json()["objects"][1];
+    assert_eq!(walls["ready"], true, "{}", plan.raw());
+    assert!(walls.get("blocked_by").is_none(), "{}", plan.raw());
+    plan.never_says("work:lay-the-tiles");
 
     // Asked with nothing, it is every project's plan, as it was.
     let everything = s.call("recall", json!({"view": "plan"})).await;
     assert_eq!(
         listed(&everything),
-        ["work:phi", "work:sigma", "work:tau"],
+        [
+            "work:build-the-roof",
+            "work:frame-the-walls",
+            "work:lay-the-tiles"
+        ],
         "{}",
         everything.raw()
     );
@@ -198,16 +240,16 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
             {"key": "wheel_size", "holds": "text"}]}),
     )
     .await;
-    s.add("thing:sigma", "Sigma").await;
-    s.add("thing:tau", "Tau").await;
-    s.add("thing:omega", "Omega").await;
+    s.add("thing:gravel-bike", "Gravel bike").await;
+    s.add("thing:road-bike", "Road bike").await;
+    s.add("thing:floor-pump", "Floor pump").await;
     for (handle, sets) in [
         (
-            "thing:sigma",
+            "thing:gravel-bike",
             json!({"frame_size": "56", "wheel_size": "700c"}),
         ),
-        ("thing:tau", json!({"wheel_size": "26in"})),
-        ("thing:omega", json!({"wattage": "900"})),
+        ("thing:road-bike", json!({"wheel_size": "26in"})),
+        ("thing:floor-pump", json!({"max_pressure": "160psi"})),
     ] {
         s.call(
             "capture",
@@ -225,7 +267,7 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
         .await;
     assert_eq!(
         listed(&bikes),
-        ["thing:sigma", "thing:tau"],
+        ["thing:gravel-bike", "thing:road-bike"],
         "{}",
         bikes.raw()
     );
@@ -239,20 +281,20 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
             .clone()
     };
     assert_eq!(
-        answers("thing:sigma")["lacking"],
+        answers("thing:gravel-bike")["lacking"],
         json!([]),
         "{}",
         bikes.raw()
     );
     assert_eq!(
-        answers("thing:tau")["lacking"],
+        answers("thing:road-bike")["lacking"],
         json!(["frame_size"]),
         "{}",
         bikes.raw()
     );
 
     // ── what it must not include ────────────────────────────────────────────
-    bikes.never_says("thing:omega");
+    bikes.never_says("thing:floor-pump");
 
     // ── the type is required, and a type nobody declared is refused ─────────
     s.refused("recall", json!({"view": "of-type", "inputs": {}}))
