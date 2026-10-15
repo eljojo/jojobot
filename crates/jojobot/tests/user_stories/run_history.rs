@@ -155,6 +155,76 @@ async fn the_history_of_a_runs_key_says_it_changed_and_never_what_it_changed_to(
     story.finish().await;
 }
 
+/// "Was this run ever handed its charter, and when?"
+///
+/// **A run no call handed its charter to is held to have been told it before
+/// every rewrite there can be**, and that moment is the start of the clock. It
+/// is a marker and not a day anybody lived, so the history of the run says
+/// *never told* for it and never a date in 1970. A run that read its charter
+/// shows the moment it did.
+#[tokio::test]
+async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_says_when() {
+    let story = Story::begin("bot:otto").await;
+    // A boot that has no run to offer back ships the charter. One that answers
+    // the offer with `new` ships none, so this run is handed it by no call.
+    let earlier = story.session().await;
+    earlier
+        .journal("a run left open, so the next boot is offered it")
+        .await;
+    let run = story.session_in("America/New_York", Some("new")).await;
+    run.journal("a first write, before any charter was read")
+        .await;
+    let handle = format!("session:{}", run.run());
+
+    // ── before it reads its charter ───────────────────────────────────────────
+    let before = run
+        .call(
+            "recall",
+            json!({"subject": &handle, "history": "charter_told"}),
+        )
+        .await;
+    let writes = before.json()["objects"][0]["history"]["writes"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("the charter's changes come back: {}", before.raw()));
+    assert_eq!(
+        writes.len(),
+        1,
+        "one change, the run's first write: {}",
+        before.raw()
+    );
+    assert_eq!(writes[0]["value"], "never told", "{}", before.raw());
+    before.never_says("1970");
+
+    // ── after it reads its charter ────────────────────────────────────────────
+    run.call("recall", json!({"subject": "bot:otto", "charter": true}))
+        .await;
+    let after = run
+        .call(
+            "recall",
+            json!({"subject": &handle, "history": "charter_told"}),
+        )
+        .await;
+    let writes = after.json()["objects"][0]["history"]["writes"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("the charter's changes come back: {}", after.raw()));
+    let newest = writes
+        .last()
+        .and_then(|write| write["value"].as_str())
+        .unwrap_or_else(|| panic!("the newest change has a value: {}", after.raw()));
+    assert!(
+        newest
+            .parse::<jiff::Timestamp>()
+            .is_ok_and(|at| at.as_second() > 0),
+        "the run read its charter, so its history says the moment: {}",
+        after.raw()
+    );
+    after.never_says("1970");
+    run.wrap("read the charter and asked when").await;
+    story.finish().await;
+}
+
 /// "Can a walk hand me a sitting with the history of its journal beside it?"
 ///
 /// **Not today: nothing links to a run, and a run links to nothing.** A write

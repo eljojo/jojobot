@@ -905,6 +905,17 @@ pub struct Session {
 /// a run never told is news-bearing for every rewrite by another identity.
 pub const NEVER_TOLD: Timestamp = Timestamp::UNIX_EPOCH;
 
+/// **A moment a run was handed its charter, as a reader is told it.** The stored
+/// moment of a run never handed its charter is [`NEVER_TOLD`], an instant in 1970
+/// that no run lived. A reader gets the words *never told* for it, and every other
+/// moment as it was kept. This is the one place that translation is made.
+pub fn told_in_words(stored: &str) -> String {
+    match stored.parse::<Timestamp>() {
+        Ok(moment) if moment == NEVER_TOLD => "never told".to_string(),
+        _ => stored.to_string(),
+    }
+}
+
 impl Session {
     /// **Whether a write to this run is allowed.** An open run takes writes. A
     /// closed one does not, except a `wrapped` run whose window is open: it
@@ -2328,6 +2339,21 @@ mod tests {
                 "must not read {hand_edited:?} as a tally"
             );
         }
+    }
+
+    /// **The marker for a run never handed its charter is served as words, and
+    /// every real moment is served as it was kept.** Both halves in one case: a
+    /// translation of everything, or of nothing, fails one of them.
+    #[test]
+    fn a_run_never_handed_its_charter_is_told_in_words_and_a_real_moment_is_not() {
+        assert_eq!(told_in_words(&NEVER_TOLD.to_string()), "never told");
+        let real = Timestamp::from_second(1_790_000_000).expect("a valid instant");
+        assert_eq!(told_in_words(&real.to_string()), real.to_string());
+        assert_eq!(
+            told_in_words("not a moment"),
+            "not a moment",
+            "a stored value that is no moment is served as kept"
+        );
     }
 
     /// The tally belongs to the SESSION, not to whichever connection is holding

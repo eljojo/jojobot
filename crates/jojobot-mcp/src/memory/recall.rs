@@ -1068,6 +1068,12 @@ fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
                         fields.insert("written_at".into(), at.to_string().into());
                     }
                     match (&change.value, change.changed) {
+                        (Some(value), Some(ChangeKind::CharterTold)) => {
+                            fields.insert(
+                                "value".into(),
+                                jojobot_domain::session::told_in_words(value).into(),
+                            );
+                        }
                         (Some(value), _) => {
                             fields.insert("value".into(), value.as_str().into());
                         }
