@@ -621,7 +621,7 @@ answer: {
   "attempted": "document:alpha",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was merged: 'document:alpha' is a document and 'thing:handcart' is not: a document merges only into another document. Merge two documents to get one that holds both. To bring 'thing:handcart' and 'document:alpha' together anyway, read the document with read_document, capture what is wanted as claims on the thing (or put it into the other document with put_document), then put the one you no longer need away with archive_entity.",
+  "how_to_proceed": "Nothing was merged: 'document:alpha' is a document and 'thing:handcart' is not: a document merges only into another document. Merge two documents to get one that holds both. To bring 'thing:handcart' and 'document:alpha' together anyway, carry over by hand what you want, in whichever direction: read 'document:alpha' with read_document and capture what is wanted as claims on 'thing:handcart', or write what is wanted from 'thing:handcart' into 'document:alpha' with put_document. Then put the one you no longer need away with archive_entity.",
   "status": "blocked",
   "wrote": false
 }

@@ -1073,10 +1073,11 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &[],
             format!(
                 "Nothing was merged: {e}. Merge two documents to get one that holds both. To \
-                 bring '{other}' and '{document}' together anyway, read the document with \
-                 read_document, capture what is wanted as claims on the thing (or put it into \
-                 the other document with put_document), then put the one you no longer need \
-                 away with archive_entity."
+                 bring '{other}' and '{document}' together anyway, carry over by hand what you \
+                 want, in whichever direction: read '{document}' with read_document and \
+                 capture what is wanted as claims on '{other}', or write what is wanted from \
+                 '{other}' into '{document}' with put_document. Then put the one you no longer \
+                 need away with archive_entity."
             ),
         )),
         // **A thing does not fold into its own descendant.** Both handles are
@@ -2640,6 +2641,42 @@ pub(crate) mod tests {
             let raised = memory_error(error);
             assert_error_word(label, &raised, word);
         }
+    }
+
+    /// **The advice for a document merged with a thing is true whichever side was
+    /// folded.** The error carries the document and the other side, not the
+    /// direction, so the advice names each by its handle, names only verbs the
+    /// surface serves, and never calls the thing a document.
+    #[test]
+    fn the_advice_for_a_document_merged_with_a_thing_is_true_in_both_directions() {
+        let answered = json_of(
+            &memory_declined(
+                "merge_entities",
+                MemoryError::DocumentMergedWithAThing {
+                    document: "document:alpha".into(),
+                    other: "thing:handcart".into(),
+                },
+            )
+            .expect("a blocked answer"),
+        );
+        let how = answered["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("document:alpha") && how.contains("thing:handcart"),
+            "{how}"
+        );
+        let served: Vec<String> = crate::Jojobot::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        for verb in ["read_document", "put_document", "archive_entity", "capture"] {
+            assert!(how.contains(verb), "the advice does not name {verb}: {how}");
+            assert!(
+                served.iter().any(|name| name == verb),
+                "{verb} is not served"
+            );
+        }
+        assert!(!how.contains("the other document"), "{how}");
     }
 
     /// **A thought too long is moved, never compressed.** Both refusals that
