@@ -1042,29 +1042,6 @@ mod tests {
             Decision::Proceed
         );
 
-        for (handle, name, why) in [
-            (
-                "place:contract-plant-tours",
-                "Plant Tours",
-                "one shared word",
-            ),
-            (
-                "place:contract-with-plant",
-                "With Plant With",
-                "a stop word",
-            ),
-            (
-                "person:contract-nuclear-plant-tours",
-                "Nuclear Plant Tours",
-                "another kind",
-            ),
-        ] {
-            assert_eq!(
-                decide_creating(&EntityId(handle.into()), &[name], None, &idx, None, None),
-                Decision::Proceed,
-                "{name}: {why}"
-            );
-        }
         // A stop word is no evidence even where rarity would pass it: "with" is
         // carried once here, so it is rare, and only the list says it counts for
         // nothing. The same pair sharing a real second word is refused.
@@ -1073,18 +1050,32 @@ mod tests {
             "Pickles With Mustard",
             "user-named",
         )];
-        assert_eq!(
-            decide_creating(
-                &EntityId("place:contract-bread-with-mustard".into()),
-                &["Bread With Mustard"],
-                None,
-                &menu,
-                None,
-                None
+        for (against, handle, name, why) in [
+            (
+                &idx,
+                "place:contract-plant-tours",
+                "Plant Tours",
+                "one shared word",
             ),
-            Decision::Proceed,
-            "a stop word and one real word are one shared word"
-        );
+            (
+                &menu,
+                "place:contract-bread-with-mustard",
+                "Bread With Mustard",
+                "a stop word and one real word",
+            ),
+            (
+                &idx,
+                "person:contract-nuclear-plant-tours",
+                "Nuclear Plant Tours",
+                "another kind",
+            ),
+        ] {
+            assert_eq!(
+                decide_creating(&EntityId(handle.into()), &[name], None, against, None, None),
+                Decision::Proceed,
+                "{name}: {why}"
+            );
+        }
         assert!(matches!(
             decide_creating(
                 &EntityId("place:contract-mustard-pickles-tours".into()),
