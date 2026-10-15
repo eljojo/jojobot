@@ -24,7 +24,9 @@ pub const NUMBERS_BY: &str = "numbers_by";
 
 /// **A positive whole number in its one spelling**: digits only, no sign, no
 /// leading zero. Two spellings of one number would let `07` and `7` both be
-/// held.
+/// held. **The largest number a machine holds is no number**: the next number is
+/// the largest held plus one, so a member holding it would leave no next, and
+/// nothing can hold what the arithmetic cannot step past.
 pub fn whole_number(raw: &str) -> Option<u64> {
     let raw = raw.trim();
     if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
@@ -33,7 +35,7 @@ pub fn whole_number(raw: &str) -> Option<u64> {
     if raw.len() > 1 && raw.starts_with('0') {
         return None;
     }
-    raw.parse::<u64>().ok().filter(|n| *n > 0)
+    raw.parse::<u64>().ok().filter(|n| *n > 0 && *n < u64::MAX)
 }
 
 /// **`<collection>/<N>` taken apart**: the handle of the collection and the
@@ -78,6 +80,8 @@ impl Numbered {
 
     /// **The largest number held, archived members included, plus one.** There
     /// is no allocator: this is a read, and a race for it is caught by the guard.
+    /// A held number is below the largest a machine holds ([`whole_number`]), so
+    /// the step cannot overflow.
     pub fn next(&self) -> u64 {
         self.held().max().unwrap_or(0) + 1
     }
@@ -559,7 +563,20 @@ mod tests {
     fn a_number_has_one_spelling() {
         assert_eq!(whole_number("7"), Some(7));
         assert_eq!(whole_number(" 12 "), Some(12));
-        for refused in ["", "0", "07", "-3", "+3", "2.5", "1e3", "seven", "1 2"] {
+        assert_eq!(whole_number("18446744073709551614"), Some(u64::MAX - 1));
+        for refused in [
+            "",
+            "0",
+            "07",
+            "-3",
+            "+3",
+            "2.5",
+            "1e3",
+            "seven",
+            "1 2",
+            "18446744073709551615",
+            "18446744073709551616",
+        ] {
             assert_eq!(whole_number(refused), None, "{refused:?}");
         }
     }

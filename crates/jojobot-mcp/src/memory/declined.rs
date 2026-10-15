@@ -930,8 +930,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing was written: {e}. Members of {collection} hold a positive whole \
                  number written in digits, with no sign, no point and no leading zero, such as \
-                 5. Send one. To see which number is free, recall {collection}: it says \
-                 next_number."
+                 5, and below 18446744073709551615. Send one. To see which number is free, \
+                 recall {collection}: it says next_number."
             ),
         )),
         // **The key stays and the value has to change**, which is what makes

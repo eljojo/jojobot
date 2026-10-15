@@ -304,6 +304,82 @@ pub async fn a_number_is_held_by_one_member_and_a_bad_value_is_refused<M: Memory
         .expect("a member's own number is not taken from it");
 }
 
+/// **The numbers end below the largest a machine holds, so the next one always
+/// exists.** The next number is the largest held plus one; a member that held the
+/// largest number there is would leave none. So that number is no number: a write
+/// of it is refused as a value that is no number, and the highest one a member can
+/// hold leaves a next that is the largest, read and named without a panic or a
+/// wrap. **Paired**: a smaller number lands beside it, and the refusal of a number
+/// held names the next one.
+pub async fn the_highest_number_a_member_can_hold_still_leaves_a_next<M: Memory>(store: &M) {
+    let collection = EntityId("topic:contract-ordinances-ceiling".into());
+    let first = EntityId("decision:contract-ordinance-ceiling-first".into());
+    let second = EntityId("decision:contract-ordinance-ceiling-second".into());
+    add(
+        store,
+        NewEntity::new(collection.clone(), "Ceiling codes", "contract-fixture"),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: BTreeMap::from([("numbers_by".to_string(), "number".to_string())]),
+            ..NewFact::about(collection.clone(), "numbers its members", date(2026, 5, 1))
+        }),
+    )
+    .await;
+    for (id, name) in [(&first, "Highest ruling"), (&second, "Lowest ruling")] {
+        add(
+            store,
+            NewEntity {
+                parent: Some(collection.clone()),
+                ..NewEntity::new(id.clone(), name, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    let write = |id: &EntityId, number: u64| {
+        state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), number.to_string())]),
+            ..NewFact::about(id.clone(), format!("takes {number}"), date(2026, 5, 2))
+        })
+    };
+    let highest = u64::MAX - 1;
+    store
+        .capture(write(&first, highest))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the highest number there is room above is a number");
+    assert_eq!(
+        store
+            .numbering_of(&collection)
+            .await
+            .expect("the collection reads")
+            .expect("numbered")
+            .next_number,
+        u64::MAX,
+        "the next number is the largest there is, and no wrap"
+    );
+    let refused = store.capture(write(&second, u64::MAX)).await;
+    assert!(
+        matches!(refused, Err(MemoryError::NotANumber { .. })),
+        "the largest number leaves no next, so it is no number: {refused:?}"
+    );
+    let Err(MemoryError::NumberTaken { holder, next, .. }) =
+        store.capture(write(&second, highest)).await
+    else {
+        panic!("a held number is refused, and naming the next one does not overflow");
+    };
+    assert_eq!((holder.as_str(), next), (first.as_str(), u64::MAX));
+    store
+        .capture(write(&second, 1))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a smaller number lands beside the highest");
+}
+
 /// **The whole subtree is the scope, and nothing outside it is.** A grandchild
 /// under a numbered member holds a number the collection knows; a thing outside
 /// the collection may hold any number.
@@ -492,6 +568,7 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(store).await;
     a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(store).await;
     a_numbered_handle_is_never_given_to_a_new_thing(store).await;
+    the_highest_number_a_member_can_hold_still_leaves_a_next(store).await;
     super::numbering_paths::no_write_path_skips_a_numbering_guard_except_a_retraction_by_design(
         store,
     )

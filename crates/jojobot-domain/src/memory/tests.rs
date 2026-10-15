@@ -1659,6 +1659,12 @@ async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
 }
 
 #[tokio::test]
+async fn fake_leaves_a_next_number_above_the_highest_a_member_can_hold() {
+    contract::the_highest_number_a_member_can_hold_still_leaves_a_next(&InMemoryMemory::booted())
+        .await;
+}
+
+#[tokio::test]
 async fn fake_holds_every_write_path_to_every_numbering_guard() {
     contract::no_write_path_skips_a_numbering_guard_except_a_retraction_by_design(
         &InMemoryMemory::booted(),
