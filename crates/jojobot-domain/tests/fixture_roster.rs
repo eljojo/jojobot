@@ -597,7 +597,6 @@ const ORDINARY: &[&str] = &[
     "place:contract-mustard-pickles-tours", // made up: a fixture of the shared-word reason
     "place:contract-pickles-with-mustard", // made up: a fixture of the shared-word reason
     "place:contract-plant-tours",         // made up: a fixture of the shared-word reason
-    "place:contract-with-plant",          // made up: a fixture of the shared-word reason
     "place:contract-bart-simpson", // made up: the short form of a person's name, under another kind
     "person:contract-bart-smithers", // made up: a short form beside a different surname
     "person:contract-bart-flanders", // made up: a short form beside a different surname

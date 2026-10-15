@@ -4226,7 +4226,7 @@ impl Memory for InMemoryMemory {
         // store spends it in the transaction that writes the sections and the
         // event.
         self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
-        for (folded_records, relocated) in planned {
+        if let Some((folded_records, relocated)) = planned {
             for place in relocated {
                 let Some(record) = folded_records.iter().find(|f| f.id == place.fact) else {
                     continue;

@@ -164,7 +164,7 @@ fn counted_for(entity: &super::Entity) -> BTreeSet<String> {
         .labels()
         .into_iter()
         .chain(std::iter::once(entity.id.slug()))
-        .flat_map(|name| camel_words(&name))
+        .flat_map(camel_words)
         .collect()
 }
 
