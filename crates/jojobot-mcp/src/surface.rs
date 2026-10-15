@@ -1122,7 +1122,7 @@ fn the_recall_description_says_how_old_what_an_object_holds_is() {
 fn the_recall_description_lists_parent_among_the_ways_to_select() {
     assert_description_names(
         "recall",
-        &["subject, kind, parent, answers_type, fields or where"],
+        &["subject, kind, parent, answers_type, fields, where or view"],
     );
 }
 

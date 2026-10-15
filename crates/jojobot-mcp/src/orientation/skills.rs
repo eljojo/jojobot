@@ -100,6 +100,14 @@ A **view** is a question somebody already worked out, asked for by name. Ask
     recall  view: "loops"          the recurring things, and what each last recorded
     recall  view: "ready"          the work not finished, unblocked and waiting on no one, and how many it left out
     recall  view: "plan"           the work not finished, ready or blocked, each with what stops it
+    recall  view: "due"            what falls due by a day, and what is late
+    recall  view: "board"          one project's work grouped by status
+    recall  view: "of-type"        the things answering a declared type, each with the keys it lacks
+
+Some views take a value in `inputs`: due takes the day `by` (a week ahead when
+you send none), board the `project` it is about (required), of-type the `type`.
+Recall `kind: "view"` and read each one's `inputs`, or ask without the value and
+read the refusal, which names every input.
 
 The colleagues view says whom each bot reports to and nothing inward. Who
 reports to a bot is a second call, a walk along `reports_to` the other way:
@@ -120,6 +128,21 @@ then the keys.
     where     which of them, as one line over keys: status != done && owner = bot:gamma
     order     a key, then ascending or descending.
     scope     what `where` is asked of: thing (the default) or record.
+    inputs    what a call fills in, as `name: type` separated by commas: `project: kind project`,
+              `by: date?`, `type: text`. A `?` after the type leaves it optional.
+    parent    the project or container whose children it lists: `$project` takes the input.
+    as_of     the day an overdue question is asked about: `$by` takes the input.
+    answers_type
+              the declared type whose things it finds: `$type` takes the input.
+    shows_keys
+              the keys each object comes back with.
+
+A `$name` stands for the input of that name in `parent`, `where`, `as_of` and
+`answers_type`. A view that takes a project is declared and asked like this:
+
+    add_entity  kind: "view"  handle: "urgent-things"  source: "user-named"
+                sets: {"selects": "work", "inputs": "project: kind project", "parent": "$project"}
+    recall      view: "urgent-things"  inputs: {"project": "project:atlas"}
 
 Anything you send beside the name wins, so a view is a starting point rather
 than a cage: `recall  view: "colleagues"  charter: true` is the shipped question
@@ -127,9 +150,10 @@ with one thing added, and each charter comes back with it.
 
 ## 2. 🚨 A capability arrives as an ARGUMENT on a verb you already know
 
-**Never as a new verb.** This surface grows by widening what exists, so when you
-go looking for a capability and find no verb named for it, **that is not an
-answer** — read the arguments of the verb whose job it is.
+**Rarely as a new verb — the document verbs are the exception, because a
+document is read and written whole.** This surface grows by widening what
+exists, so when you go looking for a capability and find no verb named for it,
+**that is not an answer** — read the arguments of the verb whose job it is.
 
 Views are an argument on `recall`. So are walking a relation, asking what has
 fallen due, and reading one key's history. **Mail is an argument on `search`.**

@@ -201,6 +201,14 @@ pub struct CaptureArgs {
     /// The keys that make a thing fall due act on it only when sent here. A key
     /// comes off the thing again with `update_fact`'s `clear_fields` on the
     /// record that carries it.
+    ///
+    /// **A container numbers what it holds** when its `sets` carries `numbers_by`
+    /// naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
+    /// that sets that key holds a whole number no other holds, and keeps it after
+    /// it is archived. Number a member in its own `sets` (`{number: "32"}`) and
+    /// recall it by the container's handle, a slash and the number
+    /// (`topic:all-rules/32`). The container's own recall says its `next_number`,
+    /// and a number already held is refused naming its holder and the free number.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
@@ -303,8 +311,10 @@ pub struct CaptureArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
-    /// **A name of your choosing for this write**, up to 128 bytes. Send the
-    /// same call again with the same `request_id` after an answer was lost: if
+    /// **A name of your choosing for this write**, up to 128 bytes.
+    /// **Send it on the first call of the write**, because a call sent without
+    /// one cannot be repeated safely. If an answer is lost, send the
+    /// same call again with the same `request_id`: if
     /// the first call wrote, you get its receipt back marked `repeat` and nothing
     /// is written a second time. It needs a `sid`, and a call that wrote nothing
     /// spends no id.

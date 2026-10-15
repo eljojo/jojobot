@@ -648,6 +648,11 @@ pub struct RecallArgs {
     /// with `where` (a line over keys, as the call's own `where`), `order` (a
     /// key, then `ascending` or `descending`) and `scope` (`thing` or `record`)
     /// for which of them and in what order.
+    /// **A view that takes values declares them in `inputs`** (`project: kind
+    /// project`) and uses each as `$name` in `parent` (`parent: "$project"`), in
+    /// `where`, in `as_of` (the day an overdue ask is asked about) or in
+    /// `answers_type` (the declared type whose things it finds). `shows_keys`
+    /// names the keys each object comes back with.
     /// Both are records of the same shape, so nothing about the answer depends
     /// on where the view came from.
     ///
@@ -678,7 +683,12 @@ pub struct RecallArgs {
     /// "due"` lists what is coming up by the day `inputs: {by: ...}` names (a week
     /// ahead when you send none) and what is already late, whatever kinds owe
     /// something: an object past due carries `overdue_by_days`, one not
-    /// yet due `due_in_days`.
+    /// yet due `due_in_days`. `view: "board"` takes the `project` it is about and
+    /// lists that project's work grouped by status, each piece with its status,
+    /// what it depends on and its owner. `view: "of-type"` takes a `type` (text)
+    /// and lists the things that answer that declared type, each with the keys it
+    /// lacks; it finds things only, so for a type another kind answers send
+    /// `answers_type` to `recall` directly.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **The values a view takes**, as `{name: value}`, beside `view`.
@@ -2403,9 +2413,9 @@ impl Jojobot {
                        nearest), kind, \
                        parent, answers_type, fields (a key and the value it holds), where (one \
                        line over keys, status != done && due <= today+7d, with order for \
-                       the sequence) or view (a question already worked out, asked by name, \
-                       so start with one if it fits). A call that narrows nothing is refused: name one of subject, \
-                       kind, parent, answers_type, fields or where, or a record's own address \
+                       the sequence) or view (a question worked out, asked by name; \
+                       start with one if it fits). A call that narrows nothing is refused: name one of subject, \
+                       kind, parent, answers_type, fields, where or view, or a record's own address \
                        (history_record or built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a rhythm under a snooze also carries \

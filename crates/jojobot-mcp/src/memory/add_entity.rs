@@ -124,6 +124,12 @@ pub struct AddEntityArgs {
     ///
     /// The claim is `inference`, as a capture's is when it says nothing. To put
     /// the operator's own word behind a key, write it with `capture`.
+    ///
+    /// **A container numbers what it holds** when its `sets` carries `numbers_by`
+    /// naming a key, `{numbers_by: "number"}`. Make each member under it with that
+    /// key in its own `sets` (`{number: "32"}`) and recall it by the container's
+    /// handle, a slash and the number (`topic:all-rules/32`). A number is held by
+    /// one member for good, and a repeated one is refused naming its holder.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The token a previous call's refusal handed you, sent back after you read
@@ -144,8 +150,10 @@ pub struct AddEntityArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
-    /// **A name of your choosing for this write**, up to 128 bytes. Send the
-    /// same call again with the same `request_id` after an answer was lost: if
+    /// **A name of your choosing for this write**, up to 128 bytes.
+    /// **Send it on the first call of the write**, because a call sent without
+    /// one cannot be repeated safely. If an answer is lost, send the
+    /// same call again with the same `request_id`: if
     /// the first call wrote, you get its receipt back marked `repeat` and nothing
     /// is written a second time, so the entity is made once. It needs a `sid`, and a call that
     /// wrote nothing spends no id.

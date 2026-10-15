@@ -266,8 +266,10 @@ what says on what.
 #### `add_entity` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the entity is made once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -293,6 +295,12 @@ the call creates the thing alone, as before.
 
 The claim is `inference`, as a capture's is when it says nothing. To put
 the operator's own word behind a key, write it with `capture`.
+
+**A container numbers what it holds** when its `sets` carries `numbers_by`
+naming a key, `{numbers_by: "number"}`. Make each member under it with that
+key in its own `sets` (`{number: "32"}`) and recall it by the container's
+handle, a slash and the number (`topic:all-rules/32`). A number is held by
+one member for good, and a repeated one is refused naming its holder.
 ```
 
 #### `add_entity` — argument `/inputSchema.sid`
@@ -454,8 +462,10 @@ set to choose from.
 #### `archive_entity` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the entity is archived or restored once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -1003,8 +1013,10 @@ touches it.
 #### `capture` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time. It needs a `sid`, and a call that wrote nothing
 spends no id.
@@ -1024,6 +1036,14 @@ the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 The keys that make a thing fall due act on it only when sent here. A key
 comes off the thing again with `update_fact`'s `clear_fields` on the
 record that carries it.
+
+**A container numbers what it holds** when its `sets` carries `numbers_by`
+naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
+that sets that key holds a whole number no other holds, and keeps it after
+it is archived. Number a member in its own `sets` (`{number: "32"}`) and
+recall it by the container's handle, a slash and the number
+(`topic:all-rules/32`). The container's own recall says its `next_number`,
+and a number already held is refused naming its holder and the free number.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due. `outcome` and `ended` set no day and still change what a thing owes. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
@@ -1358,8 +1378,10 @@ type is closed and the answer says so. Pick a name of your own.
 #### `declare_type` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the type is declared once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -1865,8 +1887,10 @@ processing outcome, because none happened.
 #### `mark_processed` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the message is retired once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -1999,8 +2023,10 @@ your session's zone.
 #### `merge_entities` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the two are merged once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -2174,8 +2200,10 @@ read_mailbox's own description says.
 #### `post_message` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the message is posted once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -2721,8 +2749,8 @@ attributed, never journalled.
 The graph query: say the shape you want and get that shape back.
 Use it for a handle, a kind, a type, a key and its value; use search when you only have words for it.
 THREE AXES COMBINE INTO ONE QUESTION.
-WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question already worked out, asked by name, so start with one if it fits).
-A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields or where, or a record's own address (history_record or built_on).
+WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question worked out, asked by name; start with one if it fits).
+A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where or view, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied the keys).
 A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
@@ -3973,6 +4001,11 @@ A view is a record that holds a query, so asking for one is naming it.
 with `where` (a line over keys, as the call's own `where`), `order` (a
 key, then `ascending` or `descending`) and `scope` (`thing` or `record`)
 for which of them and in what order.
+**A view that takes values declares them in `inputs`** (`project: kind
+project`) and uses each as `$name` in `parent` (`parent: "$project"`), in
+`where`, in `as_of` (the day an overdue ask is asked about) or in
+`answers_type` (the declared type whose things it finds). `shows_keys`
+names the keys each object comes back with.
 Both are records of the same shape, so nothing about the answer depends
 on where the view came from.
 
@@ -4003,7 +4036,12 @@ carries its own `shows_keys`, and a `keys` you send wins over it. `view:
 "due"` lists what is coming up by the day `inputs: {by: ...}` names (a week
 ahead when you send none) and what is already late, whatever kinds owe
 something: an object past due carries `overdue_by_days`, one not
-yet due `due_in_days`.
+yet due `due_in_days`. `view: "board"` takes the `project` it is about and
+lists that project's work grouped by status, each piece with its status,
+what it depends on and its owner. `view: "of-type"` takes a `type` (text)
+and lists the things that answer that declared type, each with the keys it
+lacks; it finds things only, so for a type another kind answers send
+`answers_type` to `recall` directly.
 ```
 
 #### `recall` — argument `/inputSchema.where`
@@ -4295,8 +4333,10 @@ day the call is made — a session catching up on last week says so here.
 #### `retract` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the claim is taken back once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -4776,8 +4816,10 @@ kept as written and never becomes a link.
 #### `set_charter` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the charter is written once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -5300,8 +5342,10 @@ is.
 #### `update_entity` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the edit is made once. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -6004,8 +6048,10 @@ them. Sent with `find`, never alone.
 #### `update_fact` — argument `/inputSchema.request_id`
 
 ```text
-**A name of your choosing for this write**, up to 128 bytes. Send the
-same call again with the same `request_id` after an answer was lost: if
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. If an answer is lost, send the
+same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the edit is made once. It needs a `sid`, and a call that
 wrote nothing spends no id.
