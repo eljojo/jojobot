@@ -778,6 +778,10 @@ impl DoltMemory {
         Ok(match folded_at.cmp(&left_at) {
             std::cmp::Ordering::Less => Some(wore.clone()),
             std::cmp::Ordering::Greater => Some(wearer_now),
+            // **A tie is skipped, never guessed.** No ordering spans a fold and a
+            // rename: `entity_write.ordinal` counts the writes of one entity, and a
+            // rename writes no merge event. A tie takes two transactions that
+            // stamp one nanosecond, so the row is listed and left.
             std::cmp::Ordering::Equal => None,
         })
     }

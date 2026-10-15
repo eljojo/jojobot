@@ -7972,6 +7972,283 @@ async fn dolt_brings_forwarding_rows_to_the_current_handle_of_their_survivor() {
     store.stop().await;
 }
 
+/// **Two forwarding rows in the shape an older build left**, for a case about
+/// the rows the pass cannot place. `handles` is, in order: a folded row, its
+/// survivor, the survivor's handle after a rename, then the same three for the
+/// second pair. The first pair is placeable, because only its survivor ever wore
+/// the handle. The second pair is not placeable by name: a new thing took the
+/// handle the rename freed, so only the order of two moments could say which
+/// thing the row meant.
+///
+/// The rows are written back by hand off the raw column, as an older build left
+/// them, and the pass's marker is dropped so the next run is a first run.
+async fn two_forwarding_rows(
+    memory: &DoltMemory,
+    pool: &sqlx::MySqlPool,
+    handles: [&str; 6],
+) -> [EntityId; 6] {
+    let [
+        plain_old,
+        plain_kept,
+        plain_moved,
+        tied_old,
+        tied_kept,
+        tied_moved,
+    ] = handles.map(|handle| EntityId(handle.into()));
+    for (id, name) in [
+        (&plain_old, "Tied First"),
+        (&plain_kept, "Tied Second"),
+        (&tied_old, "Tied Fourth"),
+        (&tied_kept, "Tied Fifth"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    for (day, folded, survivor, moved) in [
+        (2, &plain_old, &plain_kept, &plain_moved),
+        (4, &tied_old, &tied_kept, &tied_moved),
+    ] {
+        memory
+            .merge(
+                folded,
+                survivor,
+                None,
+                date(2026, 9, day),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("the fold lands");
+        memory
+            .rename_entity(
+                survivor,
+                moved,
+                None,
+                date(2026, 9, day + 1),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("the rename answers")
+            .written()
+            .expect("the rename lands");
+    }
+    // The survivor's name is close to the freed handle, so taking it needs the
+    // override the refusal mints.
+    let heir = NewEntity::new(tied_kept.clone(), "Tied Heir", "contract-fixture");
+    let jojobot_domain::memory::Guarded::Blocked {
+        attempted,
+        candidates,
+    } = memory
+        .add_entity(heir.clone())
+        .await
+        .expect("add_entity answers")
+    else {
+        panic!("the freed handle should have met the survivor's name");
+    };
+    let token = jojobot_domain::memory::guard::override_token(&attempted, &candidates);
+    memory
+        .add_entity(NewEntity {
+            override_token: Some(token),
+            ..heir
+        })
+        .await
+        .expect("add_entity answers")
+        .written()
+        .expect("the freed handle is taken by a new thing");
+    for (folded, survivor) in [(&plain_old, &plain_kept), (&tied_old, &tied_kept)] {
+        sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+            .bind(survivor.as_str())
+            .bind(folded.as_str())
+            .execute(pool)
+            .await
+            .expect("the old shape is written");
+    }
+    sqlx::query("DELETE FROM store_pass WHERE name = 'forwarding rows name the current handle'")
+        .execute(pool)
+        .await
+        .expect("the marker is dropped");
+    [
+        plain_old,
+        plain_kept,
+        plain_moved,
+        tied_old,
+        tied_kept,
+        tied_moved,
+    ]
+}
+
+/// **Where a forwarding row points**, read off the raw column.
+async fn forwards_to(pool: &sqlx::MySqlPool, handle: &EntityId) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>("SELECT merged_into FROM entity WHERE id = ?")
+        .bind(handle.as_str())
+        .fetch_one(pool)
+        .await
+        .expect("the forwarding row reads")
+}
+
+/// **Stamp every write of one entity with one moment**, read back as text.
+async fn stamp_writes(pool: &sqlx::MySqlPool, handle: &EntityId, moment: &str) {
+    let stamped = sqlx::query("UPDATE entity_write SET written_at = ? WHERE entity = ?")
+        .bind(moment)
+        .bind(handle.as_str())
+        .execute(pool)
+        .await
+        .expect("the writes are stamped")
+        .rows_affected();
+    assert!(stamped > 0, "{handle:?} has writes to stamp");
+}
+
+/// **A row the pass cannot place is skipped and listed, the pass stays open,
+/// and every other row is placed in the same run; once the moments can be told
+/// apart, the same row is placed.**
+///
+/// Moments the store stamped cannot tie in practice: no ordering spans a fold
+/// and a rename, and a tie needs two transactions on one nanosecond. So the tie
+/// is written by hand, and the case pins what the pass does with it. The last
+/// step is the positive the skip depends on: the same row, with its moments
+/// told apart, is placed.
+#[tokio::test]
+async fn dolt_skips_a_forwarding_row_whose_fold_and_rename_share_a_moment() {
+    let scratch = Scratch::new("forward-tied");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forward_tied")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let [plain_old, _, plain_moved, tied_old, tied_kept, tied_moved] = two_forwarding_rows(
+        &memory,
+        &pool,
+        [
+            "thing:contract-tied-first",
+            "thing:contract-tied-second",
+            "thing:contract-tied-third",
+            "thing:contract-tied-fourth",
+            "thing:contract-tied-fifth",
+            "thing:contract-tied-sixth",
+        ],
+    )
+    .await;
+
+    let one_moment = "2026-09-05T00:00:00Z";
+    stamp_writes(&pool, &tied_old, one_moment).await;
+    stamp_writes(&pool, &tied_moved, one_moment).await;
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 1), "{report:?}");
+    assert!(
+        report.skipped[0].contains("contract-tied-fourth"),
+        "{report:?}"
+    );
+    assert_eq!(
+        forwards_to(&pool, &plain_old).await.as_deref(),
+        Some(plain_moved.as_str()),
+        "the row it could place is placed in the same run",
+    );
+    assert_eq!(
+        forwards_to(&pool, &tied_old).await.as_deref(),
+        Some(tied_kept.as_str()),
+        "the row it could not place is left as it was",
+    );
+    assert!(
+        !memory
+            .migrate_forward_names()
+            .await
+            .expect("a pass after a skip runs")
+            .settled,
+        "a pass that skipped a row is not marked finished",
+    );
+
+    // **The same row, its moments told apart.** The fold came first, so it meant
+    // the survivor.
+    stamp_writes(&pool, &tied_old, "2026-09-04T00:00:00Z").await;
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 0), "{report:?}");
+    assert_eq!(
+        forwards_to(&pool, &tied_old).await.as_deref(),
+        Some(tied_moved.as_str()),
+    );
+
+    store.stop().await;
+}
+
+/// **The same holds when a moment cannot be read.** A stamp that does not parse
+/// as a moment is no order at all, so the row is skipped and listed, the pass
+/// stays open, and the other rows are placed; with the stamp repaired, the row is
+/// placed.
+#[tokio::test]
+async fn dolt_skips_a_forwarding_row_whose_rename_has_no_readable_moment() {
+    let scratch = Scratch::new("forward-unreadable");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forward_unreadable")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let [plain_old, _, plain_moved, tied_old, tied_kept, tied_moved] = two_forwarding_rows(
+        &memory,
+        &pool,
+        [
+            "thing:contract-unreadable-first",
+            "thing:contract-unreadable-second",
+            "thing:contract-unreadable-third",
+            "thing:contract-unreadable-fourth",
+            "thing:contract-unreadable-fifth",
+            "thing:contract-unreadable-sixth",
+        ],
+    )
+    .await;
+
+    stamp_writes(&pool, &tied_moved, "not a moment").await;
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 1), "{report:?}");
+    assert!(
+        report.skipped[0].contains("contract-unreadable-fourth"),
+        "{report:?}"
+    );
+    assert_eq!(
+        forwards_to(&pool, &plain_old).await.as_deref(),
+        Some(plain_moved.as_str()),
+        "the row it could place is placed in the same run",
+    );
+    assert_eq!(
+        forwards_to(&pool, &tied_old).await.as_deref(),
+        Some(tied_kept.as_str()),
+        "the row it could not place is left as it was",
+    );
+    assert!(
+        !memory
+            .migrate_forward_names()
+            .await
+            .expect("a pass after a skip runs")
+            .settled,
+        "a pass that skipped a row is not marked finished",
+    );
+
+    // **The same row, its moments readable.** The fold came first, so it meant
+    // the survivor.
+    stamp_writes(&pool, &tied_old, "2026-09-05T00:00:00Z").await;
+    stamp_writes(&pool, &tied_moved, "2026-09-06T00:00:00Z").await;
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 0), "{report:?}");
+    assert_eq!(
+        forwards_to(&pool, &tied_old).await.as_deref(),
+        Some(tied_moved.as_str()),
+    );
+
+    store.stop().await;
+}
+
 /// **A link a fold of an older build left on the forwarding row is repointed at
 /// the thing the fold ended in, once, and a second run finds nothing.**
 ///
