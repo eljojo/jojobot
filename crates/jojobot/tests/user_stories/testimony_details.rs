@@ -65,7 +65,7 @@ async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
             }),
         )
         .await;
-    second
+    let corrected = second
         .call(
             "capture",
             json!({
@@ -74,12 +74,26 @@ async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
                 "derived_from": claim,
             }),
         )
-        .await;
-    second
-        .recall("person:kenny")
         .await
-        .says("closes at nine")
-        .says(&claim);
+        .json();
+    let corrected = corrected["address"]
+        .as_str()
+        .or_else(|| corrected["fact"]["address"].as_str())
+        .expect("a capture hands back its address")
+        .to_string();
+    // **The correction by its own address**: the archived claim also holds
+    // "closes at nine" in its reason, and names itself, so a needle over the whole
+    // read is satisfied by a correction that was never derived from anything.
+    let listing = second.recall("person:kenny").await;
+    let correction = listing.claim(&corrected);
+    correction.says("closes at nine");
+    assert_eq!(
+        correction.json()["derived_from"],
+        claim.as_str(),
+        "the correction names the claim it replaces: {}",
+        correction.raw()
+    );
+    assert_ne!(corrected, claim, "the correction is a claim of its own");
 
     // The writing run still edits its own details.
     let own = first
