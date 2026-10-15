@@ -27,10 +27,10 @@ async fn a_merge_shows_in_the_history_of_a_child_it_moved() {
 
     // ── Spring · a child under the thing that will be folded ──────────────────
     let spring = story.session_on("2026-04-14", None).await;
-    spring.add("thing:epsilon", "Epsilon").await;
-    spring.add("thing:sigma", "Sigma").await;
+    spring.add("thing:commuter-bike", "Commuter bike").await;
+    spring.add("thing:red-bike", "Red bike").await;
     spring
-        .add_under("thing:epsilon", "thing:omega", "Omega")
+        .add_under("thing:commuter-bike", "thing:brass-bell", "Brass bell")
         .await;
     let spring_run = spring.run().to_string();
     spring.wrap("made the three").await;
@@ -38,7 +38,12 @@ async fn a_merge_shows_in_the_history_of_a_child_it_moved() {
     // ── Autumn · another run folds the parent into the other thing ────────────
     let autumn = story.session_on("2026-09-15", Some("new")).await;
     autumn
-        .merge_entities("thing:epsilon", "thing:sigma", "one thing twice", None)
+        .merge_entities(
+            "thing:commuter-bike",
+            "thing:red-bike",
+            "the same bike entered twice",
+            None,
+        )
         .await;
     let autumn_run = autumn.run().to_string();
     assert_ne!(
@@ -48,10 +53,10 @@ async fn a_merge_shows_in_the_history_of_a_child_it_moved() {
 
     // ── Winter · the question ─────────────────────────────────────────────────
     let winter = story.session_on("2026-12-20", Some("new")).await;
-    let now = winter.recall("thing:omega").await;
+    let now = winter.recall("thing:brass-bell").await;
     assert_eq!(
         now.json()["objects"][0]["parent"],
-        "thing:sigma",
+        "thing:red-bike",
         "{}",
         now.raw()
     );
@@ -59,7 +64,7 @@ async fn a_merge_shows_in_the_history_of_a_child_it_moved() {
     let asked = winter
         .shape(
             "who moved it under the survivor?",
-            json!({"history_record": "thing:omega"}),
+            json!({"history_record": "thing:brass-bell"}),
         )
         .await;
     let versions = versions_of(&asked);
@@ -69,11 +74,11 @@ async fn a_merge_shows_in_the_history_of_a_child_it_moved() {
         "the creation and the move are two versions: {}",
         asked.raw()
     );
-    assert_eq!(versions[0]["parent"], "thing:epsilon");
+    assert_eq!(versions[0]["parent"], "thing:commuter-bike");
     assert_eq!(versions[0]["run"], spring_run.as_str());
     assert_eq!(
         versions[1]["parent"],
-        "thing:sigma",
+        "thing:red-bike",
         "the move is not in the child's history: {}",
         asked.raw()
     );
@@ -94,27 +99,32 @@ async fn the_history_of_a_survivor_holds_the_versions_of_the_thing_folded_into_i
 
     // ── Spring · two things, each written twice, their writes interleaved ──────
     let spring = story.session_on("2026-04-14", None).await;
-    spring.add("thing:sigma", "Sigma").await;
-    spring.add("thing:epsilon", "Epsilon").await;
+    spring.add("thing:red-bike", "Red bike").await;
+    spring.add("thing:commuter-bike", "Commuter bike").await;
     spring
         .call(
             "update_entity",
-            json!({"handle": "thing:sigma", "name": "Sigma Prime"}),
+            json!({"handle": "thing:red-bike", "name": "Red bike with a basket"}),
         )
         .await;
     spring
         .call(
             "update_entity",
-            json!({"handle": "thing:epsilon", "name": "Epsilon Prime"}),
+            json!({"handle": "thing:commuter-bike", "name": "Commuter bike with a basket"}),
         )
         .await;
-    spring.add("thing:omega", "Omega").await;
+    spring.add("thing:brass-bell", "Brass bell").await;
     spring.wrap("made them").await;
 
     // ── Autumn · they are one thing ───────────────────────────────────────────
     let autumn = story.session_on("2026-09-15", Some("new")).await;
     autumn
-        .merge_entities("thing:epsilon", "thing:sigma", "one thing twice", None)
+        .merge_entities(
+            "thing:commuter-bike",
+            "thing:red-bike",
+            "the same bike entered twice",
+            None,
+        )
         .await;
     let autumn_run = autumn.run().to_string();
 
@@ -123,7 +133,7 @@ async fn the_history_of_a_survivor_holds_the_versions_of_the_thing_folded_into_i
     let asked = winter
         .shape(
             "what did both of them say?",
-            json!({"history_record": "thing:sigma"}),
+            json!({"history_record": "thing:red-bike"}),
         )
         .await;
     let versions = versions_of(&asked);
@@ -137,11 +147,11 @@ async fn the_history_of_a_survivor_holds_the_versions_of_the_thing_folded_into_i
         })
         .collect();
     let expected: Vec<(String, String)> = [
-        ("thing:sigma", "Sigma"),
-        ("thing:epsilon", "Epsilon"),
-        ("thing:sigma", "Sigma Prime"),
-        ("thing:epsilon", "Epsilon Prime"),
-        ("thing:epsilon", "Epsilon Prime"),
+        ("thing:red-bike", "Red bike"),
+        ("thing:commuter-bike", "Commuter bike"),
+        ("thing:red-bike", "Red bike with a basket"),
+        ("thing:commuter-bike", "Commuter bike with a basket"),
+        ("thing:commuter-bike", "Commuter bike with a basket"),
     ]
     .iter()
     .map(|(thing, name)| (thing.to_string(), name.to_string()))
@@ -165,7 +175,7 @@ async fn the_history_of_a_survivor_holds_the_versions_of_the_thing_folded_into_i
     let alone = winter
         .shape(
             "and one never merged?",
-            json!({"history_record": "thing:omega"}),
+            json!({"history_record": "thing:brass-bell"}),
         )
         .await;
     let alone = versions_of(&alone);
