@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""**Wait for the run of a commit on Forgejo, and print only its verdict.**
+
+    scripts/wait-run <branch | commit> [--timeout SECONDS] [--interval SECONDS]
+
+A line that pushed a branch starts this as one background command and is woken
+when it returns. It finds the run of the commit, polls until the run ends, and
+prints the run's number, its ref and its commit, then the bar's verdict block
+from the log of the report job: the verdict, each phase and the names that
+FAILED, and nothing else of the log.
+
+  A BRANCH is resolved to the head the forge holds for it, and the run is the one
+  on that ref. A COMMIT is a full hash or the first seven or more characters of
+  one; the run is the newest run of that commit, and any other run of the same
+  commit (another branch pushed the same hash) is named, not used.
+
+It matches on the commit and the ref the forge reports. It never reads a number
+out of a run's URL: the URL carries the run's index in the repository, which is
+not the run's number.
+
+Exit code: 0 the run succeeded, 1 it failed, 2 it was cancelled or skipped, 3 no
+run ended before the timeout, 4 the branch or commit names nothing.
+
+It reads and nothing else: the actions API of the repository answers a read with
+no credential, so none is asked for, read or stored. WAIT_RUN_API names another
+repository's API root (default: jojo/jojobot on the project's Forgejo).
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+API = os.environ.get(
+    "WAIT_RUN_API", "http://nelly.churra-frog.ts.net:3030/api/v1/repos/jojo/jojobot"
+)
+# A run that has reached one of these is over; every other status is still going.
+FINAL = {"success": 0, "failure": 1, "cancelled": 2, "skipped": 2}
+PAGE = 50
+PAGES = 40
+
+
+class Gone(Exception):
+    """The forge said 404."""
+
+
+def fetch(path, params=None):
+    url = API + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as answer:
+            return answer.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as err:
+        if err.code == 404:
+            raise Gone(url) from err
+        raise
+
+
+def runs_of(**params):
+    """The runs the forge lists for these filters, newest first."""
+    return json.loads(fetch("/actions/runs", {"limit": PAGE, **params}))["workflow_runs"]
+
+
+def stop(code, words):
+    print(words, file=sys.stderr)
+    sys.exit(code)
+
+
+def resolve(target):
+    """The full commit to wait for, and the ref it has to be run on, if any."""
+    if re.fullmatch(r"[0-9a-f]{40}", target):
+        return target, None
+    if re.fullmatch(r"[0-9a-f]{7,39}", target):
+        found = set()
+        for page in range(1, PAGES + 1):
+            listed = runs_of(page=page)
+            if not listed:
+                break
+            found |= {r["commit_sha"] for r in listed if r["commit_sha"].startswith(target)}
+        if len(found) > 1:
+            stop(4, f"{target} is the start of more than one commit: {sorted(found)}")
+        if found:
+            return found.pop(), None
+        # No run has been seen for it yet; the checkout may know it whole.
+        import subprocess
+
+        whole = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", target + "^{commit}"],
+            capture_output=True,
+            text=True,
+        )
+        if whole.returncode == 0:
+            return whole.stdout.strip(), None
+        stop(4, f"no run and no commit of this checkout starts with {target}")
+    try:
+        head = json.loads(fetch("/branches/" + urllib.parse.quote(target, safe="")))
+    except Gone:
+        stop(4, f"the forge holds no branch {target}: push it first")
+    return head["commit"]["id"], target
+
+
+def find(sha, ref):
+    """The run to read and the other runs of the same commit, or None."""
+    held = [r for r in runs_of(head_sha=sha) if r["commit_sha"] == sha]
+    held.sort(key=lambda r: r["id"], reverse=True)
+    mine = [r for r in held if ref is None or r["prettyref"] == ref]
+    if not mine:
+        return None
+    return mine[0], [r for r in held if r is not mine[0]]
+
+
+def verdict_block(run):
+    """The bar's verdict block from the log of the report job, without timestamps: from the
+    `verdict:` line to the `log:` line that ends it. Both are the bar's own lines."""
+    jobs = json.loads(fetch(f"/actions/runs/{run['id']}/jobs"))
+    report = next((j for j in jobs if j["name"] == "report"), None)
+    if report is None:
+        return "no report job in this run"
+    text = fetch(f"/actions/jobs/{report['id']}/logs")
+    lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", l) for l in text.splitlines()]
+    start = next((i for i, l in enumerate(lines) if l.startswith("verdict:")), None)
+    end = next((i for i, l in enumerate(lines) if l.startswith("log:")), None)
+    if start is None or end is None or end < start:
+        return "no verdict block in the log of the report job"
+    return "\n".join(lines[start : end + 1])
+
+
+class Asking(argparse.ArgumentParser):
+    """A usage error exits 4, like any target that names nothing: argparse's own 2 is the
+    exit code of a cancelled run."""
+
+    def error(self, message):
+        stop(4, f"{self.prog}: {message}")
+
+
+def main():
+    ask = Asking(description="Wait for the Forgejo run of a commit.")
+    ask.add_argument("target", help="a branch, or a commit (full, or seven or more characters)")
+    ask.add_argument("--timeout", type=float, default=3600, help="seconds to wait in all")
+    ask.add_argument("--interval", type=float, default=15, help="seconds between asks")
+    args = ask.parse_args()
+
+    deadline = time.monotonic() + args.timeout
+    sha = ref = None
+    seen = None
+    while True:
+        try:
+            if sha is None:
+                sha, ref = resolve(args.target)
+            found = find(sha, ref)
+        except Gone as err:
+            stop(4, f"the forge has nothing at {err}: is WAIT_RUN_API the repository's API root?")
+        except (urllib.error.URLError, TimeoutError, OSError) as err:
+            found = None
+            print(f"the forge did not answer ({err}); asking again", file=sys.stderr)
+        if found:
+            run, others = found
+            if seen != (run["id"], run["status"]):
+                seen = (run["id"], run["status"])
+                print(f"run #{run['id']} is {run['status']}", file=sys.stderr)
+            if run["status"] in FINAL:
+                break
+        if time.monotonic() >= deadline:
+            what = sha or args.target
+            stop(3, f"no run of {what}" + (f" on {ref}" if ref else "") + " ended in time")
+        time.sleep(args.interval)
+
+    print(f"run #{run['id']}  ref {run['prettyref']}  sha {run['commit_sha']}  {run['status']}")
+    print(run["html_url"])
+    if others:
+        print(
+            "also on this commit: "
+            + ", ".join(f"#{r['id']} {r['prettyref']} ({r['status']})" for r in others)
+        )
+    print()
+    print(verdict_block(run))
+    sys.exit(FINAL[run["status"]])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,19 @@
+2026-10-15T02:23:26.1133023Z bar: report is expected to take about 4m (middle of the latest 5 finished runs)
+2026-10-15T02:23:26.1133472Z bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+2026-10-15T02:29:59.9897808Z verdict: GREEN
+2026-10-15T02:29:59.9917017Z fmt-check: ok — formatted (wall 2.4s)
+2026-10-15T02:29:59.9917242Z build: ok — compiled (wall 34.5s)
+2026-10-15T02:29:59.9917329Z test-compile: ok — test binaries built (wall 80.2s)
+2026-10-15T02:29:59.9917424Z level: ok — report, 84 of 92 jobs, left to the boundary: lib-jojobot, lib-jojobot-adapters, lib-jojobot-domain, lib-jojobot-mcp, test-user_stories, test-dolt_store, test-fold_image_dolt, test-kind_schema; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+2026-10-15T02:29:59.9917560Z jobs: ok — 4 test binaries at a time (BAR_JOBS), wall 227s
+2026-10-15T02:29:59.9917645Z doc-tests: ok — ran (wall 4.5s)
+2026-10-15T02:29:59.9917735Z test: ok — 94 suites, 717 passed
+2026-10-15T02:29:59.9917797Z lint: ok — clean (wall 48.5s)
+2026-10-15T02:29:59.9917857Z log: target/bar/report.log (1845 lines)
+2026-10-15T02:30:00.5780493Z files over 2000 lines: 47
+2026-10-15T02:30:00.5780913Z   crates/jojobot-domain/src/memory/testing/contract/base.rs (18422 lines)
+2026-10-15T02:30:00.5781030Z   crates/jojobot-mcp/src/memory/recall/tests.rs (10282 lines)
+2026-10-15T02:30:00.5781100Z   crates/jojobot-adapters/tests/dolt_store.rs (9731 lines)
+2026-10-15T02:30:00.5781162Z   crates/jojobot-adapters/src/search/tests.rs (9574 lines)
+2026-10-15T02:30:00.5781231Z   crates/jojobot-adapters/src/dolt/memory.rs (8259 lines)
+2026-10-15T02:30:00.5781566Z   crates/jojobot-domain/src/memory.rs (7601 lines)
