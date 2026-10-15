@@ -24,6 +24,28 @@ fn handles_of(answer: &Answer) -> Vec<String> {
         .collect()
 }
 
+/// The advice a refusal carries, as one string.
+fn advice(refusal: &Answer) -> String {
+    refusal.json()["how_to_proceed"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a refusal carries advice: {}", refusal.raw()))
+        .to_string()
+}
+
+/// The text of `advice` between `start` and the next `end` after it, so a story
+/// makes the call the refusal names rather than the one it already knew.
+fn between<'a>(advice: &'a str, start: &str, end: &str) -> &'a str {
+    let from = advice
+        .find(start)
+        .unwrap_or_else(|| panic!("the advice has no {start:?}: {advice}"))
+        + start.len();
+    let rest = &advice[from..];
+    let to = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("the advice has no {end:?} after {start:?}: {advice}"));
+    &rest[..to]
+}
+
 /// A board whose keys no type declares, so an ordering on them is not licensed.
 async fn an_undeclared_board(s: &Session) {
     for (handle, name, size, touches) in [
@@ -49,17 +71,18 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
     let s = story.session_on("2026-10-09", None).await;
     a_board(&s).await;
 
-    s.refused(
-        "recall",
-        json!({ "kind": "thing", "where": "status == done" }),
-    )
-    .await
-    .says("==");
-    let fixed = s
-        .call(
+    let refusal = s
+        .refused(
             "recall",
-            json!({ "kind": "thing", "where": "status = done" }),
+            json!({ "kind": "thing", "where": "status == done" }),
         )
+        .await;
+    // The spelling is read from the refusal, not from the sent query: the sent
+    // query holds the doubled sign itself, so a needle on it proves nothing.
+    let advice = advice(&refusal);
+    let fix = between(&advice, "equality is written with one: ", ", not ");
+    let fixed = s
+        .call("recall", json!({ "kind": "thing", "where": fix }))
         .await;
     assert_eq!(handles_of(&fixed), ["thing:epsilon"], "{}", fixed.raw());
 
@@ -159,14 +182,22 @@ async fn a_licence_refusal_names_the_type_to_declare() {
     let s = story.session_on("2026-10-09", None).await;
     an_undeclared_board(&s).await;
 
-    s.refused("recall", json!({"kind": "thing", "where": "size > 3"}))
-        .await
-        .says("declare_type")
-        .says("size")
-        .says("number");
+    // The declaration is read from the refusal: its type, its key and what the
+    // key holds. The sent query holds `size` itself, so a needle on it proves
+    // nothing about what the refusal advises.
+    let refusal = s
+        .refused("recall", json!({"kind": "thing", "where": "size > 3"}))
+        .await;
+    refusal.says("declare_type");
+    let advice_for_size = advice(&refusal);
+    let kind = between(&advice_for_size, "name \"", "\" with a field key");
+    let size = json!({
+        "key": between(&advice_for_size, "field key \"", "\" holding"),
+        "holds": between(&advice_for_size, "holding \"", "\""),
+    });
     s.call(
         "declare_type",
-        json!({"name": "thing", "fields": [{"key": "size", "holds": "number"}]}),
+        json!({"name": kind, "fields": [size.clone()]}),
     )
     .await;
     let fixed = s
@@ -174,20 +205,21 @@ async fn a_licence_refusal_names_the_type_to_declare() {
         .await;
     assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
 
-    s.refused(
-        "recall",
-        json!({"kind": "thing", "where": "touches contains essay.rs"}),
-    )
-    .await
-    .says("declare_type")
-    .says("touches")
-    .says("list");
+    let refusal = s
+        .refused(
+            "recall",
+            json!({"kind": "thing", "where": "touches contains essay.rs"}),
+        )
+        .await;
+    refusal.says("declare_type");
+    let advice_for_touches = advice(&refusal);
+    let touches = json!({
+        "key": between(&advice_for_touches, "field key \"", "\" holding"),
+        "holds": between(&advice_for_touches, "holding \"", "\""),
+    });
     s.call(
         "declare_type",
-        json!({"name": "thing", "fields": [
-            {"key": "size", "holds": "number"},
-            {"key": "touches", "holds": "list:text"},
-        ]}),
+        json!({"name": kind, "fields": [size, touches]}),
     )
     .await;
     let fixed = s
@@ -213,19 +245,31 @@ async fn an_order_on_a_key_nothing_holds_is_refused_not_tied() {
     let s = story.session_on("2026-10-09", None).await;
     a_board(&s).await;
 
-    s.refused(
-        "recall",
-        json!({"kind": "thing", "order": {"key": "duedate"}}),
-    )
-    .await
-    .says("duedate")
-    .says("due");
+    let refusal = s
+        .refused(
+            "recall",
+            json!({"kind": "thing", "order": {"key": "duedate"}}),
+        )
+        .await;
+    // The keys held are read from the refusal as a list. `due` is a prefix of the
+    // key sent, so a needle on it is satisfied by the sent query; as an element of
+    // the list it is the refusal's own word, and the misspelling is not in it.
+    let advice = advice(&refusal);
+    let held: Vec<&str> = between(&advice, "the keys held among them are: ", ".")
+        .split(", ")
+        .collect();
+    assert!(held.contains(&"due"), "the held keys name due: {held:?}");
+    assert!(
+        !held.contains(&"duedate"),
+        "duedate is no held key: {held:?}"
+    );
     // The positive: the key spelt as held orders them, and the thing holding none
     // comes last.
+    let key = held.iter().find(|key| **key == "due").expect("due is held");
     let ordered = s
         .call(
             "recall",
-            json!({"kind": "thing", "order": {"key": "due", "direction": "ascending"}}),
+            json!({"kind": "thing", "order": {"key": key, "direction": "ascending"}}),
         )
         .await;
     assert_eq!(
