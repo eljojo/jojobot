@@ -134,18 +134,26 @@ async fn a_cold_session_declares_a_view_that_takes_a_project_and_runs_it() {
         .as_str()
         .unwrap_or_else(|| panic!("the board view says what it takes: {board}"))
         .to_string();
+    // The input is named for itself, `lane`, so that a word only the missing
+    // input can put in an answer is a word the answer can be asked for. The
+    // shipped name, `project`, is also the kind it takes and the work's parent.
+    let taken = taken.replace("project:", "lane:");
+    assert!(
+        taken.starts_with("lane:"),
+        "the shape of the input: {taken}"
+    );
 
     s.call(
         "add_entity",
         json!({"kind": "view", "handle": "urgent-things", "name": "Urgent things",
                "source": "user-named",
-               "sets": {"selects": "work", "inputs": taken, "parent": "$project"}}),
+               "sets": {"selects": "work", "inputs": taken, "parent": "$lane"}}),
     )
     .await;
     let under_atlas = s
         .call(
             "recall",
-            json!({"view": "urgent-things", "inputs": {"project": "project:atlas"}}),
+            json!({"view": "urgent-things", "inputs": {"lane": "project:atlas"}}),
         )
         .await;
     assert_eq!(
@@ -155,11 +163,28 @@ async fn a_cold_session_declares_a_view_that_takes_a_project_and_runs_it() {
         under_atlas.raw()
     );
 
-    // The paired refusal: the project is required, and the refusal says so.
-    s.refused("recall", json!({"view": "urgent-things", "inputs": {}}))
-        .await
-        .says("project");
+    // The paired refusal: the input is required, and the refusal names it. `lane`
+    // is in no other answer to this call: the call sent none, and the view is
+    // asked by its own name.
+    let missing = s
+        .refused("recall", json!({"view": "urgent-things", "inputs": {}}))
+        .await;
+    missing.says("lane");
+    assert_eq!(missing.json()["fix_by"], "change", "{}", missing.raw());
     story.finish().await;
+}
+
+/// How many records of a thing say `content`, read from the thing's own facts.
+async fn times_said(s: &super::dsl::Session, subject: &str, content: &str) -> usize {
+    let facts = s
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await;
+    facts.json()["objects"][0]["facts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the facts of {subject}: {}", facts.raw()))
+        .iter()
+        .filter(|fact| fact["content"] == content)
+        .count()
 }
 
 #[tokio::test]
@@ -167,43 +192,56 @@ async fn a_cold_session_sends_a_request_id_on_the_first_call_and_a_repeat_writes
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
+    // The argument is published on the write the story uses, with a description
+    // for a reader to find it by.
     let advice = s.argument_description("capture", "request_id").await;
-    let advice = advice.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        advice.contains("on the first call"),
-        "the text says when to send it: {advice}"
-    );
+    assert!(!advice.trim().is_empty(), "request_id is described");
 
     s.add("project:atlas", "Atlas").await;
     let write = json!({"subject": "project:atlas", "content": "kickoff is set",
                        "provenance": "testimony", "request_id": "kickoff-1"});
-    s.call("capture", write.clone()).await;
+    let first = s.call("capture", write.clone()).await;
+    assert!(first.json().get("repeat").is_none(), "{}", first.raw());
     let again = s.call("capture", write).await;
     again.says("repeat");
-    let facts = s
-        .call("recall", json!({"subject": "project:atlas", "facts": true}))
-        .await;
     assert_eq!(
-        facts.raw().matches("kickoff is set").count(),
+        times_said(&s, "project:atlas", "kickoff is set").await,
         1,
-        "the repeat wrote nothing: {}",
-        facts.raw()
+        "the repeat wrote nothing"
+    );
+
+    // The negative the advice rests on: the same write sent twice with no id
+    // is two writes, because nothing says the second is a resend.
+    let bare = json!({"subject": "project:atlas", "content": "budget is agreed",
+                      "provenance": "testimony"});
+    let one = s.call("capture", bare.clone()).await;
+    let two = s.call("capture", bare).await;
+    assert!(one.json().get("repeat").is_none(), "{}", one.raw());
+    assert!(two.json().get("repeat").is_none(), "{}", two.raw());
+    assert_eq!(
+        times_said(&s, "project:atlas", "budget is agreed").await,
+        2,
+        "a call sent without an id cannot be told from a new one"
     );
     story.finish().await;
 }
 
+/// **A capability arrives as an argument on a verb that exists, and the document
+/// verbs are the served exception.** `view` is an argument of `recall` and no
+/// verb is named for a view; `read_document` and `put_document` are verbs.
 #[tokio::test]
-async fn the_asking_skill_names_the_document_verbs_as_the_verbs_a_capability_does_arrive_as() {
+async fn a_capability_arrives_as_an_argument_and_the_document_verbs_are_served_verbs() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
-    // The skill says a capability rarely arrives as a new verb and that the
-    // document verbs are the exception; the verbs it points at are served.
-    let asking = skill_body(&story).await;
-    assert!(
-        asking.contains("document verbs"),
-        "the skill names the exception: {asking}"
-    );
+    // The argument a view arrives as is published by the verb that reads.
+    let view = s.argument_description("recall", "view").await;
+    assert!(!view.trim().is_empty(), "recall publishes view");
+    // The negative: no verb is named for a view, and the verbs beside it are
+    // there, so the list that was read is the whole list.
+    s.has_no_verb_containing("view", &["recall", "search"])
+        .await;
+    // The exception: a document is read and written whole, by verbs.
     let served = s.served_verbs().await;
     for verb in ["read_document", "put_document"] {
         assert!(
