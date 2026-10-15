@@ -59,8 +59,9 @@ pub(crate) fn mailbox_blocked(
             "Nothing was written. '{attempted}' is not a mailbox jojobot knows, and nothing \
              resembles it. {verb} cannot create one — and a new box is rarely the answer: a \
              mailbox is a channel someone must be draining, so use start_here, whose snapshot \
-             names every box on the board, to pick an existing one — or tell the operator there \
-             is nowhere fitting to put this. A box is \
+             lists up to twenty bots, each with the box it owns, and counts the rest under \
+             bots_left_out with the calls that list them all, to pick an existing one — or tell \
+             the operator there is nowhere fitting to put this. A box is \
              opened only by standing up the bot that drains it, so if '{attempted}' should \
              exist, what is missing is that identity.",
         ),
@@ -663,5 +664,24 @@ pub(crate) mod tests {
             ),
             "change",
         );
+    }
+
+    /// **The refusal that sends a caller to the snapshot names its cap.** The
+    /// snapshot lists at most twenty bots and counts the rest under
+    /// `bots_left_out`, so a sentence that says it lists every box is false for a
+    /// large roster. Paired with the route being named, which a caller can follow.
+    #[test]
+    fn the_refusal_that_sends_a_caller_to_the_snapshot_names_the_bots_it_leaves_out() {
+        let said = format!(
+            "{:?}",
+            mailbox_blocked(
+                &MailboxName("nowhere".into()),
+                &[],
+                BlockedBox::MustExist("post_message"),
+            )
+        );
+        assert!(said.contains("bots_left_out"), "{said}");
+        assert!(said.contains("start_here"), "{said}");
+        assert!(!said.contains("every box"), "{said}");
     }
 }

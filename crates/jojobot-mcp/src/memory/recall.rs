@@ -446,7 +446,8 @@ pub struct RecallArgs {
     /// `journal` returns the wordings of each entry written more than once. A
     /// run's history comes back in parts under the answer ceiling, newest
     /// first: `history_most` counts the changes or wordings of a part, and
-    /// `offset` reads on.
+    /// `offset` reads on. Each change of a field carries its `position`, its
+    /// place in the order the run's changes were made.
     #[serde(default)]
     pub(crate) history: Option<String>,
     /// **The writes behind one RECORD, oldest first** — name a record's address
@@ -1053,7 +1054,7 @@ fn run_history_json(history: &graph::RunHistory) -> serde_json::Value {
             "shown": changes.len(),
             "writes": changes.iter().map(|change| {
                 let mut rendered = serde_json::json!({
-                    "ordinal": change.ordinal,
+                    "position": change.ordinal,
                     "change": change.changed.map(ChangeKind::as_token),
                 });
                 if let Some(fields) = rendered.as_object_mut() {

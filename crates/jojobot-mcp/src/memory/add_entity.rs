@@ -310,8 +310,9 @@ impl Jojobot {
         if args.request_id.is_some() && creating.kind() == Some(EntityKind::BOT) {
             return Ok(crate::caller::handle_declined(
                 "add_entity",
-                "Making a bot takes no request_id: it commits in two parts, the bot and then \
-                 its mailbox. Nothing was written. Send the call without request_id.",
+                "Making a bot takes no request_id: the call also opens the bot's mailbox, and \
+                 a resend answered from the first call's receipt could leave that mailbox \
+                 unopened. Nothing was written. Send the call without request_id.",
             ));
         }
         // **A new bot grows every other bot's snapshot**, which is a write that

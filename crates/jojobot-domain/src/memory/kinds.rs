@@ -299,13 +299,14 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::listing(COLUMNS, ValueType::Text),
         ],
         // **A question asked by name.** The keys are what a view IS: what it
-        // selects over, and what it keeps. They are required because a view
-        // missing either is a question nobody can ask — unlike a loop, where
-        // an absent cadence still leaves a loop.
+        // selects over, and what it keeps. A view that holds `selects` keeps it,
+        // because a question that says nothing about what it looks at is one
+        // nobody can ask — unlike a loop, where an absent cadence still leaves a
+        // loop. A view whose ask is `overdue` holds none, and needs none.
         "view" => vec![
-            // **What the question looks at** — the kind it selects. Required,
-            // because a question that says nothing about what it looks at is
-            // one nobody can ask.
+            // **What the question looks at** — the kind it selects. Required of a
+            // view that has one: once a view holds it, a write cannot take it
+            // away. An `overdue` ask names no kind (see below).
             Field::required("selects", ValueType::Text),
             // **What of each one comes back**, as the names the read already
             // uses: `facts`, `prose`, `charter`. Optional, and a view that

@@ -121,7 +121,8 @@ how you find out what is here**, and it costs one call.
 Declare your own with the surface you already know: `add_entity` of kind `view`,
 then the keys.
 
-    selects   what it looks at — a kind. Required.
+    selects   what it looks at — a kind. Required, except in a view whose ask is
+              overdue: that question already answers only the kinds that owe something.
     shows     what of each comes back: facts, prose, charter.
     asks      overdue, when the question is what has fallen due; ready, when
               it is which work can be started.

@@ -9039,7 +9039,7 @@ async fn a_runs_history_is_recalled_through_the_history_argument() {
     );
     let ordinals: Vec<u64> = writes
         .iter()
-        .map(|w| w["ordinal"].as_u64().unwrap())
+        .map(|w| w["position"].as_u64().unwrap())
         .collect();
     assert!(ordinals.windows(2).all(|w| w[0] < w[1]), "{ordinals:?}");
     assert!(

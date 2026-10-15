@@ -3661,7 +3661,8 @@ stated_day, wrap_window, state, served_chars, charter_told or key, and
 `journal` returns the wordings of each entry written more than once. A
 run's history comes back in parts under the answer ceiling, newest
 first: `history_most` counts the changes or wordings of a part, and
-`offset` reads on.
+`offset` reads on. Each change of a field carries its `position`, its
+place in the order the run's changes were made.
 ```
 
 #### `recall` — argument `/inputSchema.history_most`

@@ -488,7 +488,7 @@ impl Jojobot {
         if !unplaced.is_empty() {
             return refuse(format!(
                 "restore_to '{asked}' would place {}, whose state at that moment rests on a \
-                 write the store kept before it stamped its writes, so no moment places it. \
+                 write recorded before writes carried a moment, so no moment places it. \
                  Nothing was written. Restore the others by editing those sections with \
                  update_fact",
                 unplaced.join(", ")

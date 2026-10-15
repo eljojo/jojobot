@@ -790,8 +790,10 @@ impl Jojobot {
         if args.request_id.is_some() && move_plan.is_some() {
             return Ok(crate::caller::handle_declined(
                 "update_fact",
-                "Moving a document section takes no request_id: it commits in several \
-                 parts. Nothing was written. Send the call without request_id.",
+                "Moving a document section takes no request_id: the move rewrites the section \
+                 and each of its chunks, and a resend answered from the first call's receipt \
+                 could leave some of them unmoved. Nothing was written. Send the call without \
+                 request_id.",
             ));
         }
         // **The thing as it stands before the write**, for the receipt's account

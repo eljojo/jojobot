@@ -466,3 +466,55 @@ async fn a_compaction_report_beside_a_skill_is_refused_rather_than_dropped() {
     assert_eq!(read["skill"]["name"], "recommend", "{read}");
     story.finish().await;
 }
+
+/// **The route the refusal and the essay name reaches the bots a capped roster
+/// left out.** A roster over the cap is listed twenty at a time, and the
+/// snapshot and the refusal for a name that is no bot say the rest are counted
+/// under `bots_left_out`. Each answer
+/// is read for the call it names, the call is made, and it returns a bot the
+/// capped list did not carry.
+#[tokio::test]
+async fn the_route_to_the_bots_a_capped_roster_left_out_returns_them() {
+    let story = Story::begin("bot:upsilon").await;
+    let roster = a_roster_of(&story, 30, "bot:upsilon").await;
+    let past_the_cap = roster[BOTS_LISTED].clone();
+    let session = story.as_bot("bot:upsilon").await;
+
+    // ── the snapshot, which the essay sends a caller without a name to ──────
+    let (booted, _) = story.call("start_here", json!({})).await;
+    let booted = booted.json();
+    let snapshot = &booted["snapshot"]["entities"];
+    let listed: Vec<&str> = snapshot["bots"]
+        .as_array()
+        .expect("a list of bots")
+        .iter()
+        .map(|bot| bot["handle"].as_str().expect("a handle"))
+        .collect();
+    assert!(
+        !listed.contains(&past_the_cap.as_str()),
+        "the capped list carries the bot the route must find: {snapshot}"
+    );
+    let how = snapshot["bots_left_out"]["how_to_list"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the snapshot names no route: {snapshot}"));
+    assert!(how.contains("list_entities"), "{how}");
+
+    // ── the refusal for a name that is no bot ───────────────────────────────
+    let refusal = story
+        .refused_at_the_door("start_here", json!({"bot": "nobody-by-this-name"}))
+        .await
+        .json();
+    let how_refused = refusal["bots_left_out"]["how_to_list"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the refusal names no route: {refusal}"));
+    assert_eq!(how_refused, how, "one route in both answers");
+
+    // ── the call both name returns the bot the list left out ───────────
+    let all = session.call("list_entities", json!({"kind": "bot"})).await;
+    assert!(
+        all.raw().contains(&past_the_cap),
+        "list_entities kind bot does not return {past_the_cap}: {}",
+        all.raw()
+    );
+    story.finish().await;
+}

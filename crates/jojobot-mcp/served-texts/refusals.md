@@ -771,7 +771,7 @@ answer: protocol error: this call was rejected: another write landed at the same
 
 ```text
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
-answer: protocol error: this call was refused by jojobot's own storage on a rule it enforces (a key held twice). The store is working and answered; nothing was written. Sending the same call again will meet the same refusal, so do not retry it unchanged. This is not something your call did wrong that you can fix by calling differently: tell the operator, because it needs a person.
+answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in brackets says what it breaks.
 {
   "fix_by": "change"
 }
@@ -950,7 +950,7 @@ answer: protocol error: this call was rejected: another write landed at the same
 
 ```text
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
-answer: protocol error: this call was refused by jojobot's own storage on a rule it enforces (a key held twice). The store is working and answered; nothing was written. Sending the same call again will meet the same refusal, so do not retry it unchanged. This is not something your call did wrong that you can fix by calling differently: tell the operator, because it needs a person.
+answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in brackets says what it breaks.
 {
   "fix_by": "change"
 }
@@ -1100,7 +1100,7 @@ answer: protocol error: this call was rejected: another write landed at the same
 
 ```text
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
-answer: protocol error: this call was refused by jojobot's own storage on a rule it enforces (a key held twice). The store is working and answered; nothing was written. Sending the same call again will meet the same refusal, so do not retry it unchanged. This is not something your call did wrong that you can fix by calling differently: tell the operator, because it needs a person.
+answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in brackets says what it breaks.
 {
   "fix_by": "change"
 }
