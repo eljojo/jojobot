@@ -38,12 +38,15 @@ pub struct ReadDocumentArgs {
 impl Jojobot {
     #[tool(
         description = "Read a document as markdown: its live sections joined in order, byte \
-                       for byte as they were put, as one markdown string. Archived sections are left \
-                       out and counted. A document longer than one answer comes back in parts: \
+                       for byte as they were put, as one markdown string, with the `addresses` \
+                       of the sections shown, in order: the address update_fact edits and put_document places after. \
+                       Archived sections are left out and counted as \
+                       `archived_sections_left_out`; recall the document with facts reads them. A document longer than one answer comes back in parts: \
                        the sections from `offset` that fit, with `next_offset` and a \
                        not_shown block naming the call that reads the rest. The document's \
-                       own name, one_liner, stale_after and resource ride beside the text, \
-                       never inside it. `as_of` (a day or an instant) reads the document as \
+                       own name and its keys ride beside the text, never inside it: one_liner \
+                       says what it is, stale_after the day past which it promises nothing, \
+                       resource the page it mirrors. `as_of` (a day or an instant) reads the document as \
                        it stood then: each section in the wording, place and archive state it \
                        had, a section made later absent, and the answer names the moment it \
                        used. A document that does not exist is a blocked result with \
@@ -150,12 +153,14 @@ impl Jojobot {
         // returns.
         let mut bare = body.clone();
         bare["markdown"] = "".into();
+        bare["addresses"] = serde_json::Value::Array(Vec::new());
         bare["next_offset"] = usize::MAX.into();
         let spent = crate::answer::served_len(&bare)
             + crate::answer::widest_not_shown("sections")
             + crate::answer::STATUS_BAR_ROOM;
         let mut room = ANSWER_CEILING.saturating_sub(spent);
         let mut page = String::new();
+        let mut shown: Vec<String> = Vec::new();
         let mut taken = 0;
         for held in &live[offset..] {
             let text = section_text(held);
@@ -164,7 +169,10 @@ impl Jojobot {
                 .to_string()
                 .chars()
                 .count()
-                - 2;
+                - 2
+                // The section's address rides beside the text, so it is paid for too.
+                + held.fact.address().to_string().len()
+                + 4;
             // One section always ships: a read that returned nothing would never
             // advance.
             if taken > 0 && cost > room {
@@ -172,9 +180,11 @@ impl Jojobot {
             }
             room = room.saturating_sub(cost);
             page.push_str(&text);
+            shown.push(held.fact.address().to_string());
             taken += 1;
         }
         body["markdown"] = page.into();
+        body["addresses"] = shown.into();
         let end = offset + taken;
         if end < live.len() {
             body["next_offset"] = end.into();

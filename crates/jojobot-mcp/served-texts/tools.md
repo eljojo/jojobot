@@ -167,6 +167,11 @@ care.
 One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
 `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`.
 
+**A `document` holds long markdown text**: write it with `put_document`, read it
+with `read_document`. Its optional keys, set in `sets`, are `one_liner` (what it
+is, in a line), `stale_after` (the day past which it promises nothing) and
+`resource` (the page it mirrors elsewhere).
+
 **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
 a bike, a hand tool — and a companion animal is not one.
 
@@ -833,7 +838,7 @@ kept as written and never becomes a link.
 
 A claim too big to be read back whole in one answer is refused with nothing
 written: shorten it, split it into claims that each say one thing, or keep
-the long text outside and write a pointer claim.
+the long text on a document (`put_document`) and write a pointer claim.
 ```
 
 #### `capture` — argument `/inputSchema.derived_from`
@@ -2099,7 +2104,7 @@ Leave a message for someone who is not in this conversation.
 A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
 No verb opens a bot's box.
 Give it a `subject`: one line saying what the message is about, which is what a reader sees on a listing before opening anything.
-A body too long to be handed to its reader whole is refused with nothing written: split it, or put the long text on a record and send its address.
+A body too long to be handed to its reader whole is refused with nothing written: split it, or put the long text on a document with put_document and send its address.
 To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one is not handed over as fresh mail if nobody has read it.
 IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (it can already say `read` if a person picked it up, and that is success), body_bytes and body_elided: true.
 Your body is not echoed back; list_sent with include_bodies returns it and takes no delivery.
@@ -2475,10 +2480,10 @@ that name.
 #### `read_document` — description
 
 ```text
-Read a document as markdown: its live sections joined in order, byte for byte as they were put, as one markdown string.
-Archived sections are left out and counted.
+Read a document as markdown: its live sections joined in order, byte for byte as they were put, as one markdown string, with the `addresses` of the sections shown, in order: the address update_fact edits and put_document places after.
+Archived sections are left out and counted as `archived_sections_left_out`; recall the document with facts reads them.
 A document longer than one answer comes back in parts: the sections from `offset` that fit, with `next_offset` and a not_shown block naming the call that reads the rest.
-The document's own name, one_liner, stale_after and resource ride beside the text, never inside it.
+The document's own name and its keys ride beside the text, never inside it: one_liner says what it is, stale_after the day past which it promises nothing, resource the page it mirrors.
 `as_of` (a day or an instant) reads the document as it stood then: each section in the wording, place and archive state it had, a section made later absent, and the answer names the moment it used.
 A document that does not exist is a blocked result with candidates.
 ```
@@ -5397,13 +5402,13 @@ A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 Two moves are gated: anything to testimony needs confirmed_by_user; open to settled needs a `receipt` (`check` or `confirmed`), which leaves provenance alone.
-Reopening is free; a fresh capture is at its word.
 It answers with a receipt read back, not the record; recall reads the record.
-A call naming no change is refused; keep: true alone touches a claim unchanged.
+A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
 Naming an own key in `sets` moves it.
-An unknown address is blocked with the addresses that exist.
+`after` (a document section's address) moves a section behind it and takes no request_id.
+An unknown address is blocked with candidates.
 The receipt's `changed` lists what moved.
 ```
 
@@ -5882,8 +5887,8 @@ kept as written and never becomes a link.
 
 An edit that would leave the claim too big to be read back whole in one
 answer is refused with the claim unchanged: shorten it, split it into claims
-that each say one thing, or keep the long text outside and write a pointer
-claim.
+that each say one thing, or keep the long text on a document (`put_document`)
+and write a pointer claim.
 ```
 
 #### `update_fact` — argument `/inputSchema.derived_from`

@@ -32,8 +32,8 @@ pub struct UpdateFactArgs {
     ///
     /// An edit that would leave the claim too big to be read back whole in one
     /// answer is refused with the claim unchanged: shorten it, split it into claims
-    /// that each say one thing, or keep the long text outside and write a pointer
-    /// claim.
+    /// that each say one thing, or keep the long text on a document (`put_document`)
+    /// and write a pointer claim.
     #[serde(default)]
     pub(crate) content: Option<String>,
     /// Replacement details; pass an empty string to clear them. They may hold
@@ -339,8 +339,8 @@ impl Jojobot {
                        the claim was MADE, never the day you call), `status`, \
                        `provenance`, `standing`, `fields`, `sets` and the claim's edge; \
                        `stands_for` marks a record as a synthesis of other claims. \
-                       ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in \
-                       update_fact, its status argument and retract. A claim that was \
+                       ARCHIVE, RETRACT OR REWRITE — one rule, stated the \
+                       same in update_fact, its status argument and retract. A claim that was \
                        true and has changed, or that was never true: archive it with \
                        update_fact (status: archived, the reason in details) and capture \
                        the replacement, naming the old claim in derived_from. A claim \
@@ -357,11 +357,10 @@ impl Jojobot {
                        with derived_from naming the archived claim. Two moves are \
                        gated: anything to testimony needs confirmed_by_user; open \
                        to settled needs a `receipt` (`check` or `confirmed`), which \
-                       leaves provenance alone. Reopening is free; a fresh capture is at \
-                       its word. It answers with a receipt read back, not the record; recall \
-                       reads the record. A call naming no change is refused; keep: true alone touches a claim unchanged. \
+                       leaves provenance alone. It answers with a receipt read back, not the record; recall \
+                       reads the record. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with the addresses that exist. The receipt's \
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` (a document section's address) moves a section behind it and takes no request_id. An unknown address is blocked with candidates. The receipt's \
                        `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(

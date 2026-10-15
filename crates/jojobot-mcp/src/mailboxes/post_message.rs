@@ -325,7 +325,7 @@ impl Jojobot {
                        a `subject`: one line saying what the message is about, which is what \
                        a reader sees on a listing before opening anything. A body too long to \
                        be handed to its reader whole is refused with nothing written: split \
-                       it, or put the long text on a record and send its address. To correct \
+                       it, or put the long text on a document with put_document and send its address. To correct \
                        or withdraw a message you sent, post again to the same box with \
                        `supersedes` set to its id: the reader is handed the new one, and the \
                        old one is not handed over as fresh mail if nobody has read it. IT \
@@ -478,8 +478,8 @@ impl Jojobot {
         if let Some(room) = body_room_beyond(&new) {
             return mailbox_declined(MailboxError::InvalidMessage(format!(
                 "this body is {} characters and the largest a reader can be handed whole is \
-                 about {room}. Split it into several messages, or put the long text on a record \
-                 with capture and send its address",
+                 about {room}. Split it into several messages, or put the long text on a document \
+                 with put_document and send its address",
                 new.body.chars().count()
             )));
         }

@@ -39,7 +39,7 @@ pub struct CaptureArgs {
     ///
     /// A claim too big to be read back whole in one answer is refused with nothing
     /// written: shorten it, split it into claims that each say one thing, or keep
-    /// the long text outside and write a pointer claim.
+    /// the long text on a document (`put_document`) and write a pointer claim.
     pub(crate) content: String,
     /// Nuance, the why, merge notes — the description under the claim. It may
     /// hold paragraph breaks and reads back with every one; the claim above

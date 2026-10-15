@@ -1277,8 +1277,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing was written: {e}. Shorten it ({} characters over); or split it into \
                  claims that each say one thing, which {verb} can write one after another; or \
-                 keep the long text as a page outside the store and write a pointer claim that \
-                 names where it is.",
+                 keep the long text on a document (add_entity of kind document, then \
+                 put_document) and write a pointer claim that names it.",
                 size - room
             ),
         )),
@@ -1308,7 +1308,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                      on it until they are smaller. Shrink them: shorten its name or \
                      aliases with update_entity, take keys off with update_fact and \
                      clear_fields, move detail to the thing it is about, or keep the long text \
-                     as a page outside the store behind a pointer claim on another thing. Then \
+                     on a document (put_document) behind a pointer claim on another thing. Then \
                      send {verb} again.",
                     size - room
                 ),

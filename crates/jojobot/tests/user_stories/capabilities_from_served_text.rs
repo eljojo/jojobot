@@ -213,3 +213,151 @@ async fn the_asking_skill_names_the_document_verbs_as_the_verbs_a_capability_doe
     }
     story.finish().await;
 }
+
+/// Text of exactly `len` characters, with no blank line in it.
+fn filler(len: usize) -> String {
+    let mut out: String = "kiln ".repeat(len / 5 + 1).chars().take(len).collect();
+    // A trailing space would be trimmed on the way in and move the length.
+    if out.ends_with(' ') {
+        out.pop();
+        out.push('k');
+    }
+    out
+}
+
+/// "I have a long plan to keep. Where does it go?" — every value below is read
+/// from an answer the session was given: the route from the refusal, the
+/// addresses from the document's reads.
+#[tokio::test]
+async fn a_cold_session_with_a_plan_too_long_for_a_claim_finds_the_document_verbs_from_the_refusal()
+{
+    use jojobot_domain::text::ANSWER_CEILING;
+
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("project:atlas", "Atlas").await;
+
+    // ── the text that meets a document's keys, its archived count and the
+    // move names them where they are read ────────────────────────────────────
+    let kinds = s.argument_description("add_entity", "kind").await;
+    assert!(
+        kinds.contains("stale_after"),
+        "the kind list explains the document: {kinds}"
+    );
+    let reading = s.description("read_document").await;
+    assert!(
+        reading.contains("archived_sections_left_out"),
+        "the read names the count it leaves out: {reading}"
+    );
+    let editing = s.description("update_fact").await;
+    for word in ["after", "request_id"] {
+        assert!(
+            editing.contains(word),
+            "update_fact names {word}: {editing}"
+        );
+    }
+
+    // Six sections that together are longer than one claim can be.
+    let each = ANSWER_CEILING / 5;
+    let plan: String = (1..=6)
+        .map(|n| format!("## Step {n}\n\nmarker-{n} {}\n\n", filler(each)))
+        .collect();
+    let plan = format!("# The plan\n\n{plan}");
+
+    // ── the capture is refused, and the refusal names the route ─────────────
+    let refusal = s
+        .refused(
+            "capture",
+            json!({"subject": "project:atlas", "content": "the plan", "details": plan,
+                   "provenance": "testimony"}),
+        )
+        .await;
+    refusal.says("put_document");
+
+    // ── the route: a document, and the plan put onto it ─────────────────────
+    s.add("document:homer", "The plan").await;
+    let put = s
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": plan}),
+        )
+        .await
+        .json();
+    let written: Vec<String> = put["addresses"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the put answers each section's address: {put}"))
+        .iter()
+        .map(|a| a.as_str().expect("an address").to_string())
+        .collect();
+    assert_eq!(written.len(), 7, "the title and six steps: {put}");
+
+    // ── the read answers the addresses of what it shows, in order ───────────
+    let read = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let shown: Vec<String> = read["addresses"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the read answers the addresses it shows: {read}"))
+        .iter()
+        .map(|a| a.as_str().expect("an address").to_string())
+        .collect();
+    assert!(shown.len() >= 4, "a page shows several sections: {read}");
+    assert_eq!(
+        shown[..],
+        written[..shown.len()],
+        "the same addresses, in order"
+    );
+
+    // ── the third step is edited through an address an answer gave ──────────
+    let third = &shown[3];
+    s.call(
+        "update_fact",
+        json!({"address": third, "field": "details",
+               "find": "marker-3", "replace": "marker-3-done"}),
+    )
+    .await;
+    let edited = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let text = edited["markdown"].as_str().expect("the text");
+    assert_eq!(text.matches("marker-3-done").count(), 1, "{edited}");
+    assert_eq!(
+        text.matches("marker-4 ").count(),
+        1,
+        "the others stand: {edited}"
+    );
+
+    // ── a section moves with `after`, and the order the read answers moves ──
+    s.call(
+        "update_fact",
+        json!({"address": shown[3], "after": shown[0]}),
+    )
+    .await;
+    let moved = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let order: Vec<String> = moved["addresses"]
+        .as_array()
+        .expect("addresses")
+        .iter()
+        .map(|a| a.as_str().expect("an address").to_string())
+        .collect();
+    assert_eq!(
+        order[1], shown[3],
+        "step three now follows the title: {moved}"
+    );
+    assert_eq!(order[2], shown[1], "step one follows it: {moved}");
+
+    // The pair: putting the plan again with no `after` is refused, and the
+    // refusal says what `after` does.
+    s.refused(
+        "put_document",
+        json!({"document": "document:homer", "markdown": "# Again\n\nonce more\n"}),
+    )
+    .await
+    .says("replaces");
+    story.finish().await;
+}

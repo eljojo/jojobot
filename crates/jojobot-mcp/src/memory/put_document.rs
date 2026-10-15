@@ -190,7 +190,8 @@ impl Jojobot {
                     MemoryError::InvalidFact(format!(
                         "{} already has {} live sections, and putting a file onto it with no \
                          `after` would write its text a second time. Two ways forward: name \
-                         `after`, the address of the section the new ones follow, or edit a \
+                         `after`, the address of the section the new ones follow (`after` adds \
+                         and replaces nothing; read_document lists the addresses), or edit a \
                          section that is there with update_fact on its address",
                         args.document,
                         live.len()
@@ -391,6 +392,7 @@ impl Jojobot {
             "sections": landed.len(),
             "first": landed.first().map(ToString::to_string),
             "last": landed.last().map(ToString::to_string),
+            "addresses": landed.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "bytes": markdown.len(),
         });
         if cut_for_size > 0 {
@@ -407,8 +409,9 @@ impl Jojobot {
         crate::answer::note_postcondition(
             &mut body,
             format!(
-                "{} written on {}, in order. read_document returns the file; update_fact on a \
-                 section's address edits that section alone.",
+                "{} written on {}, in order, at the `addresses` listed. read_document returns the \
+                 file; update_fact on a section's address edits that section alone, and with \
+                 `after` moves it.",
                 crate::answer::counted(landed.len(), "section", "sections"),
                 subject
             ),
