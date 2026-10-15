@@ -156,10 +156,12 @@ pub type EntryPart = (EntryId, usize, Vec<Wording>);
 /// **What `history: "journal"` on a run answers with**: a part of the wordings
 /// of the entries written more than once, and how many such wordings there are.
 ///
-/// The wordings stand in the run's order: entry by entry as the run holds them,
-/// each entry's oldest first. The part is the newest `most` of them after the
-/// newest `skip`, which a caller has already read, and it comes back grouped by
-/// entry in that same order.
+/// **Newest means written last**, by the moment the store made each wording, so
+/// a beat of the run's that was rewritten after a later entry holds the newest
+/// wording of all. Two wordings made at one moment keep the run's order. The
+/// part is the newest `most` of them after the newest `skip`, which a caller has
+/// already read; it comes back grouped by entry, in the run's order, each
+/// entry's wordings oldest first.
 pub fn trace_journal(
     entries: Vec<(EntryId, Vec<Wording>)>,
     most: usize,
@@ -169,9 +171,21 @@ pub fn trace_journal(
         .into_iter()
         .filter(|(_, wordings)| wordings.len() > 1)
         .collect();
-    let total: usize = amended.iter().map(|(_, wordings)| wordings.len()).sum();
+    // Every wording's place in the run's order, oldest write first.
+    let mut by_write: Vec<(Timestamp, usize)> = amended
+        .iter()
+        .flat_map(|(_, wordings)| wordings.iter().map(|w| w.written_at))
+        .enumerate()
+        .map(|(place, at)| (at, place))
+        .collect();
+    by_write.sort();
+    let total = by_write.len();
     let end = total.saturating_sub(skip);
     let start = end.saturating_sub(most);
+    let kept_places: std::collections::BTreeSet<usize> = by_write[start..end]
+        .iter()
+        .map(|(_, place)| *place)
+        .collect();
     let mut part = Vec::new();
     let mut place = 0usize;
     for (entry, wordings) in amended {
@@ -179,7 +193,7 @@ pub fn trace_journal(
         let kept: Vec<Wording> = wordings
             .into_iter()
             .enumerate()
-            .filter(|(at, _)| (start..end).contains(&(place + at)))
+            .filter(|(at, _)| kept_places.contains(&(place + at)))
             .map(|(_, wording)| wording)
             .collect();
         place += held;
@@ -535,19 +549,22 @@ mod tests {
     /// once**, read newest first in parts and grouped by entry.
     #[test]
     fn the_journals_account_is_the_wordings_of_the_entries_written_more_than_once() {
-        let wording = |text: &str, revision: usize| Wording {
+        let wording = |text: &str, revision: usize, written: i64| Wording {
             revision,
             text: text.to_string(),
             touched: None,
-            written_at: at(revision as i64),
+            written_at: at(written),
         };
         let entries = vec![
-            (EntryId("a".into()), vec![wording("only", 1)]),
+            (EntryId("a".into()), vec![wording("only", 1, 1)]),
             (
                 EntryId("b".into()),
-                vec![wording("one", 1), wording("two", 2)],
+                vec![wording("one", 1, 2), wording("two", 2, 3)],
             ),
-            (EntryId("c".into()), vec![wording("x", 1), wording("y", 2)]),
+            (
+                EntryId("c".into()),
+                vec![wording("x", 1, 4), wording("y", 2, 5)],
+            ),
         ];
         let texts = |part: &[EntryPart]| {
             part.iter()
@@ -567,6 +584,38 @@ mod tests {
         let (older, _) = trace_journal(entries.clone(), 3, 3);
         assert_eq!(texts(&older), ["b/2:one"], "the skip reads on");
         assert_eq!(trace_journal(entries, 3, 4).0, Vec::new());
+    }
+
+    /// **Newest is the wording written last, whichever entry holds it.** Entry
+    /// `b` is earlier in the run and was rewritten after `c` was, so a part of one
+    /// holds `b`'s second wording, and the part after it holds `c`'s.
+    #[test]
+    fn the_newest_wording_is_the_one_written_last_from_whichever_entry() {
+        let wording = |text: &str, revision: usize, written: i64| Wording {
+            revision,
+            text: text.to_string(),
+            touched: None,
+            written_at: at(written),
+        };
+        let entries = vec![
+            (
+                EntryId("b".into()),
+                vec![wording("one", 1, 1), wording("two", 2, 5)],
+            ),
+            (
+                EntryId("c".into()),
+                vec![wording("x", 1, 2), wording("y", 2, 3)],
+            ),
+        ];
+        let texts = |part: &[EntryPart]| {
+            part.iter()
+                .flat_map(|(_, _, wordings)| wordings.iter().map(|w| w.text.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(texts(&trace_journal(entries.clone(), 1, 0).0), ["two"]);
+        assert_eq!(texts(&trace_journal(entries.clone(), 1, 1).0), ["y"]);
+        assert_eq!(texts(&trace_journal(entries.clone(), 1, 2).0), ["x"]);
+        assert_eq!(texts(&trace_journal(entries, 1, 3).0), ["one"]);
     }
 
     /// **A token round-trips, and only the five the index reads move it.**

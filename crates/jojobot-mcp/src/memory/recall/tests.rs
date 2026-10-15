@@ -10386,3 +10386,58 @@ async fn a_view_whose_own_records_cannot_be_read_answers_an_outage_not_an_unfilt
         "{outage:?}"
     );
 }
+
+/// **A part of a run's journal that the ceiling cuts keeps the wording written
+/// last, and the pointer it leaves counts what was read.** Entry `b` is earlier
+/// in the run and was rewritten after `c`, so its second wording is the newest;
+/// the room holds one wording, so that is the one kept, and the next part starts
+/// after it.
+#[test]
+fn a_part_the_ceiling_cuts_keeps_the_wording_written_last() {
+    let big = "k".repeat(15_000);
+    let wording = |revision: usize, text: &str, written_at: &str| {
+        serde_json::json!({
+            "revision": revision,
+            "text": format!("{text} {big}"),
+            "written_at": written_at,
+        })
+    };
+    let mut body = serde_json::json!({
+        "objects": [{
+            "id": "abcdef",
+            "history": {
+                "count": 4,
+                "entries": [
+                    {"entry": "000001", "count": 2, "wordings": [
+                        wording(1, "b-one", "2026-10-15T01:00:00Z"),
+                        wording(2, "b-two", "2026-10-15T05:00:00Z"),
+                    ]},
+                    {"entry": "000002", "count": 2, "wordings": [
+                        wording(1, "c-one", "2026-10-15T02:00:00Z"),
+                        wording(2, "c-two", "2026-10-15T03:00:00Z"),
+                    ]},
+                ],
+            },
+        }]
+    });
+    fit_run_histories(&mut body, "journal", Some(0));
+    let history = &body["objects"][0]["history"];
+    let kept: Vec<&str> = history["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .flat_map(|entry| entry["wordings"].as_array().expect("wordings"))
+        .map(|w| {
+            w["text"]
+                .as_str()
+                .expect("text")
+                .split(' ')
+                .next()
+                .expect("word")
+        })
+        .collect();
+    assert_eq!(kept, ["b-two"], "{history}");
+    assert_eq!(history["shown"], 1, "{history}");
+    assert_eq!(history["not_shown"]["offset"], 1, "{history}");
+    assert_eq!(history["not_shown"]["count"], 3, "{history}");
+}

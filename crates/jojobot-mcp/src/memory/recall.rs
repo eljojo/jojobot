@@ -1161,19 +1161,30 @@ fn fit_run_histories(body: &mut serde_json::Value, traced: &str, paged: Option<u
         let reserve = crate::answer::under_key("not_shown", &pointer(usize::MAX, usize::MAX));
         let mut room =
             ANSWER_CEILING.saturating_sub(rest + crate::answer::served_len(object) + 1 + reserve);
-        // Newest first: the records are served oldest first, so fill from the end.
-        let mut kept = 0usize;
-        for (_, record) in records.iter().rev() {
-            let cost = crate::answer::served_len(record) + 1;
-            if kept > 0 && cost > room {
+        // Newest first: the newest write is the one written last, so fill in that
+        // order and drop the oldest writes when the room runs out. The part is
+        // served in the run's order, so the order of writing is read off each
+        // record, with the run's order breaking a tie.
+        let mut newest_first: Vec<usize> = (0..records.len()).collect();
+        newest_first.sort_by(|a, b| {
+            let written = |at: &usize| records[*at].1["written_at"].as_str().map(str::to_string);
+            written(b).cmp(&written(a)).then(b.cmp(a))
+        });
+        let mut kept_at = std::collections::BTreeSet::new();
+        for at in newest_first {
+            let cost = crate::answer::served_len(&records[at].1) + 1;
+            if !kept_at.is_empty() && cost > room {
                 break;
             }
             room = room.saturating_sub(cost);
-            kept += 1;
+            kept_at.insert(at);
         }
-        let first = records.len() - kept;
+        let kept = kept_at.len();
         let mut history = skeleton;
-        for (entry, record) in records.into_iter().skip(first) {
+        for (at, (entry, record)) in records.into_iter().enumerate() {
+            if !kept_at.contains(&at) {
+                continue;
+            }
             match entry {
                 Some(at) => {
                     if let Some(wordings) = history["entries"][at]["wordings"].as_array_mut() {
@@ -4255,6 +4266,21 @@ impl Jojobot {
             use jojobot_domain::session::history::{JOURNAL, trace_field, trace_journal};
             for object in objects {
                 if object.entity.kind == EntityKind::SESSION {
+                    // **A part of no changes reads nothing**, and the pointer it
+                    // would leave names the same offset, so a caller that followed it
+                    // would be sent back to the call it made.
+                    if most == 0 {
+                        return Some(memory_declined(
+                            "recall",
+                            MemoryError::InvalidQuery(
+                                "history_most is how many changes or wordings of a run's \
+                                 history one part holds, and 0 holds none, so it reads \
+                                 nothing and never moves on. Send 1 or more, or leave \
+                                 history_most off for the newest part"
+                                    .into(),
+                            ),
+                        ));
+                    }
                     let id =
                         jojobot_domain::session::SessionId(object.entity.id.slug().to_string());
                     let traced = if field == JOURNAL {

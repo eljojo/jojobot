@@ -243,3 +243,140 @@ async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
     other.wrap("read it back").await;
     story.finish().await;
 }
+
+/// "Give me the history, none of it at a time." A page of zero changes reads
+/// nothing, so it is refused and says what to send; a page of one reads the
+/// newest change, and the pointer it leaves moves forward to the next.
+#[tokio::test]
+async fn a_page_of_no_changes_is_refused_and_a_page_of_one_moves_forward_when_followed() {
+    let story = Story::begin("bot:otto").await;
+    let run = story.session().await;
+    for focus in ["reading the card", "writing the fix", "checking the fix"] {
+        run.call("journal", json!({"entry": focus, "focus": focus}))
+            .await;
+    }
+    let handle = format!("session:{}", run.run());
+
+    // The zero page: refused, naming the argument and what to send.
+    run.refused(
+        "recall",
+        json!({"subject": &handle, "history": "focus", "history_most": 0}),
+    )
+    .await
+    .says("history_most");
+
+    // The pair: one change at a time is read, and following the pointer moves.
+    let value_of = |answer: &super::dsl::Answer| {
+        answer.json()["objects"][0]["history"]["writes"][0]["value"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let first = run
+        .call(
+            "recall",
+            json!({"subject": &handle, "history": "focus", "history_most": 1}),
+        )
+        .await;
+    let pointer = first.json()["objects"][0]["history"]["not_shown"].clone();
+    let offset = pointer["offset"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("the first page points on: {}", first.raw()));
+    let second = run
+        .call(
+            "recall",
+            json!({"subject": &handle, "history": "focus", "history_most": 1,
+                   "offset": offset}),
+        )
+        .await;
+    assert_eq!(value_of(&first), "checking the fix", "{}", first.raw());
+    assert_ne!(
+        value_of(&second),
+        value_of(&first),
+        "following the pointer moved to older changes: {}",
+        second.raw()
+    );
+    run.wrap("read the focus history a change at a time").await;
+    story.finish().await;
+}
+
+/// "Show me the newest wording first." The newest wording is the one written
+/// last. A beat jojobot keeps for the run can be rewritten after a later entry
+/// was, and its new wording is then the newest of all, so a page of one holds
+/// it.
+#[tokio::test]
+async fn the_first_page_of_wordings_holds_the_one_written_last_even_from_an_early_entry() {
+    let story = Story::begin("bot:otto").await;
+    let run = story.session().await;
+    let handle = format!("session:{}", run.run());
+    // An entry of the run's, then a write that makes jojobot's own beat, then
+    // a second entry that is corrected, then another write that rewrites the
+    // beat jojobot made before it.
+    run.call("journal", json!({"entry": "a first beat"})).await;
+    run.add("decision:contract-ordinance-story-curfew", "Curfew")
+        .await;
+    run.call("journal", json!({"entry": "a later beat"})).await;
+    run.call(
+        "amend_journal",
+        json!({"entry": "a later beat, said better"}),
+    )
+    .await;
+    run.add("decision:contract-ordinance-story-parking", "Parking")
+        .await;
+
+    let all = run
+        .call(
+            "recall",
+            json!({"subject": &handle, "history": "journal", "history_most": 20}),
+        )
+        .await;
+    let wordings: Vec<(String, String)> = all.json()["objects"][0]["history"]["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the amended entries come back: {}", all.raw()))
+        .iter()
+        .flat_map(|entry| {
+            entry["wordings"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|w| {
+                    (
+                        w["written_at"].as_str().unwrap_or_default().to_string(),
+                        w["text"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+        })
+        .collect();
+    let written_last = wordings
+        .iter()
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .expect("wordings")
+        .1
+        .clone();
+    assert_ne!(
+        written_last, "a later beat, said better",
+        "the case needs a wording written after the later entry's: {wordings:?}"
+    );
+
+    let page = run
+        .call(
+            "recall",
+            json!({"subject": &handle, "history": "journal", "history_most": 1}),
+        )
+        .await;
+    let held: usize = page.json()["objects"][0]["history"]["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a page of one: {}", page.raw()))
+        .iter()
+        .map(|entry| entry["wordings"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(held, 1, "{}", page.raw());
+    assert!(
+        page.raw().contains(&written_last),
+        "the first page holds the wording written last, {written_last}: {}",
+        page.raw()
+    );
+    run.wrap("read the journal's wordings newest first").await;
+    story.finish().await;
+}
