@@ -26,10 +26,11 @@ async fn an_answer_says_there_is_mail_waiting_even_when_nothing_asked() {
     //
     // With no mail waiting there is no mail entry. Asserted BEFORE any is
     // sent, against the same verb, so "absent when empty" cannot be satisfied
-    // by a build that never emits it. The block itself is never empty: it
-    // carries the one constant line for a run whose context was compacted.
+    // by a build that never emits it. With nothing to say there is no block,
+    // and no answer carries a line about compaction.
     let quiet = s.call("list_entities", json!({ "kind": "bot" })).await;
-    quiet.says("status_bar").says("if_compacted");
+    quiet.never_says("status_bar");
+    quiet.never_says("if_compacted");
     quiet.never_says("mail_waiting");
 
     // ── a colleague leaves work, and says nothing to anybody ────────────────
@@ -45,6 +46,7 @@ async fn an_answer_says_there_is_mail_waiting_even_when_nothing_asked() {
     let told = s.call("list_entities", json!({ "kind": "bot" })).await;
     told.says("status_bar");
     told.says("\"mail_waiting\":1");
+    told.never_says("if_compacted");
 
     // …and it is still the answer to the question that was asked.
     told.says("bot:gamma");

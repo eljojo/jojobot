@@ -494,7 +494,7 @@ impl Jojobot {
 /// against the answer ceiling subtracts this along with the rest of its answer,
 /// so the answer that reaches the client is under the ceiling and not merely
 /// the verb's part of it.
-pub(crate) const STATUS_BAR_ROOM: usize = 300;
+pub(crate) const STATUS_BAR_ROOM: usize = 200;
 
 /// **What an answer says of the items it did not carry**: how many, and the one
 /// argument that reads them. Every list that fills against the ceiling

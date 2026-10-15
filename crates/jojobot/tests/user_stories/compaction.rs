@@ -5,9 +5,8 @@
 //! `compacted: true` on `start_here`, sent with its live `sid`. The run is the
 //! same run afterwards: same key, same chronology, same identity. What jojobot
 //! believed the run was taught and shown is forgotten, and another run of the
-//! same bot is left alone. Every answer carries one line telling a run that
-//! lost its context how to report it, so the instruction cannot be compacted
-//! away.
+//! same bot is left alone. No answer carries a line telling a run how to report
+//! it: the harness prompts the report at the compaction itself.
 
 use serde_json::json;
 
@@ -105,30 +104,25 @@ async fn a_run_that_reports_compaction_is_taught_again_and_keeps_its_key() {
     story.finish().await;
 }
 
-/// **Every answer carries the one line**, so a run that lost its context finds
-/// the instruction on whatever it calls next. A key named in it is the call to
-/// make, and an ordinary answer carries it beside the other bar entries.
+/// **No answer carries a line about compaction.** The harness prompts the
+/// report at the compaction itself, so an ordinary answer, one with mail waiting
+/// beside it, carries none. The positive sits in the same read: the bar is still
+/// there and still carries the mail entry.
 #[tokio::test]
-async fn an_ordinary_answer_tells_the_run_how_to_report_a_compaction() {
+async fn an_ordinary_answer_carries_no_line_about_compaction() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
 
-    let answered = capture(&gamma, "orders the pie").await;
-    let line = answered.json()["status_bar"]["if_compacted"].clone();
-    let line = line.as_str().unwrap_or_else(|| {
-        panic!(
-            "the answer carries no instruction for a compacted run: {}",
-            answered.json()
-        )
-    });
-    assert!(
-        line.contains("compacted") && line.contains("start_here"),
-        "the line names the call and the argument: {line}"
-    );
-    assert!(!line.contains('\n') && line.len() <= 200, "{line}");
+    let quiet = capture(&gamma, "orders the pie").await;
+    quiet.never_says("if_compacted");
+
+    s.post("gamma", "the pie", "your turn on the pie").await;
+    let told = capture(&gamma, "orders the pie again").await;
+    told.says("\"mail_waiting\":1");
+    told.never_says("if_compacted");
 
     story.finish().await;
 }
