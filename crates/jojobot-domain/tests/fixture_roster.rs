@@ -624,6 +624,7 @@ const ORDINARY: &[&str] = &[
     "place:contract-x",
     "project:atlas",
     "project:atlas-two",
+    "project:backyard-shed",
     "project:jojobot-server",
     "project:kitchen-floor",
     "project:the-move",

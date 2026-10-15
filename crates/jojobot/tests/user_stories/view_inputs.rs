@@ -1,4 +1,4 @@
-//! "What can I start under this project?"
+//! "What can I start on the shed?"
 //!
 //! **A view is a saved recall with typed inputs**, so the simplest session asks a
 //! premade view by name and fills in what it takes, and never learns the query
@@ -30,21 +30,33 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
 
-    s.add("project:atlas", "Atlas").await;
-    s.add("project:the-move", "The Move").await;
+    s.add("project:the-shed", "The shed").await;
+    s.add("project:kitchen-floor", "The kitchen floor").await;
     s.add("person:bart", "Bart").await;
     let work = |slug: &str, parent: &str, status: &str| {
         json!({"kind": "work", "handle": slug, "name": slug, "parent": parent,
                "source": "user-named", "sets": {"status": status}})
     };
-    s.call("add_entity", work("sigma", "project:atlas", "next"))
-        .await;
-    s.call("add_entity", work("tau", "project:atlas", "now"))
-        .await;
-    s.call("add_entity", work("phi", "project:the-move", "next"))
-        .await;
-    s.call("add_entity", work("omega", "project:atlas", "done"))
-        .await;
+    s.call(
+        "add_entity",
+        work("frame-the-walls", "project:the-shed", "next"),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work("build-the-roof", "project:the-shed", "now"),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work("lay-the-tiles", "project:kitchen-floor", "next"),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work("pour-the-slab", "project:the-shed", "done"),
+    )
+    .await;
 
     // ── the cold session finds the view and what it takes ───────────────────
     let views = s.call("recall", json!({"kind": "view"})).await;
@@ -52,29 +64,29 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     views.says("project: kind project?");
 
     // ── asked with its input, it answers for that project only ──────────────
-    let under_atlas = s
+    let under_the_shed = s
         .call(
             "recall",
-            json!({"view": "ready", "inputs": {"project": "project:atlas"}}),
+            json!({"view": "ready", "inputs": {"project": "project:the-shed"}}),
         )
         .await;
     assert_eq!(
-        listed(&under_atlas),
-        ["work:sigma", "work:tau"],
+        listed(&under_the_shed),
+        ["work:build-the-roof", "work:frame-the-walls"],
         "{}",
-        under_atlas.raw()
+        under_the_shed.raw()
     );
 
     // …and it is the answer the long way round gives on the same store.
     let long_way = s
         .call(
             "recall",
-            json!({"view": "ready", "parent": "project:atlas"}),
+            json!({"view": "ready", "parent": "project:the-shed"}),
         )
         .await;
     assert_eq!(
         listed(&long_way),
-        listed(&under_atlas),
+        listed(&under_the_shed),
         "{}",
         long_way.raw()
     );
@@ -83,7 +95,11 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     let everything = s.call("recall", json!({"view": "ready"})).await;
     assert_eq!(
         listed(&everything),
-        ["work:phi", "work:sigma", "work:tau"],
+        [
+            "work:build-the-roof",
+            "work:frame-the-walls",
+            "work:lay-the-tiles"
+        ],
         "{}",
         everything.raw()
     );
@@ -102,7 +118,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     let unknown = s
         .refused(
             "recall",
-            json!({"view": "ready", "inputs": {"projekt": "project:atlas"}}),
+            json!({"view": "ready", "inputs": {"projekt": "project:the-shed"}}),
         )
         .await;
     unknown.says("projekt");
@@ -111,7 +127,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     // ── inputs sent with no view are refused rather than ignored ────────────
     s.refused(
         "recall",
-        json!({"kind": "work", "inputs": {"project": "project:atlas"}}),
+        json!({"kind": "work", "inputs": {"project": "project:the-shed"}}),
     )
     .await
     .says("view");
@@ -119,10 +135,10 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
     // ── a rename leaves the question answering ──────────────────────────────
     s.call(
         "rename_entity",
-        json!({"handle": "project:atlas", "to": "project:atlas-two"}),
+        json!({"handle": "project:the-shed", "to": "project:backyard-shed"}),
     )
     .await;
-    for handle in ["project:atlas", "project:atlas-two"] {
+    for handle in ["project:the-shed", "project:backyard-shed"] {
         let after = s
             .call(
                 "recall",
@@ -131,7 +147,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
             .await;
         assert_eq!(
             listed(&after),
-            ["work:sigma", "work:tau"],
+            ["work:build-the-roof", "work:frame-the-walls"],
             "asked as {handle}: {}",
             after.raw()
         );
@@ -145,18 +161,27 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
 
-    s.add("project:atlas", "Atlas").await;
-    s.add("project:the-move", "The Move").await;
+    s.add("project:the-shed", "The shed").await;
+    s.add("project:kitchen-floor", "The kitchen floor").await;
     let work = |slug: &str, parent: &str, due: &str| {
         json!({"kind": "work", "handle": slug, "name": slug, "parent": parent,
                "source": "user-named", "sets": {"status": "next", "due": due}})
     };
-    s.call("add_entity", work("sigma", "project:atlas", "2026-10-20"))
-        .await;
-    s.call("add_entity", work("tau", "project:atlas", "2026-12-01"))
-        .await;
-    s.call("add_entity", work("phi", "project:the-move", "2026-10-21"))
-        .await;
+    s.call(
+        "add_entity",
+        work("frame-the-walls", "project:the-shed", "2026-10-20"),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work("build-the-roof", "project:the-shed", "2026-12-01"),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        work("lay-the-tiles", "project:kitchen-floor", "2026-10-21"),
+    )
+    .await;
 
     // ── a view that takes a project and a day ───────────────────────────────
     s.call(
@@ -179,21 +204,21 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
         .call(
             "recall",
             json!({"view": "my-projects",
-                   "inputs": {"project": "project:atlas", "before": "2026-11-01"}}),
+                   "inputs": {"project": "project:the-shed", "before": "2026-11-01"}}),
         )
         .await;
-    assert_eq!(listed(&both), ["work:sigma"], "{}", both.raw());
+    assert_eq!(listed(&both), ["work:frame-the-walls"], "{}", both.raw());
 
     // The optional input left out drops its term: every piece under the project.
     let only_project = s
         .call(
             "recall",
-            json!({"view": "my-projects", "inputs": {"project": "project:atlas"}}),
+            json!({"view": "my-projects", "inputs": {"project": "project:the-shed"}}),
         )
         .await;
     assert_eq!(
         listed(&only_project),
-        ["work:sigma", "work:tau"],
+        ["work:build-the-roof", "work:frame-the-walls"],
         "{}",
         only_project.raw()
     );
@@ -209,7 +234,7 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
     s.refused(
         "recall",
         json!({"view": "my-projects",
-               "inputs": {"project": "project:atlas", "before": "soon"}}),
+               "inputs": {"project": "project:the-shed", "before": "soon"}}),
     )
     .await
     .says("before");
