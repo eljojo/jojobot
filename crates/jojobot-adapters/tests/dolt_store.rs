@@ -8651,6 +8651,117 @@ async fn dolt_orders_the_fold_and_the_rename_as_moments_not_as_text() {
     store.stop().await;
 }
 
+/// **A forward the pass cannot place is reported at the first boot that meets
+/// it, and not again at the next.** The pass stays open, so it reads the rows
+/// every boot, but it tells the log about the same rows once. A row added to
+/// the set is new and is told about. The tie is written by hand, as in the case
+/// above that pins what the pass does with it.
+#[tokio::test]
+async fn dolt_reports_the_forwarding_rows_it_cannot_place_once() {
+    let scratch = Scratch::new("forward-reported");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forward_reported")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let [_, _, _, tied_old, _, tied_moved] = two_forwarding_rows(
+        &memory,
+        &pool,
+        [
+            "thing:contract-trap-first",
+            "thing:contract-trap-second",
+            "thing:contract-trap-third",
+            "thing:contract-trap-fourth",
+            "thing:contract-trap-fifth",
+            "thing:contract-trap-sixth",
+        ],
+    )
+    .await;
+    let one_moment = "2026-09-05T00:00:00Z";
+    stamp_writes(&pool, &tied_old, one_moment).await;
+    stamp_writes(&pool, &tied_moved, one_moment).await;
+
+    let first = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!(
+        (first.skipped.len(), first.reported),
+        (1, true),
+        "{first:?}"
+    );
+    let second = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!(
+        (second.skipped.len(), second.reported, second.settled),
+        (1, false, false),
+        "the same row is read again and not told about again, and the pass stays open: {second:?}"
+    );
+
+    // **A second row it cannot place is a different set**, so it is told about.
+    let stray = EntityId("thing:contract-lagged-stray".into());
+    let remnant = EntityId("thing:contract-lagged-remnant".into());
+    for (id, name) in [(&stray, "Lagged Stray"), (&remnant, "Lagged Remnant")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    memory
+        .merge(
+            &stray,
+            &remnant,
+            None,
+            date(2026, 9, 7),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind("thing:contract-lagged-nobody")
+        .bind(stray.as_str())
+        .execute(&pool)
+        .await
+        .expect("a handle nothing wore is written");
+    let third = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!(
+        (third.skipped.len(), third.reported),
+        (2, true),
+        "{third:?}"
+    );
+    let fourth = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!(
+        (fourth.skipped.len(), fourth.reported),
+        (2, false),
+        "{fourth:?}"
+    );
+
+    // **The pass that repoints links keeps its own account.** It meets the same
+    // two rows, and tells about them once.
+    let links = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass runs");
+    assert_eq!(
+        (links.skipped.len(), links.reported),
+        (2, true),
+        "{links:?}"
+    );
+    let links = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass runs");
+    assert_eq!(
+        (links.skipped.len(), links.reported, links.settled),
+        (2, false, false),
+        "{links:?}"
+    );
+    store.stop().await;
+}
+
 /// **A link a fold of an older build left on the forwarding row is repointed at
 /// the thing the fold ended in, once, and a second run finds nothing.**
 ///

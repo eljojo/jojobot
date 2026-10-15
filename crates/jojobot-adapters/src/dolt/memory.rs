@@ -89,6 +89,9 @@ pub struct ForwardedLinkReport {
     /// One line for each forwarding row the pass could not place. While any
     /// remains, the pass is not marked finished.
     pub skipped: Vec<String>,
+    /// This run told the log which rows it could not place. A run that finds the
+    /// same rows an earlier boot already told about says nothing again.
+    pub reported: bool,
 }
 
 /// **Which thing a folded row's forward means**, as
@@ -117,6 +120,9 @@ pub struct ForwardNameReport {
     /// One line for each forwarding row the pass could not place. While any
     /// remains, the pass is not marked finished.
     pub skipped: Vec<String>,
+    /// This run told the log which rows it could not place. A run that finds the
+    /// same rows an earlier boot already told about says nothing again.
+    pub reported: bool,
 }
 
 /// **The name the renaming of forwarding rows to their survivor's current handle
@@ -132,7 +138,16 @@ const FORWARD_NAMES_PASS: &str = "forwarding rows name the current handle";
 /// and runs once on such a store.
 const FORWARDED_LINKS_PASS: &str = "forwarded field links repaired";
 
-/// **The name the lowering of plain handle text under undeclared keys is marked
+/// **The marker that the rows the forwarding-name pass could not place were told
+/// to the log**, followed by a digest of those rows. A different set has a
+/// different marker, so it is told once in turn. The whole name is held to the
+/// `store_pass.name` column, which takes 64 characters.
+const FORWARD_NAMES_REPORTED: &str = "forward names told";
+
+/// The same marker for the pass that repoints links off forwarding rows.
+const FORWARDED_LINKS_REPORTED: &str = "forwarded links told";
+
+/// **The name the lowering of plain handle text under undeclared keys is marked/// **The name the lowering of plain handle text under undeclared keys is marked
 /// under** in `store_pass`. The link table's repair is not part of it: that is
 /// a derived index and it heals itself.
 const FIELD_LOWERING_PASS: &str = "field value lowering";
@@ -670,15 +685,10 @@ impl DoltMemory {
                 at = onward;
             }
             if let Some(line) = unplaced {
-                tracing::warn!(handle, "store: {line}; its links are left");
                 report.skipped.push(line);
                 continue;
             }
             let Ok(to) = walk.finish() else {
-                tracing::warn!(
-                    handle,
-                    "store: a forwarding row loops back on itself; its links are left"
-                );
                 report.skipped.push(format!("{handle} forwards in a loop"));
                 continue;
             };
@@ -688,12 +698,55 @@ impl DoltMemory {
             report.repointed += Self::repoint_field_links(&mut tx, &declared, badge, to).await?;
         }
         tx.commit().await.map_err(store)?;
+        report.reported = Self::tell_once(
+            &self.pool,
+            FORWARDED_LINKS_REPORTED,
+            &report.skipped,
+            "its links are left",
+        )
+        .await;
         // **Finished only when every forward was placed**: a forward the pass
         // skipped may become placeable, and a finished pass is never read again.
         if report.skipped.is_empty() {
             super::finish_pass(&self.pool, FORWARDED_LINKS_PASS).await;
         }
         Ok(report)
+    }
+
+    /// **Tell the log which forwarding rows a pass could not place, once.** A pass
+    /// that skipped a row stays open so it can place the row later, and it reads
+    /// the rows at every boot; the account of what it cannot place is the same at
+    /// every boot, so it is given the first time and a marker records that it was.
+    /// The marker holds a digest of the rows, so a changed set is told in turn.
+    /// A marker that cannot be written costs one more telling at the next boot.
+    ///
+    /// Returns whether this call told the log.
+    async fn tell_once(pool: &MySqlPool, kind: &str, lines: &[String], consequence: &str) -> bool {
+        if lines.is_empty() {
+            return false;
+        }
+        let mut sorted = lines.to_vec();
+        sorted.sort();
+        // FNV-1a over the rows: stable across builds, unlike the standard hasher.
+        let digest = sorted
+            .join("\n")
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            });
+        let marker = format!("{kind} {digest:016x}");
+        if super::finished_passes(pool).await.contains(&marker) {
+            tracing::info!(
+                rows = lines.len(),
+                "store: {kind}: the rows a pass cannot place were reported at an earlier boot"
+            );
+            return false;
+        }
+        for line in lines {
+            tracing::warn!("store: {line}; {consequence}");
+        }
+        super::finish_pass(pool, &marker).await;
+        true
     }
 
     /// **Which thing a folded row's forward means: the one decision every path
@@ -895,9 +948,13 @@ impl DoltMemory {
             }
         }
         tx.commit().await.map_err(store)?;
-        for line in &report.skipped {
-            tracing::warn!("store: {line}; the row is left");
-        }
+        report.reported = Self::tell_once(
+            &self.pool,
+            FORWARD_NAMES_REPORTED,
+            &report.skipped,
+            "the row is left",
+        )
+        .await;
         if report.skipped.is_empty() {
             super::finish_pass(&self.pool, FORWARD_NAMES_PASS).await;
         }

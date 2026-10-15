@@ -15,8 +15,8 @@
 # they share a hash.
 #
 # Format: CONSTANT | the name stores record | hash of the driving function
-FORWARD_NAMES_PASS | forwarding rows name the current handle | 263783f43d30c3b4
-FORWARDED_LINKS_PASS | forwarded field links repaired | d9de425682cfff75
+FORWARD_NAMES_PASS | forwarding rows name the current handle | ce9902628369d89c
+FORWARDED_LINKS_PASS | forwarded field links repaired | 73427b36bfbc0bfa
 FIELD_LOWERING_PASS | field value lowering | 0d45fc60c7ae6d8e
 REFERENCE_LOWERING_PASS | reference field lowering | 78638679aadbd6be
 UNREADABLE_DUE_PASS | unreadable due day | f0566a7bca5c150a
