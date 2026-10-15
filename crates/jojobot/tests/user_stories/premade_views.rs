@@ -130,9 +130,17 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     board.never_says("work:lay-the-tiles");
 
     // ── the project is required ─────────────────────────────────────────────
-    s.refused("recall", json!({"view": "board", "inputs": {}}))
-        .await
-        .says("project: kind project");
+    let refusal = s
+        .refused("recall", json!({"view": "board", "inputs": {}}))
+        .await;
+    assert_eq!(
+        refusal.json()["attempted"],
+        "view:board",
+        "{}",
+        refusal.raw()
+    );
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    refusal.says("project");
 
     s.wrap("read the board of one project by name").await;
 }
@@ -297,9 +305,18 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
     bikes.never_says("thing:floor-pump");
 
     // ── the type is required, and a type nobody declared is refused ─────────
-    s.refused("recall", json!({"view": "of-type", "inputs": {}}))
-        .await
-        .says("type: text");
+    let refusal = s
+        .refused("recall", json!({"view": "of-type", "inputs": {}}))
+        .await;
+    assert_eq!(
+        refusal.json()["attempted"],
+        "view:of-type",
+        "{}",
+        refusal.raw()
+    );
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    refusal.says("type");
+    // A type nobody declared is refused, and the refusal lists the types that exist.
     s.refused(
         "recall",
         json!({"view": "of-type", "inputs": {"type": "unicycle"}}),
@@ -308,9 +325,13 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
     .says("bike");
 
     // ── the view says what it cannot find ───────────────────────────────────
-    s.call("recall", json!({"subject": "view:of-type"}))
-        .await
-        .says("things only");
+    let view = s.call("recall", json!({"subject": "view:of-type"})).await;
+    assert_eq!(
+        view.json()["objects"][0]["fields"]["selects"],
+        "thing",
+        "{}",
+        view.raw()
+    );
 
     s.wrap("asked which things are bikes by name").await;
 }
