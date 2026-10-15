@@ -105,7 +105,8 @@ pub struct OrientArgs {
     /// new key, no voucher moves, and no other run of the bot is touched. The
     /// answer is the full orientation, charter included, whatever `brief` says,
     /// because that is what the compaction took. A `resume` or an `offer_code`
-    /// beside it changes neither the answer nor the run. A `sid` that opens no
+    /// beside it changes neither the answer nor the run. A `skill` or a `section`
+    /// beside it is refused: a fetch touches no run. A `sid` that opens no
     /// run is refused. Naming `bot` is optional; when you do, it has to be the
     /// bot the `sid` belongs to.
     #[serde(default)]

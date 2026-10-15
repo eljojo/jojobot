@@ -50,8 +50,9 @@ pub struct RenameEntityArgs {
     #[serde(default)]
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, sent beside `override_token` when the refusal rests
-    /// on the name alone: the same name under another kind, or a name that holds
-    /// or sits inside another. Without it that refusal stands. The reason is
+    /// on the name alone: the same name under another kind, a name that holds or
+    /// sits inside another, a known nickname of another, or two rare words shared
+    /// with another of the same kind. Without it that refusal stands. The reason is
     /// kept on the renamed entity as `told_apart_by`, shown beside its name.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,

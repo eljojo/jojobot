@@ -785,7 +785,7 @@ answer: protocol error: this call was rejected: another write landed at the same
 
 ```text
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
-answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in brackets says what it breaks.
+answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in parentheses says what it breaks.
 {
   "fix_by": "change"
 }
@@ -964,7 +964,7 @@ answer: protocol error: this call was rejected: another write landed at the same
 
 ```text
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
-answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in brackets says what it breaks.
+answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in parentheses says what it breaks.
 {
   "fix_by": "change"
 }
@@ -1114,7 +1114,7 @@ answer: protocol error: this call was rejected: another write landed at the same
 
 ```text
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
-answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in brackets says what it breaks.
+answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in parentheses says what it breaks.
 {
   "fix_by": "change"
 }

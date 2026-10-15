@@ -235,8 +235,9 @@ Display name, as a human would write it.
 
 ```text
 **Why you insist**, sent beside `override_token` when the refusal rests
-on the name alone: the same name under another kind, or a name that holds
-or sits inside another. Without it that refusal stands. The reason is
+on the name alone: the same name under another kind, a name that holds or
+sits inside another, a known nickname of another, or two rare words shared
+with another of the same kind. Without it that refusal stands. The reason is
 kept on the new thing as `told_apart_by`, shown beside its name.
 ```
 
@@ -1928,7 +1929,7 @@ An address you were holding for one of them still names it: update_fact, retract
 The answer's claims_moved counts the claims the survivor serves under its own handle now.
 TWO DOCUMENTS MERGE INTO ONE: the duplicate's sections follow the survivor's last.
 A document and a thing do not merge.
-A refusal is status: blocked with nothing moved, and the answer says why and who may: one handle named as both sides; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; or a result that could not be read back whole in one answer.
+A refusal is status: blocked with nothing moved, and the answer says why and who may: one handle named as both sides; a thing folded into its own descendant; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; or a result that could not be read back whole in one answer.
 The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
@@ -4180,8 +4181,9 @@ than a bare miss.
 
 ```text
 **Why you insist**, sent beside `override_token` when the refusal rests
-on the name alone: the same name under another kind, or a name that holds
-or sits inside another. Without it that refusal stands. The reason is
+on the name alone: the same name under another kind, a name that holds or
+sits inside another, a known nickname of another, or two rare words shared
+with another of the same kind. Without it that refusal stands. The reason is
 kept on the renamed entity as `told_apart_by`, shown beside its name.
 ```
 
@@ -5069,7 +5071,8 @@ handed, and writes a dated mark in the run's chronology.
 new key, no voucher moves, and no other run of the bot is touched. The
 answer is the full orientation, charter included, whatever `brief` says,
 because that is what the compaction took. A `resume` or an `offer_code`
-beside it changes neither the answer nor the run. A `sid` that opens no
+beside it changes neither the answer nor the run. A `skill` or a `section`
+beside it is refused: a fetch touches no run. A `sid` that opens no
 run is refused. Naming `bot` is optional; when you do, it has to be the
 bot the `sid` belongs to.
 ```
@@ -5333,8 +5336,9 @@ New display name.
 
 ```text
 **Why you insist**, sent beside `override_token` when the refusal rests
-on the name alone: the same name under another kind, or a name that holds
-or sits inside another. Without it that refusal stands. The reason is
+on the name alone: the same name under another kind, a name that holds or
+sits inside another, a known nickname of another, or two rare words shared
+with another of the same kind. Without it that refusal stands. The reason is
 kept on this entity as `told_apart_by`, shown beside its name.
 ```
 

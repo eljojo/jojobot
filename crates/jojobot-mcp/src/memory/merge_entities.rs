@@ -84,8 +84,8 @@ impl Jojobot {
                        ONE: the duplicate's sections follow the survivor's last. A document \
                        and a thing do not merge. A refusal is status: \
                        blocked with nothing moved, and the answer says why and who may: one \
-                       handle named as both sides; a handle already merged away; a role \
-                       object merged by anyone but its owner or a bot heading the chart; a \
+                       handle named as both sides; a thing folded into its own descendant; \
+                       a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a \
                        thought room or thought ceiling the merge would break; or a result \
                        that could not be read back whole in one answer. The receipt's \
                        `changed` lists what this call changed, or says nothing. Each \

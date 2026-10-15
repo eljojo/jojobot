@@ -24,7 +24,7 @@ pub(crate) fn refused(verb: &str, rule: &str) -> String {
     format!(
         "{verb} was refused: it breaks a rule jojobot enforces ({rule}). Nothing was written. \
          Sending the same call again will meet the same refusal, so change the call; the rule \
-         in brackets says what it breaks."
+         in parentheses says what it breaks."
     )
 }
 
@@ -78,6 +78,15 @@ pub(crate) fn unreadable(what: &str, detail: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The sentence names the mark the rule is wrapped in**, as it is.
+    #[test]
+    fn a_refusal_names_the_parentheses_its_rule_sits_in() {
+        let said = refused("post_message", "a key held twice");
+        assert!(said.contains("(a key held twice)"), "{said}");
+        assert!(said.contains("in parentheses"), "{said}");
+        assert!(!said.contains("brackets"), "{said}");
+    }
 
     /// What crosses must not contain the adapter's own account.
     #[test]

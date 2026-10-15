@@ -739,3 +739,105 @@ fn the_makefile_updates_the_snapshot_through_the_variable() {
         "{recipe}"
     );
 }
+
+/// **The text of one tool argument, or of the tool itself when `argument` is
+/// `None`**, as a model reads it.
+fn served_text(verb: &str, argument: Option<&str>) -> String {
+    let tools = Jojobot::tool_router().list_all();
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == verb)
+        .unwrap_or_else(|| panic!("the surface serves {verb}"));
+    match argument {
+        None => tool
+            .description
+            .as_deref()
+            .unwrap_or_else(|| panic!("{verb} has a description"))
+            .to_string(),
+        Some(name) => {
+            let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+            schema["properties"][name]["description"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{verb} serves a description for {name}"))
+                .to_string()
+        }
+    }
+}
+
+/// **Every reason the guard asks a caller for a reason on is named in the
+/// `override_reason` argument of each verb that screens a name** (rule 498).
+/// The list a model reads is the one `needs_a_reason` holds, so a reason added
+/// there without a word in the argument leaves a model unable to know the
+/// refusal wants one. The match has no wildcard: a new variant stops compiling
+/// here until it is placed.
+#[test]
+fn override_reason_names_every_reason_the_guard_asks_one_for() {
+    use jojobot_domain::memory::guard::MatchReason as R;
+    let every = [
+        R::ExactHandle,
+        R::SelfParent,
+        R::SameName,
+        R::SameNameOtherKind,
+        R::NearSlug,
+        R::Contains,
+        R::NearName,
+        R::HeldNumber,
+        R::Nickname,
+        R::SharedWord,
+    ];
+    // The word the argument says each reason with. `None` for a reason that
+    // keeps the token alone.
+    let said_as = |reason: R| match reason {
+        R::SameNameOtherKind => Some("another kind"),
+        R::Contains => Some("sits inside"),
+        R::Nickname => Some("nickname"),
+        R::SharedWord => Some("rare words"),
+        R::ExactHandle
+        | R::SelfParent
+        | R::SameName
+        | R::NearSlug
+        | R::NearName
+        | R::HeldNumber => None,
+    };
+    let mut asked = 0;
+    for reason in every {
+        assert_eq!(
+            said_as(reason).is_some(),
+            reason.needs_a_reason(),
+            "{reason:?}: the words and the guard disagree about whether it takes a reason"
+        );
+        let Some(word) = said_as(reason) else {
+            continue;
+        };
+        asked += 1;
+        for verb in ["add_entity", "rename_entity", "update_entity"] {
+            let text = served_text(verb, Some("override_reason"));
+            assert!(
+                text.contains(word),
+                "{verb} override_reason does not name {reason:?} (\"{word}\"): {text}"
+            );
+        }
+    }
+    assert!(
+        asked > 0,
+        "no reason asks for a reason, so this pin is blind"
+    );
+}
+
+/// **`merge_entities` lists the refusal for a thing folded into its own
+/// descendant**, beside the other refusals a merge can meet.
+#[test]
+fn merge_entities_lists_the_refusal_for_a_fold_into_a_descendant() {
+    let text = served_text("merge_entities", None);
+    assert!(text.contains("descendant"), "{text}");
+}
+
+/// **`start_here`'s `compacted` says a `skill` or a `section` beside it is
+/// refused**, which is what the verb does.
+#[test]
+fn start_here_compacted_says_it_is_refused_beside_a_skill_or_a_section() {
+    let text = served_text("start_here", Some("compacted"));
+    for fetch in ["`skill`", "`section`"] {
+        assert!(text.contains(fetch), "{fetch} is not named: {text}");
+    }
+}
