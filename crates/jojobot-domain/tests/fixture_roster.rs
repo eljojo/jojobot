@@ -253,6 +253,9 @@ const ORDINARY: &[&str] = &[
     "document:contract-docmerge",
     "document:contract-merged-into",
     "document:contract-merged-away",
+    "document:contract-chain-first",
+    "document:contract-chain-second",
+    "document:contract-chain-third",
     "topic:contract-xylophone",
     "topic:contract-zeppelin",
     // The views: the ones the software ships, and the ones a story or a page

@@ -256,6 +256,117 @@ pub async fn two_documents_merged_leave_one_document_holding_both_in_order<M: Me
     }
 }
 
+/// The text of the first link of a merge chain: a long section, cut into a
+/// heading and chunks when it is stored, and a short one.
+const LINK_FIRST: &str = "# First long\n\nfirst link opening paragraph\n\nfirst link middle \
+                          paragraph\n\nfirst link closing paragraph\n\n# First short\n\nshort \
+                          body of the first\n";
+
+/// The text of the second link, cut the same way.
+const LINK_SECOND: &str = "# Second long\n\nsecond link opening paragraph\n\nsecond link \
+                           middle paragraph\n\nsecond link closing paragraph\n\n# Second \
+                           short\n\nshort body of the second\n";
+
+/// The text of the document the chain ends in.
+const LINK_THIRD: &str = "# Third one\n\nbody of the third\n\n# Third two\n\nmore of the third\n";
+
+/// **Three documents merged in a chain serve each section once, in order, and
+/// every chunk continues the heading in front of it.** The first folds into the
+/// second, then the second into the third, so the second's served records are
+/// partly its own and partly the first's, still stored under the first's key. The
+/// text read back is the third's, then the second's, then the first's, byte for
+/// byte. **Paired**: after the first merge the second reads its own text and the
+/// first's, so what the second merge did is read against a chain that was whole.
+pub async fn a_chain_of_three_document_merges_serves_each_section_once_in_order<M: Memory>(
+    store: &M,
+) {
+    let first = EntityId("document:contract-chain-first".into());
+    let second = EntityId("document:contract-chain-second".into());
+    let third = EntityId("document:contract-chain-third".into());
+    for (id, name) in [
+        (&first, "The Chain Opener"),
+        (&second, "The Chain Middle"),
+        (&third, "The Chain Closer"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let first_records = put_text(store, &first, LINK_FIRST, 60).await;
+    let second_records = put_text(store, &second, LINK_SECOND, 60).await;
+    let third_records = put_text(store, &third, LINK_THIRD, 1_000).await;
+    assert!(
+        first_records > 2 && second_records > 2,
+        "the long sections were cut into chunks: {first_records} and {second_records}"
+    );
+
+    store
+        .merge(
+            &first,
+            &second,
+            Some("one document under two names"),
+            date(2026, 10, 14),
+            &other_caller(),
+            Some("session-merge"),
+        )
+        .await
+        .expect("the first merge lands");
+    let middle = read_sections(&store.recall(&second).await.expect("second reads"));
+    assert_eq!(
+        text_of(&middle),
+        format!("{LINK_SECOND}{LINK_FIRST}"),
+        "after the first merge the second holds its own sections, then the first's"
+    );
+
+    store
+        .merge(
+            &second,
+            &third,
+            Some("one document under two names"),
+            date(2026, 10, 14),
+            &other_caller(),
+            Some("session-merge"),
+        )
+        .await
+        .expect("the second merge lands");
+
+    let facts = store.recall(&third).await.expect("third reads after");
+    let after = read_sections(&facts);
+    assert_eq!(
+        after.len(),
+        third_records + second_records + first_records,
+        "each section is served once"
+    );
+    assert_eq!(
+        text_of(&after),
+        format!("{LINK_THIRD}{LINK_SECOND}{LINK_FIRST}"),
+        "the third's sections, then the second's, then the first's"
+    );
+    let mut heading: Option<&str> = None;
+    for (fact, _, head) in &after {
+        match head {
+            None => heading = Some(fact.id.0.as_str()),
+            Some(head) => assert_eq!(
+                Some(head.as_str()),
+                heading,
+                "{} continues a heading other than the one in front of it",
+                fact.id.0
+            ),
+        }
+    }
+    let trails = store
+        .key_trails(&third)
+        .await
+        .expect("third's trails read after")
+        .record_writes;
+    let served: std::collections::BTreeSet<&FactId> = facts.iter().map(|f| &f.id).collect();
+    for write in &trails {
+        assert!(
+            served.contains(&write.fact),
+            "a write of {} names a record the third does not serve: {trails:?}",
+            write.key
+        );
+    }
+}
+
 /// **A document merged into a thing, or a thing into a document, is refused
 /// with the route, and nothing moves.** A merge of a document into a thing would
 /// leave sections that belong to no document; a thing into a document would
