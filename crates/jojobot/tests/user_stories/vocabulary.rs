@@ -197,7 +197,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 }
 
 #[tokio::test]
-async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name() {
+async fn a_trips_two_ends_are_places_and_an_organisation_at_either_end_is_reported_by_name() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add(
@@ -210,8 +210,8 @@ async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name
         .await;
     s.add("place:springfield", "Springfield").await;
     s.add("place:daredevil-gorge", "The Daredevil Gorge").await;
-    s.add("pet:santas-little-helper", "Santa's Little Helper")
-        .await;
+    s.add("org:springfield-movers", "Springfield Movers").await;
+    s.add("org:moes-tavern", "Moe's Tavern").await;
 
     // The paired positive: a trip from one place to another is a trip.
     s.event_with(
@@ -226,12 +226,13 @@ async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name
         &[],
     )
     .await;
-    // Either end can be the pet. A declared type refuses no write, so both land.
+    // Either end can be the company instead of the place. A declared type refuses
+    // no write, so both land.
     s.event_with(
         "event:moe-open-mic",
-        "the dog came along as the start",
+        "the start was written as the company that drove",
         json!({
-            "departs_from": "pet:santas-little-helper",
+            "departs_from": "org:springfield-movers",
             "arrives_at": "place:springfield",
             "leaves_on": "2026-09-03",
             "returns_on": "2026-09-07",
@@ -241,10 +242,10 @@ async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name
     .await;
     s.event_with(
         "event:otto-benefit-show",
-        "the dog came along as the end",
+        "the end was written as the tavern that hosted",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "pet:santas-little-helper",
+            "arrives_at": "org:moes-tavern",
             "leaves_on": "2026-09-03",
             "returns_on": "2026-09-07",
         }),
@@ -275,7 +276,7 @@ async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name
         vec![json!({
             "key": "departs_from",
             "declared": "reference:place",
-            "value": "pet:santas-little-helper",
+            "value": "org:springfield-movers",
         })],
         "the answer names the key, the kind it wanted and what it holds"
     );
@@ -284,7 +285,7 @@ async fn a_trips_two_ends_are_places_and_a_pet_at_either_end_is_reported_by_name
         vec![json!({
             "key": "arrives_at",
             "declared": "reference:place",
-            "value": "pet:santas-little-helper",
+            "value": "org:moes-tavern",
         })],
     );
 
