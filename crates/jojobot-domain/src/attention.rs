@@ -888,15 +888,16 @@ pub fn unreadable_because(
 /// reason go through it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Owes {
-    /// A finished work item or project. Its date stays on the record; it is no
-    /// longer asked for.
+    /// A finished work item or project, or a thing whose carrier reads `ended`.
+    /// Its date stays on the record; it is no longer asked for.
     Finished,
     /// Anything else owes what its carrier says.
     Due(Due),
 }
 
 /// **What a thing of this kind owes**: [`Owes::Finished`] for a finished work
-/// item or project, and [`owed`] for every other thing.
+/// item or project and for a thing its carrier reads as ended, and [`owed`] for
+/// every other thing.
 pub fn owes_as(
     kind: &str,
     carriers: &[&dyn Carrier],
@@ -904,6 +905,17 @@ pub fn owes_as(
     instance: &BTreeMap<String, String>,
 ) -> Owes {
     if crate::memory::kinds::is_finished(kind, fields, instance) {
+        return Owes::Finished;
+    }
+    // A carrier that can be ended and holds its ending word has finished with the
+    // thing, whatever day it still holds. A thing no carrier answers for has no
+    // ending to hold, so it stays a thing with nothing that falls due.
+    let ended = carriers
+        .iter()
+        .find(|carrier| carrier.interface().matched_by(fields).is_some())
+        .is_some_and(|carrier| carrier.ending().is_some())
+        && has_ended(fields);
+    if ended {
         return Owes::Finished;
     }
     Owes::Due(owed(carriers, fields))

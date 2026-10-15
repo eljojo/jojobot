@@ -292,7 +292,8 @@ pub enum LeftOut {
     /// It has a cadence and has never been checked in, so its first cycle has
     /// not started.
     NotYetOpened,
-    /// A work item or project that is finished owes nothing.
+    /// A work item or project that is finished, or a thing its carrier reads as
+    /// ended, owes nothing.
     Finished,
     /// Its carrier answers that nothing falls due: it carries none of the keys a
     /// due day is worked out from, or its kind has no carrier.

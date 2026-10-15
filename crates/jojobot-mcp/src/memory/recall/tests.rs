@@ -10153,6 +10153,56 @@ async fn a_due_view_names_why_it_left_things_out_and_the_call_that_lists_them() 
     assert_eq!(handles(&people), ["person:milhouse"], "{people}");
 }
 
+/// **A thing whose carrier reads `ended` is left out of an overdue read as
+/// finished, and a thing with no due key stays under no schedule.** One read
+/// carries both, so the two reasons are told apart on the same answer: a return
+/// window that ended with its day in the past, and a thing that carries nothing
+/// that falls due, even though it holds an ending word too.
+#[tokio::test]
+async fn an_ended_thing_is_left_out_as_finished_and_a_keyless_one_as_no_schedule() {
+    let jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&jojobot, "2026-03-15").await;
+    for (slug, sets) in [
+        (
+            "epsilon",
+            vec![("runs_out", "2026-03-01"), ("ended", "renewed")],
+        ),
+        (
+            "zeta",
+            vec![("note", "carries no due key"), ("ended", "renewed")],
+        ),
+    ] {
+        let made = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some(
+                    sets.iter()
+                        .map(|(key, value)| (key.to_string(), value.to_string()))
+                        .collect(),
+                ),
+                ..add_args("thing", slug, slug)
+            }))
+            .await
+            .expect("add ok");
+        assert_ne!(json_of(&made)["status"], "blocked", "{}", json_of(&made));
+    }
+
+    let due = view_asked(&jojobot, "due", &acting, &[("by", "2026-03-22")]).await;
+    assert!(
+        !handles(&due).contains(&"thing:epsilon".to_string()),
+        "an ended thing owes nothing: {due}"
+    );
+    let reasons = &due["overdue_excluded_because"]["reasons"];
+    assert_eq!(
+        reasons["finished"],
+        serde_json::json!({"count": 1, "kinds": {"thing": 1}}),
+        "the ended thing is finished, not unscheduled: {due}",
+    );
+    assert_eq!(
+        reasons["no_schedule"]["kinds"]["thing"], 1,
+        "the keyless thing stays unscheduled, and the ended one is not counted there: {due}",
+    );
+}
+
 /// The call that reads records by address: no subject, no facts, only the list.
 fn of_records(addresses: &[&str]) -> RecallArgs {
     RecallArgs {
