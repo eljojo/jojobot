@@ -6,13 +6,73 @@
 //! printed. The negative stands beside each: a refusal that says one thing does
 //! not say it for a caller who made a different mistake.
 //!
-//! The board is the one `which_things` uses: `gamma` is open and due soon,
-//! `delta` is open and due later, `epsilon` is done, `omega` holds no status.
+//! The board is a list of chores: the gate is open and due soon, the fence is
+//! open and due later, the porch is done, and the shelf holds no status.
 
 use serde_json::json;
 
 use super::dsl::{Answer, Session, Story};
-use super::which_things::a_board;
+
+/// The chores board, and the declaration that makes `due` a date, `size` a
+/// number and `touches` a list.
+async fn a_board(s: &Session) {
+    s.call(
+        "declare_type",
+        json!({
+            "name": "thing",
+            "fields": [
+                { "key": "due", "holds": "date" },
+                { "key": "size", "holds": "number" },
+                { "key": "touches", "holds": "list:text" },
+            ],
+        }),
+    )
+    .await
+    .says("\"name\":\"thing\"");
+    s.add("person:milhouse", "Milhouse").await;
+    for (handle, name) in [
+        ("thing:fix-the-gate", "Fix the gate"),
+        ("thing:paint-the-fence", "Paint the fence"),
+        ("thing:sweep-the-porch", "Sweep the porch"),
+        ("thing:sort-the-shelf", "Sort the shelf"),
+    ] {
+        s.add(handle, name).await;
+    }
+    s.event_with(
+        "thing:fix-the-gate",
+        "open, due in three days",
+        json!({
+            "status": "now", "size": "10", "due": "2026-10-12", "rank": "10",
+            "touches": "essay.rs, skills.rs", "owner": "person:milhouse",
+        }),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "thing:paint-the-fence",
+        "open, due next month",
+        json!({
+            "status": "next", "size": "2", "due": "2026-11-20", "rank": "2",
+            "touches": "essay.rs", "owner": "person:milhouse",
+        }),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "thing:sweep-the-porch",
+        "finished last week",
+        json!({ "status": "done", "due": "2026-10-01", "owner": "person:milhouse" }),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "thing:sort-the-shelf",
+        "nobody gave it a status",
+        json!({ "note": "holds no status" }),
+        &[],
+    )
+    .await;
+}
 
 /// The handles an answer named, in order.
 fn handles_of(answer: &Answer) -> Vec<String> {
@@ -49,8 +109,13 @@ fn between<'a>(advice: &'a str, start: &str, end: &str) -> &'a str {
 /// A board whose keys no type declares, so an ordering on them is not licensed.
 async fn an_undeclared_board(s: &Session) {
     for (handle, name, size, touches) in [
-        ("thing:gamma", "Gamma", "10", "essay.rs, skills.rs"),
-        ("thing:delta", "Delta", "2", "essay.rs"),
+        (
+            "thing:fix-the-gate",
+            "Fix the gate",
+            "10",
+            "essay.rs, skills.rs",
+        ),
+        ("thing:paint-the-fence", "Paint the fence", "2", "essay.rs"),
     ] {
         s.add(handle, name).await;
         s.event_with(
@@ -84,7 +149,12 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
     let fixed = s
         .call("recall", json!({ "kind": "thing", "where": fix }))
         .await;
-    assert_eq!(handles_of(&fixed), ["thing:epsilon"], "{}", fixed.raw());
+    assert_eq!(
+        handles_of(&fixed),
+        ["thing:sweep-the-porch"],
+        "{}",
+        fixed.raw()
+    );
 
     s.refused(
         "recall",
@@ -100,7 +170,7 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
         .await;
     assert_eq!(
         handles_of(&fixed),
-        ["thing:epsilon", "thing:gamma"],
+        ["thing:fix-the-gate", "thing:sweep-the-porch"],
         "{}",
         fixed.raw()
     );
@@ -115,8 +185,8 @@ async fn a_key_held_on_records_names_the_scope_that_asks_it() {
     let story = Story::begin("bot:otto").await;
     let s = story.session_on("2026-10-09", None).await;
     for (handle, name, colour) in [
-        ("thing:gamma", "Gamma", "red"),
-        ("thing:delta", "Delta", "blue"),
+        ("thing:fix-the-gate", "Fix the gate", "red"),
+        ("thing:paint-the-fence", "Paint the fence", "blue"),
     ] {
         s.add(handle, name).await;
         // An own field: it stays on the record and never reaches the thing.
@@ -146,7 +216,12 @@ async fn a_key_held_on_records_names_the_scope_that_asks_it() {
             json!({"kind": "thing", "where": "colour = red", "scope": "record"}),
         )
         .await;
-    assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
+    assert_eq!(
+        handles_of(&fixed),
+        ["thing:fix-the-gate"],
+        "{}",
+        fixed.raw()
+    );
 
     // Through the view: the refusal names the view, and the scope beside it answers.
     s.refused("recall", json!({"view": "marked-things"}))
@@ -159,7 +234,12 @@ async fn a_key_held_on_records_names_the_scope_that_asks_it() {
             json!({"view": "marked-things", "scope": "record"}),
         )
         .await;
-    assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
+    assert_eq!(
+        handles_of(&fixed),
+        ["thing:fix-the-gate"],
+        "{}",
+        fixed.raw()
+    );
 
     // The negative: a key no scope holds is a spelling mistake, and the refusal
     // does not send the caller to a scope.
@@ -203,7 +283,12 @@ async fn a_licence_refusal_names_the_type_to_declare() {
     let fixed = s
         .call("recall", json!({"kind": "thing", "where": "size > 3"}))
         .await;
-    assert_eq!(handles_of(&fixed), ["thing:gamma"], "{}", fixed.raw());
+    assert_eq!(
+        handles_of(&fixed),
+        ["thing:fix-the-gate"],
+        "{}",
+        fixed.raw()
+    );
 
     let refusal = s
         .refused(
@@ -230,7 +315,7 @@ async fn a_licence_refusal_names_the_type_to_declare() {
         .await;
     assert_eq!(
         handles_of(&fixed),
-        ["thing:delta", "thing:gamma"],
+        ["thing:fix-the-gate", "thing:paint-the-fence"],
         "{}",
         fixed.raw()
     );
@@ -274,7 +359,12 @@ async fn an_order_on_a_key_nothing_holds_is_refused_not_tied() {
         .await;
     assert_eq!(
         handles_of(&ordered),
-        ["thing:epsilon", "thing:gamma", "thing:delta", "thing:omega"],
+        [
+            "thing:sweep-the-porch",
+            "thing:fix-the-gate",
+            "thing:paint-the-fence",
+            "thing:sort-the-shelf"
+        ],
         "{}",
         ordered.raw()
     );
@@ -313,12 +403,12 @@ async fn a_walks_keeping_is_checked_and_its_unlicensed_drops_are_counted() {
         .says("statuz")
         .says("status");
     let fixed = s.call("recall", walk("status != done")).await;
-    fixed.says("thing:gamma");
+    fixed.says("thing:fix-the-gate");
 
     // An object the walk drops for want of a licence is counted, with what to
     // declare; declaring it keeps the object.
     let ordered = s.call("recall", walk("due < 2026-10-15")).await;
-    ordered.says("thing:gamma");
+    ordered.says("thing:fix-the-gate");
     ordered.never_says("\"id\":\"place:daredevil-gorge\"");
     let counted = ordered.json()["left_out_unlicensed"].clone();
     assert_eq!(counted[0]["kind"], "place", "{}", ordered.raw());
@@ -354,7 +444,12 @@ async fn the_refusal_of_a_recall_that_narrows_nothing_lists_where() {
     a_board(&s).await;
     s.refused("recall", json!({})).await.says("where");
     let fixed = s.call("recall", json!({"where": "status = done"})).await;
-    assert_eq!(handles_of(&fixed), ["thing:epsilon"], "{}", fixed.raw());
+    assert_eq!(
+        handles_of(&fixed),
+        ["thing:sweep-the-porch"],
+        "{}",
+        fixed.raw()
+    );
     story.finish().await;
 }
 
@@ -376,7 +471,7 @@ async fn a_view_and_a_caller_combine_without_silence() {
     .await;
     // The view's own question, and a caller's where in its place, whole.
     let own = s.call("recall", json!({"view": "marked-things"})).await;
-    assert_eq!(handles_of(&own), ["thing:delta"], "{}", own.raw());
+    assert_eq!(handles_of(&own), ["thing:paint-the-fence"], "{}", own.raw());
     let replaced = s
         .call(
             "recall",
@@ -385,7 +480,7 @@ async fn a_view_and_a_caller_combine_without_silence() {
         .await;
     assert_eq!(
         handles_of(&replaced),
-        ["thing:epsilon"],
+        ["thing:sweep-the-porch"],
         "{}",
         replaced.raw()
     );
