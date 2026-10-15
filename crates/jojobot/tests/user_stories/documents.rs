@@ -180,11 +180,22 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
             json!({"document": "document:homer", "markdown": MANUAL}),
         )
         .await;
+    // An ordinary claim about the manual, which is not part of its text: it keeps
+    // the manual's name, so asking by that name still reaches it.
+    session
+        .fact("document:homer", "reviewed by a colleague")
+        .await;
     let found = session
         .call("search", json!({"query": "fryer"}))
         .await
         .json();
     let results = found["results"].as_array().expect("results");
+    assert!(
+        results
+            .iter()
+            .any(|hit| hit["content"] == "reviewed by a colleague"),
+        "a claim about the manual is found by the manual's name: {found}"
+    );
     let parts: Vec<&serde_json::Value> = results
         .iter()
         .filter(|hit| hit["document"]["handle"] == "document:homer")
@@ -202,6 +213,25 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
             "{held} mentions the fryer and was found: {found}"
         );
     }
+    // **A part that holds nothing asked for is not a hit**, in the same read as
+    // the parts that do and as the manual found by its name. The closing part
+    // says nothing of the fryer: it sits on a document called "Fryer manual",
+    // which is the manual's name and not the part's words.
+    assert_eq!(
+        contents.len(),
+        2,
+        "only the parts that hold the word come back: {found}"
+    );
+    assert!(
+        !contents.contains(&"## Closing"),
+        "the closing part holds nothing asked for: {found}"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|hit| hit["hit"] == "entity" && hit["id"] == "document:homer"),
+        "the manual itself is found by its name: {found}"
+    );
     assert!(
         parts
             .iter()

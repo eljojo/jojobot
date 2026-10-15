@@ -1459,7 +1459,14 @@ impl FullTextIndex {
             // written here, keeps their handle and not their nickname — the doc
             // does not know it, and looking it up would mean a global pass on
             // every write.
-            let subject_labels = if scan.entity.as_ref().is_some_and(|e| e.id == fact.subject) {
+            //
+            // **A section of a document carries its own words only.** The
+            // document's name is on the document, which is found by it; a section
+            // that holds nothing asked for is not a hit because it sits on a page
+            // with that name.
+            let subject_labels = if scan.entity.as_ref().is_some_and(|e| e.id == fact.subject)
+                && !jojobot_domain::memory::document::is_section(fact)
+            {
                 owner_labels.as_str()
             } else {
                 ""

@@ -341,6 +341,13 @@ pub const EDGES: &str = "edges";
 /// by what sits next to it, so a move that stopped partway can be finished.
 pub const CONTINUES: &str = "continues";
 
+/// **Whether a fact is a section of the document it sits on**: a claim on a
+/// document that carries the order key of a section. An ordinary claim about a
+/// document is not part of its text.
+pub fn is_section(fact: &Fact) -> bool {
+    fact.home.kind() == Some(EntityKind::DOCUMENT) && fact.fields.contains_key(ORDER)
+}
+
 /// **The own fields of the record that holds a section.** `edges` is always
 /// written, so a reader never has to guess what was trimmed.
 pub fn record_fields(section: &Section, order: &str) -> std::collections::BTreeMap<String, String> {
