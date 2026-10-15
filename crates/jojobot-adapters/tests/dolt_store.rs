@@ -2901,15 +2901,41 @@ async fn two_writes_of_one_number_at_once_land_one_and_refuse_the_other_naming_i
         ("decision:contract-ordinance-race-third", "Third race rule"),
     ] {
         let id = EntityId(handle.into());
-        folded
-            .add_entity(NewEntity {
-                parent: Some(collection.clone()),
-                ..NewEntity::new(id.clone(), name, "contract-fixture")
-            })
-            .await
-            .expect("add ok")
-            .written()
-            .expect("not blocked");
+        let member = NewEntity {
+            parent: Some(collection.clone()),
+            ..NewEntity::new(id.clone(), name, "contract-fixture")
+        };
+        // **Written as a bot writes a family of look-alikes.** The three members
+        // share the words of their handles, so the second meets the shared-word
+        // refusal. A bot answers it with the token the refusal minted and a
+        // reason; a refusal for any other reason is not what this case is about,
+        // and fails it.
+        let added = match folded.add_entity(member.clone()).await.expect("add ok") {
+            jojobot_domain::memory::Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                assert!(
+                    candidates
+                        .iter()
+                        .all(|c| c.reason == jojobot_domain::memory::guard::MatchReason::SharedWord),
+                    "a member is refused for more than the words it shares with its family: {candidates:?}"
+                );
+                folded
+                    .add_entity(NewEntity {
+                        override_token: Some(jojobot_domain::memory::guard::override_token(
+                            &attempted,
+                            &candidates,
+                        )),
+                        override_reason: Some("a fixture of the same family".into()),
+                        ..member
+                    })
+                    .await
+                    .expect("add ok")
+            }
+            written => written,
+        };
+        added.written().expect("not blocked");
         members.push(id);
     }
     let write = |id: &EntityId, number: &str| {
