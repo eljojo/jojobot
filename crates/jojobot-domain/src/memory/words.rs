@@ -471,7 +471,7 @@ mod tests {
         );
         assert!(named("Lisas visit").is_empty(), "word-bounded");
         assert!(
-            named("deploy alpha is live").is_empty(),
+            named("we planned the move today").is_empty(),
             "the parent's own words"
         );
         assert!(named("Bo came").is_empty(), "a connective-length name");
