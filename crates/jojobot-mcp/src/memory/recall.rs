@@ -1165,10 +1165,16 @@ fn fit_run_histories(body: &mut serde_json::Value, traced: &str, paged: Option<u
         // Newest first: the newest write is the one written last, so fill in that
         // order and drop the oldest writes when the room runs out. The part is
         // served in the run's order, so the order of writing is read off each
-        // record, with the run's order breaking a tie.
+        // record, with the run's order breaking a tie. **The moment is read as an
+        // instant**: a moment prints its fraction only when it is not zero, so
+        // as text `…:04Z` sorts after `…:04.5Z`.
         let mut newest_first: Vec<usize> = (0..records.len()).collect();
         newest_first.sort_by(|a, b| {
-            let written = |at: &usize| records[*at].1["written_at"].as_str().map(str::to_string);
+            let written = |at: &usize| {
+                records[*at].1["written_at"]
+                    .as_str()
+                    .and_then(|moment| moment.parse::<jiff::Timestamp>().ok())
+            };
             written(b).cmp(&written(a)).then(b.cmp(a))
         });
         let mut kept_at = std::collections::BTreeSet::new();

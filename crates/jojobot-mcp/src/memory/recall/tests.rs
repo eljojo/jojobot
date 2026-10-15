@@ -10560,6 +10560,59 @@ fn a_part_the_ceiling_cuts_keeps_the_wording_written_last() {
     assert_eq!(history["not_shown"]["count"], 3, "{history}");
 }
 
+/// **Two wordings written within one second are ordered by the instant, not by
+/// the text of the moment.** A moment prints its fraction only when it is not
+/// zero, so `…:04Z` sorts after `…:04.5Z` as text and is the earlier of the two.
+/// The wording written at `…:04.5Z` is the newer, and it is the one the part the
+/// ceiling cuts keeps. The older sits later in the run's order, so the run's
+/// order cannot be what keeps the right one.
+#[test]
+fn a_part_the_ceiling_cuts_orders_two_wordings_in_one_second_by_the_instant() {
+    let big = "k".repeat(15_000);
+    let wording = |text: &str, written_at: &str| {
+        serde_json::json!({
+            "revision": 1,
+            "text": format!("{text} {big}"),
+            "written_at": written_at,
+        })
+    };
+    let mut body = serde_json::json!({
+        "objects": [{
+            "id": "abcdef",
+            "history": {
+                "count": 2,
+                "entries": [
+                    {"entry": "000001", "count": 1, "wordings": [
+                        wording("later", "2026-10-15T04:00:04.5Z"),
+                    ]},
+                    {"entry": "000002", "count": 1, "wordings": [
+                        wording("earlier", "2026-10-15T04:00:04Z"),
+                    ]},
+                ],
+            },
+        }]
+    });
+    fit_run_histories(&mut body, "journal", Some(0));
+    let history = &body["objects"][0]["history"];
+    let kept: Vec<&str> = history["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .flat_map(|entry| entry["wordings"].as_array().expect("wordings"))
+        .map(|w| {
+            w["text"]
+                .as_str()
+                .expect("text")
+                .split(' ')
+                .next()
+                .expect("word")
+        })
+        .collect();
+    assert_eq!(kept, ["later"], "{history}");
+    assert_eq!(history["shown"], 1, "{history}");
+    assert_eq!(history["not_shown"]["count"], 1, "{history}");
+}
+
 /// **The write guard's envelope names every key a recall answer can add.** The
 /// guard measures a record against the answer a read of its thing would serve,
 /// and the envelope of that answer is a list written apart from the one the
