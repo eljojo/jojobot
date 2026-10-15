@@ -146,6 +146,10 @@ async fn a_part_is_moved_behind_another_with_one_call() {
         .call("read_document", json!({"document": "document:homer"}))
         .await
         .json();
+    // **No blank line stands between "wipe the lid." and "## Opening"**: the read
+    // joins the sections byte for byte, and the section that closed the manual
+    // never ended in a blank line, so moving it into the middle carries none. The
+    // opening now ends the document with the blank line it had in the middle.
     assert_eq!(
         read["markdown"],
         "# Fryer manual\n\nRead this before the first shift.\n\n## Closing\n\nDrain the oil and wipe the lid.\n## Opening\n\nSwitch the fryer on at six.\n\n",
@@ -185,16 +189,36 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
         .iter()
         .filter(|hit| hit["document"]["handle"] == "document:homer")
         .collect();
-    assert!(!parts.is_empty(), "a part of the manual was found: {found}");
+    // **Both parts that hold the word are asserted**: the title part and the
+    // opening. Grouping is a claim about more than one hit, so a search that found
+    // one part and named its manual would pass a check that the manual was named.
+    let contents: Vec<&str> = parts
+        .iter()
+        .filter_map(|hit| hit["content"].as_str())
+        .collect();
+    for held in ["# Fryer manual", "## Opening"] {
+        assert!(
+            contents.contains(&held),
+            "{held} mentions the fryer and was found: {found}"
+        );
+    }
     assert!(
         parts
             .iter()
             .all(|hit| hit["document"]["name"] == "Fryer manual"),
         "{found}"
     );
+    // They arrive together: no other hit stands between the manual's parts.
+    let places: Vec<usize> = results
+        .iter()
+        .enumerate()
+        .filter(|(_, hit)| hit["document"]["handle"] == "document:homer")
+        .map(|(place, _)| place)
+        .collect();
+    assert!(places.len() >= 2, "more than one part is grouped: {found}");
     assert!(
-        parts.iter().any(|hit| hit["content"] == "## Opening"),
-        "the part that mentions the fryer is the opening: {found}"
+        places.windows(2).all(|pair| pair[1] - pair[0] == 1),
+        "the parts of the manual are listed together: {found}"
     );
 }
 
@@ -248,12 +272,13 @@ async fn a_section_that_opens_with_a_code_fence_keeps_what_is_inside_it_literal(
     // A walk in from the thing reaches the document that mentions it in a
     // sentence and not one that names it only inside a fence.
     session.add("document:marge", "Griddle manual").await;
+    session.add("person:ned-flanders", "Ned").await;
     session
         .call(
             "put_document",
             json!({
                 "document": "document:marge",
-                "markdown": "```\n@person:bart\n```\n\nplain words\n",
+                "markdown": "```\n@person:bart\n```\n\nplain words for @person:ned-flanders\n",
             }),
         )
         .await;
@@ -280,6 +305,7 @@ async fn a_section_that_opens_with_a_code_fence_keeps_what_is_inside_it_literal(
             json!({"subject": "document:marge", "follow": {"direction": "out"}}),
         )
         .await
+        .says("person:ned-flanders")
         .never_says("person:bart");
 
     // An edit to the details of the section that opens the fence is read beside
