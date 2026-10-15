@@ -872,18 +872,20 @@ impl Story {
         let search = wired.search;
         let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = wired.mailboxes;
         let boxes_for_seed = boxes.clone();
-        // **The handle registry, filled from the board before anything is
-        // served — exactly as `main.rs` does.** A restart inherits a store
-        // that already holds runs from an earlier spawn; a registry built
-        // fresh and never filled would tell a resumed run its own `sid`
-        // addresses nothing, which is not what a real restart does.
-        let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
-        if let Ok(board) = sessions_mentioned.all_sessions().await {
-            registry.rebuild_from(&board);
-            if let Ok(minted) = sessions_mentioned.minted_without_a_card().await {
-                registry.rebuild_minted(&minted);
-            }
-        }
+        // **The startup passes the binary runs, by the same function** —
+        // the handle registry filled from the board, and the default identity,
+        // the instance record and the shipped types seeded. A restart inherits a
+        // store that already holds runs from an earlier spawn, so the registry
+        // must be filled as a real restart fills it. Run before anything serves,
+        // as the binary does.
+        let seed_memory: Arc<dyn jojobot_domain::memory::Memory> = indexed_for_seed;
+        let registry = jojobot::wiring::run_startup_passes(
+            &sessions_mentioned,
+            &seed_memory,
+            &boxes_for_seed,
+            &clock,
+        )
+        .await;
         // **The operator's own window is served too, over the same state.**
         // A story that could not open a page could not tell whether what it
         // wrote is visible to the one reader who does not speak MCP — and every
@@ -946,18 +948,9 @@ impl Story {
                 .unwrap();
         });
 
-        // **A fresh jojobot arrives with its default identity**, exactly as a
-        // real one does — seeded before anything serves. Every story runs
-        // against a server that has one, because every real server does.
-        let seed_memory: Arc<dyn jojobot_domain::memory::Memory> = indexed_for_seed;
-        jojobot_mcp::seed::ensure_default_identity(&seed_memory, &boxes_for_seed).await;
-        // **…and with its own record**, the one the operator and the zone are
-        // written onto, exactly as the real boot makes it.
-        jojobot_mcp::seed::ensure_instance_record(&seed_memory).await;
-        // **…and with the types it ships**, declared before anything connects.
-        // A story that declared them itself would prove a caller can write
-        // them, which is the opposite of what a shipped type is.
-        let _ = jojobot_mcp::seed::ensure_shipped_types(&seed_memory).await;
+        // **Test-only: the kinds.** The binary's store declares them when it
+        // opens (`open_provisioned`); the stories' stores are fakes that open
+        // with none, so the harness seeds them here.
         let _ = jojobot_mcp::seed::ensure_kinds(&seed_memory).await;
 
         Self {

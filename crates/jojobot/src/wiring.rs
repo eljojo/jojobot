@@ -968,6 +968,78 @@ pub async fn boot_store_pushing(
     }
     let search = wired.search;
 
+    let registry = run_startup_passes(
+        &sessions,
+        &(indexed.clone() as Arc<dyn Memory>),
+        &mailboxes,
+        &clock,
+    )
+    .await;
+    let seed_memory: Arc<dyn Memory> = indexed.clone();
+    // **A role claimed before roles were objects is carried onto its object.** An
+    // older build kept the holder and the moment on the bot, and nothing reads
+    // them as a lease now, so a store restored from before the change would seat a
+    // second session in every such role. Each claim is written onto its role
+    // object, the keys come off the bot, and the pass is marked finished. Not
+    // fatal: a pass that failed or was skipped is owed again at the next boot, and
+    // the keys of a role that could not be moved stay where they are.
+    match jojobot_adapters::dolt::move_old_role_claims_once(
+        store.pool(),
+        seed_memory.as_ref(),
+        the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
+    )
+    .await
+    {
+        jojobot_adapters::dolt::Migrated::Ran(moved) => {
+            tracing::info!(moved, "carried the old role claims onto their role objects")
+        }
+        jojobot_adapters::dolt::Migrated::Settled => {
+            tracing::info!("old role claims: already carried")
+        }
+        jojobot_adapters::dolt::Migrated::Skipped(reason) => tracing::warn!(
+            error = %reason,
+            "OLD ROLE CLAIMS NOT CARRIED — the bots could not be read at startup. Nothing was \
+             written; a role claimed in the old shape reads as empty until a restart repeats \
+             the pass."
+        ),
+        jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::warn!(
+            error = %reason,
+            "OLD ROLE CLAIMS NOT ALL CARRIED — a role named above was not moved, so it reads as \
+             empty until a restart repeats the pass."
+        ),
+    }
+
+    Ok(Booted {
+        store,
+        memory: indexed,
+        search,
+        mailboxes,
+        outbox,
+        sessions,
+        teachings,
+        registry,
+        requests: Arc::new(
+            jojobot_adapters::dolt::requests::DoltRequests::new(requests_pool).on_clock(clock),
+        ),
+        clock,
+    })
+}
+
+/// **The passes that run after the stores are wired and before anything
+/// serves**: the handle registry is filled from the board, the default identity,
+/// the instance record and the shipped types are seeded. The binary's boot and
+/// the story harness both call this, so breaking a pass here reddens a story. A
+/// pass that cannot read its store logs what it cost and does not stop the boot.
+///
+/// What stays out is what needs the real store: the old role claims, which want
+/// the pool, and the kinds, which the store opens with.
+pub async fn run_startup_passes(
+    sessions: &Arc<dyn Sessions>,
+    memory: &Arc<dyn Memory>,
+    mailboxes: &Arc<dyn Mailboxes>,
+    clock: &Clock,
+) -> Arc<jojobot_mcp::sid::SessionRegistry> {
+    let seed_memory = memory.clone();
     // **The handle registry, filled from the board before anything is served.**
     // Eagerly rather than on first miss: a lazy rebuild would hand the first
     // caller after a restart a different answer from the second, and that is the
@@ -1035,13 +1107,11 @@ pub async fn boot_store_pushing(
         ),
     }
 
-    let seed_memory: Arc<dyn Memory> = indexed.clone();
-
     // **There is never a jojobot with no bot.** The default identity arrives
     // with the software, before anything serves — which is what makes the
     // write gate shippable at all: an identity IS a bot, so a server with none
     // could never create the first one through its own surface.
-    match jojobot_mcp::seed::ensure_default_identity(&seed_memory, &mailboxes).await {
+    match jojobot_mcp::seed::ensure_default_identity(&seed_memory, mailboxes).await {
         jojobot_mcp::seed::Seeded::Created => {
             tracing::info!(
                 bot = jojobot_mcp::seed::DEFAULT_BOT,
@@ -1091,53 +1161,7 @@ pub async fn boot_store_pushing(
         ),
     }
 
-    // **A role claimed before roles were objects is carried onto its object.** An
-    // older build kept the holder and the moment on the bot, and nothing reads
-    // them as a lease now, so a store restored from before the change would seat a
-    // second session in every such role. Each claim is written onto its role
-    // object, the keys come off the bot, and the pass is marked finished. Not
-    // fatal: a pass that failed or was skipped is owed again at the next boot, and
-    // the keys of a role that could not be moved stay where they are.
-    match jojobot_adapters::dolt::move_old_role_claims_once(
-        store.pool(),
-        seed_memory.as_ref(),
-        the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
-    )
-    .await
-    {
-        jojobot_adapters::dolt::Migrated::Ran(moved) => {
-            tracing::info!(moved, "carried the old role claims onto their role objects")
-        }
-        jojobot_adapters::dolt::Migrated::Settled => {
-            tracing::info!("old role claims: already carried")
-        }
-        jojobot_adapters::dolt::Migrated::Skipped(reason) => tracing::warn!(
-            error = %reason,
-            "OLD ROLE CLAIMS NOT CARRIED — the bots could not be read at startup. Nothing was \
-             written; a role claimed in the old shape reads as empty until a restart repeats \
-             the pass."
-        ),
-        jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::warn!(
-            error = %reason,
-            "OLD ROLE CLAIMS NOT ALL CARRIED — a role named above was not moved, so it reads as \
-             empty until a restart repeats the pass."
-        ),
-    }
-
-    Ok(Booted {
-        store,
-        memory: indexed,
-        search,
-        mailboxes,
-        outbox,
-        sessions,
-        teachings,
-        registry,
-        requests: Arc::new(
-            jojobot_adapters::dolt::requests::DoltRequests::new(requests_pool).on_clock(clock),
-        ),
-        clock,
-    })
+    registry
 }
 
 /// **The day a boot-time pass stamps**, read the way a run that states no zone is
