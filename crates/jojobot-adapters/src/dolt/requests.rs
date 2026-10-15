@@ -28,6 +28,61 @@ fn store(e: sqlx::Error) -> RequestError {
     RequestError::Store("the request store could not be reached".into())
 }
 
+/// **A call under an id that another call spent first.** The ledger holds one
+/// row for an id, so a call that inserts a second is refused by the store as a
+/// key held twice. That is not a rule the caller broke: the id is spent, and the
+/// same call sent again finds the row and answers as a repeat. The error says
+/// what the store says for a write that collided with another (SQLSTATE `40001`),
+/// which every mapper of a store failure already tells apart and answers with a
+/// retry.
+#[derive(Debug)]
+struct SpentByAnother;
+
+impl std::fmt::Display for SpentByAnother {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the request id was spent by another call that committed first")
+    }
+}
+
+impl std::error::Error for SpentByAnother {}
+
+impl sqlx::error::DatabaseError for SpentByAnother {
+    fn message(&self) -> &str {
+        "the request id was spent by another call that committed first"
+    }
+
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some("40001".into())
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+
+/// **The error of a write that carried an id, with a key held twice read as the
+/// id having been spent.** Any other error is returned as it came.
+fn read_as_spent(e: sqlx::Error) -> sqlx::Error {
+    match e.as_database_error() {
+        Some(db) if db.kind() == sqlx::error::ErrorKind::UniqueViolation => {
+            sqlx::Error::Database(Box::new(SpentByAnother))
+        }
+        _ => e,
+    }
+}
+
 /// The permanent identity of the bot a handle answers to, or `None` when the
 /// handle answers to nothing.
 async fn bot_key(
@@ -195,7 +250,8 @@ pub(crate) async fn claim(
     .bind(landed())
     .bind(stamp(now))
     .execute(&mut **tx)
-    .await?;
+    .await
+    .map_err(read_as_spent)?;
     Ok(claim)
 }
 

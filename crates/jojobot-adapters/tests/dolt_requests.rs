@@ -648,6 +648,82 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
     server.stop().await;
 }
 
+/// **The calls that lose a race under one id are told to send the call again.**
+/// Four calls under one id at the same moment: one spends the id and stores its
+/// claim, and each of the others is refused by the store. What a loser is told
+/// is read here, because the same words reach the caller (the dispatch replaces
+/// them with the winner's receipt only when the ledger already holds it). A
+/// loser is told the write collided and to send the same call again, never that
+/// the call itself has to change. The send again then finds the winner's row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
+    use jojobot_domain::memory::MemoryError;
+
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-losers-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_losers")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = Arc::new(DoltMemory::open(pool.clone()));
+    let ledger = DoltRequests::new(pool.clone());
+    let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
+    thing(memory.as_ref(), "bot:sigma", "Sigma").await;
+
+    let mut losers = 0;
+    // Several rounds, so a race that went one way by luck would not pass.
+    for round in 0..6 {
+        let id = format!("loser-{round}");
+        let calls = (0..4).map(|n| {
+            let memory = Arc::clone(&memory);
+            let subject = milhouse.clone();
+            let id = id.clone();
+            tokio::spawn(async move {
+                let scope = Scope::new(request("bot:sigma", &id));
+                let told = within(
+                    Arc::clone(&scope),
+                    armed(memory.capture(claim_about(&subject, &format!("said it {round} {n}")))),
+                )
+                .await;
+                (told, scope.was_spent())
+            })
+        });
+        for call in calls {
+            let (told, spent) = call.await.expect("the call ran");
+            match (spent, told) {
+                (true, Ok(_)) => {}
+                (false, Err(MemoryError::Conflict)) => losers += 1,
+                (spent, told) => panic!(
+                    "round {round}: a call that {} the id was told {told:?}, \
+                     and a loser is told to send it again",
+                    if spent { "spent" } else { "did not spend" }
+                ),
+            }
+        }
+        let kept = ledger
+            .lookup(
+                &EntityId("bot:sigma".into()),
+                &RequestId::parse(&id).expect("an id"),
+            )
+            .await
+            .expect("the ledger reads");
+        assert!(
+            kept.is_some(),
+            "round {round}: the send again finds the winner's row"
+        );
+    }
+    assert!(losers > 0, "four calls at once never lost a race: {losers}");
+
+    server.stop().await;
+}
+
 /// **A request id answers as a repeat exactly while the ledger keeps it.** A row
 /// older than the keep window is not read: the dispatch finds no spent id, and a
 /// different write under the same id writes. A resend inside the window still
