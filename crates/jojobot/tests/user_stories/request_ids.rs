@@ -457,56 +457,83 @@ async fn a_message_posted_and_retired_twice_under_one_id_is_posted_and_retired_o
     story.finish().await;
 }
 
-/// What the run has been charged and told so far: the characters it was handed
-/// and the text of the beat for its captures.
-async fn bookkeeping(story: &Story) -> (u64, Option<String>) {
+/// What the run has been charged and told so far. **The characters are read the
+/// way a caller reads them**, from `list_runs`. **The beat is read from the
+/// store**, because no verb that leaves the run open serves the text of a beat
+/// that jojobot wrote: `recall` of the run gives only how many beats it holds,
+/// and a repeat that replayed a beat would add to the tally in a beat's text and
+/// not to that count. Reading charges the run too, which is why the case below
+/// measures what a read costs on its own.
+async fn bookkeeping(story: &Story, s: &Session) -> (u64, Option<String>) {
     use jojobot_domain::session::Sessions;
-    let runs = story
+    let runs = s.call("list_runs", json!({})).await.json();
+    let served = runs["runs"]
+        .as_array()
+        .and_then(|all| all.iter().find(|run| run["run"] == s.run()))
+        .and_then(|run| run["served"]["characters"].as_u64())
+        .unwrap_or_else(|| panic!("list_runs does not say what the run was handed: {runs}"));
+    let held = story
         .sessions_store()
         .all_sessions()
         .await
         .expect("the board reads");
-    // The story's own run is the one that has been charged something.
-    let run = runs
+    let beat = held
         .iter()
-        .max_by_key(|run| run.served_chars)
-        .expect("the board holds a run");
-    let beat = run
-        .entries
-        .iter()
-        .find(|entry| entry.beat.as_deref() == Some("capture"))
+        .find(|run| {
+            run.sid
+                .as_ref()
+                .is_some_and(|name| name.as_str() == s.run())
+        })
+        .and_then(|run| {
+            run.entries
+                .iter()
+                .find(|entry| entry.beat.as_deref() == Some("capture"))
+        })
         .map(|entry| entry.text.clone());
-    (run.served_chars, beat)
+    (served, beat)
 }
 
+/// **A repeat is answered and charges the run nothing, and replays no beat.**
+/// Both reads are charged, so the case first measures what a pair of reads costs
+/// with nothing between them. A repeat between two reads adds less than its own
+/// answer; a capture that is not a repeat adds at least that much, and moves the
+/// beat. The second half is the positive the first rests on.
 #[tokio::test]
 async fn a_repeat_replays_no_beat_and_no_accounting() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:milhouse", "Milhouse").await;
     s.call("capture", capture("wears glasses", "r1")).await;
-    let (served, beat) = bookkeeping(&story).await;
+    let (first, beat) = bookkeeping(&story, &s).await;
     assert!(beat.is_some(), "the first capture left its beat");
 
-    is_a_repeat(
-        &s.call("capture", capture("wears glasses", "r1"))
-            .await
-            .json(),
-    );
-    // The repeat was answered and charged nothing: no beat counted, no characters
-    // added to what the run was handed.
-    assert_eq!(
-        bookkeeping(&story).await,
-        (served, beat.clone()),
-        "a repeat replays none of the run's bookkeeping"
-    );
+    // What a pair of reads costs, with nothing between them.
+    let (second, still) = bookkeeping(&story, &s).await;
+    let reading = second - first;
+    assert!(reading > 0, "a read is charged: {first} then {second}");
+    assert_eq!(still, beat, "reading moved no beat");
 
-    // The positive the equality rests on: a capture that is not a repeat does move
-    // both.
-    s.call("capture", capture("owns a radio", "r2")).await;
-    let (served_after, beat_after) = bookkeeping(&story).await;
-    assert!(served_after > served, "a new write is charged");
-    assert_ne!(beat_after, beat, "a new write moves the beat's count");
+    let repeat = s.call("capture", capture("wears glasses", "r1")).await;
+    is_a_repeat(&repeat.json());
+    let answered = repeat.raw().chars().count() as u64;
+    let (third, after_repeat) = bookkeeping(&story, &s).await;
+    assert!(
+        third - second < reading + answered / 2,
+        "a repeat of {answered} characters was charged: reads cost {reading}, then {}",
+        third - second
+    );
+    assert_eq!(after_repeat, beat, "a repeat replays no beat");
+
+    // The positive: a capture that is not a repeat is charged and moves the beat.
+    let fresh = s.call("capture", capture("owns a radio", "r2")).await;
+    let charged = fresh.raw().chars().count() as u64;
+    let (fourth, after_fresh) = bookkeeping(&story, &s).await;
+    assert!(
+        fourth - third > reading + charged / 2,
+        "a new write of {charged} characters is charged: reads cost {reading}, then {}",
+        fourth - third
+    );
+    assert_ne!(after_fresh, beat, "a new write moves the beat's count");
 
     story.finish().await;
 }
