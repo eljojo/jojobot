@@ -91,6 +91,20 @@ pub struct ForwardedLinkReport {
     pub skipped: Vec<String>,
 }
 
+/// **Which thing a folded row's forward means**, as
+/// [`DoltMemory::wearer_of_folded_handle`] decides it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Wearer {
+    /// The one thing the forward meant, by its key.
+    Placed(String),
+    /// No thing wears the handle, and none ever wore it.
+    NeverWorn,
+    /// More than one thing has worn the handle, and the order of the fold and
+    /// the rename does not say which: the reason. The forward is left as it
+    /// is and the path says so.
+    Undecidable(String),
+}
+
 /// **What the pass that brings forwarding rows to the current handle of their
 /// survivor did.**
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -593,11 +607,6 @@ impl DoltMemory {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(store)?;
-        let former: Vec<(String, String)> =
-            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(store)?;
         // **Keyed by the badge, which no rename moves.** A fold stores the
         // survivor's handle as it stood, and a rename rewrites the survivor's own
         // row and no other, so that handle may name nothing today.
@@ -610,28 +619,6 @@ impl DoltMemory {
                 )
             })
             .collect();
-        // **The badges a stored handle has ever named**: the row wearing it now
-        // and every row that wore it before. One badge places the forward; none
-        // or several do not, and the pass does not guess between them.
-        let placed = |name: &str| -> Result<&str, Option<String>> {
-            let mut named: std::collections::BTreeSet<&str> = rows
-                .iter()
-                .filter(|(id, _, _)| id == name)
-                .map(|(id, badge, _)| badge.as_deref().unwrap_or(id.as_str()))
-                .collect();
-            named.extend(
-                former
-                    .iter()
-                    .filter(|(handle, _)| handle == name)
-                    .map(|(_, badge)| badge.as_str()),
-            );
-            let mut named = named.into_iter();
-            match (named.next(), named.next()) {
-                (Some(only), None) => Ok(only),
-                (None, _) => Err(Some("no thing has ever worn that handle".to_string())),
-                _ => Err(None),
-            }
-        };
         for (badge, (handle, into)) in &by_badge {
             if into.is_none() {
                 continue;
@@ -644,22 +631,19 @@ impl DoltMemory {
             let mut at = *into;
             // The row whose forward is being placed, for the moment it was folded.
             let mut folding: &str = handle;
+            let mut folding_key: &str = badge;
             while let Some(name) = at {
-                let next = match placed(name) {
-                    Ok(next) => next.to_string(),
-                    // More than one thing has worn the handle: the one that wore it
-                    // when this row was folded is the one it meant.
-                    Err(None) => match Self::wearer_when_folded(&mut tx, folding, name).await? {
-                        Some(wearer) => wearer,
-                        None => {
-                            unplaced = Some(format!(
-                                "{folding} forwards to {name}: more than one thing has worn that \
-                                 handle"
-                            ));
-                            break;
-                        }
-                    },
-                    Err(Some(why)) => {
+                let next = match Self::wearer_of_folded_handle(&mut tx, folding, folding_key, name)
+                    .await?
+                {
+                    Wearer::Placed(next) => next,
+                    Wearer::NeverWorn => {
+                        unplaced = Some(format!(
+                            "{folding} forwards to {name}: no thing has ever worn that handle"
+                        ));
+                        break;
+                    }
+                    Wearer::Undecidable(why) => {
                         unplaced = Some(format!("{folding} forwards to {name}: {why}"));
                         break;
                     }
@@ -672,6 +656,7 @@ impl DoltMemory {
                     break;
                 }
                 folding = next_handle;
+                folding_key = key;
                 at = onward;
             }
             if let Some(line) = unplaced {
@@ -701,49 +686,69 @@ impl DoltMemory {
         Ok(report)
     }
 
-    /// **Of the two things that have worn a handle, the one that wore it when a
-    /// row was folded.** A forwarding row names the handle its survivor wore at
-    /// the fold, and a rename moves no other row. A handle the rename freed may
-    /// since have been taken by a new thing, so the text names two things and
-    /// says nothing about which.
+    /// **Which thing a folded row's forward means: the one decision every path
+    /// that reads a forwarding handle makes.** A forwarding row names the handle
+    /// its survivor wore at the fold, and a rename moves no other row. A handle
+    /// the rename freed may since have been taken by a new thing, so the text
+    /// names two things and says nothing about which.
     ///
-    /// **The order of two moments decides.** The survivor left the handle when its
-    /// first write under the handle it wears now was made; the row was folded at
-    /// its newest write. A row folded before the survivor left meant the
+    /// **One badge ever wore the handle: that thing. None: [`Wearer::NeverWorn`].**
+    /// Two: the order of two moments decides. The survivor left the handle when
+    /// its first write under the handle it wears now was made; the row was folded
+    /// at its newest write. A row folded before the survivor left meant the
     /// survivor, and a row folded after meant the thing that wears the handle.
     /// Only that case is answered: one thing that wears the handle, one that wore
-    /// it and wears one other handle now, and the two moments told apart. Anything
-    /// else is left to the caller as ambiguous.
-    async fn wearer_when_folded(
+    /// it and wears one other handle now, and the two moments told apart.
+    /// **Anything else is [`Wearer::Undecidable`], with the reason**, and the
+    /// caller leaves the pointer where it is and says so. No path forwards a row
+    /// this function cannot place.
+    ///
+    /// The moments are read through [`entity_writes_of`], so a write filed under
+    /// a handle a thing no longer wears is still that thing's, and are compared as
+    /// parsed instants, never as text: a stamp's fractional digits vary in length.
+    /// A write with no readable stamp leaves its side unknown, and the case
+    /// undecidable.
+    ///
+    /// `folded_handle` is the handle the folded row is filed under and
+    /// `folded_key` its key (its badge, else its handle).
+    pub(super) async fn wearer_of_folded_handle(
         tx: &mut Transaction<'_, MySql>,
-        folded: &str,
-        name: &str,
-    ) -> Result<Option<String>, MemoryError> {
+        folded_handle: &str,
+        folded_key: &str,
+        forwarded: &str,
+    ) -> Result<Wearer, MemoryError> {
         let wearing: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT id, badge FROM entity WHERE id = ?")
-                .bind(name)
+                .bind(forwarded)
                 .fetch_optional(&mut **tx)
                 .await
                 .map_err(store)?;
-        let Some((id, badge)) = wearing else {
-            return Ok(None);
-        };
-        let wearer_now = badge.unwrap_or(id);
+        let wearer_now = wearing.map(|(id, badge)| badge.unwrap_or(id));
         let left: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT badge FROM entity_former_handle WHERE former_handle = ?",
         )
-        .bind(name)
+        .bind(forwarded)
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        let [wore] = left.as_slice() else {
-            return Ok(None);
-        };
-        if *wore == wearer_now {
-            return Ok(None);
+        let named: std::collections::BTreeSet<String> =
+            wearer_now.iter().cloned().chain(left).collect();
+        let mut named_iter = named.iter();
+        match (named_iter.next(), named_iter.next()) {
+            (None, _) => return Ok(Wearer::NeverWorn),
+            (Some(only), None) => return Ok(Wearer::Placed(only.clone())),
+            _ => {}
         }
-        // The handle the survivor wears now, if it wears one other than this and
-        // has worn no other since.
+        let undecidable = |why: &str| Ok(Wearer::Undecidable(why.to_string()));
+        let Some(wearer_now) = wearer_now else {
+            return undecidable("more than one thing has worn that handle and none wears it now");
+        };
+        let mut gone = named.iter().filter(|badge| **badge != wearer_now);
+        let (Some(wore), None) = (gone.next(), gone.next()) else {
+            return undecidable("more than two things have worn that handle");
+        };
+        // The handle the thing that left wears now, if it wears one other than
+        // this and has worn no other since.
         let handles: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM entity WHERE badge = ?
              UNION SELECT former_handle FROM entity_former_handle WHERE badge = ?",
@@ -753,37 +758,62 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        let mut others = handles.iter().filter(|handle| handle.as_str() != name);
+        let mut others = handles.iter().filter(|handle| handle.as_str() != forwarded);
         let (Some(now), None) = (others.next(), others.next()) else {
-            return Ok(None);
+            return undecidable("the thing that left that handle has worn more than one other");
         };
-        let moment = |text: Option<String>| -> Option<jiff::Timestamp> {
-            text.and_then(|text| text.parse().ok())
+        let left_at = Self::write_moments(tx, now, wore, Some(now))
+            .await?
+            .and_then(|moments| moments.into_iter().min());
+        let folded_at = Self::write_moments(tx, folded_handle, folded_key, None)
+            .await?
+            .and_then(|moments| moments.into_iter().max());
+        let (Some(left_at), Some(folded_at)) = (left_at, folded_at) else {
+            return undecidable("a write on one side of the fold has no readable moment");
         };
-        let left_at: Option<String> =
-            sqlx::query_scalar("SELECT MIN(written_at) FROM entity_write WHERE entity = ?")
-                .bind(now)
-                .fetch_one(&mut **tx)
-                .await
-                .map_err(store)?;
-        let folded_at: Option<String> =
-            sqlx::query_scalar("SELECT MAX(written_at) FROM entity_write WHERE entity = ?")
-                .bind(folded)
-                .fetch_one(&mut **tx)
-                .await
-                .map_err(store)?;
-        let (Some(left_at), Some(folded_at)) = (moment(left_at), moment(folded_at)) else {
-            return Ok(None);
-        };
-        Ok(match folded_at.cmp(&left_at) {
-            std::cmp::Ordering::Less => Some(wore.clone()),
-            std::cmp::Ordering::Greater => Some(wearer_now),
+        match folded_at.cmp(&left_at) {
+            std::cmp::Ordering::Less => Ok(Wearer::Placed(wore.clone())),
+            std::cmp::Ordering::Greater => Ok(Wearer::Placed(wearer_now)),
             // **A tie is skipped, never guessed.** No ordering spans a fold and a
             // rename: `entity_write.ordinal` counts the writes of one entity, and a
             // rename writes no merge event. A tie takes two transactions that
             // stamp one nanosecond, so the row is listed and left.
-            std::cmp::Ordering::Equal => None,
-        })
+            std::cmp::Ordering::Equal => {
+                undecidable("the fold and the rename were made at one moment")
+            }
+        }
+    }
+
+    /// **The moments of the writes a thing owns**, parsed, or `None` when any
+    /// of them has no readable stamp: the newest and the oldest of a list that
+    /// hides one are not known. `under` keeps only the writes filed under that
+    /// handle. Empty is `None` too.
+    async fn write_moments(
+        tx: &mut Transaction<'_, MySql>,
+        handle: &str,
+        key: &str,
+        under: Option<&str>,
+    ) -> Result<Option<Vec<jiff::Timestamp>>, MemoryError> {
+        let rows = entity_writes_of(
+            tx,
+            &EntityId(handle.to_string()),
+            &EntityId(key.to_string()),
+            "written_at, entity",
+        )
+        .await?;
+        let mut moments = Vec::new();
+        for row in &rows {
+            let filed: String = row.try_get("entity").map_err(store)?;
+            if under.is_some_and(|under| filed != under) {
+                continue;
+            }
+            let stamp: Option<String> = row.try_get("written_at").map_err(store)?;
+            match stamp.and_then(|stamp| stamp.parse::<jiff::Timestamp>().ok()) {
+                Some(at) => moments.push(at),
+                None => return Ok(None),
+            }
+        }
+        Ok((!moments.is_empty()).then_some(moments))
     }
 
     /// **A forwarding row that names the handle its survivor wore at the fold,
@@ -814,44 +844,23 @@ impl DoltMemory {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(store)?;
-        let former: Vec<(String, String)> =
-            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(store)?;
-        for (id, _, into) in &rows {
+        for (id, folded_badge, into) in &rows {
             let Some(into) = into else { continue };
-            let mut named: std::collections::BTreeSet<&str> = rows
-                .iter()
-                .filter(|(handle, _, _)| handle == into)
-                .map(|(handle, badge, _)| badge.as_deref().unwrap_or(handle.as_str()))
-                .collect();
-            named.extend(
-                former
-                    .iter()
-                    .filter(|(handle, _)| handle == into)
-                    .map(|(_, badge)| badge.as_str()),
-            );
-            let mut named = named.into_iter();
-            let badge: String = match (named.next(), named.next()) {
-                (Some(only), None) => only.to_string(),
-                (None, _) => {
+            let key = folded_badge.as_deref().unwrap_or(id.as_str());
+            let badge: String = match Self::wearer_of_folded_handle(&mut tx, id, key, into).await? {
+                Wearer::Placed(only) => only,
+                Wearer::NeverWorn => {
                     report.skipped.push(format!(
                         "{id} forwards to {into}: no thing has ever worn that handle"
                     ));
                     continue;
                 }
-                // More than one thing has worn the handle: the one that wore it when
-                // this row was folded is the one it meant.
-                _ => match Self::wearer_when_folded(&mut tx, id, into).await? {
-                    Some(wearer) => wearer,
-                    None => {
-                        report.skipped.push(format!(
-                            "{id} forwards to {into}: more than one thing has worn that handle"
-                        ));
-                        continue;
-                    }
-                },
+                Wearer::Undecidable(why) => {
+                    report
+                        .skipped
+                        .push(format!("{id} forwards to {into}: {why}"));
+                    continue;
+                }
             };
             let Some(now) = rows
                 .iter()
@@ -2186,14 +2195,18 @@ impl DoltMemory {
             if merges.iter().any(|(held, _)| *held == key) {
                 continue;
             }
-            if let Some(survivor) = entities.iter().find(|row| &row.id == into) {
-                let survivor = survivor
-                    .badge
-                    .clone()
-                    .unwrap_or_else(|| survivor.id.as_str().to_string());
-                if survivor != key {
-                    merges.push((key, survivor));
-                }
+            // **The thing the handle meant is decided by the one function every
+            // path asks**, so a handle a new thing took after the survivor
+            // left it is not read as the new thing's.
+            match Self::wearer_of_folded_handle(tx, folded.id.as_str(), &key, into.as_str()).await?
+            {
+                Wearer::Placed(survivor) if survivor != key => merges.push((key, survivor)),
+                Wearer::Placed(_) | Wearer::NeverWorn => {}
+                Wearer::Undecidable(why) => tracing::warn!(
+                    handle = %folded.id,
+                    "store: {} forwards to {into}: {why}; a pointer at it stays where it is",
+                    folded.id
+                ),
             }
         }
         jojobot_domain::memory::with_folded_names(&mut entities)?;
@@ -5170,6 +5183,31 @@ impl Memory for DoltMemory {
             ),
             None => None,
         };
+        // **Which forwarding rows meant this thing is decided before its handle
+        // moves**, while it still wears the handle the rows name and the thing that
+        // wore it before has not yet been told apart from it by a rename. A row
+        // that meant a thing that wore the handle before, or that cannot be told,
+        // is left naming it.
+        let mut carried: Vec<String> = Vec::new();
+        if from != to {
+            let forwards_here: Vec<(String, Option<String>)> =
+                sqlx::query_as("SELECT id, badge FROM entity WHERE merged_into = ?")
+                    .bind(from.as_str())
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            for (row, row_badge) in forwards_here {
+                let key = row_badge.unwrap_or_else(|| row.clone());
+                match Self::wearer_of_folded_handle(&mut tx, &row, &key, from.as_str()).await? {
+                    Wearer::Placed(wearer) if wearer == badge => carried.push(row),
+                    Wearer::Placed(_) | Wearer::NeverWorn => {}
+                    Wearer::Undecidable(why) => tracing::warn!(
+                        "store: {row} forwards to {from}: {why}; the rename leaves it naming \
+                         that handle"
+                    ),
+                }
+            }
+        }
         // **A straight primary-key rewrite, never delete-then-insert.**
         // Every other column — the badge above all — rides along untouched:
         // nothing here asks "what was this row's badge" the way
@@ -5186,11 +5224,12 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         // **A forwarding row names the survivor by the handle it wears now.** A
         // fold stores the handle as it stood, and this rename moves it, so every
-        // row that forwards here is brought along in the same transaction.
-        if from != to {
-            sqlx::query("UPDATE entity SET merged_into = ? WHERE merged_into = ?")
+        // row that forwards here and meant this thing is brought along in the same
+        // transaction.
+        for row in &carried {
+            sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
                 .bind(to.as_str())
-                .bind(from.as_str())
+                .bind(row)
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;

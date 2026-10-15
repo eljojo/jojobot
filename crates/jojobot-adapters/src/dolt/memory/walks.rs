@@ -8,7 +8,7 @@ use jojobot_domain::memory::claim_walk::{ClaimMove, ClaimWalk, MergeLoop, ThingW
 use jojobot_domain::memory::{EntityId, FactAddress, FactId, MemoryError};
 use sqlx::{MySql, Row, Transaction};
 
-use super::{DoltMemory, store};
+use super::{DoltMemory, Wearer, store};
 
 impl DoltMemory {
     /// **Where the merge events say a claim went**, by the walk the domain owns:
@@ -134,10 +134,12 @@ impl DoltMemory {
     /// **A fold made before events were kept has no event, and the forwarding
     /// row says where it went.** The row keeps the handle its survivor wore at
     /// the fold in `merged_into`. When no event names the thing, that row is the
-    /// answer: the handle is read as the key of the thing wearing it now, or of
-    /// the thing that wore it last. A handle nothing wears or ever wore places
-    /// nothing, and the pointer stays where it is. Nothing is written, so a
-    /// store the older build filled is read the same way on every start.
+    /// answer: the handle is read as the key of the thing it meant, which
+    /// [`DoltMemory::wearer_of_folded_handle`] decides. A handle nothing ever wore
+    /// places nothing, and a handle the fold and the rename do not tell apart is
+    /// logged and places nothing: the pointer stays where it is. Nothing is
+    /// written, so a store the older build filled is read the same way on every
+    /// start.
     pub(super) async fn survivor_of(
         tx: &mut Transaction<'_, MySql>,
         folded: &EntityId,
@@ -153,8 +155,8 @@ impl DoltMemory {
         if let Some(survivor) = survivor {
             return Ok(Some(EntityId(survivor)));
         }
-        let forwards_to: Option<String> = sqlx::query_scalar(
-            "SELECT merged_into FROM entity
+        let folded_row: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, merged_into FROM entity
              WHERE merged_into IS NOT NULL AND (badge = ? OR (badge IS NULL AND id = ?))
              LIMIT 1",
         )
@@ -162,30 +164,23 @@ impl DoltMemory {
         .bind(folded.as_str())
         .fetch_optional(&mut **tx)
         .await
-        .map_err(store)?
-        .flatten();
-        let Some(handle) = forwards_to else {
+        .map_err(store)?;
+        let Some((handle, forwards_to)) = folded_row else {
             return Ok(None);
         };
-        let wearing: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT id, badge FROM entity WHERE id = ?")
-                .bind(&handle)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(store)?;
-        let key = match wearing {
-            Some((id, badge)) => Some(badge.unwrap_or(id)),
-            None => sqlx::query_scalar(
-                "SELECT badge FROM entity_former_handle WHERE former_handle = ?
-                 ORDER BY ordinal DESC LIMIT 1",
-            )
-            .bind(&handle)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?,
-        };
-        // A row that names itself places nothing: the walk would stand still.
-        Ok(key.filter(|key| key != folded.as_str()).map(EntityId))
+        match Self::wearer_of_folded_handle(tx, &handle, folded.as_str(), &forwards_to).await? {
+            // A row that names itself places nothing: the walk would stand still.
+            Wearer::Placed(key) if key != folded.as_str() => Ok(Some(EntityId(key))),
+            Wearer::Placed(_) | Wearer::NeverWorn => Ok(None),
+            Wearer::Undecidable(why) => {
+                tracing::warn!(
+                    handle,
+                    "store: {handle} forwards to {forwards_to}: {why}; a pointer at it stays \
+                     where it is"
+                );
+                Ok(None)
+            }
+        }
     }
 
     /// **A merge loop as damage a person can find.** The walk names the things in

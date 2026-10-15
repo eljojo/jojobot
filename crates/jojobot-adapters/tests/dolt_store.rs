@@ -8249,6 +8249,408 @@ async fn dolt_skips_a_forwarding_row_whose_rename_has_no_readable_moment() {
     store.stop().await;
 }
 
+/// **A fold, the survivor's rename, and a handle in the shape an older build left.**
+/// `kept` is the handle the survivor wore at the fold, `moved` the one it wears
+/// now. `child` was made under the folded thing and still holds its key.
+struct HeirScene {
+    folded: EntityId,
+    kept: EntityId,
+    moved: EntityId,
+    child: EntityId,
+}
+
+/// **The handle of one role in one scene.** Written out as literals, so the
+/// fixture roster reads each one.
+fn heir_handle(scene: &str, role: &str) -> EntityId {
+    EntityId(
+        match (scene, role) {
+            ("before", "folded") => "thing:contract-heir-before-folded",
+            ("before", "kept") => "thing:contract-heir-before-kept",
+            ("before", "moved") => "thing:contract-heir-before-moved",
+            ("before", "child") => "thing:contract-heir-before-child",
+            ("after", "folded") => "thing:contract-heir-after-folded",
+            ("after", "kept") => "thing:contract-heir-after-kept",
+            ("after", "moved") => "thing:contract-heir-after-moved",
+            ("after", "child") => "thing:contract-heir-after-child",
+            ("after", "late") => "thing:contract-heir-after-late",
+            ("after", "latekid") => "thing:contract-heir-after-latekid",
+            ("tied", "folded") => "thing:contract-heir-tied-folded",
+            ("tied", "kept") => "thing:contract-heir-tied-kept",
+            ("tied", "moved") => "thing:contract-heir-tied-moved",
+            ("tied", "child") => "thing:contract-heir-tied-child",
+            ("sweep", "folded") => "thing:contract-heir-sweep-folded",
+            ("sweep", "kept") => "thing:contract-heir-sweep-kept",
+            ("sweep", "moved") => "thing:contract-heir-sweep-moved",
+            ("sweep", "child") => "thing:contract-heir-sweep-child",
+            ("sweep", "late") => "thing:contract-heir-sweep-late",
+            ("sweep", "away") => "thing:contract-heir-sweep-away",
+            _ => panic!("no handle for {role} in the {scene} scene"),
+        }
+        .to_string(),
+    )
+}
+
+async fn add_heir_thing(
+    memory: &DoltMemory,
+    handle: &EntityId,
+    name: &str,
+    parent: Option<&EntityId>,
+) {
+    memory
+        .add_entity(NewEntity {
+            parent: parent.cloned(),
+            ..NewEntity::new(handle.clone(), name, "contract-fixture")
+        })
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+}
+
+/// **A folded thing, its child, its survivor, and the survivor's rename.** The
+/// fold is made on `day` and the rename the day after.
+async fn fold_then_rename(memory: &DoltMemory, scene: &str, title: &str, day: i8) -> HeirScene {
+    let scene_of = HeirScene {
+        folded: heir_handle(scene, "folded"),
+        kept: heir_handle(scene, "kept"),
+        moved: heir_handle(scene, "moved"),
+        child: heir_handle(scene, "child"),
+    };
+    add_heir_thing(memory, &scene_of.folded, &format!("{title} Folded"), None).await;
+    add_heir_thing(memory, &scene_of.kept, &format!("{title} Kept"), None).await;
+    add_heir_thing(
+        memory,
+        &scene_of.child,
+        &format!("{title} Child"),
+        Some(&scene_of.folded),
+    )
+    .await;
+    memory
+        .merge(
+            &scene_of.folded,
+            &scene_of.kept,
+            None,
+            date(2026, 9, day),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    memory
+        .rename_entity(
+            &scene_of.kept,
+            &scene_of.moved,
+            None,
+            date(2026, 9, day + 1),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+    scene_of
+}
+
+/// **A new thing takes the handle a rename freed.**
+async fn take_the_freed_handle(memory: &DoltMemory, handle: &EntityId, name: &str) {
+    let heir = NewEntity::new(handle.clone(), name, "contract-fixture");
+    match memory
+        .add_entity(heir.clone())
+        .await
+        .expect("add_entity answers")
+    {
+        jojobot_domain::memory::Guarded::Written(_) => {}
+        jojobot_domain::memory::Guarded::Blocked {
+            attempted,
+            candidates,
+        } => {
+            let token = jojobot_domain::memory::guard::override_token(&attempted, &candidates);
+            memory
+                .add_entity(NewEntity {
+                    override_token: Some(token),
+                    override_reason: Some("a different thing".into()),
+                    ..heir
+                })
+                .await
+                .expect("add_entity answers")
+                .written()
+                .expect("the freed handle is taken by a new thing");
+        }
+    }
+}
+
+/// **The fold as a build from before merge events left it**: no event, and the
+/// forwarding row naming the handle the survivor wore at the fold.
+async fn as_an_older_build_left_it(pool: &sqlx::MySqlPool, folded: &EntityId, kept: &EntityId) {
+    sqlx::query("DELETE FROM merge_event WHERE folded = (SELECT badge FROM entity WHERE id = ?)")
+        .bind(folded.as_str())
+        .execute(pool)
+        .await
+        .expect("the events are removed");
+    sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+        .bind(kept.as_str())
+        .bind(folded.as_str())
+        .execute(pool)
+        .await
+        .expect("the old shape is written");
+}
+
+/// **Three folds that name a handle two things have worn**, each with a child of
+/// the folded thing, and the parent each child is served under. A fold made before
+/// the survivor left the handle meant the survivor; a fold made after the new thing
+/// took it meant the new thing; a fold and a rename at one moment mean neither, and
+/// the child stays under the folded thing.
+async fn children_of_folds_that_name_a_worn_handle(
+    memory: &DoltMemory,
+    pool: &sqlx::MySqlPool,
+) -> Vec<(&'static str, EntityId, EntityId)> {
+    let before = fold_then_rename(memory, "before", "Before", 2).await;
+    take_the_freed_handle(memory, &before.kept, "Before Heir").await;
+    as_an_older_build_left_it(pool, &before.folded, &before.kept).await;
+
+    let after = fold_then_rename(memory, "after", "After", 4).await;
+    take_the_freed_handle(memory, &after.kept, "After Heir").await;
+    let late = heir_handle("after", "late");
+    let late_child = heir_handle("after", "latekid");
+    add_heir_thing(memory, &late, "After Late", None).await;
+    add_heir_thing(memory, &late_child, "After Latekid", Some(&late)).await;
+    memory
+        .merge(
+            &late,
+            &after.kept,
+            None,
+            date(2026, 9, 6),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    as_an_older_build_left_it(pool, &late, &after.kept).await;
+
+    let tied = fold_then_rename(memory, "tied", "Tied", 8).await;
+    take_the_freed_handle(memory, &tied.kept, "Tied Heir").await;
+    as_an_older_build_left_it(pool, &tied.folded, &tied.kept).await;
+    let one_moment = "2026-09-09T00:00:00Z";
+    stamp_writes(pool, &tied.folded, one_moment).await;
+    stamp_writes(pool, &tied.moved, one_moment).await;
+
+    vec![
+        ("before the survivor left", before.child, before.moved),
+        ("after the new thing took it", late_child, after.kept),
+        ("at one moment", tied.child, tied.folded),
+    ]
+}
+
+/// **A pointer at a folded thing, read for one document, is served as the thing
+/// the fold meant, and left at the folded thing when that cannot be told.** The
+/// folded rows are in the shape an older build left: no merge event, and a
+/// forwarding row naming a handle two things have worn. Served as the new thing
+/// that took the handle when the fold came first is the wrong answer this case
+/// is about; the second shape is the positive the first rests on.
+#[tokio::test]
+async fn dolt_serves_a_child_of_a_folded_row_under_the_thing_the_fold_meant_in_a_document() {
+    let scratch = Scratch::new("heir-document");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "heir_document")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    for (when, child, expected) in children_of_folds_that_name_a_worn_handle(&memory, &pool).await {
+        let document = memory
+            .scan_entity(&child)
+            .await
+            .expect("the document reads")
+            .expect("the child has a document");
+        let parent = document
+            .entity
+            .expect("a document of a thing holds the thing")
+            .parent;
+        assert_eq!(
+            parent.as_ref(),
+            Some(&expected),
+            "folded {when}: the child is served under the wrong parent"
+        );
+    }
+    store.stop().await;
+}
+
+/// **The same three folds, read through the entity list.**
+#[tokio::test]
+async fn dolt_lists_a_child_of_a_folded_row_under_the_thing_the_fold_meant() {
+    let scratch = Scratch::new("heir-list");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "heir_list")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let cases = children_of_folds_that_name_a_worn_handle(&memory, &pool).await;
+    let listed = memory
+        .list_entities(None)
+        .await
+        .expect("the entities are listed");
+    for (when, child, expected) in cases {
+        let parent = listed
+            .iter()
+            .find(|entity| entity.id == child)
+            .unwrap_or_else(|| panic!("{child} is listed"))
+            .parent
+            .clone();
+        assert_eq!(
+            parent.as_ref(),
+            Some(&expected),
+            "folded {when}: the child is listed under the wrong parent"
+        );
+    }
+    store.stop().await;
+}
+
+/// **A rename moves the forwarding rows that meant the renamed thing, and leaves
+/// the one that meant a thing that wore the handle before it.** A row folded
+/// before the survivor left the handle meant the survivor; the new thing that took
+/// the handle is renamed in turn, and the sweep that follows the rename must not
+/// carry that row to it. A row folded after the new thing took the handle is
+/// carried, which is the positive the other rests on.
+#[tokio::test]
+async fn dolt_leaves_a_forwarding_row_a_rename_does_not_mean() {
+    let scratch = Scratch::new("heir-sweep");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "heir_sweep")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let sweep = fold_then_rename(&memory, "sweep", "Sweep", 2).await;
+    take_the_freed_handle(&memory, &sweep.kept, "Sweep Heir").await;
+    as_an_older_build_left_it(&pool, &sweep.folded, &sweep.kept).await;
+    let late = heir_handle("sweep", "late");
+    add_heir_thing(&memory, &late, "Sweep Late", None).await;
+    memory
+        .merge(
+            &late,
+            &sweep.kept,
+            None,
+            date(2026, 9, 5),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+    assert_eq!(
+        forwards_to(&pool, &late).await.as_deref(),
+        Some(sweep.kept.as_str()),
+        "a fold names the handle its survivor wears"
+    );
+
+    let away = heir_handle("sweep", "away");
+    memory
+        .rename_entity(
+            &sweep.kept,
+            &away,
+            None,
+            date(2026, 9, 6),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+    assert_eq!(
+        forwards_to(&pool, &late).await.as_deref(),
+        Some(away.as_str()),
+        "a row folded after the new thing took the handle meant it, and follows it"
+    );
+    assert_eq!(
+        forwards_to(&pool, &sweep.folded).await.as_deref(),
+        Some(sweep.kept.as_str()),
+        "a row folded before the survivor left the handle meant the survivor, and stays"
+    );
+    store.stop().await;
+}
+
+/// **Two moments are ordered as moments, never as text.** A stamp's fractional
+/// digits vary in length, so the text `…:00Z` sorts after `…:00.3Z` though it is
+/// the earlier moment. The folded row's newest write is `…:00.3Z`, after the
+/// survivor left the handle at `…:00.2Z`, so the row meant the new thing that
+/// took the handle: the pass places it there and has nothing to rewrite. Ordered
+/// as text, the newest write reads as `…:00Z`, before the rename, and the row is
+/// carried to the survivor.
+#[tokio::test]
+async fn dolt_orders_the_fold_and_the_rename_as_moments_not_as_text() {
+    let scratch = Scratch::new("forward-text-order");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "forward_text_order")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let [plain_old, _, plain_moved, tied_old, tied_kept, tied_moved] = two_forwarding_rows(
+        &memory,
+        &pool,
+        [
+            "thing:contract-trap-first",
+            "thing:contract-trap-second",
+            "thing:contract-trap-third",
+            "thing:contract-trap-fourth",
+            "thing:contract-trap-fifth",
+            "thing:contract-trap-sixth",
+        ],
+    )
+    .await;
+    let writes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE entity = ?")
+        .bind(tied_old.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the writes count");
+    assert!(
+        writes >= 2,
+        "the folded row needs two writes for the text order to differ from the time order"
+    );
+    stamp_writes(&pool, &tied_old, "2026-09-05T00:00:00.1Z").await;
+    for (ordinal, moment) in [(1, "2026-09-05T00:00:00Z"), (2, "2026-09-05T00:00:00.3Z")] {
+        let stamped =
+            sqlx::query("UPDATE entity_write SET written_at = ? WHERE entity = ? AND ordinal = ?")
+                .bind(moment)
+                .bind(tied_old.as_str())
+                .bind(ordinal)
+                .execute(&pool)
+                .await
+                .expect("the write is stamped")
+                .rows_affected();
+        assert_eq!(stamped, 1, "write {ordinal} of the folded row exists");
+    }
+    stamp_writes(&pool, &tied_moved, "2026-09-05T00:00:00.2Z").await;
+
+    let report = memory.migrate_forward_names().await.expect("the pass runs");
+    assert_eq!((report.renamed, report.skipped.len()), (1, 0), "{report:?}");
+    assert_eq!(
+        forwards_to(&pool, &plain_old).await.as_deref(),
+        Some(plain_moved.as_str()),
+        "the row that only the survivor ever named is carried to its new handle",
+    );
+    assert_eq!(
+        forwards_to(&pool, &tied_old).await.as_deref(),
+        Some(tied_kept.as_str()),
+        "a row folded after the survivor left meant the thing that took the handle",
+    );
+    store.stop().await;
+}
+
 /// **A link a fold of an older build left on the forwarding row is repointed at
 /// the thing the fold ended in, once, and a second run finds nothing.**
 ///
