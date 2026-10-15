@@ -1006,13 +1006,13 @@ async fn read_the_whole_manual(session: &super::dsl::Session) -> String {
     }
 }
 
-/// **A restore sent again after a part of it was lost still brings back the whole
-/// section.** A section too long for one record is a heading and chunks that carry
-/// it on. The section is archived, restored, and then the restored last chunk is
-/// archived by hand: the state a restore that stopped before its last write
-/// leaves. The same restore sent again finds the heading restored and the chunk
-/// missing, and must write the chunk under the heading that stands NOW, not under
-/// the archived one it copied, or the chunk is written and never read.
+/// "I restored the fryer manual to September and the end of the long section was
+/// missing. Does restoring again bring it back?" A section too long for one
+/// record is a heading and chunks that carry it on. The section is archived and
+/// restored, and then the chunk that holds its last line is archived by hand: the
+/// state a restore that stopped before its last write leaves. The same restore
+/// sent again must bring that last line back where it is read, not write it
+/// under the archived heading it copied.
 ///
 /// **Paired**: the first restore reads whole, so the loss is the hand-archive and
 /// not a cut that never worked; and a third restore writes nothing, so the second
@@ -1069,12 +1069,14 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
         "the first restore reads whole"
     );
 
-    // The last chunk, as the restore wrote it, is lost.
-    // Recall serves the large chunks a few at a time, so read on until the one
-    // that holds the tail turns up.
-    let mut lost = None;
+    // The chunk that holds the last line, as the restore wrote it, is lost.
+    // Recall serves the large chunks a few at a time, so read every page. The
+    // first section's own chunks still stand under its archived heading; the
+    // restore wrote its copy of the last line after them, so the newest record
+    // holding the line is the restored one.
+    let mut holding: Vec<(String, String)> = Vec::new();
     let mut offset = 0;
-    while lost.is_none() {
+    loop {
         let page = session
             .call(
                 "recall",
@@ -1085,28 +1087,31 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
         let facts = page["objects"][0]["facts"]
             .as_array()
             .unwrap_or_else(|| panic!("a page of records: {page}"));
-        // A chunk is a restored record that carries a section on; the last one
-        // in the order the section is read in holds the tail.
-        lost = facts
-            .iter()
-            .filter(|fact| {
-                fact["status"] == "active"
-                    && fact["derived_from"].is_string()
-                    && fact["fields"]["continues"].is_string()
-            })
-            .max_by_key(|fact| {
-                fact["fields"]["order"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string()
-            })
-            .map(|fact| fact["address"].as_str().expect("an address").to_string());
+        holding.extend(
+            facts
+                .iter()
+                .filter(|fact| {
+                    fact["status"] == "active"
+                        && ["content", "details"].iter().any(|part| {
+                            fact[*part]
+                                .as_str()
+                                .is_some_and(|text| text.contains("The tail ends here."))
+                        })
+                })
+                .map(|fact| {
+                    (
+                        fact["inserted_at"].as_str().unwrap_or_default().to_string(),
+                        fact["address"].as_str().expect("an address").to_string(),
+                    )
+                }),
+        );
         match page["not_shown"]["offset"].as_u64() {
             Some(next) => offset = next,
             None => break,
         }
     }
-    let lost = lost.expect("the restored chunk that holds the tail");
+    let lost = holding.into_iter().max().map(|(_, address)| address);
+    let lost = lost.expect("the restored chunk that holds the last line");
     session
         .call(
             "update_fact",
@@ -1116,7 +1121,7 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
     assert_ne!(
         read_the_whole_manual(&session).await,
         manual,
-        "the tail is gone, or this story proves nothing"
+        "the last line is gone, or this story proves nothing"
     );
 
     let second = restore().await.json();
@@ -1124,7 +1129,7 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
     assert_eq!(
         read_the_whole_manual(&session).await,
         manual,
-        "the restore sent again brings the tail back: {second}"
+        "the restore sent again brings the last line back: {second}"
     );
 
     let third = restore().await.json();
@@ -1134,13 +1139,12 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
     );
 }
 
-/// **A section that was worked out from an archived one is not that one's
-/// restored copy.** `derived_from` says a record was worked out from another, and
-/// a restore also writes it; a restore must take only its own copies as the
-/// section they restore. Here the closing is archived and the opening is edited
-/// to say it was worked out from the closing. A restore to the day before must
-/// bring the closing back as its own section and leave the opening as it was,
-/// not read the opening as the closing's copy and put the closing's words over it.
+/// "I folded the closing into the opening and noted it came from the closing.
+/// Does restoring September put the closing back without touching the opening?"
+/// The closing is archived and the opening is edited to say it was worked out
+/// from the closing. A restore to the day before must bring the closing back as
+/// its own section and leave the opening as it was, not read the opening as the
+/// closing's copy and put the closing's words over it.
 ///
 /// **Paired**: the restore reads the September page byte for byte, so the
 /// closing came back and the opening is the opening.
@@ -1216,16 +1220,16 @@ async fn standing_records(session: &super::dsl::Session) -> Vec<serde_json::Valu
     }
 }
 
-/// **A restore marks each record it writes with the section it reproduces, and
-/// reads only that mark to know a section is restored.** The closing is archived
-/// and a section made since is edited to say it was worked out from the closing,
-/// which is a reason of its own and not a restore. A restore to the day before
-/// must bring the closing back as a record that says which version it
-/// reproduces, and must archive the section made since as it archives any
-/// section made since, not rewrite it into the closing.
+/// "I replaced the closing with a new cleaning section, noting it came from the
+/// closing. Restoring September: does the closing come back and say where it
+/// came from, and does the cleaning section go?" The closing is archived and a
+/// section made since is edited to say it was worked out from the closing. A
+/// restore to the day before must bring the closing back as a section that says
+/// which version it reproduces, and must archive the section made since as it
+/// archives any section made since, not rewrite it into the closing.
 ///
 /// **Paired in one read**: the page is the September page, the restored closing
-/// carries the mark, and the section made since no longer stands.
+/// says which version it reproduces, and the section made since no longer stands.
 #[tokio::test]
 async fn a_record_worked_out_from_a_section_is_not_taken_for_its_restored_copy() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
@@ -1295,13 +1299,15 @@ async fn a_record_worked_out_from_a_section_is_not_taken_for_its_restored_copy()
     );
 }
 
-/// **A restored copy that was edited since is found again by its mark.** The
-/// closing is archived and restored, and the restored closing is then edited. A
-/// restore sent again reads the mark, finds the copy, and puts its wording back on
-/// the SAME record; it does not archive the copy and write a third closing.
+/// "I restored the closing, then fixed a word in it. If I restore September
+/// again, do I get a second closing?" The closing is archived and restored, and
+/// the restored closing is then edited. A restore sent again finds that copy by
+/// the version it says it reproduces and puts its wording back on the SAME
+/// record; it does not archive the copy and write a third closing.
 ///
 /// **Paired in one read**: the page is the September page and the closing stands
-/// on the address the first restore gave it, still carrying the mark.
+/// on the address the first restore gave it, still saying which version it
+/// reproduces.
 #[tokio::test]
 async fn an_edited_restored_copy_is_found_by_its_mark_and_put_back_in_place() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
