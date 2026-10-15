@@ -192,6 +192,79 @@ impl DoltMemory {
         }
     }
 
+    /// **The numbered collections whose numbers a declaration of these keys can
+    /// change**, as they stand now: those that number by one of the keys. A key's
+    /// fold is part of what its writes come to, so declaring it a counter changes
+    /// what every member holds under it without a write to any member.
+    pub(super) async fn collections_numbering_by(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        keys: &BTreeSet<&str>,
+    ) -> Result<Vec<(EntityId, Numbered)>, MemoryError> {
+        let stored: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT entity FROM field_write WHERE `key` = ?")
+                .bind(NUMBERS_BY)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(store)?;
+        let mut found: Vec<(EntityId, Numbered)> = Vec::new();
+        for stored in stored {
+            let Some((key, handle)) = self.resolve_stored_key(tx, &stored).await? else {
+                continue;
+            };
+            if found.iter().any(|(_, held)| held.collection == handle) {
+                continue;
+            }
+            if let Some(scope) = Self::collection_at(tx, &handle, &key).await?
+                && keys.contains(scope.key.as_str())
+            {
+                found.push((key, scope));
+            }
+        }
+        Ok(found)
+    }
+
+    /// **Refuse a declaration that leaves a member with a number it did not hold
+    /// before**, given the collections as they stood before it
+    /// ([`Self::collections_numbering_by`]). Asked after the declaration's rows
+    /// are written in the same transaction, so each member's fold is read under the
+    /// declaration being made. One collection at a time: a member of two
+    /// collections that number by different keys is judged in each by its own key.
+    pub(super) async fn guard_declared_numbering(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        before: Vec<(EntityId, Numbered)>,
+    ) -> Result<(), MemoryError> {
+        for (key, scope) in before {
+            let Some(after) = Self::collection_at(tx, &scope.collection, &key).await? else {
+                continue;
+            };
+            let change = Change {
+                holds: after
+                    .members
+                    .iter()
+                    .map(|member| {
+                        let held = member
+                            .value
+                            .iter()
+                            .map(|value| (scope.key.clone(), value.clone()))
+                            .collect();
+                        (member.handle.clone(), held)
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let reach = Reach {
+                scopes: vec![scope],
+                ..Default::default()
+            };
+            if let Some(refusal) = reach.refuses(&change) {
+                return Err(refusal);
+            }
+        }
+        Ok(())
+    }
+
     /// **A move changes which collections the thing and everything under it sit
     /// in.** Each of them is held to the numbers of the collections it leaves and
     /// of those it joins.

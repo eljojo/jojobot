@@ -782,3 +782,79 @@ pub async fn a_write_that_keeps_every_number_with_one_holder_still_lands<M: Memo
         .expect("a claim that sets no number is retracted");
     assert_eq!(next_number(store, &o.collection).await, 10);
 }
+
+/// **Declaring the numbering key a counter is held to the numbers.** A counter
+/// reads back as the total of its writes, so a declaration changes what every
+/// member holds under the key without any member being written. A member that
+/// confirmed its own number once holds it twice, and as a counter it holds the
+/// sum: here the first entry's 1 written twice would total 2, the number the
+/// second entry holds. The declaration is refused for the number two members
+/// would share, and nothing is declared or changed. **Paired**: a counter on a
+/// key the collection does not number by is declared.
+pub async fn declaring_the_numbering_key_a_counter_is_held_to_the_numbers<M: Memory>(store: &M) {
+    use crate::memory::types::{DeclaredType, Field};
+    let book = EntityId("topic:contract-tally-book".into());
+    let first = EntityId("decision:contract-entry-first".into());
+    let second = EntityId("decision:contract-entry-second".into());
+    add(
+        store,
+        NewEntity::new(book.clone(), "Tally book", "contract-fixture"),
+    )
+    .await;
+    claim_about(
+        store,
+        &book,
+        "numbers its entries",
+        &[("numbers_by", "tally_slot")],
+    )
+    .await;
+    for (id, name, slot) in [
+        (&first, "First tally entry", "1"),
+        (&second, "Second tally entry", "2"),
+    ] {
+        add(store, member(&book, id, name)).await;
+        claim_about(store, id, &format!("slot {slot}"), &[("tally_slot", slot)]).await;
+    }
+    claim_about(store, &first, "slot 1 confirmed", &[("tally_slot", "1")]).await;
+    let slot = |held: BTreeMap<String, String>| held.get("tally_slot").cloned();
+    assert_eq!(
+        slot(store.fields(&first).await.expect("fields read")),
+        Some("1".to_string()),
+        "an undeclared key takes its newest write"
+    );
+
+    let counter = DeclaredType::new("contract-tally-counter", vec![Field::summing("tally_slot")]);
+    let refused = store
+        .declare_type(counter, None)
+        .await
+        .expect_err("two entries would share a number");
+    assert!(
+        matches!(refused, MemoryError::NumberTaken { .. }),
+        "refused for the number two members would hold: {refused:?}"
+    );
+    assert!(
+        store
+            .declared_types()
+            .await
+            .expect("the roster reads")
+            .iter()
+            .all(|declared| declared.name != "contract-tally-counter"),
+        "a refused declaration declares nothing"
+    );
+    for (id, expected) in [(&first, "1"), (&second, "2")] {
+        assert_eq!(
+            slot(store.fields(id).await.expect("fields read")),
+            Some(expected.to_string()),
+            "{id} holds what it held"
+        );
+    }
+
+    let unrelated = DeclaredType::new(
+        "contract-tally-visits",
+        vec![Field::summing("tally_visits")],
+    );
+    store
+        .declare_type(unrelated, None)
+        .await
+        .expect("a counter on a key the collection does not number by is declared");
+}

@@ -7477,6 +7477,14 @@ impl Memory for DoltMemory {
         if declared.origin == Origin::Shipped && held_origin == Some(Origin::Declared) {
             displace(&mut tx, &declared.name, &self.clock).await?;
         }
+        // **The collections that number by a key this type names, as they stand
+        // before it.** A fold is declared here, and a counter changes what a member
+        // holds without a write to the member.
+        let declared_keys: std::collections::BTreeSet<&str> =
+            declared.fields.iter().map(|f| f.key.as_str()).collect();
+        let numbered_before = self
+            .collections_numbering_by(&mut tx, &declared_keys)
+            .await?;
         sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
             .bind(&declared.name)
             .bind(KEYS_OF_A_TYPE)
@@ -7507,6 +7515,8 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
         }
+        self.guard_declared_numbering(&mut tx, numbered_before)
+            .await?;
         if declared.origin == Origin::Declared {
             append_type_write(
                 &mut tx,
