@@ -318,6 +318,100 @@ pub struct Selection {
     /// naming what to recall, so a view that asks `overdue` need not select a
     /// kind.
     pub owed: bool,
+    /// **Readiness is asked of the work**, because the call is a view that asks
+    /// what is ready or the whole plan. Readiness is a question about work and
+    /// only work answers it, so it names what to recall as a kind does.
+    pub ready: bool,
+}
+
+/// **The ways a recall says what it is about.** A selection that uses none of
+/// them asks for the whole store, which is not a question
+/// ([`Selection::narrows_nothing`]). **This is the one list**: the test of a
+/// selection, the test of a view's keys and the sentences that tell a caller
+/// what would narrow are all built from [`Narrowing::ALL`], so adding a way
+/// here is the only edit that teaches all three.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Narrowing {
+    /// One named handle.
+    Subject,
+    /// A kind.
+    Kind,
+    /// The direct children of a thing.
+    Parent,
+    /// What has fallen due, whatever kinds owe something.
+    Overdue,
+    /// What can be started, or the whole plan: readiness asked of the work.
+    Readiness,
+    /// The things answering a declared type.
+    AnswersType,
+    /// A filter on keys, the `fields` of a call or a `where` line.
+    Filter,
+    /// Records around a day.
+    Near,
+}
+
+impl Narrowing {
+    /// Every way a recall can narrow.
+    pub const ALL: [Narrowing; 8] = [
+        Narrowing::Subject,
+        Narrowing::Kind,
+        Narrowing::Parent,
+        Narrowing::Overdue,
+        Narrowing::Readiness,
+        Narrowing::AnswersType,
+        Narrowing::Filter,
+        Narrowing::Near,
+    ];
+
+    /// **The key a view holds it under**, as a caller writes it in `sets`, or
+    /// `None` for a way a view cannot hold: a view is a question asked by name,
+    /// and the thing it is about or the day it reads around are the asker's.
+    pub fn view_spelling(self) -> Option<&'static str> {
+        match self {
+            Narrowing::Kind => Some("selects"),
+            Narrowing::Parent => Some("parent"),
+            Narrowing::Overdue => Some("asks: overdue"),
+            Narrowing::Readiness => Some("asks: ready or asks: plan"),
+            Narrowing::AnswersType => Some("answers_type"),
+            Narrowing::Filter => Some("where"),
+            Narrowing::Subject | Narrowing::Near => None,
+        }
+    }
+
+    /// Does a view with these fields narrow in this way?
+    fn held_by_view(self, fields: &BTreeMap<String, String>) -> bool {
+        let held = |key: &str| {
+            fields
+                .get(key)
+                .is_some_and(|value| !value.trim().is_empty())
+        };
+        match self {
+            Narrowing::Kind => held("selects"),
+            Narrowing::Parent => held("parent"),
+            Narrowing::Overdue => fields.get("asks").map(String::as_str) == Some("overdue"),
+            Narrowing::Readiness => fields
+                .get("asks")
+                .is_some_and(|word| super::readiness::Ask::named(word).is_some()),
+            Narrowing::AnswersType => held("answers_type"),
+            Narrowing::Filter => held("where"),
+            Narrowing::Subject | Narrowing::Near => false,
+        }
+    }
+
+    /// **The keys that would narrow a view**, spelled as a caller writes them.
+    pub fn view_keys() -> Vec<&'static str> {
+        Narrowing::ALL
+            .into_iter()
+            .filter_map(Narrowing::view_spelling)
+            .collect()
+    }
+}
+
+/// **Does a view's own fields narrow its question?** A view's key filters are
+/// records on the view and are not in its fields; a view that holds only those
+/// is judged when it is asked, on the whole question.
+pub fn view_narrows(fields: &BTreeMap<String, String>) -> bool {
+    Narrowing::ALL.iter().any(|way| way.held_by_view(fields))
 }
 
 impl Selection {
@@ -328,19 +422,32 @@ impl Selection {
     /// record to trace has sent, so the two readers of this condition are the
     /// refusal and the fill that makes the refusal unnecessary. One definition,
     /// because a second could come to disagree about what counts as a
-    /// question.
+    /// question: it is [`Narrowing::ALL`] asked of this selection, and every
+    /// refusal that lists what narrows is built from the same list.
     pub fn narrows_nothing(&self) -> bool {
-        self.subject.is_none()
-            && self.kind.is_none()
-            && self.parent.is_none()
-            && !self.owed
-            && !self.filters_facts()
+        !Narrowing::ALL.iter().any(|way| self.narrowed_by(*way))
+    }
+
+    /// Does this selection narrow in this one way?
+    fn narrowed_by(&self, way: Narrowing) -> bool {
+        match way {
+            Narrowing::Subject => self.subject.is_some(),
+            Narrowing::Kind => self.kind.is_some(),
+            Narrowing::Parent => self.parent.is_some(),
+            Narrowing::Overdue => self.owed,
+            Narrowing::Readiness => self.ready,
+            Narrowing::AnswersType => self.answers_type.is_some(),
+            Narrowing::Filter => !self.fields.is_empty(),
+            Narrowing::Near => self.near.is_some(),
+        }
     }
 
     /// Is there a filter here beyond the object's own properties? Kind and
     /// subject are properties of the object itself.
     fn filters_facts(&self) -> bool {
-        self.answers_type.is_some() || !self.fields.is_empty() || self.near.is_some()
+        self.narrowed_by(Narrowing::AnswersType)
+            || self.narrowed_by(Narrowing::Filter)
+            || self.narrowed_by(Narrowing::Near)
     }
 
     /// Is there a filter here that ONE record has to answer?

@@ -5778,6 +5778,17 @@ pub enum MemoryError {
         /// The values the missing key takes, when it takes a closed set.
         accepts: Vec<String>,
     },
+    /// **A view asked as it stands narrows nothing.** Judged on the view and
+    /// what the caller sent beside it, after the view's optional inputs are filled
+    /// or dropped: no kind, subject, parent, overdue or readiness ask, type or
+    /// key filter is left, so the call is a request for every record there is,
+    /// which is not a question. `Narrowing` lists what would narrow it, and the
+    /// refusal is built from that list.
+    #[error("the view '{view}' narrows nothing as it is asked")]
+    ViewNarrowsNothing {
+        /// The view, by handle.
+        view: String,
+    },
     /// **A number in a numbered collection is already held.** The collection
     /// numbers its members by `key`, and a member of it already holds this
     /// number, archived or not: a number is never reused. There is no override:

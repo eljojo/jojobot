@@ -4585,3 +4585,49 @@ fn post_messages_body_teaches_quoting_the_operator_by_address() {
         "post_message's body does not teach quoting the operator by address: {body}"
     );
 }
+
+/// 🚨 **Every text that says what narrows a view names each key of the one list.**
+/// The asking skill and the `view` argument of `recall` each carry the sentence,
+/// and the list is `Narrowing::view_keys()`, which the refusal reads too. Pinned
+/// by the identifiers a caller writes in `sets`, never by the sentence around
+/// them; each text is cut to the paragraph that carries the sentence, because
+/// `parent` and `where` are words the same texts spend elsewhere.
+#[test]
+fn the_texts_that_say_what_narrows_a_view_name_every_key_of_the_one_list() {
+    let keys: Vec<String> = jojobot_domain::memory::graph::Narrowing::view_keys()
+        .into_iter()
+        .map(|spelled| spelled.split(':').next().unwrap_or(spelled).to_string())
+        .collect();
+    let skill = crate::orientation::skills::named("asking")
+        .expect("the asking skill ships")
+        .body;
+    let argument = argument_description("recall", "view");
+    for (text, opening) in [
+        (skill, "A view that narrows nothing as it is asked"),
+        (argument.as_str(), "A view needs something that narrows"),
+    ] {
+        let start = text
+            .find(opening)
+            .unwrap_or_else(|| panic!("the text carries the sentence `{opening}`: {text}"));
+        // The sentence that lists the keys: up to the first full stop that ends a
+        // word, so a key named again in the sentence after it does not count.
+        let rest = &text[start..];
+        let end = rest
+            .char_indices()
+            .find(|(at, c)| {
+                *c == '.'
+                    && rest[at + 1..]
+                        .chars()
+                        .next()
+                        .is_none_or(char::is_whitespace)
+            })
+            .map_or(rest.len(), |(at, _)| at);
+        let sentence = &rest[..end];
+        for key in &keys {
+            assert!(
+                sentence.contains(key.as_str()),
+                "the sentence at `{opening}` names `{key}`: {sentence}"
+            );
+        }
+    }
+}

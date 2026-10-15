@@ -382,6 +382,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksSchedule { .. }
+        | MemoryError::ViewNarrowsNothing { .. }
         | MemoryError::NumberTaken { .. }
         | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
@@ -884,6 +885,22 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                         .join(" or "),
                 )
             },
+        )),
+        // **The way forward is something that narrows, on the view or beside
+        // it.** The view is named, and so is every key that would narrow it,
+        // built from the one list a recall's own refusal reads
+        // (`graph::Narrowing`). A key written `$name` narrows only when its input
+        // is sent, which is how a view that does narrow comes to be refused.
+        MemoryError::ViewNarrowsNothing { ref view } => Ok(blocked_body(
+            &EntityId(view.clone()),
+            &[],
+            format!(
+                "Nothing was read: {e}. A view narrows by one of these keys: {}. A key \
+                 written `$name` narrows only when its input is sent. Or ask with a \
+                 subject, kind, parent, answers_type or fields of your own beside the view, \
+                 which win over it.",
+                jojobot_domain::memory::graph::Narrowing::view_keys().join(", ")
+            ),
         )),
         // **The number is held and stays held**, archived or not, so the way
         // forward is a different number, and the refusal hands the caller the
@@ -1708,6 +1725,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::BreaksType { .. }
         | MemoryError::RemapsShippedWord { .. }
         | MemoryError::BreaksSchedule { .. }
+        | MemoryError::ViewNarrowsNothing { .. }
         | MemoryError::NumberTaken { .. }
         | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
@@ -2313,6 +2331,13 @@ pub(crate) mod tests {
                     held: s("cadence_days"),
                     missing: s("due_date"),
                     accepts: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "ViewNarrowsNothing",
+                MemoryError::ViewNarrowsNothing {
+                    view: s("view:plain-listing"),
                 },
                 Some("change"),
             ),

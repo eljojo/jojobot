@@ -951,6 +951,8 @@ impl Jojobot {
                     body["moved_to_sets"] = serde_json::json!(moved_to_sets);
                 }
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
+                self.note_view_narrows_nothing(&mut body, &fact.subject)
+                    .await;
                 if let Some((subject, before)) = held_before_archive {
                     self.note_what_left(&mut body, &subject, before).await;
                 }

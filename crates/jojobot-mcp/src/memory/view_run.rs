@@ -107,6 +107,7 @@ impl Question {
                 fields,
                 order,
                 owed: asked.overdue,
+                ready: asked.ready.is_some(),
                 ..graph::Selection::default()
             },
             graph::Include {

@@ -354,6 +354,20 @@ answer: {
 }
 ```
 
+### Memory refusal `ViewNarrowsNothing`
+
+```text
+reads: the view 'view:plain-listing' narrows nothing as it is asked
+answer: {
+  "attempted": "view:plain-listing",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was read: the view 'view:plain-listing' narrows nothing as it is asked. A view narrows by one of these keys: selects, parent, asks: overdue, asks: ready or asks: plan, answers_type, where. A key written `$name` narrows only when its input is sent. Or ask with a subject, kind, parent, answers_type or fields of your own beside the view, which win over it.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `BreaksType`
 
 ```text

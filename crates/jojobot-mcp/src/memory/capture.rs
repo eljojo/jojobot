@@ -1138,6 +1138,8 @@ impl Jojobot {
                 }
                 crate::answer::note_postcondition(&mut body, line);
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
+                self.note_view_narrows_nothing(&mut body, &fact.subject)
+                    .await;
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_status_word(&fact, &mut body).await;
                 self.note_depends_on_read(&fact, &caller, &mut body).await;

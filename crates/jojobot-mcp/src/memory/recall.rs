@@ -657,6 +657,11 @@ pub struct RecallArgs {
     /// `where`, in `as_of` (the day an overdue ask is asked about) or in
     /// `answers_type` (the declared type whose things it finds). `shows_keys`
     /// names the keys each object comes back with.
+    /// **A view needs something that narrows it**: `selects` (a kind), `parent`,
+    /// `asks: overdue`, `asks: ready` or `asks: plan`, `answers_type` or `where`.
+    /// Asked as it stands without one, it is refused, naming the view and those
+    /// keys; a kind, subject, parent, answers_type or fields sent beside it count.
+    /// A write that leaves it with none still lands, with a note saying so.
     /// Both are records of the same shape, so nothing about the answer depends
     /// on where the view came from.
     ///
@@ -1405,6 +1410,47 @@ fn entity_history_json(history: &graph::EntityHistory) -> serde_json::Value {
     body
 }
 
+/// **The refusal for a name that is no view.** The views that exist ride in the
+/// sentence rather than as candidates: a candidate carries a reason the guard
+/// flagged it, and none of these was flagged, they are simply what there is.
+/// A similarity screen would be worse still, since it answers a wild guess with
+/// nothing, which reads as "there are no views".
+fn no_such_view(handle: &EntityId, known: &[Entity]) -> CallToolResult {
+    let names = known
+        .iter()
+        .map(|e| e.id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    blocked_body(
+        handle,
+        &[],
+        match names.is_empty() {
+            true => format!(
+                "Nothing was read: no view is named '{}', and there are no views \
+                 here yet. Declare one with add_entity of kind view.",
+                handle.as_str(),
+            ),
+            false => format!(
+                "Nothing was read: no view is named '{}'. The views here are: \
+                 {names}. Ask for one of those, or declare your own with \
+                 add_entity of kind view.",
+                handle.as_str(),
+            ),
+        },
+    )
+}
+
+/// **The handle a view is named by**, whether the call sent the whole handle or
+/// the bare slug.
+fn view_handle(named: &str) -> EntityId {
+    match named.trim().split_once(':') {
+        Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
+            EntityId(named.trim().to_string())
+        }
+        _ => EntityId::new(EntityKind::VIEW, named.trim()),
+    }
+}
+
 /// **Why a view named in a call could not be filled.** A view the call
 /// cannot use is an answer about the call; a store that could not be read is
 /// an outage, and saying it is the call's fault sends the caller to change
@@ -1438,12 +1484,7 @@ impl Jojobot {
         args: RecallArgs,
         today: jiff::civil::Date,
     ) -> Result<ViewFilled, ViewStop> {
-        let handle = match named.trim().split_once(':') {
-            Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
-                EntityId(named.trim().to_string())
-            }
-            _ => EntityId::new(EntityKind::VIEW, named.trim()),
-        };
+        let handle = view_handle(named);
         let held = self.memory.fields(&handle).await;
         let held = match held {
             Ok(held) if !held.is_empty() => held,
@@ -1460,36 +1501,15 @@ impl Jojobot {
                     .list_entities(Some(EntityKind::VIEW))
                     .await
                     .map_err(ViewStop::Outage)?;
-                // **Every view, named in the sentence rather than as
-                // candidates.** A candidate carries a reason the guard flagged
-                // it, and none of these was flagged: they are simply what there
-                // is. Putting them in the list would mean stating a match that
-                // was never made.
-                //
-                // A similarity screen would be worse still — it answers a wild
-                // guess with nothing, which reads as "there are no views".
-                let names = known
-                    .iter()
-                    .map(|e| e.id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(ViewStop::said(blocked_body(
-                    &handle,
-                    &[],
-                    match names.is_empty() {
-                        true => format!(
-                            "Nothing was read: no view is named '{}', and there are no views \
-                             here yet. Declare one with add_entity of kind view.",
-                            handle.as_str(),
-                        ),
-                        false => format!(
-                            "Nothing was read: no view is named '{}'. The views here are: \
-                             {names}. Ask for one of those, or declare your own with \
-                             add_entity of kind view.",
-                            handle.as_str(),
-                        ),
-                    },
-                )));
+                // **A view made with no keys is a view.** It holds no fields, which
+                // is what "no view under that name" looks like from here, so the
+                // list of views settles which it is. Such a view goes on to the
+                // refusal that names it and the keys that would narrow it.
+                if known.iter().any(|view| view.id == handle) {
+                    Default::default()
+                } else {
+                    return Err(ViewStop::said(no_such_view(&handle, &known)));
+                }
             }
         };
         // **The view's own keys and its own records, read where the page
@@ -2595,6 +2615,18 @@ impl Jojobot {
                 );
             }
         }
+        // **A readiness ask with no kind means the work kind.** Only work is ever
+        // ready or blocked, and a walk over every kind would count a person as
+        // ready, so a view that asks it and selects nothing is asked of work. A
+        // call that named a subject keeps the one it named.
+        let args = if readiness_asked.is_some() && args.kind.is_none() && args.subject.is_none() {
+            RecallArgs {
+                kind: Some(EntityKind::WORK.as_token().to_string()),
+                ..args
+            }
+        } else {
+            args
+        };
         // **The name is resolved to its declaration here, once**, exactly as
         // `search` resolves it: everything below takes the keys rather than
         // the name, and a name nobody declared is answered where the roster to
@@ -2914,6 +2946,7 @@ impl Jojobot {
                 near,
                 asked_by,
                 owed: view_overdue,
+                ready: readiness_asked.is_some(),
             },
             include,
             follow,
@@ -2994,6 +3027,23 @@ impl Jojobot {
                 }
                 _ => {}
             }
+        }
+
+        // **A view that narrows nothing is refused by name.** The call chose
+        // nothing beside it either, so the whole store is what it asks for. The
+        // generic refusal below lists `view` among the ways to choose, which sends
+        // a caller who named a view round in a circle; this one names the view and
+        // the keys that would narrow it. Checked after the address fill above, so
+        // a view traced by a record's address is not refused.
+        if let Some(named) = &view_named
+            && query.select.narrows_nothing()
+        {
+            return memory_declined(
+                "recall",
+                MemoryError::ViewNarrowsNothing {
+                    view: view_handle(named).to_string(),
+                },
+            );
         }
 
         // **Route through the search index when nothing else already makes

@@ -589,6 +589,7 @@ impl Jojobot {
                     _ => changed,
                 };
                 crate::changed::note_changed(&mut body, changed);
+                self.note_view_narrows_nothing(&mut body, &entity.id).await;
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

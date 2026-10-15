@@ -4016,6 +4016,11 @@ project`) and uses each as `$name` in `parent` (`parent: "$project"`), in
 `where`, in `as_of` (the day an overdue ask is asked about) or in
 `answers_type` (the declared type whose things it finds). `shows_keys`
 names the keys each object comes back with.
+**A view needs something that narrows it**: `selects` (a kind), `parent`,
+`asks: overdue`, `asks: ready` or `asks: plan`, `answers_type` or `where`.
+Asked as it stands without one, it is refused, naming the view and those
+keys; a kind, subject, parent, answers_type or fields sent beside it count.
+A write that leaves it with none still lands, with a note saying so.
 Both are records of the same shape, so nothing about the answer depends
 on where the view came from.
 

@@ -571,34 +571,163 @@ async fn a_callers_fields_beside_a_view_replace_the_views_own_whole() {
     story.finish().await;
 }
 
-/// **A view that narrows nothing is refused when it is asked.** The view kind
-/// requires no key, so a view can be declared holding only what it shows. Asked
-/// by name it names no kind, no parent, no overdue ask, no type and no key
-/// filter, which is a request for the whole store and not a question. Paired with
-/// a view that selects a kind, which answers.
+/// **A view that narrows nothing is made, and is refused only when it is asked.**
+/// Whatever the caller sends beside a view wins, so a view that only shows or
+/// orders is a call a caller can make with a kind of their own; declaring one is
+/// not refused. Its receipt says it narrows nothing on its own, and asking it as
+/// it stands is refused, naming the view and the keys that would narrow it.
+/// Paired with a view that selects a kind, which answers and carries no note,
+/// and with the same view asked beside a kind, which answers.
 #[tokio::test]
-async fn a_view_holding_nothing_that_narrows_is_refused_when_asked_by_name() {
+async fn a_view_holding_nothing_that_narrows_is_made_and_refused_only_when_asked() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("thing:omega", "Omega").await;
 
-    s.call(
-        "add_entity",
-        json!({"kind": "view", "handle": "plain-listing", "name": "Plain listing",
-               "source": "user-named", "sets": {"shows": "facts"}}),
-    )
-    .await;
-    s.call(
-        "add_entity",
-        json!({"kind": "view", "handle": "kind-listing", "name": "Kind listing",
-               "source": "user-named", "sets": {"selects": "thing", "shows": "facts"}}),
-    )
-    .await;
+    // ── declared with keys that narrow nothing: it lands, and the receipt says
+    // it narrows nothing on its own ───────────────────────────────────────────
+    let plain = s
+        .call(
+            "add_entity",
+            json!({"kind": "view", "handle": "plain-listing", "name": "Plain listing",
+                   "source": "user-named", "sets": {"shows": "facts"}}),
+        )
+        .await;
+    for held in [
+        "view:plain-listing",
+        "selects",
+        "parent",
+        "answers_type",
+        "where",
+    ] {
+        plain.holds_at("/narrows_nothing_note", held);
+    }
+    // The positive beside it: a view that selects a kind carries no note.
+    let kind = s
+        .call(
+            "add_entity",
+            json!({"kind": "view", "handle": "kind-listing", "name": "Kind listing",
+                   "source": "user-named", "sets": {"selects": "thing", "shows": "facts"}}),
+        )
+        .await;
+    assert!(
+        kind.json().get("narrows_nothing_note").is_none(),
+        "a view that selects a kind narrows on its own: {}",
+        kind.raw()
+    );
 
-    s.refused("recall", json!({"view": "plain-listing"}))
+    // The note is about views: the same key-less write on a thing says nothing.
+    let thing = s
+        .call(
+            "add_entity",
+            json!({"kind": "thing", "handle": "sigma", "name": "Sigma",
+                   "source": "user-named", "sets": {"shows": "facts"}}),
+        )
+        .await;
+    assert!(
+        thing.json().get("narrows_nothing_note").is_none(),
+        "only a view is told it narrows nothing: {}",
+        thing.raw()
+    );
+
+    // ── asked as it stands: refused, naming the view and every key ──────────
+    let asked = s.refused("recall", json!({"view": "plain-listing"})).await;
+    for held in [
+        "view:plain-listing",
+        "selects",
+        "parent",
+        "answers_type",
+        "where",
+    ] {
+        asked.says(held);
+    }
+    // Asked beside a kind of the caller's own, the same view answers.
+    s.call("recall", json!({"view": "plain-listing", "kind": "thing"}))
         .await
-        .says("name what to recall");
-    let answered = s.call("recall", json!({"view": "kind-listing"})).await;
-    answered.says("thing:omega");
+        .says("thing:omega");
+
+    // ── made with no keys, it lands, is refused the same way, and the keys that
+    // narrow make it answer ──────────────────────────────────────────────────
+    s.add("view:bare-listing", "Bare listing").await;
+    let bare = s.refused("recall", json!({"view": "bare-listing"})).await;
+    for held in ["view:bare-listing", "selects", "answers_type"] {
+        bare.says(held);
+    }
+    s.call(
+        "capture",
+        json!({"subject": "view:bare-listing", "content": "what it looks at",
+               "provenance": "testimony", "sets": {"selects": "thing", "shows": "facts"}}),
+    )
+    .await;
+    s.call("recall", json!({"view": "bare-listing"}))
+        .await
+        .says("thing:omega");
+    story.finish().await;
+}
+
+/// **A view that asks what is ready or the whole plan needs no `selects`.**
+/// Readiness is a question about work, so the ask names what to recall as a kind
+/// does: the view answers with work, and a person on the same board is not
+/// handed back as ready. Paired with a view whose `parent` is an input the call
+/// leaves out, which narrows nothing for that call and is refused, and answers
+/// once the input is sent.
+#[tokio::test]
+async fn a_view_that_asks_what_is_ready_needs_no_kind_and_an_unsent_input_narrows_nothing() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("person:kenny", "Kenny").await;
+    s.add("project:atlas", "Atlas").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "work", "handle": "omega", "name": "omega", "parent": "project:atlas",
+               "source": "user-named", "sets": {"status": "now"}}),
+    )
+    .await;
+    // Each narrows on its own, so neither receipt says otherwise.
+    let startable = s
+        .call(
+            "add_entity",
+            json!({"kind": "view", "handle": "steps-startable", "name": "Steps startable",
+                   "source": "user-named", "sets": {"asks": "ready"}}),
+        )
+        .await;
+    let everything = s
+        .call(
+            "add_entity",
+            json!({"kind": "view", "handle": "steps-everything", "name": "Steps everything",
+                   "source": "user-named", "sets": {"asks": "plan"}}),
+        )
+        .await;
+    for receipt in [&startable, &everything] {
+        assert!(
+            receipt.json().get("narrows_nothing_note").is_none(),
+            "a readiness ask narrows a view: {}",
+            receipt.raw()
+        );
+    }
+    for view in ["steps-startable", "steps-everything"] {
+        s.call("recall", json!({"view": view}))
+            .await
+            .says("work:omega")
+            .never_says("person:kenny");
+    }
+
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "optional-listing", "name": "Optional listing",
+               "source": "user-named",
+               "sets": {"inputs": "project: kind project?",
+                        "parent": "$project"}}),
+    )
+    .await;
+    s.refused("recall", json!({"view": "optional-listing"}))
+        .await
+        .says("view:optional-listing");
+    s.call(
+        "recall",
+        json!({"view": "optional-listing", "inputs": {"project": "project:atlas"}}),
+    )
+    .await
+    .says("work:omega");
     story.finish().await;
 }

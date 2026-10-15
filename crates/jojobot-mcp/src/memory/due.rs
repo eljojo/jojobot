@@ -330,6 +330,42 @@ impl Jojobot {
         );
     }
 
+    /// **Says on the receipt that a view narrows nothing on its own.** A write
+    /// that leaves a view holding none of the keys that narrow it still lands: a
+    /// caller's own kind, subject or fields win beside a view, so a view that only
+    /// shows or orders is a call a caller can make. Asked as it stands it is
+    /// refused, and this tells the writer so while the keys can still be added.
+    /// The keys are the ones the refusal reads (`graph::Narrowing`). Nothing is
+    /// said about any other kind, nor when the store cannot answer.
+    pub(crate) async fn note_view_narrows_nothing(
+        &self,
+        body: &mut serde_json::Value,
+        subject: &EntityId,
+    ) {
+        use jojobot_domain::memory::graph::{Narrowing, view_narrows};
+        if subject.kind() != Some(EntityKind::VIEW) {
+            return;
+        }
+        let Ok(held) = self.memory.fields(subject).await else {
+            return;
+        };
+        if view_narrows(&held) {
+            return;
+        }
+        if let Some(fields) = body.as_object_mut() {
+            fields.insert(
+                "narrows_nothing_note".into(),
+                format!(
+                    "{subject} holds none of the keys that narrow a view ({}), so asked as it \
+                     is, it is refused. A kind, subject, parent, answers_type or fields sent \
+                     beside it narrow it for that call.",
+                    Narrowing::view_keys().join(", ")
+                )
+                .into(),
+            );
+        }
+    }
+
     /// **What a thing holds right now**, read before a record is taken off it so
     /// [`Jojobot::note_what_left`] can say what the taking-off cost. `None` when
     /// the store could not answer: a receipt then says nothing about it, because

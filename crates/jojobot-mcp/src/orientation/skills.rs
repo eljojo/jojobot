@@ -122,7 +122,8 @@ Declare your own with the surface you already know: `add_entity` of kind `view`,
 then the keys.
 
     selects   what it looks at — a kind. A view needs something that narrows it:
-              a kind, asks overdue, a parent, answers_type or a filter on keys.
+              a kind, an ask (overdue, ready or plan), a parent, answers_type or a
+              filter on keys.
     shows     what of each comes back: facts, prose, charter.
     asks      overdue, when the question is what has fallen due; ready, when
               it is which work can be started.
@@ -137,6 +138,14 @@ then the keys.
               the declared type whose things it finds: `$type` takes the input.
     shows_keys
               the keys each object comes back with.
+
+A view that narrows nothing as it is asked is refused, naming the view and the
+keys that would narrow it: `selects`, `parent`, `asks: overdue`, `asks: ready`
+or `asks: plan`, `answers_type` and `where`. A kind, subject, parent,
+answers_type or fields sent beside the view count. A key written `$name`
+narrows only when its input is sent. A write that leaves a view holding none of
+those still lands, with a note saying so, and a view made with no keys is filled
+in a key at a time.
 
 A `$name` stands for the input of that name in `parent`, `where`, `as_of` and
 `answers_type`. A view that takes a project is declared and asked like this:

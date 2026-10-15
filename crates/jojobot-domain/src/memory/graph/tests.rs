@@ -4879,3 +4879,134 @@ fn children_are_counted_live_and_archived_apart_and_a_folded_one_is_not_counted(
         "a leaf has none"
     );
 }
+
+/// Fields as a view holds them.
+fn view_fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect()
+}
+
+/// 🚨 **A selection narrowed in any one way asks a question, and the list of ways
+/// is the one `narrows_nothing` reads.** Each way is built by hand here and not
+/// read from `Narrowing::ALL`, so a way left off that list reads as a selection
+/// that narrows nothing and this case goes red on it. Paired: a selection with no
+/// way at all narrows nothing.
+#[test]
+fn a_selection_narrowed_in_any_one_way_asks_a_question() {
+    let ways = [
+        (
+            "subject",
+            Selection {
+                subject: Some(EntityId("thing:gamma".into())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "kind",
+            Selection {
+                kind: Some(EntityKind::THING),
+                ..Selection::default()
+            },
+        ),
+        (
+            "parent",
+            Selection {
+                parent: Some(EntityId("project:atlas".into())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "overdue",
+            Selection {
+                owed: true,
+                ..Selection::default()
+            },
+        ),
+        (
+            "readiness",
+            Selection {
+                ready: true,
+                ..Selection::default()
+            },
+        ),
+        (
+            "answers_type",
+            Selection {
+                answers_type: Some(types::DeclaredType::new("pet", Vec::new())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "filter",
+            Selection {
+                fields: vec![FieldFilter::key("status")],
+                ..Selection::default()
+            },
+        ),
+        (
+            "near",
+            Selection {
+                near: Some(Nearness {
+                    day: "2026-03-15".parse().expect("a day"),
+                    within_days: 3,
+                    clock: Clock::RecordedOn,
+                }),
+                ..Selection::default()
+            },
+        ),
+    ];
+    assert_eq!(
+        ways.len(),
+        Narrowing::ALL.len(),
+        "every way a recall narrows is built here"
+    );
+    for (named, selection) in &ways {
+        assert!(
+            !selection.narrows_nothing(),
+            "a selection narrowed by {named} alone narrows something"
+        );
+    }
+    assert!(Selection::default().narrows_nothing());
+}
+
+/// **What narrows a view is the same list, spelled as the view holds it.** Each
+/// key is built by hand, and a key that is not one of them narrows nothing. The
+/// refusals name exactly these keys.
+#[test]
+fn a_view_narrows_by_the_keys_the_one_list_spells() {
+    for held in [
+        &[("selects", "work")][..],
+        &[("parent", "project:atlas")],
+        &[("asks", "overdue")],
+        &[("asks", "ready")],
+        &[("asks", "plan")],
+        &[("answers_type", "bike")],
+        &[("where", "status = now")],
+    ] {
+        assert!(view_narrows(&view_fields(held)), "{held:?} narrows a view");
+    }
+    for held in [
+        &[][..],
+        &[("shows", "facts")],
+        &[("selects", "  ")],
+        &[("order", "name ascending"), ("scope", "record")],
+    ] {
+        assert!(
+            !view_narrows(&view_fields(held)),
+            "{held:?} narrows nothing"
+        );
+    }
+    assert_eq!(
+        Narrowing::view_keys(),
+        [
+            "selects",
+            "parent",
+            "asks: overdue",
+            "asks: ready or asks: plan",
+            "answers_type",
+            "where"
+        ]
+    );
+}
