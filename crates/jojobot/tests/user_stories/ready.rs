@@ -360,11 +360,19 @@ async fn the_ready_view_turns_a_person_away_and_still_answers_for_work() {
         person.raw()
     );
 
-    // A kind other than work is refused the same way.
+    // A kind other than work is refused the same way, and the refusal names the
+    // kind that answers. The call that differs only in that kind is the positive:
+    // it lists the piece of work, so the refusal is about the kind and nothing
+    // else in the call.
     let kind = s
         .refused("recall", json!({"view": "ready", "kind": "person"}))
         .await;
     assert_eq!(kind.json()["fix_by"], "change", "{}", kind.raw());
+    kind.says("work");
+    let of_work = s
+        .call("recall", json!({"view": "ready", "kind": "work"}))
+        .await;
+    assert_eq!(listed(&of_work), ["work:omega"], "{}", of_work.raw());
 
     // A record's address is no subject for the view, as it is no subject for any
     // recall: it is refused as no handle, and the piece of work it belongs to
@@ -380,5 +388,10 @@ async fn the_ready_view_turns_a_person_away_and_still_answers_for_work() {
         .refused("recall", json!({"view": "ready", "subject": address}))
         .await;
     assert_eq!(by_record.json()["fix_by"], "change", "{}", by_record.raw());
+    assert!(
+        by_record.raw().contains(&address),
+        "the refusal names the address it turned away: {}",
+        by_record.raw()
+    );
     story.finish().await;
 }
