@@ -126,9 +126,9 @@ async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
 
     // The teaching about claims, as a session that meets a claim by recall
     // first is handed it: the reference this search is held to.
-    writer.add("bot:tau", "Tau").await;
+    writer.add("bot:gamma", "Gamma").await;
     let claims = story
-        .as_bot("bot:tau")
+        .as_bot("bot:gamma")
         .await
         .call("recall", json!({"subject": "person:lisa", "facts": true}))
         .await
