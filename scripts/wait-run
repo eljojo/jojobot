@@ -22,8 +22,11 @@ Exit code: 0 the run succeeded, 1 it failed, 2 it was cancelled or skipped, 3 no
 run ended before the timeout, 4 the branch or commit names nothing.
 
 It reads and nothing else: the actions API of the repository answers a read with
-no credential, so none is asked for, read or stored. WAIT_RUN_API names another
-repository's API root (default: jojo/jojobot on the project's Forgejo).
+no credential, so none is asked for, read or stored. WAIT_RUN_API names the
+repository's API root, for example http://forge.invalid:3000/api/v1/repos/homer/jojobot.
+It has no default host: this repository names no forge. On a Forgejo Actions runner,
+with the variable unset, the root is built from the runner's own GITHUB_API_URL and
+GITHUB_REPOSITORY. With neither, the tool exits 4 before it asks anything.
 """
 import argparse
 import json
@@ -35,9 +38,23 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-API = os.environ.get(
-    "WAIT_RUN_API", "http://nelly.churra-frog.ts.net:3030/api/v1/repos/jojo/jojobot"
-)
+
+def api_root():
+    """The repository's API root: WAIT_RUN_API, else the runner's own context, else none.
+    The context is the API URL and the repository that Forgejo Actions sets, and counts
+    only on a runner."""
+    named = os.environ.get("WAIT_RUN_API")
+    if named:
+        return named
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        api = os.environ.get("GITHUB_API_URL")
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        if api and repository:
+            return f"{api.rstrip('/')}/repos/{repository}"
+    return ""
+
+
+API = api_root()
 # A run that has reached one of these is over; every other status is still going.
 FINAL = {"success": 0, "failure": 1, "cancelled": 2, "skipped": 2}
 PAGE = 50
@@ -144,6 +161,8 @@ def main():
     ask.add_argument("--timeout", type=float, default=3600, help="seconds to wait in all")
     ask.add_argument("--interval", type=float, default=15, help="seconds between asks")
     args = ask.parse_args()
+    if not API:
+        stop(4, "WAIT_RUN_API is not set: set it to the repository's API root on your Forgejo")
 
     deadline = time.monotonic() + args.timeout
     sha = ref = None

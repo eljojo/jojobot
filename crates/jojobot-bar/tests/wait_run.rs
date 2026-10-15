@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-const REPO: &str = "/api/v1/repos/jojo/jojobot";
+const REPO: &str = "/api/v1/repos/homer/jojobot";
 const GREEN_SHA: &str = "5bd016dd9bb84bcd03726abab28b71fd61a0dbb2";
 const RED_SHA: &str = "65c9ebcb5e15fe82d91e0064c00611a5ae7ac057";
 
@@ -51,7 +51,7 @@ fn run(id: u64, branch: &str, sha: &str, status: &str) -> Value {
         "event": "push",
         "trigger_event": "push",
         "status": status,
-        "html_url": format!("http://forge.invalid/jojo/jojobot/actions/runs/{}", id - 2),
+        "html_url": format!("http://forge.invalid/homer/jojobot/actions/runs/{}", id - 2),
     })
 }
 
@@ -552,6 +552,109 @@ fn a_commit_of_the_checkout_with_no_run_yet_is_waited_for() {
 fn a_call_with_no_target_exits_four() {
     let ran = Command::new(tool()).output().expect("the tool runs");
     assert_eq!(ran.status.code(), Some(4));
+}
+
+/// The tool with no API root and no runner context in its environment, however
+/// the case runs: a case that itself runs on a runner holds the runner's variables.
+fn bare(target: &str, extra: &[(&str, &str)]) -> Command {
+    let mut command = Command::new(tool());
+    command.args([target, "--interval", "0.05", "--timeout", "2"]);
+    for held in [
+        "WAIT_RUN_API",
+        "GITHUB_ACTIONS",
+        "GITHUB_API_URL",
+        "GITHUB_REPOSITORY",
+    ] {
+        command.env_remove(held);
+    }
+    command.envs(extra.iter().copied());
+    command
+}
+
+/// **The tool names no forge of its own.** With no API root set, or an empty one,
+/// and no runner context, it exits four and names the variable, before it asks
+/// anything. A runner's variables count only on a runner (`GITHUB_ACTIONS` true)
+/// and only whole (the API URL and the repository both). The proxy points at a
+/// closed local port, so a tool that went looking for a forge could reach none and
+/// would wait out its timeout instead of answering at once.
+#[test]
+fn a_call_with_no_api_root_exits_four_and_names_the_variable() {
+    let api = "http://127.0.0.1:9/api/v1";
+    let cases: [(&str, &[(&str, &str)]); 5] = [
+        ("unset", &[]),
+        ("empty", &[("WAIT_RUN_API", "")]),
+        (
+            "runner variables on a host that is no runner",
+            &[
+                ("GITHUB_API_URL", api),
+                ("GITHUB_REPOSITORY", "homer/jojobot"),
+            ],
+        ),
+        (
+            "a runner with no repository",
+            &[("GITHUB_ACTIONS", "true"), ("GITHUB_API_URL", api)],
+        ),
+        (
+            "a runner with no API URL",
+            &[
+                ("GITHUB_ACTIONS", "true"),
+                ("GITHUB_REPOSITORY", "homer/jojobot"),
+            ],
+        ),
+    ];
+    for (what, extra) in cases {
+        let ran = bare("a-branch", extra)
+            .env("http_proxy", "http://127.0.0.1:9")
+            .output()
+            .expect("the tool runs");
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert_eq!(ran.status.code(), Some(4), "{what}: {said}");
+        assert!(said.contains("WAIT_RUN_API"), "{what}: {said}");
+        assert!(ran.stdout.is_empty(), "{what}");
+    }
+}
+
+/// **On a runner the root comes from the runner's own context**: the API URL and
+/// the repository the runner sets, joined the way the forge's API is laid out.
+/// No host is written in the tool.
+#[test]
+fn on_a_runner_the_api_root_is_built_from_the_runner_context() {
+    let forge = stand(two_runs_of_one_commit());
+    let api = format!("{}/api/v1", forge.addr);
+    let ran = bare(
+        "dev9-2374r-work",
+        &[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_API_URL", &api),
+            ("GITHUB_REPOSITORY", "homer/jojobot"),
+        ],
+    )
+    .output()
+    .expect("the tool runs");
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(0), "{said}");
+    assert!(String::from_utf8_lossy(&ran.stdout).contains("run #225"));
+}
+
+/// **A root that is set wins over the runner's context.**
+#[test]
+fn a_set_api_root_wins_over_the_runner_context() {
+    let forge = stand(two_runs_of_one_commit());
+    let root = format!("{}{REPO}", forge.addr);
+    let ran = bare(
+        "dev9-2374r-work",
+        &[
+            ("WAIT_RUN_API", &root),
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_API_URL", "http://127.0.0.1:9/api/v1"),
+            ("GITHUB_REPOSITORY", "marge/elsewhere"),
+        ],
+    )
+    .output()
+    .expect("the tool runs");
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(0), "{said}");
+    assert!(String::from_utf8_lossy(&ran.stdout).contains("run #225"));
 }
 
 fn scratch(tag: &str) -> PathBuf {
