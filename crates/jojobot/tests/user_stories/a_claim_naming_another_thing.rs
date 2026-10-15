@@ -3,8 +3,8 @@
 //! is a place the claim could belong?"
 //!
 //! The write is never refused: the claim may be exactly where it belongs. The
-//! receipt of a claim whose words share a rare name word with another known
-//! thing says so, names the route that moves a claim, and says it once per
+//! receipt of a claim whose words say another known thing's whole name or
+//! alias says so, names the route that moves a claim, and says it once per
 //! thing in a session. A thing the claim already points at is not named.
 
 use serde_json::json;
@@ -83,7 +83,7 @@ async fn a_receipt_names_another_known_thing_the_claims_words_name_once_a_sessio
             "capture",
             json!({
                 "subject": "org:mr-plow",
-                "content": "The filter was swapped in June",
+                "content": "The air filter was swapped in June",
                 "provenance": "testimony",
             }),
         )
@@ -95,6 +95,47 @@ async fn a_receipt_names_another_known_thing_the_claims_words_name_once_a_sessio
             .is_some_and(|note| note.contains("thing:the-air-filter")),
         "the filter is named: {unpointed}"
     );
+
+    // A long look-back that shares single words with a thing, an org
+    // and a project names none of them ...
+    s.add("thing:dining-chairs", "Dining chairs").await;
+    s.add("project:kitchen-floor", "Kitchen floor").await;
+    s.add("org:springfield-movers", "Springfield movers").await;
+    let look_back = "Looked back on the week: the chairs were scuffed, the kitchen is clean, the \
+                     floor was waxed and Springfield was quiet.";
+    let single = s
+        .call(
+            "capture",
+            json!({
+                "subject": "org:mr-plow",
+                "content": look_back,
+                "provenance": "testimony",
+            }),
+        )
+        .await
+        .json();
+    assert!(single.get("address").is_some(), "the write lands: {single}");
+    assert!(
+        single.get("possible_subject_note").is_none(),
+        "single shared words draw no note: {single}"
+    );
+    // ... and the same claim saying one thing's whole name does.
+    let whole = s
+        .call(
+            "capture",
+            json!({
+                "subject": "org:mr-plow",
+                "content": format!("{look_back} The dining chairs are next."),
+                "provenance": "testimony",
+            }),
+        )
+        .await
+        .json();
+    let note = whole["possible_subject_note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the whole name is noted: {whole}"));
+    assert!(note.contains("thing:dining-chairs"), "{note}");
+    assert!(!note.contains("project:kitchen-floor"), "{note}");
 
     story.finish().await;
 }

@@ -19,13 +19,15 @@ const NOTED_DOMAIN: &str = "possible-subject:";
 const NAMED_AT_MOST: usize = 3;
 
 impl Jojobot {
-    /// **Note it on the receipt when this claim's words share a name word with
-    /// another known thing** that is not its subject, a ref or its edge object.
+    /// **Note it on the receipt when this claim's words say another known
+    /// thing's whole name or alias** and that thing is not its subject, a ref or
+    /// its edge object.
     ///
-    /// The comparison is the one `search` and the creation screen already make
-    /// ([`jojobot_domain::memory::words::sharing_a_word`]): a word of four
-    /// letters or more, rare among the things of its kind. The write has
-    /// landed either way, and a read that fails adds nothing.
+    /// The comparison is
+    /// [`jojobot_domain::memory::words::named_in_full`]. One shared word is not
+    /// enough: a claim with details holds hundreds of words, and nearly every
+    /// one is rare in some kind of a small store. The write has landed either
+    /// way, and a read that fails adds nothing.
     pub(crate) async fn note_possible_subject(
         &self,
         fact: &Fact,
@@ -60,7 +62,7 @@ impl Jojobot {
                 || text.contains(id.as_str())
         };
         let mut named: Vec<&EntityId> = Vec::new();
-        for (entity, _shared) in jojobot_domain::memory::words::sharing_a_word(&text, &known) {
+        for entity in jojobot_domain::memory::words::named_in_full(&text, &known) {
             if named.len() == NAMED_AT_MOST {
                 break;
             }
@@ -207,6 +209,43 @@ mod tests {
                 "{slug} carries no note: {receipt}"
             );
         }
+    }
+
+    /// **A claim that shares only single words with other things is not noted.**
+    /// A long look-back holds `chairs`, `kitchen`, `floor` and `springfield`, and
+    /// a thing, a project and an org each wear one of them in their names. None is named in
+    /// full, so no note. The positive sits in the same read: the same long claim
+    /// with one thing's whole name added is noted for that thing alone.
+    #[tokio::test]
+    async fn a_long_claim_sharing_single_words_is_not_noted_and_one_naming_a_thing_is() {
+        let jojobot = handler();
+        for handle in [
+            "thing:dining-chairs",
+            "project:kitchen-floor",
+            "org:springfield-movers",
+            "org:mr-plow",
+        ] {
+            ensure(&jojobot, handle).await;
+        }
+        let words = "Looked back on the week: the chairs were scuffed, the kitchen is clean, the \
+                     floor was waxed and Springfield was quiet.";
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let single = booted(&jojobot, "gamma").await;
+        let receipt = capture_as(&jojobot, &single, capture_args("org:mr-plow", words)).await;
+        assert_ne!(receipt["status"], "blocked", "{receipt}");
+        assert!(
+            noted(&receipt).is_none(),
+            "single words draw no note: {receipt}"
+        );
+
+        let named = booted(&jojobot, "delta").await;
+        let said = format!("{words} The dining chairs are next.");
+        let receipt = capture_as(&jojobot, &named, capture_args("org:mr-plow", &said)).await;
+        let note = noted(&receipt).unwrap_or_else(|| panic!("the whole name is noted: {receipt}"));
+        assert!(note.contains("thing:dining-chairs"), "{note}");
+        assert!(!note.contains("org:springfield-movers"), "{note}");
+        assert!(!note.contains("project:kitchen-floor"), "{note}");
     }
 
     /// **A thing is named once per session, and a new session is told again.**
@@ -366,7 +405,7 @@ mod tests {
 
         let on_the_parent = capture_on(
             &jojobot,
-            capture_args("person:randy", "The weekly call is overdue"),
+            capture_args("person:randy", "The Call Randy loop is overdue"),
         )
         .await;
         let note =

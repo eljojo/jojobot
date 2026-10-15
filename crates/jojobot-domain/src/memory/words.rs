@@ -221,6 +221,66 @@ pub fn sharing_a_word<'a>(
     found
 }
 
+/// **The things whose name or an alias a text says IN FULL**, by handle order.
+/// A name is said when its alphanumeric tokens, lowercased, stand in the text in
+/// order, adjacent, each side bounded by a non-alphanumeric character or the
+/// text's edge: `The furnace` is said by `the furnace's service`, `Lisa` by
+/// `Lisa told`, and `Code red 2` is not said by `code-red-free text`.
+///
+/// **Why rarity is the wrong test here.** [`sharing_a_word`] asks whether a
+/// word is evidence that two NAMES mean one thing, and a word few things carry
+/// is. A claim is a different question: whether its text is about the thing. A
+/// long claim holds hundreds of words, so in a small store nearly one of them is
+/// rare in some kind, and a single shared word says nothing about what the claim
+/// is about. Only the whole name does.
+///
+/// **What is kept from [`sharing_a_word`]:** only browsable things are offered,
+/// and a name whose every token is a word of its parent's slug says nothing
+/// beyond the parent, so it is not matched. The parent's words are not removed
+/// from a name that has others, because that would break the adjacency a whole
+/// name needs. A name of one token under [`MIN_WORD`] letters is not matched:
+/// it is a connective as often as a name.
+///
+/// **Known limit:** a name with a leading article is not matched without it.
+/// `The air filter` is not said by `the filter was swapped`, nor by `air filter`.
+pub fn named_in_full<'a>(text: &str, entities: &'a [super::Entity]) -> Vec<&'a super::Entity> {
+    let said = tokens(text);
+    if said.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<&super::Entity> = entities
+        .iter()
+        .filter(|entity| entity.browsable())
+        .filter(|entity| {
+            let given: BTreeSet<String> = entity
+                .parent
+                .as_ref()
+                .map(|parent| tokens(parent.slug()).into_iter().collect())
+                .unwrap_or_default();
+            entity.labels().into_iter().any(|label| {
+                let name = tokens(label);
+                let worth = name.len() > 1 || name.iter().any(|t| t.chars().count() >= MIN_WORD);
+                worth
+                    && !name.iter().all(|token| given.contains(token))
+                    && said
+                        .windows(name.len())
+                        .any(|window| window == name.as_slice())
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| a.id.cmp(&b.id));
+    found
+}
+
+/// The lowercased alphanumeric runs of a text, in order.
+fn tokens(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +428,54 @@ mod tests {
         assert!(common.is_empty(), "{common:?}");
         let rare = sharing_a_word("wharf", &held);
         assert_eq!(rare.len(), 2, "{rare:?}");
+    }
+
+    /// **A text names a thing only by its whole name or an alias, word-bounded.**
+    /// The negatives sit beside the positives in one store: a single shared word,
+    /// a hyphen-joined run that breaks the name's words apart, a name that is a
+    /// prefix of a longer word, a name made only of its parent's words, a
+    /// connective-length name, and a thing folded into another.
+    #[test]
+    fn a_text_names_a_thing_only_by_its_whole_name() {
+        let mut held = vec![
+            entity("thing:the-furnace", "The furnace"),
+            entity("person:lisa", "Lisa"),
+            entity("thing:gorge-email", "Code red 2"),
+            entity("thing:the-air-filter", "Air filter swap"),
+            entity("thing:house-keys", "The move"),
+            entity("thing:fat-bike", "Bo"),
+            entity("thing:laptop-dock", "Gamma ray"),
+        ];
+        held[2].aliases = vec!["Redcode".into()];
+        held[4].parent = Some(EntityId("project:the-move".into()));
+        held[6].merged_into = Some(EntityId("thing:the-air-filter".into()));
+        let named = |text: &str| -> Vec<&str> {
+            named_in_full(text, &held)
+                .into_iter()
+                .map(|e| e.id.as_str())
+                .collect()
+        };
+        assert_eq!(named("the furnace's service is due"), ["thing:the-furnace"]);
+        assert_eq!(named("Lisa told me"), ["person:lisa"]);
+        assert_eq!(named("see Code red 2 today"), ["thing:gorge-email"]);
+        assert_eq!(named("the REDCODE alias"), ["thing:gorge-email"]);
+        assert!(named("code-red-free text").is_empty());
+        assert!(
+            named("the furnace").len() == 1,
+            "positive beside the negatives"
+        );
+        assert!(named("a furnace in the cellar").is_empty(), "one word");
+        assert!(
+            named("the air filter was swapped").is_empty(),
+            "name has more words"
+        );
+        assert!(named("Lisas visit").is_empty(), "word-bounded");
+        assert!(
+            named("deploy alpha is live").is_empty(),
+            "the parent's own words"
+        );
+        assert!(named("Bo came").is_empty(), "a connective-length name");
+        assert!(named("gamma ray burst").is_empty(), "a folded thing");
     }
 
     /// **The limit is three other carriers.** Two others carrying a word leave
