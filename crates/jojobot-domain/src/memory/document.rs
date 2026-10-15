@@ -340,6 +340,11 @@ pub const EDGES: &str = "edges";
 /// holds the section's heading. A section is found again by this link rather than
 /// by what sits next to it, so a move that stopped partway can be finished.
 pub const CONTINUES: &str = "continues";
+/// The field on a record a restore writes: the address of the version it
+/// reproduces. A restore reads this to know a section is already restored, and
+/// reads nothing else on a record that has it. It is stored on records, so the
+/// spelling is pinned by a test of its own.
+pub const RESTORED_FROM: &str = "restored_from";
 
 /// **Whether a fact is a section of the document it sits on**: a claim on a
 /// document that carries the order key of a section. An ordinary claim about a
@@ -1041,5 +1046,12 @@ mod tests {
             assert_eq!(got, firsts, "{text:?}");
             assert_eq!(join(&sections), text);
         }
+    }
+
+    /// The key a restore marks its copies with is stored on records, and nothing
+    /// outside this process declares it, so its spelling is pinned here.
+    #[test]
+    fn the_key_a_restore_marks_its_copies_with_is_restored_from() {
+        assert_eq!(RESTORED_FROM, "restored_from");
     }
 }

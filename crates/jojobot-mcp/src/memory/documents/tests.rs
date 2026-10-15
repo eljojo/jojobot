@@ -1795,3 +1795,75 @@ async fn a_put_lists_one_created_entry_per_section_it_wrote() {
     assert_eq!(changed[0]["on"], more["first"], "{more}");
     assert_ne!(changed[0]["on"], first["last"], "{more}");
 }
+
+/// **A copy written before the mark existed is still found, and only when it
+/// reads as the version it names.** The plan is worked out from the records alone.
+/// The closing stands under another record that names it in `derived_from` and
+/// carries no `restored_from`: a copy by the old rule, so nothing is written.
+/// **Paired**: the same record with other words was worked out from the closing for
+/// another reason, so the plan archives it and writes the closing again.
+#[tokio::test]
+async fn an_unmarked_record_is_a_restored_copy_only_when_it_reads_as_the_version_it_names() {
+    let jojobot = handler();
+    put_ok(
+        &jojobot,
+        "document:homer",
+        "# Manual\n\n## Closing\n\nDrain the oil.\n",
+    )
+    .await;
+    let facts = jojobot
+        .memory
+        .recall(&EntityId("document:homer".into()))
+        .await
+        .expect("recall ok");
+    let then = live_sections(&facts);
+    let closing = then
+        .iter()
+        .find(|held| held.fact.content == "## Closing")
+        .expect("the closing")
+        .fact;
+
+    let plan_with = |copy_of: Fact| {
+        let others: Vec<Fact> = facts
+            .iter()
+            .filter(|fact| fact.id != closing.id)
+            .cloned()
+            .chain(std::iter::once(copy_of))
+            .collect();
+        let now = live_sections(&others);
+        plan_restore(
+            &EntityId("document:homer".into()),
+            &then,
+            &now,
+            "s",
+            jiff::civil::date(2026, 10, 8),
+        )
+    };
+    let mut copy = closing.clone();
+    copy.id = FactId("f99".into());
+    copy.derived_from = Some(closing.address());
+    assert!(
+        !copy.fields.contains_key(document::RESTORED_FROM),
+        "a copy from before the mark has none"
+    );
+    assert!(
+        plan_with(copy.clone()).steps.is_empty(),
+        "the copy is found, nothing to write"
+    );
+
+    copy.details = Some("Something else entirely.".into());
+    let plan = plan_with(copy.clone());
+    assert!(
+        plan.steps.iter().any(|step| matches!(
+            step,
+            Step::Archive { address } if *address == copy.address()
+        )),
+        "worked out from the closing for another reason: it is archived, not the copy"
+    );
+    assert!(
+        plan.steps
+            .iter()
+            .any(|step| matches!(step, Step::Recreate { .. })),
+        "…and the closing is written again"
+    );
+}

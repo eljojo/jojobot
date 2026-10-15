@@ -224,6 +224,13 @@ fn restored_record(subject: &EntityId, then: &Fact, session: &str, day: Date) ->
     new.standing = Some(then.standing);
     new.fields = then.fields.clone();
     new.fields.remove(document::CONTINUES);
+    // **The copy says which version it reproduces**, and a copy of a copy says
+    // the version it was asked to reproduce, so the mark is set after the
+    // fields are taken from the section.
+    new.fields.insert(
+        document::RESTORED_FROM.to_string(),
+        then.address().to_string(),
+    );
     new.derived_from = Some(then.address());
     new.session = Some(session.to_string());
     new
@@ -244,28 +251,44 @@ fn plan_restore(
         .enumerate()
         .map(|(at, held)| (held.fact.id.0.as_str(), at))
         .collect();
-    // **A section restored before stands under a new record that names the one it
-    // restores**, so a second restore to the same moment finds it there and has
-    // nothing to do. An archived claim has no un-archive, which is why the copy
-    // is a record of its own.
+    // **A section restored before stands under a new record that says which version
+    // it reproduces** (`restored_from`), so a second restore to the same moment finds
+    // it there and has nothing to do. An archived claim has no un-archive, which is
+    // why the copy is a record of its own.
     //
-    // **Only a record that did not stand then is a copy.** A record that stood on
-    // that day under its own identity was worked out from another by its writer,
-    // which `derived_from` also says; taking it for a copy would put the words of
-    // the section it names over it.
-    let then_ids: std::collections::HashSet<&str> =
-        then.iter().map(|held| held.fact.id.0.as_str()).collect();
-    let now_by_origin: std::collections::HashMap<String, usize> = now
+    // **The mark is the only thing read on a record that has it.** A record written
+    // before the mark existed has none, and is a copy only if it names the version
+    // in `derived_from` AND reads as that version did: `derived_from` is also how a
+    // writer says a record was worked out from another, and such a record reads
+    // otherwise. A marked copy of a version always wins over an unmarked one.
+    let then_by_address: std::collections::HashMap<String, &Held<'_>> = then
+        .iter()
+        .map(|held| (held.fact.address().to_string(), held))
+        .collect();
+    let mut now_by_origin: std::collections::HashMap<String, usize> = now
         .iter()
         .enumerate()
-        .filter(|(_, held)| !then_ids.contains(held.fact.id.0.as_str()))
         .filter_map(|(at, held)| {
             held.fact
-                .derived_from
-                .as_ref()
-                .map(|from| (from.to_string(), at))
+                .fields
+                .get(document::RESTORED_FROM)
+                .map(|from| (from.clone(), at))
         })
         .collect();
+    for (at, held) in now.iter().enumerate() {
+        if held.fact.fields.contains_key(document::RESTORED_FROM) {
+            continue;
+        }
+        let Some(from) = held.fact.derived_from.as_ref().map(ToString::to_string) else {
+            continue;
+        };
+        if then_by_address
+            .get(&from)
+            .is_some_and(|was| same_section(was.fact, held.fact))
+        {
+            now_by_origin.entry(from).or_insert(at);
+        }
+    }
     let counterpart = |was: &Held<'_>| -> Option<usize> {
         now_by_id
             .get(was.fact.id.0.as_str())

@@ -1190,3 +1190,180 @@ async fn a_section_worked_out_from_an_archived_one_is_not_its_restored_copy() {
         "the September page, byte for byte: {restored}"
     );
 }
+
+/// Every record of `document:homer` that stands, across the pages recall serves
+/// them in.
+async fn standing_records(session: &super::dsl::Session) -> Vec<serde_json::Value> {
+    let mut found = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = session
+            .call(
+                "recall",
+                json!({"subject": "document:homer", "facts": true, "offset": offset}),
+            )
+            .await
+            .json();
+        let facts = page["objects"][0]["facts"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a page of records: {page}"));
+        found.extend(facts.iter().filter(|f| f["status"] == "active").cloned());
+        match page["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => return found,
+        }
+    }
+}
+
+/// **A restore marks each record it writes with the section it reproduces, and
+/// reads only that mark to know a section is restored.** The closing is archived
+/// and a section made since is edited to say it was worked out from the closing,
+/// which is a reason of its own and not a restore. A restore to the day before
+/// must bring the closing back as a record that says which version it
+/// reproduces, and must archive the section made since as it archives any
+/// section made since, not rewrite it into the closing.
+///
+/// **Paired in one read**: the page is the September page, the restored closing
+/// carries the mark, and the section made since no longer stands.
+#[tokio::test]
+async fn a_record_worked_out_from_a_section_is_not_taken_for_its_restored_copy() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let closing = manual_addresses(&session).await[2].clone();
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({"address": closing, "status": "archived"}),
+        )
+        .await;
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "after": manual_addresses(&session).await[1],
+                "markdown": "## Cleaning\n\nWipe the fryer down each night.\n",
+            }),
+        )
+        .await;
+    let cleaning = standing_records(&session)
+        .await
+        .into_iter()
+        .find(|fact| fact["content"] == "## Cleaning")
+        .expect("the section made since");
+    session
+        .call(
+            "update_fact",
+            json!({"address": cleaning["address"], "derived_from": closing}),
+        )
+        .await;
+
+    let restored = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await
+        .json();
+    assert_ne!(restored["status"], "blocked", "{restored}");
+    assert_eq!(
+        read_the_whole_manual(&session).await,
+        MANUAL,
+        "the September page: {restored}"
+    );
+    let standing = standing_records(&session).await;
+    let back = standing
+        .iter()
+        .find(|fact| fact["content"] == "## Closing")
+        .unwrap_or_else(|| panic!("the closing stands again: {standing:?}"));
+    assert_eq!(
+        back["fields"]["restored_from"], closing,
+        "the restored closing says which version it reproduces: {back}"
+    );
+    assert!(
+        standing.iter().all(|fact| fact["content"] != "## Cleaning"),
+        "the section made since is archived, not rewritten into the closing: {standing:?}"
+    );
+}
+
+/// **A restored copy that was edited since is found again by its mark.** The
+/// closing is archived and restored, and the restored closing is then edited. A
+/// restore sent again reads the mark, finds the copy, and puts its wording back on
+/// the SAME record; it does not archive the copy and write a third closing.
+///
+/// **Paired in one read**: the page is the September page and the closing stands
+/// on the address the first restore gave it, still carrying the mark.
+#[tokio::test]
+async fn an_edited_restored_copy_is_found_by_its_mark_and_put_back_in_place() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let closing = manual_addresses(&session).await[2].clone();
+    clock.stating(OCTOBER.parse().expect("a day"));
+    session
+        .call(
+            "update_fact",
+            json!({"address": closing, "status": "archived"}),
+        )
+        .await;
+    let restore = || {
+        session.call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+    };
+    restore().await;
+    let copy = standing_records(&session)
+        .await
+        .into_iter()
+        .find(|fact| fact["content"] == "## Closing")
+        .expect("the restored closing");
+    assert_eq!(copy["fields"]["restored_from"], closing, "{copy}");
+    session
+        .call(
+            "update_fact",
+            json!({
+                "address": copy["address"], "field": "details",
+                "find": "wipe the lid", "replace": "wipe the hood",
+            }),
+        )
+        .await;
+    assert_ne!(
+        read_the_whole_manual(&session).await,
+        MANUAL,
+        "the copy was edited, or this story proves nothing"
+    );
+
+    let again = restore().await.json();
+    assert_ne!(again["status"], "blocked", "{again}");
+    assert_eq!(
+        read_the_whole_manual(&session).await,
+        MANUAL,
+        "the September page: {again}"
+    );
+    let standing = standing_records(&session).await;
+    let closings: Vec<_> = standing
+        .iter()
+        .filter(|fact| fact["content"] == "## Closing")
+        .collect();
+    assert_eq!(closings.len(), 1, "one closing stands: {standing:?}");
+    assert_eq!(
+        closings[0]["address"], copy["address"],
+        "the copy was put back in place, not replaced: {again}"
+    );
+    assert_eq!(closings[0]["fields"]["restored_from"], closing);
+}
