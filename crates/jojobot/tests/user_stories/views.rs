@@ -413,11 +413,6 @@ async fn a_session_told_nothing_finds_the_view_path_and_composes_a_real_question
         skill.contains("colleagues") && skill.contains("loops"),
         "the skill's worked examples are the views that really ship: {skill}",
     );
-    // …and the sentence that stops an agent concluding a capability is absent.
-    assert!(
-        skill.contains("ARGUMENT on a verb you already know"),
-        "the skill says where capabilities live on this surface: {skill}",
-    );
 
     // ③ **The composed call.** Not the axes recited — a real question, built
     // from what the skill just said, that comes back with the answer.

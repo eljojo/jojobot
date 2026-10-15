@@ -232,11 +232,11 @@ async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_say
 /// with nothing connected in either direction, so a run is only ever the
 /// object a call selected.
 ///
-/// 🚨 **This pins that.** `fit_run_histories` cuts the history of the objects a
-/// call selected and not of the objects it reached, and it can leave the nested
-/// case alone only while no walk reaches a run. The day a run becomes linkable
-/// this case goes red, and the cut must be extended to the objects reached by
-/// the walk (rule 498) in the same change.
+/// 🚨 **THIS IS A TRIPWIRE, NOT A STORY.** It pins that. `fit_run_histories`
+/// cuts the history of the objects a call selected and not of the objects it
+/// reached, and it can leave the nested case alone only while no walk reaches a
+/// run. The day a run becomes linkable this case goes red, and the cut must be
+/// extended to the objects reached by the walk (rule 498) in the same change.
 #[tokio::test]
 async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
     let story = Story::begin("bot:otto").await;

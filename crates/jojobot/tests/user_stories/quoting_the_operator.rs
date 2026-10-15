@@ -192,7 +192,10 @@ async fn a_body_under_the_ceiling_before_expansion_and_over_it_after_is_refused(
         .await
         .json();
     assert_eq!(refusal["wrote"], false, "nothing was posted: {refusal}");
-    assert_eq!(refusal["fix_by"], "change", "the call must change: {refusal}");
+    assert_eq!(
+        refusal["fix_by"], "change",
+        "the call must change: {refusal}"
+    );
     assert_eq!(story.box_counts_on_the_page("person:lisa").await, held);
 
     story.finish().await;
