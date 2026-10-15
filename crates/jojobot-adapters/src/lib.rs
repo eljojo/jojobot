@@ -45,3 +45,6 @@ mod fold_image_tests;
 
 #[cfg(test)]
 mod fold_rails_image_tests;
+
+#[cfg(test)]
+mod fold_dropped_tests;

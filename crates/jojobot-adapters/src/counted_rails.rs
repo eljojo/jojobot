@@ -100,8 +100,8 @@ impl Calls {
 
     /// **The next call of `name` commits and its caller never hears.** The store
     /// writes, then the call stays pending, so a caller that stops waiting drops a
-    /// future whose write already landed. Only `append`, `post_message` and
-    /// `forget` hang.
+    /// future whose write already landed. Every write verb of the three ports
+    /// hangs.
     pub fn hang_after_next(&self, name: &'static str) {
         *self.hang_after.lock().expect("count lock") = Some(name);
     }
@@ -180,7 +180,9 @@ impl Sessions for CountedSessions {
     }
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         self.calls.hit("begin", Kind::Write);
-        self.inner.begin(new).await
+        let landed = self.inner.begin(new).await;
+        self.calls.hang_if_armed("begin").await;
+        landed
     }
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
         self.calls.hit("append", Kind::Write);
@@ -190,7 +192,9 @@ impl Sessions for CountedSessions {
     }
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
         self.calls.hit("amend_last", Kind::Write);
-        self.inner.amend_last(id, text).await
+        let landed = self.inner.amend_last(id, text).await;
+        self.calls.hang_if_armed("amend_last").await;
+        landed
     }
     async fn amend_beat(
         &self,
@@ -200,11 +204,15 @@ impl Sessions for CountedSessions {
         at: Timestamp,
     ) -> Result<JournalEntry, SessionError> {
         self.calls.hit("amend_beat", Kind::Write);
-        self.inner.amend_beat(id, entry, text, at).await
+        let landed = self.inner.amend_beat(id, entry, text, at).await;
+        self.calls.hang_if_armed("amend_beat").await;
+        landed
     }
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         self.calls.hit("set_focus", Kind::Write);
-        self.inner.set_focus(id, focus).await
+        let landed = self.inner.set_focus(id, focus).await;
+        self.calls.hang_if_armed("set_focus").await;
+        landed
     }
     async fn set_timezone(
         &self,
@@ -212,7 +220,9 @@ impl Sessions for CountedSessions {
         timezone: Option<&str>,
     ) -> Result<Session, SessionError> {
         self.calls.hit("set_timezone", Kind::Write);
-        self.inner.set_timezone(id, timezone).await
+        let landed = self.inner.set_timezone(id, timezone).await;
+        self.calls.hang_if_armed("set_timezone").await;
+        landed
     }
     async fn set_stated_day(
         &self,
@@ -220,7 +230,9 @@ impl Sessions for CountedSessions {
         day: Option<Date>,
     ) -> Result<Session, SessionError> {
         self.calls.hit("set_stated_day", Kind::Write);
-        self.inner.set_stated_day(id, day).await
+        let landed = self.inner.set_stated_day(id, day).await;
+        self.calls.hang_if_armed("set_stated_day").await;
+        landed
     }
     async fn set_wrap_window(
         &self,
@@ -228,27 +240,39 @@ impl Sessions for CountedSessions {
         window: Option<WrapWindow>,
     ) -> Result<Session, SessionError> {
         self.calls.hit("set_wrap_window", Kind::Write);
-        self.inner.set_wrap_window(id, window).await
+        let landed = self.inner.set_wrap_window(id, window).await;
+        self.calls.hang_if_armed("set_wrap_window").await;
+        landed
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.calls.hit("close", Kind::Write);
-        self.inner.close(id, to).await
+        let landed = self.inner.close(id, to).await;
+        self.calls.hang_if_armed("close").await;
+        landed
     }
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.calls.hit("add_served", Kind::Write);
-        self.inner.add_served(id, chars).await
+        let landed = self.inner.add_served(id, chars).await;
+        self.calls.hang_if_armed("add_served").await;
+        landed
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.calls.hit("reset_served", Kind::Write);
-        self.inner.reset_served(id).await
+        let landed = self.inner.reset_served(id).await;
+        self.calls.hang_if_armed("reset_served").await;
+        landed
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.calls.hit("reopen", Kind::Write);
-        self.inner.reopen(id).await
+        let landed = self.inner.reopen(id).await;
+        self.calls.hang_if_armed("reopen").await;
+        landed
     }
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
         self.calls.hit("set_charter_told", Kind::Write);
-        self.inner.set_charter_told(id, at).await
+        let landed = self.inner.set_charter_told(id, at).await;
+        self.calls.hang_if_armed("set_charter_told").await;
+        landed
     }
 
     async fn scan_session_history(
@@ -286,7 +310,9 @@ impl Sessions for CountedSessions {
     }
     async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
         self.calls.hit("set_key_hash", Kind::Write);
-        self.inner.set_key_hash(id, hash).await
+        let landed = self.inner.set_key_hash(id, hash).await;
+        self.calls.hang_if_armed("set_key_hash").await;
+        landed
     }
     async fn note_charter_change(
         &self,
@@ -295,9 +321,12 @@ impl Sessions for CountedSessions {
         by_session: Option<&str>,
     ) -> Result<(), SessionError> {
         self.calls.hit("note_charter_change", Kind::Write);
-        self.inner
+        let landed = self
+            .inner
             .note_charter_change(bot, change, by_session)
-            .await
+            .await;
+        self.calls.hang_if_armed("note_charter_change").await;
+        landed
     }
     async fn charter_change_of(
         &self,
@@ -342,7 +371,9 @@ impl Mailboxes for CountedMailboxes {
         override_token: Option<&str>,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
         self.calls.hit("create_mailbox", Kind::Write);
-        self.inner.create_mailbox(name, owner, override_token).await
+        let landed = self.inner.create_mailbox(name, owner, override_token).await;
+        self.calls.hang_if_armed("create_mailbox").await;
+        landed
     }
     async fn repoint_owner(
         &self,
@@ -350,7 +381,9 @@ impl Mailboxes for CountedMailboxes {
         to: &EntityId,
     ) -> Result<Option<Mailbox>, MailboxError> {
         self.calls.hit("repoint_owner", Kind::Write);
-        self.inner.repoint_owner(from, to).await
+        let landed = self.inner.repoint_owner(from, to).await;
+        self.calls.hang_if_armed("repoint_owner").await;
+        landed
     }
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         self.calls.hit("list_mailboxes", Kind::Read);
@@ -383,7 +416,9 @@ impl Mailboxes for CountedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError> {
         self.calls.hit("read_mailbox", Kind::Write);
-        self.inner.read_mailbox(name, taken_by, acting).await
+        let landed = self.inner.read_mailbox(name, taken_by, acting).await;
+        self.calls.hang_if_armed("read_mailbox").await;
+        landed
     }
     async fn read_message(
         &self,
@@ -391,7 +426,9 @@ impl Mailboxes for CountedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Delivered, MailboxError> {
         self.calls.hit("read_message", Kind::Write);
-        self.inner.read_message(id, acting).await
+        let landed = self.inner.read_message(id, acting).await;
+        self.calls.hang_if_armed("read_message").await;
+        landed
     }
     async fn mark_processed(
         &self,
@@ -400,7 +437,9 @@ impl Mailboxes for CountedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         self.calls.hit("mark_processed", Kind::Write);
-        self.inner.mark_processed(id, notes, acting).await
+        let landed = self.inner.mark_processed(id, notes, acting).await;
+        self.calls.hang_if_armed("mark_processed").await;
+        landed
     }
     async fn quarantine(
         &self,
@@ -410,7 +449,9 @@ impl Mailboxes for CountedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
         self.calls.hit("quarantine", Kind::Write);
-        self.inner.quarantine(id, by, reason, acting).await
+        let landed = self.inner.quarantine(id, by, reason, acting).await;
+        self.calls.hang_if_armed("quarantine").await;
+        landed
     }
 
     async fn message_history(
@@ -463,7 +504,9 @@ impl Teachings for CountedTeachings {
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
         self.calls.hit("first_contact", Kind::Write);
-        self.inner.first_contact(sid, domain, at).await
+        let landed = self.inner.first_contact(sid, domain, at).await;
+        self.calls.hang_if_armed("first_contact").await;
+        landed
     }
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         self.calls.hit("forget", Kind::Write);

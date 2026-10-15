@@ -44,6 +44,9 @@ pub struct Story {
     /// **The task that pushes the operator's mail**, when this server was set
     /// up to push. Kept so a story can stop it, as stopping the process would.
     runner: Option<Arc<jojobot::push::Runner>>,
+    /// **The search index this server answers from**, so a story can make the
+    /// next write to it fail, as a disk that fills does.
+    index: Arc<jojobot_adapters::search::FullTextIndex>,
 }
 
 /// The subject the operator's browser logs in as. One reader, because the
@@ -800,6 +803,7 @@ impl Story {
             let _ = indexed.rebuild().await;
         }
         let indexed_for_seed = indexed.clone();
+        let index = indexed.index();
         let wired = jojobot::wiring::assemble_ports(
             indexed.clone(),
             mail_store.clone(),
@@ -912,7 +916,15 @@ impl Story {
             mail_image,
             runs_image,
             runner,
+            index,
         }
+    }
+
+    /// **The search index cannot take the next write.** The stores keep
+    /// answering; only the projection of them fails once, so a verb that
+    /// reindexes after its store write commits and then cannot refresh.
+    pub fn the_search_index_fails_its_next_commit(&self) {
+        self.index.fail_next_commit();
     }
 
     /// **Stand the story's own bot up**, once, by the identity every jojobot

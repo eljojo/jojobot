@@ -53,7 +53,7 @@ impl Counted {
 
     /// **The next call of `name` commits and its caller never hears.** The store
     /// writes, then the call stays pending, so a caller that stops waiting drops a
-    /// future whose write already landed. Only `capture` and `add_entity` hang.
+    /// future whose write already landed. Every write verb of the port hangs.
     pub fn hang_after_next(&self, name: &'static str) {
         *self.hang_after.lock().expect("count lock") = Some(name);
     }
@@ -112,7 +112,9 @@ impl Memory for Counted {
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         self.hit("add_entity_with_first_claim");
-        self.inner.add_entity_with_first_claim(new, first).await
+        let landed = self.inner.add_entity_with_first_claim(new, first).await;
+        self.hang_if_armed("add_entity_with_first_claim").await;
+        landed
     }
     async fn update_entity_with_claim(
         &self,
@@ -121,9 +123,12 @@ impl Memory for Counted {
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         self.hit("update_entity_with_claim");
-        self.inner
+        let landed = self
+            .inner
             .update_entity_with_claim(handle, patch, claim)
-            .await
+            .await;
+        self.hang_if_armed("update_entity_with_claim").await;
+        landed
     }
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.hit("list_entities");
@@ -165,7 +170,9 @@ impl Memory for Counted {
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.hit("update_entity");
-        self.inner.update_entity(handle, patch).await
+        let landed = self.inner.update_entity(handle, patch).await;
+        self.hang_if_armed("update_entity").await;
+        landed
     }
     async fn rename_entity(
         &self,
@@ -177,9 +184,12 @@ impl Memory for Counted {
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.hit("rename_entity");
-        self.inner
+        let landed = self
+            .inner
             .rename_entity(from, to, parent, date, resemblance, session)
-            .await
+            .await;
+        self.hang_if_armed("rename_entity").await;
+        landed
     }
     async fn archive_entity(
         &self,
@@ -188,7 +198,9 @@ impl Memory for Counted {
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
         self.hit("archive_entity");
-        self.inner.archive_entity(id, reason, session).await
+        let landed = self.inner.archive_entity(id, reason, session).await;
+        self.hang_if_armed("archive_entity").await;
+        landed
     }
     async fn restore_entity(
         &self,
@@ -196,7 +208,9 @@ impl Memory for Counted {
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
         self.hit("restore_entity");
-        self.inner.restore_entity(id, session).await
+        let landed = self.inner.restore_entity(id, session).await;
+        self.hang_if_armed("restore_entity").await;
+        landed
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.hit("capture");
@@ -215,7 +229,9 @@ impl Memory for Counted {
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         self.hit("update_fact");
-        self.inner.update_fact(address, patch, caller).await
+        let landed = self.inner.update_fact(address, patch, caller).await;
+        self.hang_if_armed("update_fact").await;
+        landed
     }
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         self.hit("history");
@@ -306,9 +322,12 @@ impl Memory for Counted {
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         self.hit("retract");
-        self.inner
+        let landed = self
+            .inner
             .retract(address, reason, date, caller, session)
-            .await
+            .await;
+        self.hang_if_armed("retract").await;
+        landed
     }
     async fn merge(
         &self,
@@ -320,9 +339,12 @@ impl Memory for Counted {
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
         self.hit("merge");
-        self.inner
+        let landed = self
+            .inner
             .merge(folded, survivor, reason, date, caller, session)
-            .await
+            .await;
+        self.hang_if_armed("merge").await;
+        landed
     }
     async fn set_prose(
         &self,
@@ -331,7 +353,9 @@ impl Memory for Counted {
         session: Option<&str>,
     ) -> Result<String, MemoryError> {
         self.hit("set_prose");
-        self.inner.set_prose(entity, prose, session).await
+        let landed = self.inner.set_prose(entity, prose, session).await;
+        self.hang_if_armed("set_prose").await;
+        landed
     }
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.hit("scan");
@@ -355,7 +379,9 @@ impl Memory for Counted {
         by_session: Option<&str>,
     ) -> Result<DeclaredType, MemoryError> {
         self.hit("declare_type");
-        self.inner.declare_type(declared, by_session).await
+        let landed = self.inner.declare_type(declared, by_session).await;
+        self.hang_if_armed("declare_type").await;
+        landed
     }
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.hit("declared_types");
@@ -372,11 +398,15 @@ impl Memory for Counted {
         fields: Vec<types::Field>,
     ) -> Result<(), MemoryError> {
         self.hit("declare_kind");
-        self.inner.declare_kind(token, origin, fields).await
+        let landed = self.inner.declare_kind(token, origin, fields).await;
+        self.hang_if_armed("declare_kind").await;
+        landed
     }
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
         self.hit("reclaim_kind");
-        self.inner.reclaim_kind(token).await
+        let landed = self.inner.reclaim_kind(token).await;
+        self.hang_if_armed("reclaim_kind").await;
+        landed
     }
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
         self.hit("declared_kinds");

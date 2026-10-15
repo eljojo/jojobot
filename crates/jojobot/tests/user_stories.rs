@@ -59,6 +59,9 @@ mod citing;
 mod clearing_a_key;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
+/// A write the store took is answered as done when what reads it cannot follow.
+#[path = "user_stories/commit_then_refresh_fails.rs"]
+mod commit_then_refresh_fails;
 /// A run that reports its context was compacted is taught and shown afresh and
 /// keeps its key.
 #[path = "user_stories/compaction.rs"]
