@@ -398,6 +398,10 @@ pub(crate) struct OrientRequest<'a> {
     /// **The handle the caller arrived with**, as sent. A boot that names a role
     /// with a live handle of the named bot claims the role for THAT session.
     pub(crate) sid: Option<&'a str>,
+    /// **The run a compaction report named by its bot alone**, with no `sid`.
+    /// The answer says which run was reported and hands back no key: none was
+    /// sent and none is held in the clear.
+    pub(crate) reported_run: Option<&'a str>,
     /// **A code that was checked and matched**, spent once this call's own sid is
     /// known: the voucher goes to the session that booted. `None` is the
     /// ordinary boot, unchanged.
@@ -428,6 +432,7 @@ impl Jojobot {
             carried,
             claim,
             sid: arrived_with,
+            reported_run,
             redeem,
             compacted,
             offer_code,
@@ -598,6 +603,18 @@ impl Jojobot {
         };
         let mut session = match bot {
             None => serde_json::Value::Null,
+            Some(_) if reported_run.is_some() => serde_json::json!({
+                "available": true,
+                "run": reported_run,
+                "resumed": false,
+                "note": "this is the one live run of the bot you named: it was reported compacted \
+                         without a sid, so nothing was started, resumed or offered, and no key is \
+                         handed back. Keep sending the sid you already hold, if you have it.",
+                "shown_and_taught": "Your context was reported compacted, so what this run was \
+                                     shown and taught before is forgotten: your answers from \
+                                     here teach and show as to a fresh session. The run, its \
+                                     key and its chronology are as they were.",
+            }),
             Some(_) if running_as.is_some() => {
                 let (sid, run) = running_as.clone().unwrap_or_default();
                 let mut running = serde_json::json!({

@@ -663,6 +663,21 @@ impl SessionRegistry {
             .cloned()
     }
 
+    /// **The runs of `bot` that still hold a key**, by name. A wrapped run's key
+    /// is void and is left out. Whether a held run is still active is the
+    /// store's to say, and the caller asks it.
+    pub fn held_runs_of(&self, bot: &EntityId) -> Vec<Handle> {
+        let held = self.held.read().expect("the registry is poisoned");
+        let mut runs: Vec<Handle> = held
+            .by_name
+            .values()
+            .filter(|h| &h.bot == bot && matches!(h.key, KeyState::Held(_)))
+            .cloned()
+            .collect();
+        runs.sort_by(|a, b| a.name.0.cmp(&b.name.0));
+        runs
+    }
+
     /// **The name the run on this card goes by**, if the registry holds it.
     pub fn name_of_card(&self, card: &SessionId) -> Option<Sid> {
         self.held

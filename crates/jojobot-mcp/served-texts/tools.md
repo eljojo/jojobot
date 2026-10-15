@@ -5066,9 +5066,11 @@ and the third wrong code voids the challenge.
 #### `start_here` — argument `/inputSchema.compacted`
 
 ```text
-**Send `true` with your live `sid` when your context was compacted.** A
-compaction takes away what jojobot taught you and showed you, and jojobot
-cannot tell. This call says so: jojobot forgets what it believed this run
+**Send `true` with your live `sid` when your context was compacted.** If
+you no longer hold the `sid`, send `bot` alone: it reports the bot's one
+live run, and is refused, naming the runs, when the bot has none or more
+than one. A compaction takes away what jojobot taught you and showed you,
+and jojobot cannot tell. This call says so: jojobot forgets what it believed this run
 was taught and shown, restarts the running total of what the run has been
 handed, and writes a dated mark in the run's chronology.
 

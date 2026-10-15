@@ -127,6 +127,67 @@ async fn an_ordinary_answer_carries_no_line_about_compaction() {
     story.finish().await;
 }
 
+/// **A run that lost its key reports by the name of its bot.** A new session
+/// rarely knows what its previous `sid` was, so `start_here` with `bot` and
+/// `compacted: true` and no `sid` is about the bot's one live run: it is taught
+/// again, no key is handed back, and the chronology carries the mark. The
+/// positive for the refusal that follows in the same story: a bot with two live
+/// runs is refused, naming both runs by name, and neither forgets anything.
+#[tokio::test]
+async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:lisa", "Lisa").await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("bot:delta", "Delta").await;
+
+    let only = story.as_bot("bot:delta").await;
+    capture(&only, "orders the pie").await.says(CLAIMS_TEACHING);
+    capture(&only, "orders the pie again")
+        .await
+        .never_says(CLAIMS_TEACHING);
+
+    let (reported, handed) = story
+        .call("start_here", json!({"compacted": true, "bot": "delta"}))
+        .await;
+    assert!(
+        handed.is_none(),
+        "no key is handed back: {}",
+        reported.json()
+    );
+    let body = reported.json();
+    assert_eq!(body["session"]["run"], only.run(), "{body}");
+    assert!(body["session"]["shown_and_taught"].is_string(), "{body}");
+    assert!(
+        body["orientation"]
+            .as_str()
+            .is_some_and(|essay| !essay.is_empty()),
+        "{body}"
+    );
+    reported.never_says(only.sid());
+    capture(&only, "orders the pie after the compaction")
+        .await
+        .says(CLAIMS_TEACHING);
+
+    // ── two live runs: refused, both named, nothing forgotten ────────────────
+    let first = story.as_bot("bot:gamma").await;
+    let second = story.as_bot("bot:gamma").await;
+    capture(&first, "orders the donut").await;
+    capture(&second, "orders the cake").await;
+    let refusal = story
+        .refused_at_the_door("start_here", json!({"compacted": true, "bot": "gamma"}))
+        .await;
+    refusal.says(first.run()).says(second.run());
+    capture(&first, "orders the donut again")
+        .await
+        .never_says(CLAIMS_TEACHING);
+    capture(&second, "orders the cake again")
+        .await
+        .never_says(CLAIMS_TEACHING);
+
+    story.finish().await;
+}
+
 /// **A report that opens nothing is refused and names the way forward.** A
 /// handle is needed because the report is about one run, and a handle that
 /// addresses nothing leaves no run to forget for.
@@ -135,11 +196,12 @@ async fn a_compaction_report_that_opens_no_run_is_refused() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
+    s.add("bot:delta", "Delta").await;
     let gamma = story.as_bot("bot:gamma").await;
 
-    // No handle at all.
+    // No handle, and the bot named has no live run to be the address.
     story
-        .refused_at_the_door("start_here", json!({"compacted": true, "bot": "gamma"}))
+        .refused_at_the_door("start_here", json!({"compacted": true, "bot": "delta"}))
         .await
         .says("sid");
     // A handle that addresses nothing.

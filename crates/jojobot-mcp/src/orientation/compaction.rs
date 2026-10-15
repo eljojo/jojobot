@@ -19,8 +19,62 @@ use jojobot_domain::session::NewEntry;
 const COMPACTION_BEAT: &str = "compaction";
 
 impl Jojobot {
+    /// **The one live run of `bot`, for a report that carries no `sid`.** A run
+    /// that lost its context often cannot say its key. A report naming the bot
+    /// alone is about the bot's single live run: none, or more than one, is
+    /// refused, because a guess at whose it is would make another run forget.
+    /// A run that wrapped holds no key and is not live; a card that is not
+    /// `active` is not live either.
+    async fn sole_live_run(&self, bot: &EntityId) -> Result<Caller, CallToolResult> {
+        let mut live = Vec::new();
+        for held in self.registry.held_runs_of(bot) {
+            let active = match &held.card {
+                Some(card) => self
+                    .sessions
+                    .read_session(card)
+                    .await
+                    .map(|session| session.state == SessionState::Active)
+                    // A card the store cannot read is not proof that the run ended.
+                    .unwrap_or(true),
+                None => true,
+            };
+            if active {
+                live.push(held);
+            }
+        }
+        match live.len() {
+            0 => Err(misused(format!(
+                "{bot} has no live run to report for, and no `sid` was sent. Boot with \
+                 start_here to begin a run, or send the `sid` of the run that was compacted."
+            ))),
+            1 => {
+                let held = live.remove(0);
+                Ok(Caller {
+                    sid: held.name,
+                    bot: held.bot,
+                    card: held.card,
+                    zone: held.zone,
+                    day: held.day,
+                })
+            }
+            _ => {
+                let names: Vec<&str> = live.iter().map(|h| h.name.as_str()).collect();
+                Err(misused(format!(
+                    "{bot} has {} live runs ({}), so a report with no `sid` could be about any \
+                     of them and nothing was forgotten. Send the `sid` of the run that was \
+                     compacted.",
+                    live.len(),
+                    names.join(", ")
+                )))
+            }
+        }
+    }
+
     /// Make the run forget what it was taught and shown, and write the mark.
-    /// Answers the bot the handle belongs to, or the refusal.
+    /// Answers the run the report is about, or the refusal.
+    ///
+    /// **With no `sid`, the bot named is the address**: its one live run, see
+    /// [`Self::sole_live_run`]. A `sid` always wins.
     ///
     /// **Refused when the handle opens no run**, with the way forward: the
     /// report is about one run, and a guess at whose it is would make another
@@ -33,10 +87,20 @@ impl Jojobot {
         &self,
         sid: Option<&str>,
         named: Option<&EntityId>,
-    ) -> Result<EntityId, CallToolResult> {
-        let gate = self.registry.gate(&self.gate_key(sid));
+    ) -> Result<Caller, CallToolResult> {
+        let by_name = match (sid.map(str::trim).filter(|s| !s.is_empty()), named) {
+            (None, Some(bot)) => Some(bot),
+            _ => None,
+        };
+        let gate = match by_name {
+            Some(bot) => self.registry.gate(bot.as_str()),
+            None => self.registry.gate(&self.gate_key(sid)),
+        };
         let serialized = gate.lock().await;
-        let caller = self.identified(sid)?;
+        let caller = match by_name {
+            Some(bot) => self.sole_live_run(bot).await?,
+            None => self.identified(sid)?,
+        };
         if let Some(named) = named
             && named != &caller.bot
         {
@@ -108,6 +172,6 @@ impl Jojobot {
             ));
         }
         self.registry.forget_shown(run);
-        Ok(caller.bot)
+        Ok(caller)
     }
 }

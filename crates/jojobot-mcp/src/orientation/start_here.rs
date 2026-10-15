@@ -95,9 +95,11 @@ pub struct OrientArgs {
     /// in the same call it re-orients with.
     #[serde(default)]
     pub(crate) sid: Option<String>,
-    /// **Send `true` with your live `sid` when your context was compacted.** A
-    /// compaction takes away what jojobot taught you and showed you, and jojobot
-    /// cannot tell. This call says so: jojobot forgets what it believed this run
+    /// **Send `true` with your live `sid` when your context was compacted.** If
+    /// you no longer hold the `sid`, send `bot` alone: it reports the bot's one
+    /// live run, and is refused, naming the runs, when the bot has none or more
+    /// than one. A compaction takes away what jojobot taught you and showed you,
+    /// and jojobot cannot tell. This call says so: jojobot forgets what it believed this run
     /// was taught and shown, restarts the running total of what the run has been
     /// handed, and writes a dated mark in the run's chronology.
     ///
@@ -487,7 +489,11 @@ impl Jojobot {
         };
         self.orient(orient::OrientRequest {
             redeem: verified.as_ref(),
-            bot: reporter.as_ref().or(bot.as_ref()),
+            bot: reporter.as_ref().map(|run| &run.bot).or(bot.as_ref()),
+            reported_run: reporter
+                .as_ref()
+                .filter(|_| args.sid.as_deref().map(str::trim).is_none_or(str::is_empty))
+                .map(|run| run.sid.as_str()),
             brief: args.brief.unwrap_or(false) && !compacted,
             resume,
             timezone: timezone.as_deref(),
