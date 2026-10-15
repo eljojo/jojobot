@@ -4678,6 +4678,130 @@ async fn a_views_page_asks_for_the_type_its_input_names() {
     ct.cancel();
 }
 
+/// **A view runs on its page whenever recall runs it with the same inputs.** An
+/// input that is not optional but carries a default is not demanded: the page
+/// answers a first visit exactly as the verb answers a call that sends nothing,
+/// and the default is used. **Paired**: a required input with no default still
+/// asks for a value before it answers, and a value in the URL beats the default.
+#[tokio::test]
+async fn a_views_page_runs_a_required_input_that_carries_a_default() {
+    let memory = memory_with_views().await;
+    memory
+        .declare_type(
+            DeclaredType::new("marked", vec![Field::new("flagged", ValueType::Text)]),
+            None,
+        )
+        .await
+        .expect("the type is declared");
+    for handle in ["rhythm:worming", "rhythm:abseiling"] {
+        memory
+            .capture(set_on(NewFact {
+                fields: [("flagged".to_string(), "yes".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "set aside",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the key is written");
+    }
+    for (view, name, inputs) in [
+        (
+            "view:marked-by-default",
+            "Marked by default",
+            "type: text = marked",
+        ),
+        ("view:marked-by-asking", "Marked by asking", "type: text"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(EntityId(view.into()), name, "the operator"))
+            .await
+            .expect("the view is created")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(set_on(NewFact {
+                fields: [
+                    ("selects".to_string(), "rhythm".to_string()),
+                    ("inputs".to_string(), inputs.to_string()),
+                    ("answers_type".to_string(), "$type".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(view.into()),
+                    "the loops that answer a type",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the question is written");
+    }
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: String| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, &path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // The verb, sent nothing, uses the default.
+    let from_recall = recall_body(
+        addr,
+        serde_json::json!({"view": "marked-by-default", "inputs": {}}),
+    )
+    .await["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect::<Vec<_>>();
+    let mut from_recall = from_recall;
+    from_recall.sort();
+    assert_eq!(from_recall, ["rhythm:abseiling", "rhythm:worming"]);
+
+    // The page, visited with nothing in the URL, answers the same.
+    let visited = page("/view:marked-by-default/".into()).await;
+    let mut from_the_page = listed_handles(&visited);
+    from_the_page.sort();
+    assert_eq!(
+        from_the_page, from_recall,
+        "the page and the verb agree: {visited}"
+    );
+    assert!(
+        !visited.contains("Fill in the inputs"),
+        "an input with a default is not asked for: {visited}"
+    );
+
+    // A value in the URL beats the default.
+    let other = page("/view:marked-by-default/?type=no-such-type".into()).await;
+    assert!(
+        refusal_on(&other).contains("no-such-type"),
+        "the URL's value is the one used: {other}"
+    );
+
+    // The pair: without a default the page still asks first.
+    let asked = page("/view:marked-by-asking/".into()).await;
+    assert!(
+        asked.contains("Fill in the inputs") && !asked.contains("<table id=\"answer\""),
+        "a required input with no default is still asked for: {asked}"
+    );
+    ct.cancel();
+}
+
 /// **A ready view over something that is not work cannot be run on the page**,
 /// and the page says why: readiness is a question about work.
 #[tokio::test]

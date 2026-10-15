@@ -825,14 +825,19 @@ async fn view_section(
         .filter(|(_, value)| !value.trim().is_empty())
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
-    // A first visit to a view that needs a value asks for it and runs nothing.
-    if given.is_empty() && declared.iter().any(|input| !input.optional) {
+    let former = state.memory.former_handles().await.unwrap_or_default();
+    // **A first visit to a view that needs a value asks for it and runs
+    // nothing.** What needs a value is the verb's own answer, asked of the same
+    // function: an input that is not optional and carries a default needs none,
+    // because the verb fills it in.
+    if given.is_empty()
+        && view_inputs::bind(view.as_str(), &declared, &given, &known, &former, today).is_err()
+    {
         return format!(
             "<h2>What this view answers</h2>\n{form}<p>Fill in the inputs above to ask this \
              view.</p>\n"
         );
     }
-    let former = state.memory.former_handles().await.unwrap_or_default();
     let (asked, parent) = match asked.filled(view.as_str(), &given, &known, &former, today) {
         Ok(filled) => filled,
         Err(refused) => {
@@ -1002,7 +1007,11 @@ fn inputs_form(
              name=\"{name}\"{required}{step}{list_attr} value=\"{value}\"></label>{datalist}</p>\n",
             name = escape(&input.name),
             optional = if input.optional { ", optional" } else { "" },
-            required = if input.optional { "" } else { " required" },
+            required = if input.optional || input.default.is_some() {
+                ""
+            } else {
+                " required"
+            },
             step = if kind == "number" {
                 " step=\"any\""
             } else {
