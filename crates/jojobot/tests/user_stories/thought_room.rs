@@ -211,11 +211,16 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         .says("the couch got fixed on its own, this is more pressing");
     // The couch's own words are still on the record — a drop archives, it
     // never deletes — but it no longer reads as live, active testimony.
-    assert!(
-        after_drop.raw().matches("\"status\":\"archived\"").count() > 0,
-        "the dropped thought must read as archived, not simply gone: {}",
-        after_drop.raw(),
-    );
+    // **The couch's own claim**, picked by its address: an archived mark anywhere
+    // in the read would be satisfied by any other archived claim on the bot.
+    after_drop
+        .claim(&couch)
+        .says("the couch needs a leg fixed")
+        .says("\"status\":\"archived\"");
+    // And the radiator, which was kept and not dropped, is not archived.
+    after_drop
+        .claim(&radiator)
+        .never_says("\"status\":\"archived\"");
 
     // And the room is still bounded: two live thoughts at capacity two, so a
     // fourth ordinary write is refused exactly as the first one was.
