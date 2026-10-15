@@ -490,6 +490,10 @@ impl DoltMemory {
     /// resolved: a restart does not undo progress, it repeats the same scan
     /// and finds less to do.
     ///
+    /// **A pointer at a record the store was told the build supplies is
+    /// resolved as it stands.** That needs [`Self::knowing`]; a store not told
+    /// reads such a pointer as naming nothing.
+    ///
     /// Returns how many distinct stored values it rewrote.
     pub async fn resolve_stale_pointer_columns(&self) -> Result<usize, MemoryError> {
         let known: Vec<(String, String)> =
@@ -534,6 +538,12 @@ impl DoltMemory {
             .map_err(store)?;
             for value in stored {
                 if badges.contains(value.as_str()) {
+                    continue;
+                }
+                // **A record the build supplies has no row and no badge, and a
+                // write stores its handle as it stands**: a pointer at one is
+                // resolved as it is written, and is no stale handle.
+                if self.supplied.record_for(&EntityId(value.clone())).is_some() {
                     continue;
                 }
                 match resolve.get(value.as_str()) {

@@ -598,7 +598,9 @@ pub async fn boot_store_pushing(
     // history they just made current. **And after the adoption above**: a
     // pointer at a handle the build stopped supplying names nothing until the
     // adoption gives that handle a row, so a scan that ran first would report
-    // it as unresolvable at every upgrade.
+    // it as unresolvable at every upgrade. **Over the instance that is told what
+    // the build supplies**, which `badging` is not: a pointer at a shipped record
+    // has no row to resolve through, and is valid as it stands.
     //
     // **Louder than its two neighbours, on purpose.** Those two leave a row
     // merely unreachable until the next restart. This one, left unresolved,
@@ -608,7 +610,7 @@ pub async fn boot_store_pushing(
     // not a routine retry. It is still not fatal to boot: refusing to serve a
     // live instance over historical rows would be a worse outcome than
     // reporting on itself loudly and continuing.
-    match badging.resolve_stale_pointer_columns().await {
+    match linking.resolve_stale_pointer_columns().await {
         Ok(0) => {}
         Ok(rewritten) => tracing::info!(
             rewritten,

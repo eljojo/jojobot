@@ -6233,6 +6233,59 @@ async fn a_pointer_at_a_thing_the_deployed_build_folded_reads_as_the_survivor_af
     drop(scratch);
 }
 
+/// The thing the recording made under a record the build supplies.
+const SUPPLIED_CHILD: &str = "thing:kettle";
+
+/// **A pointer at a record the build supplies is valid, and the boot says nothing
+/// about it.** The recording holds an edge, a ref and a parent at shipped views,
+/// which have no row of their own. A boot that read one as a stale handle would
+/// log an error naming it, and `boot_current` holds every boot to no error line.
+/// The pointers also read back as they were written, so a boot that dropped them
+/// to stay quiet is not a pass.
+#[tokio::test]
+async fn a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "supplied-pointers").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
+            .await,
+    )
+    .expect("the holder reads");
+    let child: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("recall", json!({"subject": SUPPLIED_CHILD}))
+            .await,
+    )
+    .expect("the child reads");
+    booted.stop().await;
+
+    assert_eq!(
+        the_claim_saying(&read, "keeps an eye on the colleagues view")["edge"]["object"],
+        "view:colleagues",
+        "recorded at {git_ref}: {read}"
+    );
+    assert_eq!(
+        the_claim_saying(&read, "mentions the loops view among its refs")["refs"][0],
+        "view:loops",
+        "recorded at {git_ref}: {read}"
+    );
+    assert_eq!(
+        child["objects"][0]["parent"], "view:ready",
+        "recorded at {git_ref}: {child}"
+    );
+    drop(scratch);
+}
+
 /// **The first boot over a store the deployed build filled says nothing is wrong,
 /// and the second boot logs the same.** The store's pass markers are set, so the
 /// passes that already ran take their settled branch, and the passes this build

@@ -350,6 +350,44 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the ref at the duplicate is captured");
+    // **Pointers at records the build supplies**, which have no row: an edge, a ref
+    // and a parent. A boot must read each as naming something, not as a stale
+    // handle, and a boot that read one as unresolved would say so as an error.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "keeps an eye on the colleagues view",
+                "provenance": "testimony",
+                "shape": "about",
+                "object": "view:colleagues",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the edge at a supplied view is captured");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "mentions the loops view among its refs",
+                "provenance": "testimony",
+                "refs": ["view:loops"],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the ref at a supplied view is captured");
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "thing", "handle": "kettle", "name": "A Recorded Kettle",
+                   "source": "test", "parent": "view:ready", "sid": sid}),
+        )
+        .await
+        .expect("a thing under a supplied view is added");
     surface
         .must(
             "merge_entities",
