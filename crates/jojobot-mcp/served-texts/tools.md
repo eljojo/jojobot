@@ -2293,7 +2293,7 @@ read_document returns the file byte for byte; update_fact edits one section and 
 A section too long for one record is cut at the last blank line that fits.
 The document must already exist (add_entity, kind document).
 Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
-`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` showed it at that moment: sections that differ get a new write with their old wording, one archived since comes back as a new record naming it, one made since is archived, and nothing in the history is rewritten; over testimony it needs `confirmed_by_user`.
+`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` showed it at that moment: sections that differ get a new write with their old wording, one archived since comes back as a new record naming it in `restored_from`, one made since is archived, and nothing in the history is rewritten; over testimony it needs `confirmed_by_user`.
 Every section is checked before any is written; a write that stops midway answers with the addresses that landed and where the rest begins.
 Answers with a receipt, not the text.
 The receipt's `changed` lists what this call changed, or says nothing.
@@ -3700,8 +3700,9 @@ Each write says **when it happened** and where it sits in the order.
 That moment is not the claim's own first-recorded one, which answers a
 different question and is on the claim. A write kept before jojobot
 recorded one carries none. **Each write also names the `run` that made
-it**, by the run's public name; a write no run made, and one kept before
-runs were recorded, carries none.
+it**, by the run's public name, which opens nothing: a caller reads its
+own runs with `recall` kind session. A write no run made, and one kept
+before runs were recorded, carries none.
 
 **The address is selection enough.** Send it on its own and the read
 answers about the thing the address names — you do not have to repeat
@@ -4369,7 +4370,7 @@ One ranked list over entities, facts, free prose AND the messages in bots' mailb
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
 kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
-No hit comes back bare: a fact carries its claim, its address (feed it to update_fact), who it is `about` and where it is `home`d; an entity or prose hit carries the entity's names and edges; a message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet.
+No hit comes back bare: a fact carries its claim, its address (feed it to update_fact), who it is `about` and where it is `home`d; an entity or prose hit carries the entity's names and edges; a message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 ALWAYS read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, which is not the same as nothing matching, and a `note` says which case you are in.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.

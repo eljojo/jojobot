@@ -95,7 +95,7 @@ impl Jojobot {
                        `restore_to` (a day or an instant) instead of `markdown` puts the \
                        document back as `read_document` showed it at that moment: sections that \
                        differ get a new write with their old wording, one archived since comes \
-                       back as a new record naming it, one made since is archived, and nothing \
+                       back as a new record naming it in `restored_from`, one made since is archived, and nothing \
                        in the history is rewritten; over testimony it needs \
                        `confirmed_by_user`. Every \
                        section is checked before any is written; a write that stops midway \

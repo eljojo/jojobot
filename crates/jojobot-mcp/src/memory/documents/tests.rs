@@ -1260,6 +1260,67 @@ async fn hits_on_sections_of_one_document_are_grouped_and_say_which_document() {
     );
 }
 
+/// **A section hit names the call that reads its whole document**, once in the
+/// answer however many sections matched, and following it returns the file. An
+/// answer with no section hit carries no such line.
+#[tokio::test]
+async fn a_section_hit_names_the_call_that_reads_the_whole_document() {
+    let spy = Arc::new(SpySearch::default());
+    let jojobot = handler_with(spy.clone());
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        "# Alpha one\n\nshop\n\n# Alpha two\n\nshop\n",
+    )
+    .await;
+    capture_ok(&jojobot, capture_args("person:homer", "runs the shop")).await;
+    spy.answer_with(vec![
+        hit_on(&jojobot, "document:alpha", "# Alpha one").await,
+        hit_on(&jojobot, "document:alpha", "# Alpha two").await,
+    ]);
+    let body = json_of(
+        &jojobot
+            .search(Parameters(search_for_documents()))
+            .await
+            .expect("search answers"),
+    );
+    let results = body["results"].as_array().expect("results");
+    assert_eq!(results.len(), 2, "both sections matched: {body}");
+    let handle = results[0]["document"]["handle"]
+        .as_str()
+        .expect("a section hit names its document");
+    let line = body["read_the_document"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the answer names the call that goes further: {body}"));
+    assert!(line.contains("read_document"), "{line}");
+    assert!(
+        results
+            .iter()
+            .all(|hit| hit.get("read_the_document").is_none()),
+        "the line rides the answer once, not each hit: {body}"
+    );
+    let whole = read_all(&jojobot, handle).await;
+    assert!(
+        whole.contains("# Alpha one") && whole.contains("# Alpha two"),
+        "the handle in the document block reads the whole file: {whole}"
+    );
+
+    spy.answer_with(vec![
+        hit_on(&jojobot, "person:homer", "runs the shop").await,
+    ]);
+    let plain = json_of(
+        &jojobot
+            .search(Parameters(search_for_documents()))
+            .await
+            .expect("search answers"),
+    );
+    assert_eq!(plain["count"], 1, "{plain}");
+    assert!(
+        plain.get("read_the_document").is_none(),
+        "an answer with no section hit has no document to read: {plain}"
+    );
+}
+
 /// **A walk by the offsets search returns yields every hit once**, though the
 /// answer ceiling cuts a page whose ranking interleaves the sections of two
 /// documents (A1 B1 A2 B2). Grouping brings A1 and A2 together, so a cut that

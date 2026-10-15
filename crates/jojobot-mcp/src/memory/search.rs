@@ -636,7 +636,8 @@ impl Jojobot {
                        is `about` and where it is `home`d; an entity or prose hit carries the \
                        entity's names and edges; a message hit carries its box, state (new, \
                        read or processed), sender and the id read_message takes, plus a \
-                       snippet. MAIL IS OPT-IN: pass include_mail: true to search messages \
+                       snippet; section hits come grouped with a document \
+                       block. MAIL IS OPT-IN: pass include_mail: true to search messages \
                        too. ALWAYS read the `mail` and `memory` fields of the answer: \
                        searched: false means nothing there was searched, which is not the \
                        same as nothing matching, and a `note` says which case you are in. AN \
@@ -984,10 +985,18 @@ impl Jojobot {
         } else {
             0
         };
+        // **Room for the line that names the call to the whole document**, set
+        // aside whenever a section hit could be among the hits.
+        let document_room = if documents.is_empty() {
+            0
+        } else {
+            crate::answer::served_len(&serde_json::json!([READ_THE_DOCUMENT])) + 32
+        };
         let rest = crate::answer::served_len(&body)
             + crate::answer::widest_not_shown("hits")
             + crate::answer::STATUS_BAR_ROOM
-            + teaching_room;
+            + teaching_room
+            + document_room;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
         // **Hits on sections of one document sit together**, under the best-ranked
         // of them, and each says which document it is part of. Within what shipped
@@ -1001,6 +1010,14 @@ impl Jojobot {
             .collect::<Vec<_>>()
             .into();
         body["count"] = kept.kept().len().into();
+        // **Once per answer**, and only when a hit that shipped is a section.
+        if kept
+            .kept()
+            .iter()
+            .any(|(json, _)| json.get("document").is_some())
+        {
+            body["read_the_document"] = READ_THE_DOCUMENT.into();
+        }
         // **The first answer to a session that shows it a claim carries the
         // claims teaching**, before the session decides how to write one. Asked
         // of the hits that shipped, so a claim left out spends nothing.
@@ -1136,6 +1153,11 @@ impl Jojobot {
         found
     }
 }
+
+/// **What a section hit's `document` block leads to.** A section is one part of
+/// a file, and the block's handle is the address of the whole of it.
+const READ_THE_DOCUMENT: &str = "a hit with a `document` block is one section of that \
+    document. read_document with the block's handle returns the whole document.";
 
 /// **How many things an empty answer names as sharing a word with the query.**
 const SHARES_A_WORD_SHOWN: usize = 5;
