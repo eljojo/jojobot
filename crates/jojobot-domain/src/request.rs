@@ -161,9 +161,6 @@ enum State {
     Taken,
     /// The commit stored the write together with the id's row.
     Spent,
-    /// The id was already spent when the commit tried to spend it, and the
-    /// commit stored nothing.
-    Lost,
 }
 
 impl Scope {
@@ -183,14 +180,6 @@ impl Scope {
         matches!(
             *self.state.lock().expect("a scope is poisoned"),
             State::Spent
-        )
-    }
-
-    /// Whether a commit found the id already spent and stored nothing.
-    pub fn was_lost(&self) -> bool {
-        matches!(
-            *self.state.lock().expect("a scope is poisoned"),
-            State::Lost
         )
     }
 }
@@ -246,11 +235,6 @@ impl Reservation {
     /// The commit stored the write with the id's row.
     pub fn spent(self) {
         *self.scope.state.lock().expect("a scope is poisoned") = State::Spent;
-    }
-
-    /// The commit found the id already spent and stored nothing.
-    pub fn lost(self) {
-        *self.scope.state.lock().expect("a scope is poisoned") = State::Lost;
     }
 
     /// The commit failed for another reason and stored nothing. The id stays
@@ -324,7 +308,6 @@ mod tests {
         )
         .await;
         assert!(scope.was_spent());
-        assert!(!scope.was_lost());
     }
 
     #[tokio::test]
@@ -355,19 +338,5 @@ mod tests {
     #[tokio::test]
     async fn outside_a_scope_nothing_is_taken() {
         assert!(take().is_none());
-    }
-
-    #[tokio::test]
-    async fn a_lost_race_is_reported_to_the_scope() {
-        let scope = Scope::new(request("r1"));
-        within(
-            Arc::clone(&scope),
-            armed(async {
-                take().expect("taken").lost();
-            }),
-        )
-        .await;
-        assert!(scope.was_lost());
-        assert!(!scope.was_spent());
     }
 }

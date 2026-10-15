@@ -20,8 +20,9 @@ impl InMemoryRequests {
     }
 
     /// **What a store's commit does with the claim it took**: spend the id with
-    /// what the write returned, or find it already spent. Returns whether this
-    /// write spent it. The scope behind the claim is told which.
+    /// what the write returned, or find it already spent, which fails the commit
+    /// as the real store's duplicate key does and hands the claim back. Returns
+    /// whether this write spent it.
     ///
     /// A fake store calls this under its own lock, in the same step as the write,
     /// so the check and the write cannot be separated.
@@ -31,7 +32,7 @@ impl InMemoryRequests {
         let mut rows = self.rows.lock().expect("the ledger is poisoned");
         if rows.contains_key(&key) {
             drop(rows);
-            reservation.lost();
+            reservation.failed();
             return false;
         }
         rows.insert(
@@ -97,9 +98,9 @@ mod tests {
     }
 
     /// One call: open a scope, let a commit take the claim and spend it.
-    async fn write(ledger: &InMemoryRequests, request: Request) -> (bool, bool) {
+    async fn write(ledger: &InMemoryRequests, request: Request) -> bool {
         let scope = Scope::new(request);
-        let spent = within(
+        within(
             Arc::clone(&scope),
             armed(async {
                 ledger.spend(
@@ -108,8 +109,7 @@ mod tests {
                 )
             }),
         )
-        .await;
-        (spent, scope.was_lost())
+        .await
     }
 
     #[tokio::test]
@@ -117,17 +117,17 @@ mod tests {
         let ledger = InMemoryRequests::new();
         let me = request("bot:milhouse", "r1");
         // The positive the negative rests on: the first call spends it.
-        assert_eq!(write(&ledger, me.clone()).await, (true, false));
+        assert!(write(&ledger, me.clone()).await);
         assert_eq!(ledger.len(), 1);
-        assert_eq!(write(&ledger, me.clone()).await, (false, true));
+        assert!(!write(&ledger, me.clone()).await);
         assert_eq!(ledger.len(), 1, "the lost spender stored nothing");
     }
 
     #[tokio::test]
     async fn the_same_id_from_another_bot_is_another_row() {
         let ledger = InMemoryRequests::new();
-        assert!(write(&ledger, request("bot:milhouse", "r1")).await.0);
-        assert!(write(&ledger, request("bot:nelson", "r1")).await.0);
+        assert!(write(&ledger, request("bot:milhouse", "r1")).await);
+        assert!(write(&ledger, request("bot:nelson", "r1")).await);
         assert_eq!(ledger.len(), 2);
     }
 
