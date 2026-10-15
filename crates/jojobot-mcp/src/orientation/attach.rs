@@ -139,6 +139,7 @@ impl Jojobot {
                 self.registry
                     .set_zone(&run.name, timezone.map(str::to_string));
                 self.registry.set_day(&run.name, today);
+                self.note_minted(&run.name).await;
                 // Bound to the identity with no session: the first write is
                 // what begins the card, exactly as a first boot's is. **The run
                 // that was offered is left running** — a new session never
@@ -295,6 +296,7 @@ impl Jojobot {
                 self.registry
                     .set_zone(&run.name, timezone.map(str::to_string));
                 self.registry.set_day(&run.name, today);
+                self.note_minted(&run.name).await;
                 self.fresh_block(run)
             }
             None => {
@@ -584,9 +586,14 @@ impl Jojobot {
                 // The window did not open, so the key just issued is taken away
                 // again: the run is as the refusal says it is.
                 self.registry.set_key(&name, sid::KeyState::Void, None);
+                let trail = self
+                    .registry
+                    .lookup_name(name.as_str())
+                    .map(|held| held.trail())
+                    .unwrap_or_default();
                 if let Err(e) = self
                     .sessions
-                    .set_key_hash(&wrapped.id, jojobot_domain::session::KEY_VOID)
+                    .set_key_hash(&wrapped.id, jojobot_domain::session::KEY_VOID, &trail)
                     .await
                 {
                     tracing::warn!(error = %e, run = %wrapped.id, "a key issued for a window that did not open could not be taken away");
@@ -605,6 +612,31 @@ impl Jojobot {
                      a second closing entry beside the first, or when a newer run of this bot \
                      starts. No role was taken and no lease was renewed.",
         }))
+    }
+
+    /// **Keep the key this boot handed out**, for a run that has no card until
+    /// its first write. Without a note a restart between the boot and the first
+    /// write leaves the caller holding a key that opens nothing. A store that
+    /// refuses the note is logged and the boot goes on: the run works until the
+    /// next restart, as every run did before the note existed.
+    async fn note_minted(&self, name: &sid::Sid) {
+        let Some(held) = self.registry.lookup_name(name.as_str()) else {
+            return;
+        };
+        let sid::KeyState::Held(key_hash) = held.key else {
+            return;
+        };
+        let run = jojobot_domain::session::MintedRun {
+            name: held.name,
+            key_hash,
+            bot: held.bot,
+            zone: held.zone,
+            day: held.day,
+            minted_at: self.clock().now(),
+        };
+        if let Err(e) = self.sessions.note_minted(&run).await {
+            tracing::warn!(error = %e, run = %name, "a minted run's key could not be kept");
+        }
     }
 
     /// The block for a session with no card behind it yet — a first boot, or
@@ -859,8 +891,12 @@ impl Jojobot {
         };
         let key = jojobot_domain::session::mint_key();
         let hash = jojobot_domain::session::hash_key(&key);
-        if let Some(card) = held.card
-            && let Err(e) = self.sessions.set_key_hash(&card, &hash).await
+        let at = self.clock().now();
+        // **The card gets the key and what it replaces in one write**: the
+        // retired key and the pick-up mark are what a restart cannot rebuild.
+        let trail = held.trail_after(Some((at, by)));
+        if let Some(card) = &held.card
+            && let Err(e) = self.sessions.set_key_hash(card, &hash, &trail).await
         {
             tracing::warn!(error = %e, session = %card, "a run's new key could not be written");
             return Err(handle_declined(
@@ -871,11 +907,8 @@ impl Jojobot {
                     .to_string(),
             ));
         }
-        self.registry.set_key(
-            name,
-            sid::KeyState::Held(hash),
-            Some((self.clock().now(), by)),
-        );
+        self.registry
+            .set_key(name, sid::KeyState::Held(hash), Some((at, by)));
         Ok(key)
     }
 }
@@ -4009,7 +4042,11 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let (wrapped, _code) = wrapped_with_a_code(&store, 5, "bcd345").await;
         store
-            .set_key_hash(&wrapped.id, jojobot_domain::session::KEY_VOID)
+            .set_key_hash(
+                &wrapped.id,
+                jojobot_domain::session::KEY_VOID,
+                &Default::default(),
+            )
             .await
             .expect("the wrap took the key away");
         let board = store.all_sessions().await.expect("the board");

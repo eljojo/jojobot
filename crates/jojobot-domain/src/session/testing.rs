@@ -45,6 +45,7 @@ pub struct InMemorySessions {
     /// Set when this store keeps no list of its charter changes to hand over,
     /// as a port that leaves [`Sessions::charter_changes`] at its default.
     no_charter_list: bool,
+    minted: Mutex<Vec<super::MintedRun>>,
 }
 
 impl InMemorySessions {
@@ -278,6 +279,7 @@ impl Sessions for InMemorySessions {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
         };
         self.sessions
             .lock()
@@ -551,7 +553,12 @@ impl Sessions for InMemorySessions {
         Ok(kept)
     }
 
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &super::KeyTrail,
+    ) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
         let at_index = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
@@ -561,7 +568,48 @@ impl Sessions for InMemorySessions {
         })?;
         sessions[at_index].key_hash = Some(hash.to_string());
         self.record(id, Change::Key);
+        sessions[at_index].key_trail = trail.clone();
         Ok(())
+    }
+
+    async fn note_minted(&self, run: &super::MintedRun) -> Result<(), SessionError> {
+        let mut minted = self.minted.lock().expect("minted lock");
+        // **Written once**: a second note of one name changes nothing.
+        if !minted.iter().any(|held| held.name == run.name) {
+            minted.push(run.clone());
+        }
+        Ok(())
+    }
+
+    async fn minted_without_a_card(&self) -> Result<Vec<super::MintedRun>, SessionError> {
+        let sessions = self.sessions.lock().expect("session lock");
+        let mut found: Vec<super::MintedRun> = self
+            .minted
+            .lock()
+            .expect("minted lock")
+            .iter()
+            .filter(|run| {
+                !sessions
+                    .iter()
+                    .any(|card| card.id.as_str() == run.name.as_str())
+            })
+            .cloned()
+            .collect();
+        found.sort_by_key(|run| run.minted_at);
+        Ok(found)
+    }
+
+    async fn prune_minted(&self, before: Timestamp) -> Result<usize, SessionError> {
+        let sessions = self.sessions.lock().expect("session lock");
+        let mut minted = self.minted.lock().expect("minted lock");
+        let held = minted.len();
+        minted.retain(|run| {
+            let has_card = sessions
+                .iter()
+                .any(|card| card.id.as_str() == run.name.as_str());
+            !has_card && run.minted_at >= before
+        });
+        Ok(held - minted.len())
     }
 
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
@@ -2240,7 +2288,7 @@ pub mod contract {
         );
 
         store
-            .set_key_hash(&name, "hash-two")
+            .set_key_hash(&name, "hash-two", &Default::default())
             .await
             .expect("a key is replaced");
         assert_eq!(
@@ -2269,7 +2317,7 @@ pub mod contract {
             .await
             .expect("wrap ok");
         store
-            .set_key_hash(&name, super::super::KEY_VOID)
+            .set_key_hash(&name, super::super::KEY_VOID, &Default::default())
             .await
             .expect("a wrapped run's key is voided");
         assert_eq!(
@@ -2283,7 +2331,11 @@ pub mod contract {
         );
 
         let miss = store
-            .set_key_hash(&SessionId("999999".into()), "hash-three")
+            .set_key_hash(
+                &SessionId("999999".into()),
+                "hash-three",
+                &Default::default(),
+            )
             .await
             .expect_err("no such run");
         assert!(
@@ -2449,11 +2501,15 @@ pub mod contract {
         store.add_served(&run.id, 2).await.expect("served");
         store.reset_served(&run.id).await.expect("reset");
         store
-            .set_key_hash(&run.id, "hash-one")
+            .set_key_hash(&run.id, "hash-one", &super::super::KeyTrail::default())
             .await
             .expect("rekey");
         store
-            .set_key_hash(&run.id, super::super::KEY_VOID)
+            .set_key_hash(
+                &run.id,
+                super::super::KEY_VOID,
+                &super::super::KeyTrail::default(),
+            )
             .await
             .expect("void");
         store
@@ -2693,7 +2749,156 @@ pub mod contract {
         assert_eq!(first_wordings.2.len(), 2);
     }
 
+    /// **A key's history is stored in the same write as the key and replaced
+    /// whole.** The retired key and the pick-up mark come back with the card,
+    /// from a read of the one run and from a read of the board; a later write
+    /// that carries none leaves none.
+    pub async fn a_key_trail_is_stored_with_the_hash_and_replaced_whole(store: &dyn Sessions) {
+        let name = SessionId("b4n8qz".into());
+        store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: Sid("b4n8qz".into()),
+                id: Some(name.clone()),
+                key_hash: Some("hash-one".into()),
+                focus: "a keyed run".into(),
+                started_at: at(1),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin");
+        assert_eq!(
+            store.read_session(&name).await.expect("read").key_trail,
+            super::super::KeyTrail::default(),
+            "a run never resumed or wrapped holds no history"
+        );
+
+        let trail = super::super::KeyTrail {
+            retired: Some(super::super::RetiredKey {
+                hash: "hash-one".into(),
+                at: at(5),
+                by: super::super::RetiredBy::Resumed,
+            }),
+            taken_at: Some(at(6)),
+        };
+        store
+            .set_key_hash(&name, "hash-two", &trail)
+            .await
+            .expect("a key is replaced with its history");
+        assert_eq!(
+            store.read_session(&name).await.expect("read").key_trail,
+            trail
+        );
+        let board = store.all_sessions().await.expect("all");
+        let card = board
+            .iter()
+            .find(|run| run.id == name)
+            .expect("on the board");
+        assert_eq!(card.key_trail, trail, "the board carries it too");
+        assert_eq!(card.key_hash.as_deref(), Some("hash-two"));
+
+        // A wrap's history names the other reason, and replaces the first whole.
+        let wrapped = super::super::KeyTrail {
+            retired: Some(super::super::RetiredKey {
+                hash: "hash-two".into(),
+                at: at(9),
+                by: super::super::RetiredBy::Wrapped,
+            }),
+            taken_at: None,
+        };
+        store
+            .set_key_hash(&name, super::super::KEY_VOID, &wrapped)
+            .await
+            .expect("a wrap ends the key");
+        assert_eq!(
+            store.read_session(&name).await.expect("read").key_trail,
+            wrapped,
+            "the pick-up mark of the earlier write is gone with it"
+        );
+        store
+            .set_key_hash(&name, "hash-three", &Default::default())
+            .await
+            .expect("a key with no history");
+        assert_eq!(
+            store.read_session(&name).await.expect("read").key_trail,
+            super::super::KeyTrail::default()
+        );
+    }
+
+    /// **A boot's note of a run is kept until the run writes, and deleted when it
+    /// is spent or abandoned.** Written once; a read shows only the notes with no
+    /// card; the prune deletes the spent ones and the ones minted before the
+    /// moment it is given, and keeps the rest.
+    pub async fn a_minted_run_is_kept_until_it_writes_and_pruned_when_it_does_not(
+        store: &dyn Sessions,
+    ) {
+        let minted = |name: &str, hash: &str, when: i64| super::super::MintedRun {
+            name: Sid(name.into()),
+            key_hash: hash.into(),
+            bot: bot("gamma"),
+            zone: Some("America/Toronto".into()),
+            day: Some(jiff::civil::date(2026, 10, 12)),
+            minted_at: at(when),
+        };
+        let (spent, old, recent) = (
+            minted("c5p7sz", "hash-spent", 10),
+            minted("d6q2tz", "hash-old", 20),
+            minted("f7r3vz", "hash-recent", 30),
+        );
+        for run in [&spent, &old, &recent] {
+            store.note_minted(run).await.expect("a boot's note");
+        }
+        // Written once: the same name noted again changes nothing.
+        store
+            .note_minted(&super::super::MintedRun {
+                key_hash: "hash-other".into(),
+                ..old.clone()
+            })
+            .await
+            .expect("noting a name twice is not an error");
+        assert_eq!(
+            store.minted_without_a_card().await.expect("read"),
+            vec![spent.clone(), old.clone(), recent.clone()],
+            "every note comes back whole, oldest first, with the first hash"
+        );
+
+        // The first write of one run makes its card, and its note is spent.
+        store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: spent.name.clone(),
+                id: Some(SessionId(spent.name.0.clone())),
+                key_hash: Some(spent.key_hash.clone()),
+                focus: "wrote at last".into(),
+                started_at: at(11),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin");
+        assert_eq!(
+            store.minted_without_a_card().await.expect("read"),
+            vec![old.clone(), recent.clone()],
+            "a run with a card is not read back from its note"
+        );
+
+        // The prune deletes the spent note and the note minted before the moment.
+        assert_eq!(store.prune_minted(at(25)).await.expect("prune"), 2);
+        assert_eq!(
+            store.minted_without_a_card().await.expect("read"),
+            vec![recent.clone()]
+        );
+        assert_eq!(
+            store.prune_minted(at(25)).await.expect("prune again"),
+            0,
+            "nothing is left to delete"
+        );
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
+        a_key_trail_is_stored_with_the_hash_and_replaced_whole(&fresh()).await;
+        a_minted_run_is_kept_until_it_writes_and_pruned_when_it_does_not(&fresh()).await;
         a_runs_key_hash_is_stored_with_the_card_and_can_be_replaced(&fresh()).await;
         a_begun_session_is_active_and_empty(&fresh()).await;
         beginning_twice_under_one_handle_yields_one_run(&fresh()).await;

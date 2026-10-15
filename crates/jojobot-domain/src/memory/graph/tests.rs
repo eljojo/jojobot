@@ -512,6 +512,7 @@ fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
         stated_day: None,
         wrap_window: None,
         charter_told_at: None,
+        key_trail: Default::default(),
         entries: vec![JournalEntry {
             id: EntryId("e1".into()),
             at: "2026-07-24T09:05:00Z".parse().expect("a timestamp"),

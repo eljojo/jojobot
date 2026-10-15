@@ -308,11 +308,33 @@ impl Sessions for CountedSessions {
         self.calls.hit("journal_history", Kind::Read);
         self.inner.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
         self.calls.hit("set_key_hash", Kind::Write);
-        let landed = self.inner.set_key_hash(id, hash).await;
+        let landed = self.inner.set_key_hash(id, hash, trail).await;
         self.calls.hang_if_armed("set_key_hash").await;
         landed
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), SessionError> {
+        self.calls.hit("note_minted", Kind::Write);
+        self.inner.note_minted(run).await
+    }
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, SessionError> {
+        self.calls.hit("minted_without_a_card", Kind::Read);
+        self.inner.minted_without_a_card().await
+    }
+    async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, SessionError> {
+        self.calls.hit("prune_minted", Kind::Write);
+        self.inner.prune_minted(before).await
     }
     async fn note_charter_change(
         &self,

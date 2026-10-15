@@ -335,8 +335,30 @@ impl Sessions for SessionChanges {
         self.inner.journal_history(id, entry).await
     }
 
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.inner.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash, trail).await
+    }
+
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, SessionError> {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     async fn note_charter_change(

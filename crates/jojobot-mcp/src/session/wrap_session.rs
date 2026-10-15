@@ -213,9 +213,15 @@ impl Jojobot {
         // the call returns: a restart must not bring a closed run's key back.
         // The wrap's story and close have landed, so a store that refuses this
         // write is reported as the refusal it is and a retry finishes it.
+        let ended_at = self.clock().now();
+        let trail = self
+            .registry
+            .lookup_name(caller.sid.as_str())
+            .map(|held| held.trail_after(Some((ended_at, sid::RetiredBy::Wrapped))))
+            .unwrap_or_default();
         if let Err(e) = self
             .sessions
-            .set_key_hash(&session, jojobot_domain::session::KEY_VOID)
+            .set_key_hash(&session, jojobot_domain::session::KEY_VOID, &trail)
             .await
         {
             tracing::warn!(error = %e, %session, "a wrapped run's key could not be ended");
@@ -239,7 +245,7 @@ impl Jojobot {
         self.registry.set_key(
             &caller.sid,
             sid::KeyState::Void,
-            Some((self.clock().now(), sid::RetiredBy::Wrapped)),
+            Some((ended_at, sid::RetiredBy::Wrapped)),
         );
         // **A wrapped session releases every role it held.** Best-effort and
         // after the close: the wrap itself already landed, and releasing a

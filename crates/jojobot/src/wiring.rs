@@ -986,6 +986,30 @@ pub async fn boot_store_pushing(
                 cards = board.len(),
                 "sessions: handle registry rebuilt from the board"
             );
+            // **The runs a boot handed a key and that have not written yet**
+            // have no card, so only their note can bring them back. Read
+            // before the prune, which deletes the notes a card has spent.
+            match sessions.minted_without_a_card().await {
+                Ok(minted) => {
+                    let put_back = registry.rebuild_minted(&minted);
+                    tracing::info!(
+                        put_back,
+                        "sessions: keys of runs that had not written put back"
+                    );
+                }
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "RUN KEYS NOT RECOVERED — the notes of runs that had not written could \
+                     not be read at startup, so those runs' keys answer 'opens no session'. \
+                     Booting again begins a run; nothing on the board was lost."
+                ),
+            }
+            if let Err(e) = sessions
+                .prune_minted(clock.now() - jojobot_domain::session::MINTED_NOTE_KEPT)
+                .await
+            {
+                tracing::warn!(error = %e, "spent notes of minted runs could not be pruned");
+            }
             // **Only when there is something to say.** A clean rebuild — every
             // gap between `cards` and `recovered` explained by a card with no
             // `sid` at all — reports nothing further: the routine gap already

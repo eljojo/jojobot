@@ -384,8 +384,27 @@ impl jojobot_domain::session::Sessions for CommitsThenLoses {
         &self,
         id: &jojobot_domain::session::SessionId,
         hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
     ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.inner.set_key_hash(id, hash).await
+        self.inner.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.note_minted(run).await
+    }
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.inner.minted_without_a_card().await
+    }
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.inner.prune_minted(before).await
     }
     async fn note_charter_change(
         &self,

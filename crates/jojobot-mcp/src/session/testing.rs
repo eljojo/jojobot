@@ -300,8 +300,33 @@ impl Sessions for CommitsThenFails {
     {
         self.inner.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.inner.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -457,8 +482,33 @@ impl Sessions for RefusingFocus {
     {
         self.0.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.0.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.0.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.0.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -589,8 +639,33 @@ impl Sessions for RefusingWindowClear {
     {
         self.0.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.0.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.0.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.0.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -774,18 +849,43 @@ impl Sessions for Refusing {
     {
         self.inner.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
         let voiding = hash == jojobot_domain::session::KEY_VOID;
         let refusing = match voiding {
             true => self.void_fails.load(std::sync::atomic::Ordering::SeqCst),
             false => self.key_fails.load(std::sync::atomic::Ordering::SeqCst),
         };
         if !refusing {
-            return self.inner.set_key_hash(id, hash).await;
+            return self.inner.set_key_hash(id, hash, trail).await;
         }
         Err(SessionError::Store(
             "the key cell on the page could not be written".into(),
         ))
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -996,8 +1096,33 @@ impl Sessions for CountingSessions {
     {
         self.inner.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.inner.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -1127,8 +1252,33 @@ impl Sessions for RefusingAppend {
     {
         self.0.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.0.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.0.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.0.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -1318,8 +1468,33 @@ impl Sessions for RefusingClose {
     {
         self.inner.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.inner.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     async fn note_charter_change(
@@ -1470,8 +1645,33 @@ impl Sessions for Yielding {
     {
         self.0.journal_history(id, entry).await
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.0.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.0.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.0.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.0.prune_minted(before).await
     }
 
     async fn note_charter_change(

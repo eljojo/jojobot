@@ -438,8 +438,24 @@ impl Sessions for Mentioning {
         }
         Ok(wordings)
     }
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-        self.inner.set_key_hash(id, hash).await
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &super::KeyTrail,
+    ) -> Result<(), SessionError> {
+        self.inner.set_key_hash(id, hash, trail).await
+    }
+    async fn note_minted(&self, run: &super::MintedRun) -> Result<(), super::SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(&self) -> Result<Vec<super::MintedRun>, super::SessionError> {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, super::SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     /// **Both handles are stored as the badges they wear**, as a run's `bot`

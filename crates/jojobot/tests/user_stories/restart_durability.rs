@@ -1,0 +1,254 @@
+//! **A restart keeps what the board alone cannot say.**
+//!
+//! A run's key, the key a resume or a wrap ended, and the moment another
+//! sitting took a run over were all held in the process, so a deploy forgot
+//! them: an ended key read as one that never existed, a wrapped run's probe
+//! said `gone`, a run taken over a moment ago could be taken again, and a
+//! booted run that had not written yet lost its key. Each case below restarts
+//! the server over the same stores and asks the question the memory answered.
+
+use jojobot_domain::memory::EntityId;
+use jojobot_domain::session::{NewSession, Sessions, Sid};
+use serde_json::json;
+
+use super::dsl::Story;
+
+/// A lease of seconds on the real clock, long enough that a restart fits inside
+/// it and short enough to wait out.
+const LEASE: std::time::Duration = std::time::Duration::from_secs(8);
+
+async fn wait_out_the_lease() {
+    tokio::time::sleep(LEASE + std::time::Duration::from_millis(500)).await;
+}
+
+/// **A key a resume replaced still says why it stopped, after a restart.** The
+/// refusal names the run and lists what is in flight, which only a refusal to a
+/// key that once opened a run does; a key that never opened one gets neither.
+#[tokio::test]
+async fn a_key_a_resume_replaced_is_still_told_why_after_a_restart() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("topic:widgets", "Widgets").await;
+    let old = story.as_bot("bot:gamma").await;
+    old.call("journal", json!({"entry": "carrying on"})).await;
+    wait_out_the_lease().await;
+    let (_, taker) = story
+        .call(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": old.run()}),
+        )
+        .await;
+    let taker = taker.expect("a quiet run is handed to whoever names it");
+
+    let again = story.restarted_on_a_lease_of(LEASE).await;
+    let probe = again.as_bot("bot:otto").await;
+    let refused = probe
+        .refused(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": old.sid()}),
+        )
+        .await;
+    // The run and the reason: a resume took the run over.
+    refused
+        .says(old.run())
+        .says("was resumed")
+        .never_says(old.sid());
+    assert!(
+        refused.json()["in_flight"].is_object(),
+        "the refusal to a key that once opened a run lists what is in flight: {}",
+        refused.raw()
+    );
+    // The positive: the key that replaced it opens the run.
+    probe
+        .call(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": taker.sid()}),
+        )
+        .await
+        .says("topic:widgets");
+    // The negative control: a key nothing ever minted is not told a history.
+    let stranger = probe
+        .refused(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": jojobot_domain::session::mint_key()}),
+        )
+        .await;
+    assert!(
+        stranger.json().get("in_flight").is_none(),
+        "a key that never opened a run names no run: {}",
+        stranger.raw()
+    );
+    again.finish().await;
+    story.finish().await;
+}
+
+/// **A run wrapped before a restart still answers `wrapped` to its old key.**
+#[tokio::test]
+async fn a_run_wrapped_before_a_restart_still_answers_wrapped_to_a_probe() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("bot:delta", "Delta").await;
+    let wrapped = story.as_bot("bot:gamma").await;
+    wrapped.call("journal", json!({"entry": "almost"})).await;
+    wrapped.call("wrap_session", json!({"story": "done"})).await;
+    let live = story.as_bot("bot:delta").await;
+    live.call("journal", json!({"entry": "still going"})).await;
+
+    let again = story.restarted_on_a_lease_of(LEASE).await;
+    let probe = again.as_bot("bot:otto").await;
+    let standing = |sid: String| {
+        let probe = &probe;
+        async move { probe.call("ping", json!({"sid": sid})).await.json()["carried_session"].clone() }
+    };
+    assert_eq!(standing(wrapped.sid().to_string()).await, "wrapped");
+    // The same key sent on a call is refused with the run and the reason: the
+    // run wrapped, which ended its key.
+    probe
+        .refused(
+            "recall",
+            json!({"subject": "bot:gamma", "sid": wrapped.sid()}),
+        )
+        .await
+        .says(wrapped.run())
+        .says("wrapped at")
+        .never_says(wrapped.sid());
+    // The pairs: a live key is held, and a key nothing minted is gone.
+    assert_eq!(standing(live.sid().to_string()).await, "held");
+    assert_eq!(standing(jojobot_domain::session::mint_key()).await, "gone");
+    again.finish().await;
+    story.finish().await;
+}
+
+/// **A run taken over inside the lease cannot be taken again, even across a
+/// restart.** A pick-up writes a key and no entry, so only the mark of the
+/// pick-up says the run is its new sitting's.
+#[tokio::test]
+async fn a_second_pick_up_inside_the_lease_is_refused_after_a_restart() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let old = story.as_bot("bot:gamma").await;
+    old.call("journal", json!({"entry": "carrying on"})).await;
+    wait_out_the_lease().await;
+    let ask = json!({"bot": "gamma", "brief": true, "resume": old.run()});
+    let (_, first) = story.call("start_here", ask.clone()).await;
+    first.expect("the first pick-up takes the run");
+
+    let again = story.restarted_on_a_lease_of(LEASE).await;
+    again.refused_at_the_door("start_here", ask.clone()).await;
+    // The positive: the same name takes the run once the lease has run out.
+    wait_out_the_lease().await;
+    let (_, second) = again.call("start_here", ask).await;
+    second.expect("the name takes a run that has been quiet for the lease");
+    again.finish().await;
+    story.finish().await;
+}
+
+/// **The exchange of a keyless run's name is a pick-up that survives a
+/// restart too.**
+#[tokio::test]
+async fn a_name_exchanged_for_a_key_cannot_take_the_run_inside_the_lease_after_a_restart() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    story
+        .sessions_store()
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: Sid("jm7z".into()),
+            id: None,
+            key_hash: None,
+            focus: "a run the older build began".into(),
+            started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("the older build's run is on the board");
+    let deployed = story.restarted_on_a_lease_of(LEASE).await;
+    let holder = deployed.as_bot("bot:gamma").await;
+    holder
+        .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
+        .await
+        .says("\"exchanged\":true");
+
+    let again = deployed.restarted_on_a_lease_of(LEASE).await;
+    let ask = json!({"bot": "gamma", "brief": true, "resume": "jm7z"});
+    again.refused_at_the_door("start_here", ask.clone()).await;
+    wait_out_the_lease().await;
+    let (_, taker) = again.call("start_here", ask).await;
+    taker.expect("the name takes a run that has been quiet for the lease");
+    again.finish().await;
+    deployed.finish().await;
+    story.finish().await;
+}
+
+/// **A run that booted and has not written yet keeps its key across a
+/// restart.** No card exists for it, so only a record made at the boot can say
+/// the key was ever handed out.
+#[tokio::test]
+async fn a_booted_run_that_never_wrote_still_holds_its_key_after_a_restart() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("topic:widgets", "Widgets").await;
+    let quiet = story.as_bot("bot:gamma").await;
+
+    let again = story.restarted_on_a_lease_of(LEASE).await;
+    let probe = again.as_bot("bot:otto").await;
+    probe
+        .call(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": quiet.sid()}),
+        )
+        .await
+        .says("topic:widgets");
+    // The negative control: a key nothing minted opens nothing.
+    probe
+        .refused(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": jojobot_domain::session::mint_key()}),
+        )
+        .await;
+    again.finish().await;
+    story.finish().await;
+}
+
+/// **A run that answered `new` at the door and has not written yet keeps its key
+/// across a restart too.** The answer mints a run by a branch of its own, so the
+/// note of the minted key is made there as well.
+#[tokio::test]
+async fn a_run_begun_by_answering_new_that_never_wrote_still_holds_its_key_after_a_restart() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("topic:widgets", "Widgets").await;
+    let (_, begun) = story
+        .call(
+            "start_here",
+            json!({"bot": "gamma", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let begun = begun.expect("answering new hands back a key");
+
+    let again = story.restarted_on_a_lease_of(LEASE).await;
+    let probe = again.as_bot("bot:otto").await;
+    probe
+        .call(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": begun.sid()}),
+        )
+        .await
+        .says("topic:widgets");
+    // The negative control: a key nothing minted opens nothing.
+    probe
+        .refused(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": jojobot_domain::session::mint_key()}),
+        )
+        .await;
+    again.finish().await;
+    story.finish().await;
+}

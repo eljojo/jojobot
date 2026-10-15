@@ -880,6 +880,9 @@ impl Story {
         let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
         if let Ok(board) = sessions_mentioned.all_sessions().await {
             registry.rebuild_from(&board);
+            if let Ok(minted) = sessions_mentioned.minted_without_a_card().await {
+                registry.rebuild_minted(&minted);
+            }
         }
         // **The operator's own window is served too, over the same state.**
         // A story that could not open a page could not tell whether what it

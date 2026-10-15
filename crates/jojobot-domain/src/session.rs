@@ -166,6 +166,86 @@ pub fn hash_key(key: &str) -> String {
 /// how it is told from a run whose key was voided.
 pub const KEY_VOID: &str = "void";
 
+/// **Why a key stopped opening its run.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RetiredBy {
+    /// Another session resumed the run and was handed a new key.
+    Resumed,
+    /// The run wrapped, which took its key away.
+    Wrapped,
+}
+
+impl RetiredBy {
+    /// The word the store keeps for this reason.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            RetiredBy::Resumed => "resumed",
+            RetiredBy::Wrapped => "wrapped",
+        }
+    }
+
+    /// The reason a stored word names, or nothing for a word this build did not
+    /// write.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "resumed" => Some(RetiredBy::Resumed),
+            "wrapped" => Some(RetiredBy::Wrapped),
+            _ => None,
+        }
+    }
+}
+
+/// **The key a run held before its newest key**, kept so the sitting that still
+/// sends it is told why it stopped opening the run. One per run: the newest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetiredKey {
+    /// The hash of the key that stopped opening the run.
+    pub hash: String,
+    /// When it stopped, on the server's clock.
+    pub at: Timestamp,
+    /// Why it stopped.
+    pub by: RetiredBy,
+}
+
+/// **What a run's key history says that its newest hash cannot**, written in
+/// the same statement as the hash so a restart finds the two together.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyTrail {
+    /// The newest key that stopped opening this run, if one did.
+    #[serde(default)]
+    pub retired: Option<RetiredKey>,
+    /// When another sitting last took this run over, by a resume or by the
+    /// exchange of a keyless run's name, on the server's clock. A pick-up writes
+    /// no chronology entry, so without this mark the run reads as quiet.
+    #[serde(default)]
+    pub taken_at: Option<Timestamp>,
+}
+
+/// **A run's key as the boot handed it out, for a run with no card yet.** The
+/// run's card holds all of this once the run writes; until then this is the
+/// only record that the key was ever given, so a restart can bring it back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MintedRun {
+    /// The run's public name.
+    pub name: Sid,
+    /// The hash of its key. Never the key.
+    pub key_hash: String,
+    /// The bot it is one run of.
+    pub bot: EntityId,
+    /// The zone it stated at the boot, if it stated one.
+    pub zone: Option<String>,
+    /// The day it stated at the boot, if it stated one.
+    pub day: Option<Date>,
+    /// When the boot minted it, on the server's clock.
+    pub minted_at: Timestamp,
+}
+
+/// **How long a note of a minted run is kept when the run never writes.** Seven
+/// days is the window in which a run that stopped is still offered back at a
+/// boot; a run that never wrote has nothing to offer past it, and a caller that
+/// comes back later boots again.
+pub const MINTED_NOTE_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(7 * 24);
+
 /// One chronology entry's id — minted by the store (a comment id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntryId(pub String);
@@ -896,6 +976,12 @@ pub struct Session {
     /// then the moment to compare from.
     #[serde(default)]
     pub charter_told_at: Option<Timestamp>,
+    /// **The key history the newest hash cannot say**: the last key that stopped
+    /// opening this run and when another sitting took it over. Empty on a run
+    /// that was never resumed or wrapped, and on every card written before this
+    /// existed.
+    #[serde(default)]
+    pub key_trail: KeyTrail,
 }
 
 /// **The moment a run that was never handed its charter is held to have been
@@ -1476,7 +1562,33 @@ pub trait Sessions: Send + Sync {
     /// Allowed on a closed run, because a wrap removes the key of a run that is
     /// already closing, and a wrap code returns one to a run that is `wrapped`.
     /// [`SessionError::UnknownSession`] on a card that does not exist.
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError>;
+    ///
+    /// **The `trail` is written in the same statement** and replaces what the
+    /// card held: the caller sends the whole picture, because a restart reads it
+    /// back as the picture and a half written would be a run that lost the other
+    /// half.
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &KeyTrail,
+    ) -> Result<(), SessionError>;
+
+    /// **Keep the key a boot handed a run that has not written yet.** One row per
+    /// run, written once; a second note of the same name changes nothing. Read
+    /// back by [`minted_without_a_card`](Sessions::minted_without_a_card) so a
+    /// restart brings the key back before the run's first write makes a card.
+    async fn note_minted(&self, run: &MintedRun) -> Result<(), SessionError>;
+
+    /// **The minted runs that have no card**, oldest first. A run whose card
+    /// exists is not here: the card holds its key.
+    async fn minted_without_a_card(&self) -> Result<Vec<MintedRun>, SessionError>;
+
+    /// **Delete the spent and the abandoned notes.** A note whose run has a card
+    /// is spent. A note with no card minted before `before` is abandoned: its
+    /// caller never wrote and did not come back inside the window. Returns how
+    /// many it deleted.
+    async fn prune_minted(&self, before: Timestamp) -> Result<usize, SessionError>;
 
     /// **Keep that `bot`'s charter was rewritten**, by whom, from which run
     /// (`by_session`, the run's public name) and when. Every change is kept, in
@@ -1935,6 +2047,7 @@ mod projection_tests {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
             entries: vec![
                 JournalEntry {
                     id: EntryId("e1".into()),
@@ -2379,6 +2492,7 @@ mod tests {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2644,8 +2758,22 @@ mod tests {
             ) -> Result<Vec<history::Wording>, SessionError> {
                 self.0.journal_history(id, entry).await
             }
-            async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
-                self.0.set_key_hash(id, hash).await
+            async fn set_key_hash(
+                &self,
+                id: &SessionId,
+                hash: &str,
+                trail: &KeyTrail,
+            ) -> Result<(), SessionError> {
+                self.0.set_key_hash(id, hash, trail).await
+            }
+            async fn note_minted(&self, run: &MintedRun) -> Result<(), SessionError> {
+                self.0.note_minted(run).await
+            }
+            async fn minted_without_a_card(&self) -> Result<Vec<MintedRun>, SessionError> {
+                self.0.minted_without_a_card().await
+            }
+            async fn prune_minted(&self, before: Timestamp) -> Result<usize, SessionError> {
+                self.0.prune_minted(before).await
             }
             async fn note_charter_change(
                 &self,
@@ -2781,6 +2909,7 @@ mod tests {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2842,6 +2971,7 @@ mod tests {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2970,6 +3100,7 @@ mod tests {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),

@@ -26,9 +26,9 @@ use jojobot_domain::session::history::{
     next_wording,
 };
 use jojobot_domain::session::{
-    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
-    SessionState, Sessions, Sid, WrapWindow, is_readable_sid, normalize_entry, validate_entry,
-    validate_focus, validate_session_id,
+    CharterChange, EntryId, JournalEntry, KeyTrail, MintedRun, NewEntry, NewSession, RetiredBy,
+    RetiredKey, Session, SessionError, SessionId, SessionState, Sessions, Sid, WrapWindow,
+    is_readable_sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -304,7 +304,8 @@ impl DoltSessions {
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
             "SELECT id, sid, key_hash, bot, focus, started_at, state, timezone, started_on,
-                    served_chars, stated_day, wrap_window, charter_told_at
+                    served_chars, stated_day, wrap_window, charter_told_at,
+                    retired_key_hash, retired_at, retired_by, taken_at
              FROM session WHERE id = ?",
         )
         .bind(id.as_str())
@@ -533,6 +534,36 @@ fn summary_from(
     })
 }
 
+/// The key history a row carries. **A retired key is read only when all three of
+/// its columns are there and the reason is one this build wrote**; a half of one
+/// would be a key with no moment or no reason to tell its holder.
+fn key_trail_from(row: &sqlx::mysql::MySqlRow) -> Result<KeyTrail, SessionError> {
+    let hash = row
+        .try_get::<Option<String>, _>("retired_key_hash")
+        .map_err(store)?;
+    let at = row
+        .try_get::<Option<String>, _>("retired_at")
+        .map_err(store)?;
+    let by = row
+        .try_get::<Option<String>, _>("retired_by")
+        .map_err(store)?;
+    let retired = match (hash, at, by.as_deref().and_then(RetiredBy::from_token)) {
+        (Some(hash), Some(at), Some(by)) => Some(RetiredKey {
+            hash,
+            at: instant(&at)?,
+            by,
+        }),
+        _ => None,
+    };
+    let taken_at = row
+        .try_get::<Option<String>, _>("taken_at")
+        .map_err(store)?
+        .as_deref()
+        .map(instant)
+        .transpose()?;
+    Ok(KeyTrail { retired, taken_at })
+}
+
 fn session_from(
     row: &sqlx::mysql::MySqlRow,
     entries: &[sqlx::mysql::MySqlRow],
@@ -566,6 +597,7 @@ fn session_from(
             .as_deref()
             .map(instant)
             .transpose()?,
+        key_trail: key_trail_from(row)?,
         wrap_window: row
             .try_get::<Option<String>, _>("wrap_window")
             .map_err(store)?
@@ -1267,20 +1299,106 @@ impl Sessions for DoltSessions {
         Ok(session)
     }
 
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &KeyTrail,
+    ) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Existence only, never refused on a closed session: see the trait.
         self.exists(&mut tx, id).await?;
-        sqlx::query("UPDATE session SET key_hash = ? WHERE id = ?")
-            .bind(hash)
-            .bind(id.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
+        // **One statement for the hash and the trail**, so a restart never finds
+        // a new key with the old key's history.
+        sqlx::query(
+            "UPDATE session SET key_hash = ?, retired_key_hash = ?, retired_at = ?, \
+             retired_by = ?, taken_at = ? WHERE id = ?",
+        )
+        .bind(hash)
+        .bind(trail.retired.as_ref().map(|r| r.hash.as_str()))
+        .bind(trail.retired.as_ref().map(|r| stamp(r.at)))
+        .bind(trail.retired.as_ref().map(|r| r.by.as_token()))
+        .bind(trail.taken_at.map(stamp))
+        .bind(id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(store)?;
         self.keep_change(&mut tx, id, Change::Key).await?;
         tx.commit().await.map_err(store)?;
         Ok(())
+    }
+
+    async fn note_minted(&self, run: &MintedRun) -> Result<(), SessionError> {
+        // **Written once.** A second note of one name is the same run asked
+        // twice, and it changes nothing.
+        sqlx::query(
+            "INSERT IGNORE INTO session_key (name, key_hash, bot, zone, day, minted_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(run.name.as_str())
+        .bind(&run.key_hash)
+        .bind(run.bot.as_str())
+        .bind(run.zone.as_deref())
+        .bind(run.day.map(|day| day.to_string()))
+        .bind(stamp(run.minted_at))
+        .execute(&self.pool)
+        .await
+        .map_err(store)?;
+        Ok(())
+    }
+
+    async fn minted_without_a_card(&self) -> Result<Vec<MintedRun>, SessionError> {
+        let rows = sqlx::query(
+            "SELECT name, key_hash, bot, zone, day, minted_at FROM session_key k \
+             WHERE NOT EXISTS (SELECT 1 FROM session s WHERE s.id = k.name)",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let mut found = rows
+            .iter()
+            .map(|row| {
+                Ok(MintedRun {
+                    name: Sid(row.try_get::<String, _>("name").map_err(store)?),
+                    key_hash: row.try_get::<String, _>("key_hash").map_err(store)?,
+                    bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
+                    zone: row.try_get::<Option<String>, _>("zone").map_err(store)?,
+                    day: day(row.try_get::<Option<String>, _>("day").map_err(store)?)?,
+                    minted_at: instant(&row.try_get::<String, _>("minted_at").map_err(store)?)?,
+                })
+            })
+            .collect::<Result<Vec<MintedRun>, SessionError>>()?;
+        // Ordered here, not in SQL: the moments are text of no fixed width, and
+        // only a parsed moment orders.
+        found.sort_by(|a, b| (a.minted_at, &a.name.0).cmp(&(b.minted_at, &b.name.0)));
+        Ok(found)
+    }
+
+    async fn prune_minted(&self, before: Timestamp) -> Result<usize, SessionError> {
+        let rows = sqlx::query(
+            "SELECT name, minted_at, EXISTS (SELECT 1 FROM session s WHERE s.id = k.name) \
+             AS has_card FROM session_key k",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let mut pruned = 0;
+        for row in &rows {
+            let name: String = row.try_get("name").map_err(store)?;
+            let has_card: i64 = row.try_get("has_card").map_err(store)?;
+            let minted_at = instant(&row.try_get::<String, _>("minted_at").map_err(store)?)?;
+            if has_card == 0 && minted_at >= before {
+                continue;
+            }
+            sqlx::query("DELETE FROM session_key WHERE name = ?")
+                .bind(&name)
+                .execute(&self.pool)
+                .await
+                .map_err(store)?;
+            pruned += 1;
+        }
+        Ok(pruned)
     }
 
     async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {

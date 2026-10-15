@@ -757,6 +757,36 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0093_supplied_handle.sql"),
         leaves: Leaves::Table("supplied_handle"),
     },
+    Migration {
+        version: "0094_session_retired_key_hash",
+        sql: include_str!("../../migrations/0094_session_retired_key_hash.sql"),
+        leaves: Leaves::Column("session", "retired_key_hash"),
+    },
+    Migration {
+        version: "0095_session_retired_key_hash_index",
+        sql: include_str!("../../migrations/0095_session_retired_key_hash_index.sql"),
+        leaves: Leaves::Index("session", "by_retired_key_hash"),
+    },
+    Migration {
+        version: "0096_session_retired_at",
+        sql: include_str!("../../migrations/0096_session_retired_at.sql"),
+        leaves: Leaves::Column("session", "retired_at"),
+    },
+    Migration {
+        version: "0097_session_retired_by",
+        sql: include_str!("../../migrations/0097_session_retired_by.sql"),
+        leaves: Leaves::Column("session", "retired_by"),
+    },
+    Migration {
+        version: "0098_session_taken_at",
+        sql: include_str!("../../migrations/0098_session_taken_at.sql"),
+        leaves: Leaves::Column("session", "taken_at"),
+    },
+    Migration {
+        version: "0099_session_key",
+        sql: include_str!("../../migrations/0099_session_key.sql"),
+        leaves: Leaves::Table("session_key"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

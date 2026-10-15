@@ -522,7 +522,7 @@ async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gon
         .expect("amend");
     store.set_focus(&run.id, "writing").await.expect("focus");
     store
-        .set_key_hash(&run.id, "another-hash")
+        .set_key_hash(&run.id, "another-hash", &Default::default())
         .await
         .expect("rekey");
 

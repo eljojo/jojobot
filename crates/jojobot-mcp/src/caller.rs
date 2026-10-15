@@ -250,7 +250,10 @@ impl Jojobot {
         // finds it already exchanged and is refused as any bare name is.
         let taken = self.registry.take_legacy(raw, hash.clone(), now)?;
         if let Some(card) = &taken.card
-            && let Err(e) = self.sessions.set_key_hash(card, &hash).await
+            && let Err(e) = self
+                .sessions
+                .set_key_hash(card, &hash, &taken.trail())
+                .await
         {
             tracing::warn!(error = %e, session = %card, "a run's exchanged key could not be written");
             self.registry.put_back_legacy(raw, &hash);

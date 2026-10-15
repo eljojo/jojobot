@@ -33,13 +33,13 @@ use std::sync::{Arc, RwLock};
 
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{
-    KEY_VOID, RUN_LEN, Session, SessionId, hash_key, is_readable_sid, mint_key,
+    KEY_VOID, MintedRun, RUN_LEN, Session, SessionId, hash_key, is_readable_sid, mint_key,
 };
 
 // The name type, its alphabet and its shape rule are the domain's — a session
 // answers to it, and the store persists it. Re-exported so callers reach one
 // vocabulary rather than two names for one thing.
-pub use jojobot_domain::session::{Sid, is_readable_sid as is_readable};
+pub use jojobot_domain::session::{RetiredBy, Sid, is_readable_sid as is_readable};
 
 /// The answer that chooses a fresh session over any of the resumable ones.
 /// Deliberately a word rather than a name: it is not a session, and giving it
@@ -132,12 +132,16 @@ pub struct Handle {
     /// server's clock. In memory only: it exists so the sitting that still
     /// sends the old name is told why it is refused.
     pub(crate) exchanged_at: Option<jiff::Timestamp>,
-    /// **When another sitting last took this run over**, on the server's clock.
-    /// A pick-up writes a key and no chronology entry, so without this the run
-    /// would still read as quiet to the next asker, and two asks made together
-    /// would both be handed a key. In memory only: after a restart the run is
-    /// judged by its last entry, which the sitting that took it writes next.
+    /// **When another sitting last took this run over**, on the server's clock:
+    /// by a resume, or by the exchange of a keyless run's name. A pick-up writes
+    /// a key and no chronology entry, so without this the run would still read
+    /// as quiet to the next asker, and two asks made together would both be
+    /// handed a key. Kept on the card with the key, so a restart keeps it.
     pub(crate) taken_at: Option<jiff::Timestamp>,
+    /// **The newest key that stopped opening this run**, kept beside the card's
+    /// key because the registry's map of retired keys is by hash and bounded, and
+    /// the card carries one per run.
+    pub(crate) last_retired: Option<jojobot_domain::session::RetiredKey>,
 }
 
 /// What [`SessionRegistry::rebuild_from`] found on the board.
@@ -163,18 +167,10 @@ impl std::fmt::Display for NoFreeHandle {
     }
 }
 
-/// **Why a key stopped opening its run.**
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetiredBy {
-    /// Another session resumed the run and was handed a new key.
-    Resumed,
-    /// The run wrapped, which took its key away.
-    Wrapped,
-}
-
 /// **What the registry remembers about a key that no longer opens its run**, so
-/// the sitting that held it is told why rather than that it never existed. Held
-/// in memory only: a restart forgets it, and the key then reads as unknown.
+/// the sitting that held it is told why rather than that it never existed. The
+/// newest such key of each run is kept on its card and comes back with a
+/// restart; an older one is forgotten by a restart and reads as unknown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Retired {
     /// The run it was the key of, by its public name.
@@ -236,36 +232,80 @@ impl Held {
         let Some(handle) = self.by_name.get_mut(name) else {
             return;
         };
-        if let KeyState::Held(old) = &handle.key {
-            self.by_hash.remove(old);
+        // **The trail the card will hold, worked out before the key changes**:
+        // it needs the key being replaced.
+        let trail = handle.trail_after(retire);
+        let replaced = match &handle.key {
+            KeyState::Held(old) => Some(old.clone()),
+            _ => None,
+        };
+        if let Some(old) = replaced {
+            self.by_hash.remove(&old);
             if let Some((at, by)) = retire {
-                if self.retired_order.len() >= RETIRED_KEPT
-                    && let Some(oldest) = self.retired_order.pop_front()
-                {
-                    self.retired.remove(&oldest);
-                }
-                self.retired_order.push_back(old.clone());
-                self.retired.insert(
-                    old.clone(),
-                    Retired {
-                        name: handle.name.clone(),
-                        bot: handle.bot.clone(),
-                        at,
-                        by,
-                    },
-                );
+                let retired = Retired {
+                    name: handle.name.clone(),
+                    bot: handle.bot.clone(),
+                    at,
+                    by,
+                };
+                self.remember_retired(old, retired);
             }
         }
         // **Marked whatever key the run held**, including none: a run that
         // began before keys existed replaces nothing when it is picked up, and
         // it must still read as just taken to the next asker.
-        if let Some((at, RetiredBy::Resumed)) = &retire {
-            handle.taken_at = Some(*at);
-        }
+        let Some(handle) = self.by_name.get_mut(name) else {
+            return;
+        };
+        handle.last_retired = trail.retired;
+        handle.taken_at = trail.taken_at;
         if let KeyState::Held(new) = &key {
             self.by_hash.insert(new.clone(), name.to_string());
         }
         handle.key = key;
+    }
+
+    /// Keep a key that stopped opening its run, forgetting the oldest kept once
+    /// the registry holds [`RETIRED_KEPT`].
+    fn remember_retired(&mut self, hash: String, retired: Retired) {
+        if self.retired_order.len() >= RETIRED_KEPT
+            && let Some(oldest) = self.retired_order.pop_front()
+        {
+            self.retired.remove(&oldest);
+        }
+        self.retired_order.push_back(hash.clone());
+        self.retired.insert(hash, retired);
+    }
+}
+
+impl Handle {
+    /// **The key history the card should hold once the key changes** the way
+    /// `retire` says: the key being replaced becomes the run's retired key when
+    /// it is a held one, and a resume marks the run as just taken over.
+    pub(crate) fn trail_after(
+        &self,
+        retire: Option<(jiff::Timestamp, RetiredBy)>,
+    ) -> jojobot_domain::session::KeyTrail {
+        let mut trail = self.trail();
+        if let (KeyState::Held(old), Some((at, by))) = (&self.key, &retire) {
+            trail.retired = Some(jojobot_domain::session::RetiredKey {
+                hash: old.clone(),
+                at: *at,
+                by: *by,
+            });
+        }
+        if let Some((at, RetiredBy::Resumed)) = &retire {
+            trail.taken_at = Some(*at);
+        }
+        trail
+    }
+
+    /// The key history this run holds now.
+    pub(crate) fn trail(&self) -> jojobot_domain::session::KeyTrail {
+        jojobot_domain::session::KeyTrail {
+            retired: self.last_retired.clone(),
+            taken_at: self.taken_at,
+        }
     }
 }
 
@@ -616,6 +656,7 @@ impl SessionRegistry {
                     day: None,
                     exchanged_at: None,
                     taken_at: None,
+                    last_retired: None,
                 },
             );
             held.by_hash.insert(hash, candidate);
@@ -791,6 +832,7 @@ impl SessionRegistry {
             if let KeyState::Held(hash) = &key {
                 held.by_hash.insert(hash.clone(), name.0.clone());
             }
+            let run_name = name.clone();
             held.by_name.insert(
                 name.0.clone(),
                 Handle {
@@ -808,14 +850,61 @@ impl SessionRegistry {
                     // the latter as the creation day it always was.
                     day: session.stated_day.or(session.started_on),
                     exchanged_at: None,
-                    taken_at: None,
+                    taken_at: session.key_trail.taken_at,
+                    last_retired: session.key_trail.retired.clone(),
                 },
             );
+            // **The key the run's newest key replaced comes back with it**, so a
+            // sitting that still sends it is told why it stopped opening the run.
+            if let Some(retired) = &session.key_trail.retired {
+                let named = Retired {
+                    name: run_name,
+                    bot: session.bot.clone(),
+                    at: retired.at,
+                    by: retired.by,
+                };
+                held.remember_retired(retired.hash.clone(), named);
+            }
         }
         Rebuilt {
             recovered: held.by_name.len(),
             unreadable,
         }
+    }
+
+    /// **Put back the runs a boot handed a key and that have not written yet.**
+    /// A run with a card is put back by [`rebuild_from`](Self::rebuild_from), so a
+    /// name the registry already holds is left as it is. Returns how many it put
+    /// back.
+    pub fn rebuild_minted(&self, runs: &[MintedRun]) -> usize {
+        let mut held = self.held.write().expect("the registry is poisoned");
+        let mut put_back = 0;
+        for run in runs {
+            if held.by_name.contains_key(run.name.as_str())
+                || held.by_hash.contains_key(&run.key_hash)
+                || !is_readable_sid(run.name.as_str())
+            {
+                continue;
+            }
+            held.by_hash
+                .insert(run.key_hash.clone(), run.name.0.clone());
+            held.by_name.insert(
+                run.name.0.clone(),
+                Handle {
+                    bot: run.bot.clone(),
+                    name: run.name.clone(),
+                    card: None,
+                    key: KeyState::Held(run.key_hash.clone()),
+                    zone: run.zone.clone(),
+                    day: run.day,
+                    exchanged_at: None,
+                    taken_at: None,
+                    last_retired: None,
+                },
+            );
+            put_back += 1;
+        }
+        put_back
     }
 
     /// **Record the zone this run resolves days against**, replacing whatever it
@@ -974,6 +1063,7 @@ mod tests {
             stated_day: None,
             wrap_window: None,
             charter_told_at: None,
+            key_trail: Default::default(),
         }
     }
 

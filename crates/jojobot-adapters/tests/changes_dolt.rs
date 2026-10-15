@@ -138,7 +138,10 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
         counted.add_served(&id, 12).await.map(|_| ())
     });
     step!("set_key_hash", async {
-        counted.set_key_hash(&id, "hash").await.map(|_| ())
+        counted
+            .set_key_hash(&id, "hash", &jojobot_domain::session::KeyTrail::default())
+            .await
+            .map(|_| ())
     });
     step!("close", counted.close(&id, SessionState::Wrapped));
     step!(

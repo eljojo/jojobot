@@ -462,7 +462,11 @@ async fn a_run_write_dropped_after_the_store_committed_leaves_the_image_correct(
         .await;
     row.dropped(
         "set_key_hash",
-        folded.set_key_hash(&gamma.id, "another-hash"),
+        folded.set_key_hash(
+            &gamma.id,
+            "another-hash",
+            &jojobot_domain::session::KeyTrail::default(),
+        ),
     )
     .await;
     row.dropped(

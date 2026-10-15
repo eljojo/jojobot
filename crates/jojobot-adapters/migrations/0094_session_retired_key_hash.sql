@@ -1,0 +1,16 @@
+-- The hash of the newest key that stopped opening a run.
+--
+-- **A restart used to forget it.** A sitting that still sends a key which a
+-- resume or a wrap took away is told why and which run, from a map the process
+-- holds. A deploy emptied the map, so the same sitting was told that the key
+-- never existed. One retired key per run is kept on its card, written in the
+-- same statement as `key_hash`, and read back with the row.
+--
+-- NULL is a run that was never resumed or wrapped, and every row written before
+-- this migration: no row is rewritten, and such a run reads as it did, with no
+-- retired key.
+--
+-- This file adds this column and nothing else. The migrations 0095 to 0098
+-- add the index and the three columns that go with it, one object each, because
+-- this store commits DDL as it goes and a landed check can name one object.
+ALTER TABLE session ADD COLUMN retired_key_hash VARCHAR(64) NULL;

@@ -3296,6 +3296,7 @@ fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session:
         stated_day: None,
         wrap_window: None,
         charter_told_at: None,
+        key_trail: Default::default(),
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),
@@ -3516,7 +3517,26 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
         _: &jojobot_domain::session::SessionId,
         _: &str,
+        _: &jojobot_domain::session::KeyTrail,
     ) -> Result<(), jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn note_minted(
+        &self,
+        _: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn prune_minted(
+        &self,
+        _: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
     async fn note_charter_change(
@@ -3971,6 +3991,7 @@ fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::sessio
         stated_day: None,
         wrap_window: None,
         charter_told_at: None,
+        key_trail: Default::default(),
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),

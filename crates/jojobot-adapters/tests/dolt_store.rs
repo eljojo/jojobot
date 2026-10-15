@@ -9859,7 +9859,7 @@ async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
         .await
         .expect("day");
     sessions_store
-        .set_key_hash(&run.id, "hash-one")
+        .set_key_hash(&run.id, "hash-one", &Default::default())
         .await
         .expect("rekey");
     sessions_store

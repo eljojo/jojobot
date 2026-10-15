@@ -432,9 +432,31 @@ impl jojobot_domain::session::Sessions for UnreachableRuns {
         &self,
         id: &jojobot_domain::session::SessionId,
         hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
     ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.set_key_hash(id, hash).await
+        self.0.set_key_hash(id, hash, trail).await
     }
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        self.0.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
+    {
+        self.0.minted_without_a_card().await
+    }
+
+    async fn prune_minted(
+        &self,
+        before: jiff::Timestamp,
+    ) -> Result<usize, jojobot_domain::session::SessionError> {
+        self.0.prune_minted(before).await
+    }
+
     async fn append(
         &self,
         id: &jojobot_domain::session::SessionId,

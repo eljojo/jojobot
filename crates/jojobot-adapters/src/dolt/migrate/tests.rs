@@ -133,6 +133,12 @@ const ALL_VERSIONS: &[&str] = &[
     "0091_fact_receipt",
     "0092_fact_write_receipt",
     "0093_supplied_handle",
+    "0094_session_retired_key_hash",
+    "0095_session_retired_key_hash_index",
+    "0096_session_retired_at",
+    "0097_session_retired_by",
+    "0098_session_taken_at",
+    "0099_session_key",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

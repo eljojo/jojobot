@@ -153,6 +153,9 @@ mod override_reason;
 /// A run taken over by its name is taught and shown afresh; a wrap code is not.
 #[path = "user_stories/picked_up_by_name.rs"]
 mod picked_up_by_name;
+/// What a run's key, its retired key and its pick-up mark do across a restart.
+#[path = "user_stories/restart_durability.rs"]
+mod restart_durability;
 #[path = "user_stories/session_key.rs"]
 mod session_key;
 /// A key set on a record the software ships is found by that key.

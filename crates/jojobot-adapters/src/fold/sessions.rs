@@ -665,14 +665,20 @@ impl Sessions for FoldedSessions {
         }
     }
 
-    async fn set_key_hash(&self, id: &SessionId, hash: &str) -> Result<(), SessionError> {
+    async fn set_key_hash(
+        &self,
+        id: &SessionId,
+        hash: &str,
+        trail: &jojobot_domain::session::KeyTrail,
+    ) -> Result<(), SessionError> {
         let _gate = self.writing.lock().await;
         self.scoped(async {
             let (_held, at) = self.moment();
-            self.inner.set_key_hash(id, hash).await?;
+            self.inner.set_key_hash(id, hash, trail).await?;
             self.follow("set_key_hash", |image| match image.run_mut(id) {
                 Some(run) => {
                     run.key_hash = Some(hash.to_string());
+                    run.key_trail = trail.clone();
                     image.record(id, Change::Key, at);
                     true
                 }
@@ -682,6 +688,24 @@ impl Sessions for FoldedSessions {
             Ok(())
         })
         .await
+    }
+
+    /// **Straight through**: the fold holds the cards, and a minted run has none.
+    async fn note_minted(
+        &self,
+        run: &jojobot_domain::session::MintedRun,
+    ) -> Result<(), SessionError> {
+        self.inner.note_minted(run).await
+    }
+
+    async fn minted_without_a_card(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::MintedRun>, SessionError> {
+        self.inner.minted_without_a_card().await
+    }
+
+    async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, SessionError> {
+        self.inner.prune_minted(before).await
     }
 
     async fn note_charter_change(

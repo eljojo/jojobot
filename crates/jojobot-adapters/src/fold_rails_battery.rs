@@ -372,7 +372,17 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
     w.add_served(&homer.id, 40).await.expect("add_served");
     p.agree("after the served total grows again").await;
     calls.reset();
-    w.set_key_hash(&homer.id, "another-hash")
+    // **A trail that says something**, so an image that kept the hash and
+    // forgot the retired key or the pick-up mark disagrees with the store.
+    let trail = jojobot_domain::session::KeyTrail {
+        retired: Some(jojobot_domain::session::RetiredKey {
+            hash: "the-key-before".into(),
+            at: at(60),
+            by: jojobot_domain::session::RetiredBy::Resumed,
+        }),
+        taken_at: Some(at(61)),
+    };
+    w.set_key_hash(&homer.id, "another-hash", &trail)
         .await
         .expect("set_key_hash");
     wrote_without_reading("set_key_hash", calls);
