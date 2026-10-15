@@ -4055,10 +4055,11 @@ impl Memory for InMemoryMemory {
         // check and fall through to the guard, which the mutation below
         // cannot actually carry out.
         //
-        // Both sides are checked before anything moves, so a refusal leaves
-        // the store exactly as it was.
-        for side in [folded, survivor] {
-            if !index.iter().any(|e| &e.id == side) {
+        // **The sides are judged by the one function every store asks**, in its
+        // order, before anything moves, so a refusal leaves the store exactly as
+        // it was.
+        match super::super::merge::refuses_merge_sides(folded, survivor, &index) {
+            Some(super::super::merge::SideRefusal::Missing(side)) => {
                 // **A supplied record is real and still not a row.** Reported
                 // apart from an ordinary miss (rule 234): the handle reads,
                 // lists and searches as existing, so `UnknownEntity` here
@@ -4067,7 +4068,7 @@ impl Memory for InMemoryMemory {
                     .supplied
                     .lock()
                     .expect("fake mutex poisoned")
-                    .record_for(side)
+                    .record_for(&side)
                     .is_some()
                 {
                     return Err(MemoryError::SuppliedHandle {
@@ -4076,23 +4077,11 @@ impl Memory for InMemoryMemory {
                 }
                 return Err(MemoryError::UnknownEntity {
                     attempted: side.to_string(),
-                    nearest: self.nearest_for(side, &self.known()),
+                    nearest: self.nearest_for(&side, &self.known()),
                 });
             }
-        }
-        // **Neither side may already be a forwarding row.** A chain stops
-        // answering in one hop, so it is refused rather than followed.
-        for side in [folded, survivor] {
-            let held = index
-                .iter()
-                .find(|e| &e.id == side)
-                .expect("checked present just above");
-            if let Some(into) = &held.merged_into {
-                return Err(MemoryError::AlreadyMerged {
-                    attempted: side.to_string(),
-                    into: into.to_string(),
-                });
-            }
+            Some(super::super::merge::SideRefusal::Refused(refused)) => return Err(refused),
+            None => {}
         }
 
         // **A document merges only into another document**, decided before
@@ -4288,6 +4277,10 @@ impl Memory for InMemoryMemory {
             }
         }
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        // **The id is spent before the event is recorded**, so a merge that finds
+        // it spent stores nothing, as the real store spends it in the transaction
+        // that writes the event.
+        self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
         self.merges
             .lock()
             .expect("fake mutex poisoned")
@@ -4321,7 +4314,6 @@ impl Memory for InMemoryMemory {
             stale_after: None,
             receipt: None,
         };
-        self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
         self.push_stored(Fact {
             fields: Default::default(),
             ..record.clone()
@@ -4783,6 +4775,76 @@ mod tests {
             .written()
             .expect("not blocked")
             .address()
+    }
+
+    /// **Two merges under one request id leave one event.** The first spends the
+    /// id and lands; the second finds it spent and is refused, and the store holds
+    /// nothing of it: the event is recorded after the id is spent, as the real
+    /// store records it in the transaction that spends it. **Paired**: the first
+    /// merge landed, and without an id a second merge into the same survivor
+    /// lands too, so the refusal is about the id.
+    #[tokio::test]
+    async fn two_merges_under_one_request_id_leave_one_event() {
+        use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
+        let ledger = crate::request::testing::InMemoryRequests::new();
+        let store = InMemoryMemory::booted().with_requests(ledger.clone());
+        let survivor = thing(&store, "person:lisa", "Lisa").await;
+        let first = thing(&store, "person:nelson", "Nelson").await;
+        let second = thing(&store, "person:milhouse", "Milhouse").await;
+        let third = thing(&store, "person:ralph", "Ralph").await;
+        let caller = EntityId("bot:sigma".into());
+        let under_the_id = |folded: EntityId| {
+            let store = &store;
+            let survivor = survivor.clone();
+            let caller = caller.clone();
+            async move {
+                let scope = Scope::new(Request {
+                    bot: EntityId("bot:sigma".into()),
+                    id: RequestId::parse("merge-1").expect("a good id"),
+                    verb: "merge_entities".into(),
+                    digest: digest_of("{}"),
+                });
+                within(
+                    scope,
+                    armed(store.merge(&folded, &survivor, None, date(2026, 6, 3), &caller, None)),
+                )
+                .await
+            }
+        };
+
+        under_the_id(first.clone())
+            .await
+            .expect("the first merge lands");
+        let refused = under_the_id(second.clone())
+            .await
+            .expect_err("the id is spent, so the second merge is refused");
+        assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+
+        let events = store
+            .merge_events(Some(&survivor))
+            .await
+            .expect("the events read");
+        assert_eq!(events.len(), 1, "one event: {events:?}");
+        assert_eq!(events[0].folded, first);
+        let rows = store.list_entities(None).await.expect("lists");
+        assert!(
+            rows.iter()
+                .any(|e| e.id == second && e.merged_into.is_none()),
+            "the refused merge folded nothing"
+        );
+        // The positive: with no id, another merge into the survivor lands.
+        store
+            .merge(&third, &survivor, None, date(2026, 6, 3), &caller, None)
+            .await
+            .expect("a merge with no id lands");
+        assert_eq!(
+            store
+                .merge_events(Some(&survivor))
+                .await
+                .expect("the events read")
+                .len(),
+            2
+        );
     }
 
     /// **A claim stood up under the folded key after the merge is served to

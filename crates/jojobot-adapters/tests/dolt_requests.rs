@@ -971,3 +971,56 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
 
     server.stop().await;
 }
+
+/// **Two merges under one id leave one event in the real store**, as the fake
+/// leaves one. The first spends the id in the transaction that writes its event;
+/// the second finds it spent and stores nothing, so the thing it would have
+/// folded is still a thing. **Paired**: the first merge landed.
+#[tokio::test]
+async fn two_merges_under_one_id_leave_one_event() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-merge-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_merge")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let survivor = thing(&memory, "person:lisa", "Lisa").await;
+    let first = thing(&memory, "person:nelson", "Nelson").await;
+    let second = thing(&memory, "person:milhouse", "Milhouse").await;
+    let caller = thing(&memory, "bot:sigma", "Sigma").await;
+
+    let mut outcomes = Vec::new();
+    for folded in [&first, &second] {
+        let scope = Scope::new(request_on("merge_entities", "merge-1"));
+        let landed = within(
+            Arc::clone(&scope),
+            armed(memory.merge(folded, &survivor, None, date(2026, 9, 1), &caller, None)),
+        )
+        .await
+        .is_ok();
+        outcomes.push((landed, scope.was_spent()));
+    }
+    assert_eq!(outcomes, [(true, true), (false, false)], "{outcomes:?}");
+    let events = memory
+        .merge_events(Some(&survivor))
+        .await
+        .expect("the events read");
+    assert_eq!(events.len(), 1, "one event: {events:?}");
+    assert_eq!(events[0].folded, first);
+    let rows = memory.list_entities(None).await.expect("lists");
+    assert!(
+        rows.iter()
+            .any(|e| e.id == second && e.merged_into.is_none()),
+        "the refused merge folded nothing"
+    );
+
+    server.stop().await;
+}
