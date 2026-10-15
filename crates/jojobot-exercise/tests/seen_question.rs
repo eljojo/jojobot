@@ -136,8 +136,8 @@ async fn a_creation_beside_a_sibling_is_asked_about_its_own_words_and_not_the_pa
 
     let asked = created(
         "work",
-        "atlas-donut-stand-two",
-        "Donut Stand Two",
+        "atlas-donut-shop",
+        "Donut Shop",
         json!("project:atlas"),
     )
     .await;
