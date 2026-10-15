@@ -1476,11 +1476,16 @@ impl Jojobot {
         };
         // **The view's own keys and its own records, read where the page
         // reads them** (rule 51). A filter is a record on the view, so
-        // reading the view's question needs its facts beside its fields —
-        // degrading to none on a read failure, the same way the candidate
-        // list just above does, rather than failing a view whose fields
-        // already answered.
-        let facts = self.memory.recall(&handle).await.unwrap_or_default();
+        // reading the view's question needs its facts beside its fields. A
+        // read of them that fails is the outage, as every other read this
+        // view needs is: answering without them would run the question with no
+        // filter and hand back every thing it selects as though that were the
+        // answer (rule 473).
+        let facts = self
+            .memory
+            .recall(&handle)
+            .await
+            .map_err(ViewStop::Outage)?;
         let asked = graph::asked_by_view(&held, &facts);
         // **The call's inputs are bound to what the view declares, and the view is
         // filled from them**, through the one function the page fills a view

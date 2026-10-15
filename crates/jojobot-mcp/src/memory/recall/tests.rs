@@ -10340,3 +10340,49 @@ async fn a_view_bound_by_a_handle_answers_an_outage_when_the_entity_index_cannot
         "{outage:?}"
     );
 }
+
+/// **A saved question either answers itself or says it could not.** A view's own
+/// filters are records on the view, and a read of them that failed used to leave
+/// the question with none: the view then answered as if it had no filter, with
+/// every thing in it. Two handlers over ONE store, the second unable to read a
+/// claim. The healthy one answers the view with its filter in force, so the
+/// blind one's failure is the outage and the view was good.
+#[tokio::test]
+async fn a_view_whose_own_records_cannot_be_read_answers_an_outage_not_an_unfiltered_list() {
+    let (healthy, blind) = healthy_and_down(Down::Recall);
+    declared_view(&healthy, "my-red-things", &[("selects", "work")]).await;
+    let acting = run_on(&healthy, "2026-03-15").await;
+
+    async fn ask(
+        jojobot: &Jojobot,
+        acting: &str,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("my-red-things".into()),
+                subject: None,
+                facts: None,
+                sid: Some(acting.to_string()),
+                ..recall_args("work:phi")
+            }))
+            .await
+    }
+    let answered = json_of(
+        &ask(&healthy, &acting)
+            .await
+            .expect("the healthy handler answers"),
+    );
+    assert_ne!(
+        answered["status"], "blocked",
+        "the view is good: {answered}"
+    );
+
+    let outage = ask(&blind, &acting)
+        .await
+        .expect_err("a failed read of the view's records is an error, not an answer");
+    assert_eq!(
+        outage.code,
+        rmcp::model::ErrorCode::INTERNAL_ERROR,
+        "{outage:?}"
+    );
+}
