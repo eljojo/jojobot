@@ -112,3 +112,43 @@ async fn a_reader_with_three_addresses_reads_what_each_says_now_in_one_call() {
         .says("meets on Tuesdays")
         .says("meets on Wednesdays");
 }
+
+/// **A day, a window or a clock sent beside `records` is refused, and says which
+/// argument it was.** Reading records by address is a read of what stands now.
+/// `as_of`, `day`, `within_days` and `clock` are not arguments of `recall` at
+/// all (`overdue` and `near` carry them), so the surface turns each back by name,
+/// and `overdue` and `near` themselves are refused beside the list. The same list
+/// sent alone is served, so none of the refusals is about the list.
+#[tokio::test]
+async fn a_day_a_window_or_a_clock_beside_a_list_of_records_is_refused_by_name() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:the-mailbox", "The Mailbox").await;
+    let painted = s.fact("thing:the-mailbox", "is painted green").await;
+
+    let alone = s.call("recall", json!({"records": [&painted]})).await;
+    assert_eq!(
+        alone.json()["records"][0]["content"],
+        "is painted green",
+        "{}",
+        alone.raw()
+    );
+
+    for (name, extra) in [
+        ("as_of", json!({"as_of": "2026-01-01"})),
+        ("day", json!({"day": "2026-01-01"})),
+        ("within_days", json!({"within_days": 3})),
+        ("clock", json!({"clock": "taken_in"})),
+        ("near", json!({"near": {"day": "2026-01-01"}})),
+        ("overdue", json!({"overdue": {"as_of": "2026-01-01"}})),
+    ] {
+        let mut call = json!({"records": [&painted]});
+        for (key, value) in extra.as_object().expect("an object") {
+            call[key] = value.clone();
+        }
+        let refusal = s.refused("recall", call).await;
+        assert_eq!(refusal.json()["wrote"], false, "{name}: {}", refusal.raw());
+        refusal.says(name);
+    }
+    story.finish().await;
+}

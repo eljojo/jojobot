@@ -10560,6 +10560,80 @@ fn a_part_the_ceiling_cuts_keeps_the_wording_written_last() {
     assert_eq!(history["not_shown"]["count"], 3, "{history}");
 }
 
+/// **Every argument of `recall` that selects or shapes is refused beside
+/// `records`, and the refusal names it.** The table holds one value for each
+/// argument, and it holds exactly the arguments the verb publishes: an argument
+/// added to the verb fails the last assertion until the table, and so the case
+/// for it, is written.
+#[tokio::test]
+async fn recall_refuses_every_argument_the_verb_publishes_beside_records() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
+    let beside: Vec<(&str, serde_json::Value)> = vec![
+        ("subject", serde_json::json!("person:alpha")),
+        ("kind", serde_json::json!("person")),
+        ("parent", serde_json::json!("person:alpha")),
+        ("answers_type", serde_json::json!("pet")),
+        ("fields", serde_json::json!([{"key": "owner"}])),
+        ("where", serde_json::json!("owner = person:alpha")),
+        ("scope", serde_json::json!("thing")),
+        ("order", serde_json::json!({"key": "owner"})),
+        ("facts", serde_json::json!(true)),
+        ("stood_for", serde_json::json!(true)),
+        ("status", serde_json::json!("active")),
+        ("prose", serde_json::json!(true)),
+        ("charter", serde_json::json!(true)),
+        ("keys", serde_json::json!(["owner"])),
+        ("held", serde_json::json!(true)),
+        ("history", serde_json::json!("owner")),
+        ("history_record", serde_json::json!("person:alpha#f1")),
+        ("history_most", serde_json::json!(3)),
+        ("backing", serde_json::json!(true)),
+        ("built_on", serde_json::json!("person:alpha#f1")),
+        ("values", serde_json::json!("owner")),
+        ("values_most", serde_json::json!(3)),
+        ("overdue", serde_json::json!({"as_of": "2026-01-01"})),
+        ("near", serde_json::json!({"day": "2026-01-01"})),
+        ("follow", serde_json::json!({"depth": 1})),
+        ("view", serde_json::json!("ready")),
+        ("inputs", serde_json::json!({"project": "project:atlas"})),
+    ];
+    for (name, value) in &beside {
+        let mut sent = serde_json::json!({"records": ["person:alpha#f1"]});
+        sent[*name] = value.clone();
+        let args: RecallArgs = serde_json::from_value(sent).expect("the arguments read");
+        let refused = json_of(
+            &jojobot
+                .recall(Parameters(args))
+                .await
+                .expect("recall answers"),
+        );
+        assert!(
+            refused["status"] == "blocked"
+                && refused["wrote"] == false
+                && refused.to_string().contains(name),
+            "{name} beside records was not refused, naming it: {refused}"
+        );
+    }
+    // The table is the verb's arguments: the three that belong with a list of
+    // records are the only ones it leaves out.
+    let schema = serde_json::to_value(schemars::schema_for!(RecallArgs)).expect("a schema");
+    let mut published: Vec<&str> = schema["properties"]
+        .as_object()
+        .expect("the verb publishes its arguments")
+        .keys()
+        .map(String::as_str)
+        .filter(|name| !["records", "offset", "sid"].contains(name))
+        .collect();
+    let mut tabled: Vec<&str> = beside.iter().map(|(name, _)| *name).collect();
+    published.sort_unstable();
+    tabled.sort_unstable();
+    assert_eq!(
+        published, tabled,
+        "the table holds the arguments the verb has"
+    );
+}
+
 /// **Two wordings written within one second are ordered by the instant, not by
 /// the text of the moment.** A moment prints its fraction only when it is not
 /// zero, so `…:04Z` sorts after `…:04.5Z` as text and is the earlier of the two.
