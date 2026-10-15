@@ -388,6 +388,32 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("a thing under a supplied view is added");
+    // **A reference-typed field that names a record the build supplies.** The
+    // record has no row and no badge, so the field holds its handle as it stands.
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "upgrade-fixture-viewer",
+                "fields": [{"key": "looks_at", "holds": "reference"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the viewer type is declared");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "looks at the colleagues view",
+                "provenance": "testimony",
+                "sets": {"looks_at": "view:colleagues"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the reference at a supplied view is captured");
     surface
         .must(
             "merge_entities",

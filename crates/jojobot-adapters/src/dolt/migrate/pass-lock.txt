@@ -18,7 +18,7 @@
 FORWARD_NAMES_PASS | forwarding rows name the current handle | ce9902628369d89c
 FORWARDED_LINKS_PASS | forwarded field links repaired | 73427b36bfbc0bfa
 FIELD_LOWERING_PASS | field value lowering | 0d45fc60c7ae6d8e
-REFERENCE_LOWERING_PASS | reference field lowering | 78638679aadbd6be
+REFERENCE_LOWERING_PASS | reference field lowering | 602e628bdfd711b2
 UNREADABLE_DUE_PASS | unreadable due day | f0566a7bca5c150a
 OLD_ROLE_CLAIMS_PASS | old role claims | 57767b348d06e1cc
 PASSES | mail mentions | 2171b5815c1f23b6

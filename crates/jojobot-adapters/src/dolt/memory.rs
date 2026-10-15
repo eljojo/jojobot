@@ -1326,6 +1326,16 @@ impl DoltMemory {
                             // Left exactly as written.
                             item.to_string()
                         }
+                        // **A record the build supplies has no row and no badge**,
+                        // and a write stores its handle as it stands: the value
+                        // is valid as written. This needs [`Self::knowing`].
+                        None if self
+                            .supplied
+                            .record_for(&jojobot_domain::memory::EntityId(item.to_string()))
+                            .is_some() =>
+                        {
+                            item.to_string()
+                        }
                         None => {
                             ok = false;
                             unresolved.push(format!(

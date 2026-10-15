@@ -634,8 +634,11 @@ pub async fn boot_store_pushing(
     // kind-narrowed reference type. Louder than the first two, for the reason
     // `resolve_stale_pointer_columns` is: a row left unresolved holds a
     // stale handle a later collision could still hijack, so it is reported
-    // as a problem to repair rather than a routine retry.
-    match badging.migrate_reference_fields().await {
+    // as a problem to repair rather than a routine retry. **Over the instance
+    // that is told what the build supplies**, as the pass above is: a value
+    // naming a shipped record has no row to resolve through, and is valid as it
+    // stands.
+    match linking.migrate_reference_fields().await {
         Ok(0) => {}
         Ok(rewritten) => tracing::info!(
             rewritten,

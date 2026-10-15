@@ -6286,6 +6286,57 @@ async fn a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back() {
     drop(scratch);
 }
 
+/// **A reference-typed field that names a record the build supplies is valid, and
+/// a boot that owes the reference pass says nothing about it.** The recording
+/// holds such a field, on a key declared to hold a reference to anything. The
+/// deployed build had already run the pass, so its marker is dropped first: a
+/// store that has not run it is one that last booted on a build before the pass.
+/// The record has no row to resolve through, and a boot that read the value as a
+/// stale handle would log an error naming it. The field reads back as the record.
+#[tokio::test]
+async fn a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "supplied-reference").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_write WHERE `key` = 'looks_at'")
+        .fetch_one(store.pool())
+        .await
+        .expect("the field writes count");
+    let dropped = sqlx::query("DELETE FROM store_pass WHERE name = 'reference field lowering'")
+        .execute(store.pool())
+        .await
+        .expect("the pass is owed again")
+        .rows_affected();
+    store.stop().await;
+    assert_eq!(
+        (held, dropped),
+        (1, 1),
+        "recorded at {git_ref}: the recording holds the field, and the pass had run"
+    );
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("recall", json!({"subject": FOLD_HOLDER}))
+            .await,
+    )
+    .expect("the holder reads");
+    booted.stop().await;
+    assert_eq!(
+        read["objects"][0]["fields"]["looks_at"], "view:colleagues",
+        "recorded at {git_ref}: {read}"
+    );
+    drop(scratch);
+}
+
 /// **The first boot over a store the deployed build filled says nothing is wrong,
 /// and the second boot logs the same.** The store's pass markers are set, so the
 /// passes that already ran take their settled branch, and the passes this build

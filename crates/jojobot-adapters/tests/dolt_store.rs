@@ -1248,6 +1248,114 @@ async fn migrate_reference_fields_refuses_to_guess_at_an_unresolvable_value() {
     store.stop().await;
 }
 
+/// **A reference-field value that names a record the build supplies is valid, and
+/// one that names nothing still is not.** The supplied record has no row and no
+/// badge, so a value naming it is the handle as it stands. The store is told what
+/// the build supplies; both values sit under one key, and the refusal names the
+/// one that resolves to nothing and not the other.
+#[tokio::test]
+async fn migrate_reference_fields_accepts_a_supplied_record_and_still_names_a_dangling_one() {
+    let scratch = Scratch::new("reference-field-migration-supplied");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "reference_field_migration_supplied")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let shipped = "view:loops";
+    let supplied = Provisions::new(vec![Provision::record(
+        jojobot_domain::memory::Entity {
+            folded_names: Vec::new(),
+            id: EntityId(shipped.into()),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    )]);
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied);
+
+    memory
+        .declare_type(
+            DeclaredType::new(
+                "contract-field-migration-supplied-pointer",
+                vec![Field::new("friend", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .expect("declare_type ok");
+    let pet = EntityId("pet:contract-field-migration-blocked-pet".into());
+    memory
+        .add_entity(NewEntity::new(pet.clone(), "The Pet", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    memory
+        .capture(NewFact::about(
+            pet.clone(),
+            "names a shipped view and something that never existed",
+            date(2026, 5, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+    let never_existed = "person:contract-field-migration-never-existed";
+    let badge = badge_of(&pool, pet.as_str()).await;
+    for (key, ordinal, value) in [("friend", 1, shipped), ("friend", 2, never_existed)] {
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id) VALUES (?, ?, ?, \
+             ?, (SELECT id FROM fact WHERE entity = ? LIMIT 1))",
+        )
+        .bind(&badge)
+        .bind(key)
+        .bind(ordinal)
+        .bind(value)
+        .bind(&badge)
+        .execute(&pool)
+        .await
+        .expect("the values are written directly");
+    }
+
+    let err = memory
+        .migrate_reference_fields()
+        .await
+        .expect_err("the value that names nothing is reported");
+    let message = err.to_string();
+    assert!(
+        message.contains(never_existed),
+        "the value that names nothing is named: {message}"
+    );
+    assert!(
+        !message.contains(shipped),
+        "the supplied record is not reported as unresolved: {message}"
+    );
+    let held: Vec<String> = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE entity = ? AND `key` = 'friend' ORDER BY ordinal",
+    )
+    .bind(&badge)
+    .fetch_all(&pool)
+    .await
+    .expect("the values read");
+    assert_eq!(
+        held,
+        [shipped, never_existed],
+        "both values stay as they were written"
+    );
+    store.stop().await;
+}
+
 /// 🚨 **The migration batch, against rows the previous build actually wrote.**
 ///
 /// Every other case in this module builds its "before" state either with the
