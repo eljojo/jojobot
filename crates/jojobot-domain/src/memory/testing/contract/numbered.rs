@@ -561,6 +561,288 @@ pub async fn a_numbered_handle_is_never_given_to_a_new_thing<M: Memory>(store: &
     assert_eq!(still.get("title").map(String::as_str), Some("Parking"));
 }
 
+/// A member under `parent`, holding `number` under the key when it is given.
+async fn member_of<M: Memory>(
+    store: &M,
+    parent: &EntityId,
+    handle: &str,
+    number: Option<&str>,
+) -> (EntityId, FactAddress) {
+    let id = EntityId(handle.to_string());
+    add(
+        store,
+        NewEntity {
+            parent: Some(parent.clone()),
+            ..NewEntity::new(id.clone(), handle, "contract-fixture")
+        },
+    )
+    .await;
+    let mut fields = BTreeMap::from([("title".to_string(), handle.to_string())]);
+    if let Some(number) = number {
+        fields.insert("number".to_string(), number.to_string());
+    }
+    let claim = capture(
+        store,
+        state(NewFact {
+            fields,
+            ..NewFact::about(
+                id.clone(),
+                format!("{} was filed", handle.rsplit('-').next().unwrap_or(handle)),
+                date(2026, 5, 2),
+            )
+        }),
+    )
+    .await;
+    (id, claim.address())
+}
+
+/// A collection that does not number yet, with a claim to write `numbers_by` on.
+async fn plain_collection<M: Memory>(store: &M, handle: &str) -> (EntityId, FactAddress) {
+    let id = EntityId(handle.to_string());
+    add(
+        store,
+        NewEntity::new(id.clone(), handle, "contract-fixture"),
+    )
+    .await;
+    let claim = capture(
+        store,
+        state(NewFact {
+            fields: BTreeMap::from([("title".to_string(), handle.to_string())]),
+            ..NewFact::about(
+                id.clone(),
+                format!("{handle} holds things"),
+                date(2026, 5, 1),
+            )
+        }),
+    )
+    .await;
+    (id, claim.address())
+}
+
+fn numbers_by(key: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([("numbers_by".to_string(), key.to_string())])
+}
+
+/// **A collection keeps its promise from the moment it exists.** Writing
+/// `numbers_by` onto a thing whose descendants already hold a duplicate or a
+/// value that is no number under that key is refused, naming those members, by
+/// a capture and by an edit alike; a subtree that already keeps the promise
+/// takes the key and is held to it afterwards. Changing `numbers_by` to another
+/// key frees the numbers held under the old one, so it is refused while a member
+/// holds one.
+pub async fn a_collection_is_founded_only_over_members_that_already_keep_its_promise<M: Memory>(
+    store: &M,
+) {
+    // **First write of `numbers_by` in the store**, so a store that numbers
+    // nothing yet is asked too.
+    // Two members hold 5: refused by a capture and by an edit, naming both.
+    let (twice, twice_claim) = plain_collection(store, "topic:contract-founding-twice").await;
+    let (a, a_claim) = member_of(store, &twice, "decision:contract-fm-twice-lamp", Some("5")).await;
+    let (b, _) = member_of(store, &twice, "decision:contract-fm-twice-bench", Some("5")).await;
+    let by_capture = store
+        .capture(state(NewFact {
+            fields: numbers_by("number"),
+            ..NewFact::about(twice.clone(), "numbers its members", date(2026, 5, 3))
+        }))
+        .await;
+    let Err(MemoryError::MembersBreakNumbering { members, key, .. }) = &by_capture else {
+        panic!("a duplicated subtree must be refused: {by_capture:?}");
+    };
+    assert_eq!(key, "number");
+    for member in [&a, &b] {
+        assert!(
+            members.iter().any(|m| m.contains(member.as_str())),
+            "the refusal names {member}: {members:?}"
+        );
+    }
+    let by_edit = store
+        .update_fact(
+            &twice_claim,
+            state_patch(FactPatch {
+                fields: numbers_by("number"),
+                ..FactPatch::default()
+            }),
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(&by_edit, Err(MemoryError::MembersBreakNumbering { .. })),
+        "an edit is held to the same refusal: {by_edit:?}"
+    );
+    assert!(
+        store.numbering_of(&twice).await.expect("reads").is_none(),
+        "a refusal wrote nothing"
+    );
+    // A clean subtree: distinct numbers, a member with none, a grandchild, and
+    // an archived member whose number still counts.
+    let (tidy, tidy_claim) = plain_collection(store, "topic:contract-founding-tidy").await;
+    let (first, _) = member_of(
+        store,
+        &tidy,
+        "decision:contract-fm-tidy-pavement",
+        Some("1"),
+    )
+    .await;
+    member_of(store, &tidy, "decision:contract-fm-tidy-blank", None).await;
+    let (retired, _) = member_of(
+        store,
+        &tidy,
+        "decision:contract-fm-tidy-repealed",
+        Some("3"),
+    )
+    .await;
+    member_of(
+        store,
+        &first,
+        "decision:contract-fm-tidy-grandchild",
+        Some("2"),
+    )
+    .await;
+    store
+        .archive_entity(&retired, "repealed", None)
+        .await
+        .expect("archive ok");
+    edit(
+        store,
+        &tidy_claim,
+        state_patch(FactPatch {
+            fields: numbers_by("number"),
+            ..FactPatch::default()
+        }),
+    )
+    .await;
+    assert_eq!(
+        store
+            .numbering_of(&tidy)
+            .await
+            .expect("reads")
+            .expect("a clean subtree took the key")
+            .next_number,
+        4,
+        "the archived member's 3 counts"
+    );
+    let late = member_of(store, &tidy, "decision:contract-fm-tidy-newcomer", None)
+        .await
+        .0;
+    let taken = store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), "2".to_string())]),
+            ..NewFact::about(late, "takes a held number", date(2026, 5, 3))
+        }))
+        .await;
+    assert!(
+        matches!(&taken, Err(MemoryError::NumberTaken { .. })),
+        "the collection holds its members to the key once it has it: {taken:?}"
+    );
+    // The same key again changes nothing and lands.
+    capture(
+        store,
+        state(NewFact {
+            fields: numbers_by("number"),
+            ..NewFact::about(tidy.clone(), "numbers by the same key", date(2026, 5, 4))
+        }),
+    )
+    .await;
+
+    // Repair one holder and the key lands.
+    edit(
+        store,
+        &a_claim,
+        state_patch(FactPatch {
+            fields: BTreeMap::from([("number".to_string(), "6".to_string())]),
+            ..FactPatch::default()
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: numbers_by("number"),
+            ..NewFact::about(twice.clone(), "numbers its members", date(2026, 5, 5))
+        }),
+    )
+    .await;
+    assert_eq!(
+        store
+            .numbering_of(&twice)
+            .await
+            .expect("reads")
+            .expect("numbered once the duplicate was repaired")
+            .next_number,
+        7
+    );
+
+    // A value that is no number: refused, naming the member that holds it.
+    let (words, _) = plain_collection(store, "topic:contract-founding-words").await;
+    let (spelled, _) = member_of(
+        store,
+        &words,
+        "decision:contract-fm-words-spelling",
+        Some("five"),
+    )
+    .await;
+    let refused = store
+        .capture(state(NewFact {
+            fields: numbers_by("number"),
+            ..NewFact::about(words.clone(), "numbers its members", date(2026, 5, 3))
+        }))
+        .await;
+    let Err(MemoryError::MembersBreakNumbering { members, .. }) = &refused else {
+        panic!("a value that is no number must be refused: {refused:?}");
+    };
+    assert!(
+        members.iter().any(|m| m.contains(spelled.as_str())),
+        "{members:?}"
+    );
+
+    // Another key frees the numbers held under the old one.
+    let rekey = ordinances(
+        store,
+        "Founding rekey",
+        [
+            "topic:contract-founding-rekey",
+            "decision:contract-fm-rekey-one",
+            "decision:contract-fm-rekey-two",
+            "decision:contract-fm-rekey-three",
+            "decision:contract-fm-rekey-four",
+        ],
+    )
+    .await;
+    let freed = store
+        .capture(state(NewFact {
+            fields: numbers_by("ordinal"),
+            ..NewFact::about(
+                rekey.collection.clone(),
+                "numbers by ordinal",
+                date(2026, 5, 3),
+            )
+        }))
+        .await;
+    assert!(
+        matches!(&freed, Err(MemoryError::NumberFreed { key, .. }) if key == "number"),
+        "a member holds a number under the old key: {freed:?}"
+    );
+    // With no member holding a number under the old key, the key may change.
+    let (open, _) = plain_collection(store, "topic:contract-founding-open").await;
+    capture(
+        store,
+        state(NewFact {
+            fields: numbers_by("number"),
+            ..NewFact::about(open.clone(), "numbers its members", date(2026, 5, 3))
+        }),
+    )
+    .await;
+    member_of(store, &open, "decision:contract-fm-open-vacant", None).await;
+    capture(
+        store,
+        state(NewFact {
+            fields: numbers_by("ordinal"),
+            ..NewFact::about(open.clone(), "numbers by ordinal", date(2026, 5, 4))
+        }),
+    )
+    .await;
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_numbered<M: Memory>(store: &M) {
     a_member_is_named_by_its_number_and_the_collection_says_the_next(store).await;
@@ -568,6 +850,7 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(store).await;
     a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(store).await;
     a_numbered_handle_is_never_given_to_a_new_thing(store).await;
+    a_collection_is_founded_only_over_members_that_already_keep_its_promise(store).await;
     the_highest_number_a_member_can_hold_still_leaves_a_next(store).await;
     super::numbering_paths::no_write_path_skips_a_numbering_guard_except_a_retraction_by_design(
         store,

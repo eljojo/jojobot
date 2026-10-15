@@ -968,7 +968,7 @@ impl InMemoryMemory {
         rows: &[Entity],
         facts: &[Fact],
     ) -> Result<(), MemoryError> {
-        if !self.carries_numbering() {
+        if !self.carries_numbering() && !change.sets_numbering() {
             return Ok(());
         }
         let fields = self.fields_by_handle(rows, facts);

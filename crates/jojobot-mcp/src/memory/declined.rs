@@ -386,6 +386,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::NumberTaken { .. }
         | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
+        | MemoryError::MembersBreakNumbering { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
         | MemoryError::ThingTooLarge { .. }
@@ -975,6 +976,25 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  number written in digits, with no sign, no point and no leading zero, such as \
                  5, and below 18446744073709551615. Send one. To see which number is free, \
                  recall {collection}: it says next_number."
+            ),
+        )),
+        // **The members are repaired first**, so the way forward is a write on each
+        // member named, or another key. No override: the same integrity guard as
+        // the ones above (rule 472).
+        MemoryError::MembersBreakNumbering {
+            ref collection,
+            ref key,
+            ..
+        } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. {collection} would promise that every member holds \
+                 a positive whole number under {key} and that no two hold the same one, and \
+                 the members named already break that. Give each a number nobody else holds \
+                 (a number given by mistake is taken back by retracting the claim that gave \
+                 it), or number {collection} by a key they do not hold, and then send \
+                 numbers_by again."
             ),
         )),
         // **The key stays and the value has to change**, which is what makes
@@ -1755,6 +1775,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::NumberTaken { .. }
         | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
+        | MemoryError::MembersBreakNumbering { .. }
         | MemoryError::BootTooHeavy { .. }
         | MemoryError::ClaimTooLarge { .. }
         | MemoryError::ThingTooLarge { .. }
@@ -2536,6 +2557,15 @@ pub(crate) mod tests {
                     key: s("number"),
                     number: 2,
                     holder: s("thing:handcart"),
+                },
+                Some("change"),
+            ),
+            (
+                "MembersBreakNumbering",
+                MemoryError::MembersBreakNumbering {
+                    collection: s("topic:widgets"),
+                    key: s("number"),
+                    members: vec![s("thing:handcart (5)"), s("thing:handcart-2 (5)")],
                 },
                 Some("change"),
             ),

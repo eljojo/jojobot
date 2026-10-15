@@ -655,6 +655,20 @@ answer: {
 }
 ```
 
+### Memory refusal `MembersBreakNumbering`
+
+```text
+reads: 'topic:widgets' cannot number its members by 'number': thing:handcart (5), thing:handcart-2 (5)
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'topic:widgets' cannot number its members by 'number': thing:handcart (5), thing:handcart-2 (5). topic:widgets would promise that every member holds a positive whole number under number and that no two hold the same one, and the members named already break that. Give each a number nobody else holds (a number given by mistake is taken back by retracting the claim that gave it), or number topic:widgets by a key they do not hold, and then send numbers_by again.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `NothingToRename`
 
 ```text

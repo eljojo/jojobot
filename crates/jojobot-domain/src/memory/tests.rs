@@ -1679,6 +1679,14 @@ async fn fake_lets_a_write_that_keeps_every_number_land() {
 }
 
 #[tokio::test]
+async fn fake_founds_a_collection_only_over_members_that_keep_its_promise() {
+    contract::a_collection_is_founded_only_over_members_that_already_keep_its_promise(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn fake_gives_a_numbered_handle_to_no_new_numbered_thing() {
     contract::a_numbered_handle_is_never_given_to_a_new_thing(&InMemoryMemory::booted()).await;
 }

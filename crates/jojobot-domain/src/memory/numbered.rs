@@ -143,18 +143,44 @@ pub fn collection_of(
     if key.is_empty() {
         return None;
     }
-    let members = descendants(collection, entities)
-        .into_iter()
-        .map(|e| Member {
-            handle: e.id.clone(),
-            value: fields.get(&e.id).and_then(|f| f.get(&key)).cloned(),
-        })
-        .collect();
-    Some(Numbered {
+    Some(numbered_by(collection, &key, entities, fields))
+}
+
+/// **A thing read as a collection numbering by `key`**, whether or not it
+/// carries `numbers_by` yet: every descendant with what it holds under the key.
+/// A write that would make the thing a collection is judged on this.
+pub fn numbered_by(
+    collection: &EntityId,
+    key: &str,
+    entities: &[Entity],
+    fields: &BTreeMap<EntityId, BTreeMap<String, String>>,
+) -> Numbered {
+    Numbered {
         collection: collection.clone(),
-        key,
-        members,
-    })
+        key: key.to_string(),
+        members: descendants(collection, entities)
+            .into_iter()
+            .map(|e| Member {
+                handle: e.id.clone(),
+                value: fields.get(&e.id).and_then(|f| f.get(key)).cloned(),
+            })
+            .collect(),
+    }
+}
+
+/// **The key a write would number a thing by, when that is news**: the
+/// `numbers_by` the thing holds after the write, when it is not the one it holds
+/// now. A write that sends the key it already has founds nothing.
+pub fn new_numbers_by(
+    now: Option<&BTreeMap<String, String>>,
+    after: &BTreeMap<String, String>,
+) -> Option<String> {
+    let wanted = after.get(NUMBERS_BY)?.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    let held = now.and_then(|f| f.get(NUMBERS_BY)).map(|v| v.trim());
+    (held != Some(wanted)).then(|| wanted.to_string())
 }
 
 /// **Every numbered collection a thing sits under**, nearest first: the
@@ -219,6 +245,23 @@ pub struct Change {
 }
 
 impl Change {
+    /// **Whether a thing the change leaves in place holds a `numbers_by`**, so a
+    /// store that numbers nothing yet still has to ask.
+    pub fn sets_numbering(&self) -> bool {
+        self.founds()
+            .any(|(_, fields)| fields.get(NUMBERS_BY).is_some_and(|v| !v.trim().is_empty()))
+    }
+
+    /// **The things whose own `numbers_by` this change judges.** A merge reads
+    /// its survivor through the fold and is judged by its own path, so a change
+    /// that releases a thing founds nothing.
+    pub fn founds(&self) -> impl Iterator<Item = (&EntityId, &BTreeMap<String, String>)> {
+        self.holds
+            .iter()
+            .filter(|_| self.leaves.is_empty())
+            .map(|(handle, fields)| (handle, fields))
+    }
+
     /// Every thing the change names.
     pub fn touched(&self) -> impl Iterator<Item = &EntityId> {
         self.holds
@@ -238,6 +281,64 @@ pub struct Reach {
     pub scopes: Vec<Numbered>,
     /// The collections at or above the new parent of a thing that moves.
     pub chain: BTreeSet<EntityId>,
+    /// The things the write makes a collection, or numbers by another key.
+    pub founded: Vec<Founding>,
+}
+
+/// **A thing the write makes a collection**, or moves to another key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Founding {
+    /// The collection as it numbers now, when it numbers already.
+    pub old: Option<Numbered>,
+    /// The collection as the write would have it: the thing, the new key and
+    /// what every descendant holds under that key.
+    pub new: Numbered,
+}
+
+impl Founding {
+    /// **Refuse a collection whose members already break its promise.** Asked
+    /// in this order: a key change frees every number held under the old key;
+    /// then the members are asked for one whole number each and no number twice.
+    /// A member that holds nothing under the key is welcome.
+    fn refuses(&self) -> Option<MemoryError> {
+        if let Some(old) = &self.old {
+            for member in &old.members {
+                let Some(number) = member.value.as_deref().and_then(whole_number) else {
+                    continue;
+                };
+                return Some(MemoryError::NumberFreed {
+                    collection: old.collection.to_string(),
+                    key: old.key.clone(),
+                    number,
+                    holder: member.handle.to_string(),
+                });
+            }
+        }
+        let held = |m: &Member| m.value.as_deref().and_then(whole_number);
+        let mut unfit: Vec<String> = Vec::new();
+        for member in &self.new.members {
+            let Some(raw) = member.value.as_deref() else {
+                continue;
+            };
+            let twice = held(member).is_some_and(|number| {
+                self.new
+                    .members
+                    .iter()
+                    .any(|other| other.handle != member.handle && held(other) == Some(number))
+            });
+            if held(member).is_none() || twice {
+                unfit.push(format!("{} ({raw})", member.handle));
+            }
+        }
+        if unfit.is_empty() {
+            return None;
+        }
+        Some(MemoryError::MembersBreakNumbering {
+            collection: self.new.collection.to_string(),
+            key: self.new.key.clone(),
+            members: unfit,
+        })
+    }
 }
 
 impl Numbered {
@@ -281,6 +382,11 @@ impl Reach {
         // A collection inside the moved subtree moves with its members and
         // changes nothing for them.
         let moved: BTreeSet<&EntityId> = change.moved.iter().map(|(h, _)| h).collect();
+        for founding in &self.founded {
+            if let Some(refusal) = founding.refuses() {
+                return Some(refusal);
+            }
+        }
         for scope in &self.scopes {
             if moved.contains(&scope.collection) {
                 continue;
@@ -428,6 +534,14 @@ pub fn reach_of(
     for handle in change.touched() {
         for scope in scopes_of(handle, entities, fields) {
             add(scope, &mut reach);
+        }
+    }
+    for (handle, after) in change.founds() {
+        if let Some(key) = new_numbers_by(fields.get(handle), after) {
+            reach.founded.push(Founding {
+                old: collection_of(handle, entities, fields),
+                new: numbered_by(handle, &key, entities, fields),
+            });
         }
     }
     if let Some(parent) = under {

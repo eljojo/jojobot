@@ -5828,6 +5828,23 @@ pub enum MemoryError {
         /// The member that held it.
         holder: String,
     },
+    /// **A collection cannot be founded over members that already break its
+    /// promise.** The write sets `numbers_by` on a thing whose descendants hold,
+    /// under that key, a value that is no positive whole number or a number
+    /// another of them holds. `members` names each, with what it holds. There is
+    /// no override: the members are repaired first.
+    #[error(
+        "'{collection}' cannot number its members by '{key}': {}",
+        members.join(", ")
+    )]
+    MembersBreakNumbering {
+        /// The thing the write would make a collection.
+        collection: String,
+        /// The key the write would number by.
+        key: String,
+        /// Each member that breaks the promise, as `handle (value)`.
+        members: Vec<String>,
+    },
     /// **The value is no number, under a key a collection numbers by.** A
     /// numbered member holds a positive whole number in its one spelling.
     #[error(

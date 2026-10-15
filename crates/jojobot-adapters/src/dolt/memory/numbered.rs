@@ -11,7 +11,8 @@ use std::collections::BTreeSet;
 
 use jojobot_domain::memory::guard::EntityMatch;
 use jojobot_domain::memory::numbered::{
-    Change, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, Reach, numbered_handle,
+    Change, Founding, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, Reach, new_numbers_by,
+    numbered_handle,
 };
 
 use super::*;
@@ -162,6 +163,17 @@ impl DoltMemory {
         else {
             return Ok(None);
         };
+        Ok(Some(Self::collection_numbering(tx, handle, key, by).await?))
+    }
+
+    /// A thing read as a collection numbering by `by`, whether or not it carries
+    /// `numbers_by` yet: every descendant with what it holds under that key.
+    async fn collection_numbering(
+        tx: &mut Transaction<'_, MySql>,
+        handle: &EntityId,
+        key: &EntityId,
+        by: String,
+    ) -> Result<Numbered, MemoryError> {
         let found = Self::descendants_of_key(tx, key.as_str()).await?;
         let keys: Vec<EntityId> = found
             .iter()
@@ -176,11 +188,11 @@ impl DoltMemory {
                 value: held.get(&by).cloned(),
             });
         }
-        Ok(Some(Numbered {
+        Ok(Numbered {
             collection: handle.clone(),
             key: by,
             members,
-        }))
+        })
     }
 
     /// A stored key (a badge, or the handle of a thing that wears none) read
@@ -256,6 +268,25 @@ impl DoltMemory {
         for handle in change.touched() {
             for scope in self.numbering_scopes(tx, handle).await? {
                 push(scope, &mut reach);
+            }
+        }
+        // **A write that gives a thing `numbers_by`, or another one, makes it a
+        // collection over the descendants it already has**, which the scopes above
+        // cannot see: the thing is never its own scope. Asked only of a change that
+        // holds the key, so a write on anything else pays no query.
+        for (handle, after) in change.founds() {
+            if !after.contains_key(NUMBERS_BY) {
+                continue;
+            }
+            let Some((key, handle)) = self.resolve(tx, handle).await? else {
+                continue;
+            };
+            let now = Self::held_by(tx, &key).await?;
+            if let Some(by) = new_numbers_by(Some(&now), after) {
+                reach.founded.push(Founding {
+                    old: Self::collection_at(tx, &handle, &key).await?,
+                    new: Self::collection_numbering(tx, &handle, &key, by).await?,
+                });
             }
         }
         if let Some(parent) = under
