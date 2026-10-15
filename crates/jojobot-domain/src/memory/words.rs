@@ -109,7 +109,8 @@ pub fn words(text: &str) -> BTreeSet<String> {
 /// "from") is never the reason two works are asked about.
 ///
 /// A thing carries a word when its name, an alias or its slug holds it, the
-/// same words the question compares. **The count is over the OTHER things**:
+/// same words the question compares, a camelCase word counting through its parts
+/// (see [`counted_for`]). **The count is over the OTHER things**:
 /// the caller leaves out the thing it asks about, so a creation and a search
 /// that has no thing yet count alike.
 ///
@@ -130,7 +131,7 @@ impl Rarity {
             let Some(kind) = entity.id.kind() else {
                 continue;
             };
-            for word in carried_by(entity) {
+            for word in counted_for(entity) {
                 *carriers
                     .entry((kind.as_token().to_string(), word))
                     .or_default() += 1;
@@ -151,6 +152,20 @@ impl Rarity {
     pub fn is_rare(&self, kind: &str, word: &str) -> bool {
         (1..COMMON_AT).contains(&self.carriers(kind, word))
     }
+}
+
+/// **The words one thing is counted as carrying**: the words it carries, and the
+/// parts of a camelCase word among them, read through [`camel_words`] as the
+/// shared-word reason reads a name. A word that reason finds in two names is
+/// counted here, so a `KwikEMart` carries `mart`. Search keeps [`carried_by`],
+/// which reads a name whole.
+fn counted_for(entity: &super::Entity) -> BTreeSet<String> {
+    entity
+        .labels()
+        .into_iter()
+        .chain(std::iter::once(entity.id.slug()))
+        .flat_map(|name| camel_words(&name))
+        .collect()
 }
 
 /// The words one thing carries: its labels and its slug.

@@ -1113,6 +1113,42 @@ mod tests {
         );
     }
 
+    /// **A camelCase name counts its parts as carried words, as the question
+    /// reads them.** A stored `SpringfieldNuclearPlant` shares `nuclear` and
+    /// `plant` with `Nuclear Plant Tours`, and the two words are rare only when
+    /// the count reads the stored name through the same split. **Paired**: three
+    /// more camelCase names carrying the two words make them common, so the same
+    /// pair is no longer refused.
+    #[test]
+    fn a_camel_case_name_counts_its_parts_as_carried_words() {
+        let tours = EntityId("place:contract-nuclear-plant-tours".into());
+        let mut idx = vec![entity(
+            "place:leftorium",
+            "SpringfieldNuclearPlant",
+            "user-named",
+        )];
+        let Decision::Block(candidates) =
+            decide_creating(&tours, &["Nuclear Plant Tours"], None, &idx, None, None)
+        else {
+            panic!("the parts of a camelCase name are shared words");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "place:leftorium");
+        assert_eq!(candidates[0].reason, MatchReason::SharedWord);
+
+        for (slug, name) in [
+            ("place:moes", "ShelbyvilleNuclearPlant"),
+            ("place:shelbyville", "CapitalCityNuclearPlant"),
+            ("place:wonder-wharf", "OgdenvilleNuclearPlant"),
+        ] {
+            idx.push(entity(slug, name, "user-named"));
+        }
+        assert_eq!(
+            decide_creating(&tours, &["Nuclear Plant Tours"], None, &idx, None, None),
+            Decision::Proceed,
+            "words four camelCase names carry are common"
+        );
+    }
+
     /// **The escape works on this channel too.** A sibling under a fuller name
     /// is a real pair, not a mistake, so the caller has to be able to say so —
     /// with the token this refusal minted and nothing else.
