@@ -20,7 +20,7 @@ async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
-    s.add("thing:the-air-filter", "The Furnace").await;
+    s.add("thing:the-air-filter", "The air filter").await;
     s.add_under(
         "thing:the-air-filter",
         "rhythm:swap-the-air-filter",
