@@ -35,6 +35,24 @@
 //! project repeats more than any other and the one a tired author breaks, so
 //! the parser holds it rather than whoever is awake.
 //!
+//! # 🚨 Three limits that are deliberate
+//!
+//! Each of these looks like a missing word. Each is absent for a reason a
+//! reader can check, so none is a gap to fill.
+//!
+//! * **There is no `at most N` and no `exactly N`.** An upper bound passes on
+//!   zero, on an empty store and on a run that did nothing, so it is a negative
+//!   in a different spelling. If one is ever added, the parser must refuse it
+//!   standing alone, exactly as it refuses a bare `lacks`.
+//! * **There is no "the answer is not empty".** That is a claim about the whole
+//!   answer. `at least N of` is a different claim: it counts the places a
+//!   substring occurs in the text, and says nothing about how many objects came
+//!   back. A word for the first would be read as the second.
+//! * **A lock never matches on the text of a refusal.** A blocked answer is a
+//!   string like any other, and a broken room refuses too. A lock that carries
+//!   a refusal's words holds on the room it was written about and on the room
+//!   that failed to get there.
+//!
 //! # 🚨 A lock carries no session, and that is what a lock IS
 //!
 //! **A lock's query goes to the room with no `sid`**, so it can ask only the
