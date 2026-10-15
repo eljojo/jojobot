@@ -52,8 +52,11 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
     let collection = s.recall(COLLECTION).await.json();
     assert_eq!(
         collection["objects"][0]["next_number"], 5,
-        "the largest held is 4 and an archived 3 is held too: {collection}"
+        "the largest held is 4, one past it is 5: {collection}"
     );
+    // The archived 3 is not the largest, so it does not move this number. That an
+    // archived member keeps its number is pinned below: `/3` still names it, and
+    // a write repeating 3 is refused.
 
     // ── a member is named by its number, in a recall ────────────────────────
     let found = s.recall(&format!("{COLLECTION}/2")).await.json();
@@ -84,14 +87,31 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
                    "parent": COLLECTION, "sets": {"number": "3"}}),
         )
         .await;
-    refusal.says(LEAVES).says("5");
+    refusal.says(LEAVES);
+    // **The free number is read from the refusal and is the collection's own
+    // `next_number`**: a bare "5" is satisfied by any digit in the answer.
+    let advice = refusal.json()["how_to_proceed"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a refusal carries advice: {}", refusal.raw()))
+        .to_string();
+    let free = advice
+        .split("The next free number is ")
+        .nth(1)
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or_else(|| panic!("the refusal names the free number: {advice}"))
+        .to_string();
+    assert_eq!(
+        free.parse::<u64>().ok(),
+        collection["objects"][0]["next_number"].as_u64(),
+        "the refusal hands over the number the collection says is next: {advice}"
+    );
     // Nothing was made by the refusal, so the same call with the free number
     // lands: the positive the refusal depends on.
     s.call(
         "add_entity",
         json!({"kind": "decision", "handle": "contract-ordinance-story-signs",
                "name": "Sign height", "source": "user-named",
-               "parent": COLLECTION, "sets": {"number": "5"}}),
+               "parent": COLLECTION, "sets": {"number": free}}),
     )
     .await;
     let after = s.recall(COLLECTION).await.json();
