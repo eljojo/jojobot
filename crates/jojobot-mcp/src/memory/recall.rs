@@ -463,7 +463,9 @@ pub struct RecallArgs {
     /// Each write says **when it happened** and where it sits in the order.
     /// That moment is not the claim's own first-recorded one, which answers a
     /// different question and is on the claim. A write kept before jojobot
-    /// recorded one carries none.
+    /// recorded one carries none. **Each write also names the `run` that made
+    /// it**, by the run's public name; a write no run made, and one kept before
+    /// runs were recorded, carries none.
     ///
     /// **The address is selection enough.** Send it on its own and the read
     /// answers about the thing the address names — you do not have to repeat
@@ -1231,6 +1233,12 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
                 "standing": write.standing.as_token(),
             });
             if let Some(fields) = rendered.as_object_mut() {
+                // **The run that made this write**, by its public name and never a
+                // key, as the versions of a thing's own row name it. Absent for a
+                // write no run made.
+                if let Some(run) = &write.session {
+                    fields.insert("run".into(), run.as_str().into());
+                }
                 if let Some(details) = &write.details {
                     fields.insert("details".into(), details.as_str().into());
                 }

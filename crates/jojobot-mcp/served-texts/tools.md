@@ -3693,7 +3693,9 @@ somebody corrected it. Name one or the other, never both.
 Each write says **when it happened** and where it sits in the order.
 That moment is not the claim's own first-recorded one, which answers a
 different question and is on the claim. A write kept before jojobot
-recorded one carries none.
+recorded one carries none. **Each write also names the `run` that made
+it**, by the run's public name; a write no run made, and one kept before
+runs were recorded, carries none.
 
 **The address is selection enough.** Send it on its own and the read
 answers about the thing the address names — you do not have to repeat

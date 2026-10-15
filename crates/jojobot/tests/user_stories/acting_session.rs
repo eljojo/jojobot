@@ -4,36 +4,44 @@
 //! by the session of its first write. Some acts wrote their claim with no session
 //! although the caller had one: a retraction, a fold, a restore, a role's claim,
 //! renewal and release, and the taking-off of a stored due moment. Each case
-//! below runs the act as a named run and reads who the store says made the write.
+//! below runs the act as a named run and reads who made the write from the claim's
+//! history, as a caller does.
 
 use std::collections::BTreeMap;
 
-use jojobot_domain::memory::EntityId;
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
-/// Every claim on `entity` with how many writes it has and the session of the
-/// newest, read from the store beneath the surface.
-async fn writes_on(story: &Story, entity: &str) -> BTreeMap<String, (usize, Option<String>)> {
-    let memory = story.memory_store();
+/// Every claim on `entity` with how many writes it has and the run of the
+/// newest, read the way a caller reads them: `recall` lists the claims and
+/// `recall` with `history_record` gives each one's writes.
+async fn writes_on(s: &Session, entity: &str) -> BTreeMap<String, (usize, Option<String>)> {
+    let listed = s
+        .call("recall", json!({"subject": entity, "facts": true}))
+        .await
+        .json();
     let mut out = BTreeMap::new();
-    // A role nobody has claimed is not an entity yet, and holds no claim.
-    let facts = match memory.recall(&EntityId(entity.to_string())).await {
-        Ok(facts) => facts,
-        Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => Vec::new(),
-        Err(e) => panic!("the claims of {entity} did not read: {e:?}"),
-    };
-    for fact in facts {
-        let writes = memory
-            .claim_history(&fact.address())
+    for fact in listed["objects"][0]["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let address = fact["address"].as_str().expect("a claim has an address");
+        let history = s
+            .call("recall", json!({"history_record": address}))
             .await
-            .expect("the history reads");
+            .json();
+        let record = &history["objects"][0]["record_history"];
+        let writes = record["writes"].as_array().expect("the claim's writes");
         out.insert(
-            fact.address().to_string(),
+            address.to_string(),
             (
-                writes.len(),
-                writes.last().and_then(|write| write.session.clone()),
+                record["count"].as_u64().expect("a count of writes") as usize,
+                writes
+                    .last()
+                    .and_then(|write| write["run"].as_str())
+                    .map(str::to_string),
             ),
         );
     }
@@ -91,7 +99,7 @@ async fn a_retraction_names_the_run_that_made_it() {
                    "provenance": "inference"}),
         )
         .await;
-    let before = writes_on(&story, "thing:delta").await;
+    let before = writes_on(&s, "thing:delta").await;
     all_name(&written_since(&BTreeMap::new(), &before), gamma.run(), 1);
 
     gamma
@@ -100,7 +108,7 @@ async fn a_retraction_names_the_run_that_made_it() {
             json!({"address": claim.field("address"), "reason": "written in error"}),
         )
         .await;
-    let after = writes_on(&story, "thing:delta").await;
+    let after = writes_on(&s, "thing:delta").await;
     all_name(&written_since(&before, &after), gamma.run(), 2);
     story.finish().await;
 }
@@ -114,7 +122,7 @@ async fn a_merge_names_the_run_that_made_it() {
     s.add("thing:epsilon", "Epsilon").await;
     s.add("thing:sigma", "Sigma").await;
     let gamma = story.as_bot("bot:gamma").await;
-    let before = writes_on(&story, "thing:sigma").await;
+    let before = writes_on(&s, "thing:sigma").await;
 
     gamma
         .call(
@@ -123,7 +131,7 @@ async fn a_merge_names_the_run_that_made_it() {
                    "reason": "one thing under two names"}),
         )
         .await;
-    let after = writes_on(&story, "thing:sigma").await;
+    let after = writes_on(&s, "thing:sigma").await;
     all_name(&written_since(&before, &after), gamma.run(), 1);
     story.finish().await;
 }
@@ -143,7 +151,7 @@ async fn a_restore_names_the_run_that_made_it() {
             json!({"handle": "thing:omega", "reason": "a mistaken filing"}),
         )
         .await;
-    let before = writes_on(&story, "thing:omega").await;
+    let before = writes_on(&s, "thing:omega").await;
 
     gamma
         .call(
@@ -151,7 +159,7 @@ async fn a_restore_names_the_run_that_made_it() {
             json!({"handle": "thing:omega", "reason": "it was fine", "restore": true}),
         )
         .await;
-    let after = writes_on(&story, "thing:omega").await;
+    let after = writes_on(&s, "thing:omega").await;
     all_name(&written_since(&before, &after), gamma.run(), 1);
     story.finish().await;
 }
@@ -162,7 +170,8 @@ async fn a_role_claim_and_a_release_name_the_run() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
-    let before = writes_on(&story, "role:gamma").await;
+    // A role nobody has claimed is not an entity yet, and holds no claim.
+    let before = BTreeMap::new();
     let (_, held) = story
         .call(
             "start_here",
@@ -170,14 +179,14 @@ async fn a_role_claim_and_a_release_name_the_run() {
         )
         .await;
     let held = held.expect("the boot hands back the run");
-    let claimed = writes_on(&story, "role:gamma").await;
+    let claimed = writes_on(&s, "role:gamma").await;
     all_name(&written_since(&before, &claimed), held.run(), 1);
 
     // **The release at the wrap.** A renewal is not asked here: a lease is
     // renewed only once it is old enough to need it, and none is.
     held.call("wrap_session", json!({"story": "done for now"}))
         .await;
-    let released = writes_on(&story, "role:gamma").await;
+    let released = writes_on(&s, "role:gamma").await;
     all_name(&written_since(&claimed, &released), held.run(), 1);
     story.finish().await;
 }
@@ -197,7 +206,7 @@ async fn clearing_a_stored_due_moment_names_the_run_that_did() {
                    "provenance": "testimony", "sets": {"runs_out": "2026-06-01"}}),
         )
         .await;
-    let before = writes_on(&story, "thing:tau").await;
+    let before = writes_on(&s, "thing:tau").await;
 
     gamma
         .call(
@@ -205,7 +214,7 @@ async fn clearing_a_stored_due_moment_names_the_run_that_did() {
             json!({"address": covered.field("address"), "clear_fields": ["runs_out"]}),
         )
         .await;
-    let after = writes_on(&story, "thing:tau").await;
+    let after = writes_on(&s, "thing:tau").await;
     all_name(&written_since(&before, &after), gamma.run(), 1);
     story.finish().await;
 }
