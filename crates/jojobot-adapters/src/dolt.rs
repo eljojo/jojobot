@@ -30,16 +30,34 @@ pub mod teaching;
 /// rule if it did: a key held twice, a reference to nothing, a required value left
 /// out, a failed check. Every rail's error mapper asks this one question, so the
 /// four of them cannot disagree about what a refusal is. The words are the
-/// kind and nothing of the server's own account, which is logged and never
-/// crosses.
+/// kind and what to change, and nothing of the server's own account, which is
+/// logged and never crosses.
 pub(crate) fn refused_rule(e: &sqlx::Error) -> Option<&'static str> {
-    e.as_database_error().and_then(|db| match db.kind() {
-        sqlx::error::ErrorKind::UniqueViolation => Some("a key held twice"),
-        sqlx::error::ErrorKind::ForeignKeyViolation => Some("a reference to nothing"),
-        sqlx::error::ErrorKind::NotNullViolation => Some("a required value left out"),
-        sqlx::error::ErrorKind::CheckViolation => Some("a check that failed"),
+    e.as_database_error().and_then(|db| rule_words(db.kind()))
+}
+
+/// **The words for one kind of refused rule**: the kind of value that broke, then
+/// what the caller changes. Neither names the value, which is the server's own
+/// account and stays in the log.
+fn rule_words(kind: sqlx::error::ErrorKind) -> Option<&'static str> {
+    match kind {
+        sqlx::error::ErrorKind::UniqueViolation => Some(
+            "a key held twice: another record already holds that key, so send a different key or \
+             edit that record",
+        ),
+        sqlx::error::ErrorKind::ForeignKeyViolation => Some(
+            "a reference to nothing: the thing it points at does not exist, so create that thing \
+             first or point at one that does",
+        ),
+        sqlx::error::ErrorKind::NotNullViolation => {
+            Some("a required value left out: the write sent none, so send the missing value")
+        }
+        sqlx::error::ErrorKind::CheckViolation => Some(
+            "a check that failed: a value is outside what its field allows, so send a value the \
+             field allows",
+        ),
         _ => None,
-    })
+    }
 }
 
 /// The database jojobot serves out of its data directory. Named rather than
@@ -1045,6 +1063,33 @@ fn die_with_this_process(_spawning: &mut tokio::process::Command) {}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// **Each rule word names the kind of value that broke and what to change**:
+    /// `<kind>: <what is wrong>, so <what to change>`. The kinds are the words the
+    /// boundary has always served, so they are pinned as written.
+    #[test]
+    fn every_refused_rule_says_what_broke_and_what_to_change() {
+        use sqlx::error::ErrorKind as K;
+        let kinds = [
+            (K::UniqueViolation, "a key held twice"),
+            (K::ForeignKeyViolation, "a reference to nothing"),
+            (K::NotNullViolation, "a required value left out"),
+            (K::CheckViolation, "a check that failed"),
+        ];
+        for (kind, said_as) in kinds {
+            let words = rule_words(kind).expect("a rule the store enforces has words");
+            let (broke, rest) = words
+                .split_once(": ")
+                .unwrap_or_else(|| panic!("{words:?} has no cause after its kind"));
+            assert_eq!(broke, said_as);
+            let (cause, change) = rest
+                .split_once(", so ")
+                .unwrap_or_else(|| panic!("{words:?} names no change"));
+            assert!(!cause.is_empty() && !change.is_empty(), "{words:?}");
+            assert!(!words.contains('\n'), "{words:?}");
+        }
+        assert_eq!(rule_words(K::Other), None);
+    }
 
     /// **A failing run shows what the server said, and a passing one stays
     /// quiet.** Either half alone passes on a helper that does the other.
