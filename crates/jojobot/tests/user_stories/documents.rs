@@ -984,3 +984,151 @@ async fn a_restore_without_a_moment_or_to_a_day_before_the_document_is_refused()
         "a refused restore wrote nothing: {after}"
     );
 }
+
+/// The whole read of `document:homer`, taken in as many parts as it comes in.
+async fn read_the_whole_manual(session: &super::dsl::Session) -> String {
+    let mut read = String::new();
+    let mut offset = 0;
+    loop {
+        let part = session
+            .call(
+                "read_document",
+                json!({"document": "document:homer", "offset": offset}),
+            )
+            .await
+            .json();
+        read.push_str(part["markdown"].as_str().expect("a part has markdown"));
+        match part["next_offset"].as_u64() {
+            Some(next) => offset = next,
+            None => return read,
+        }
+    }
+}
+
+/// **A restore sent again after a part of it was lost still brings back the whole
+/// section.** A section too long for one record is a heading and chunks that carry
+/// it on. The section is archived, restored, and then the restored last chunk is
+/// archived by hand: the state a restore that stopped before its last write
+/// leaves. The same restore sent again finds the heading restored and the chunk
+/// missing, and must write the chunk under the heading that stands NOW, not under
+/// the archived one it copied, or the chunk is written and never read.
+///
+/// **Paired**: the first restore reads whole, so the loss is the hand-archive and
+/// not a cut that never worked; and a third restore writes nothing, so the second
+/// brought back a section that stays.
+#[tokio::test]
+async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    let mut manual = String::from("# Big\n\n");
+    for _ in 0..40 {
+        manual.push_str(&paragraph());
+    }
+    manual.push_str("The tail ends here.\n");
+    let put = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": manual}),
+        )
+        .await
+        .json();
+    assert!(
+        put["cut_for_size"].as_u64().is_some_and(|n| n >= 1),
+        "the section is cut into chunks: {put}"
+    );
+    assert_eq!(read_the_whole_manual(&session).await, manual, "put whole");
+
+    // October: the heading is archived, which takes the section off the page.
+    clock.stating(OCTOBER.parse().expect("a day"));
+    let heading = manual_addresses(&session).await[0].clone();
+    session
+        .call(
+            "update_fact",
+            json!({"address": heading, "status": "archived"}),
+        )
+        .await;
+    assert_ne!(
+        read_the_whole_manual(&session).await,
+        manual,
+        "the section is gone, or this story proves nothing"
+    );
+
+    let restore = || {
+        session.call(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+    };
+    let first = restore().await.json();
+    assert_ne!(first["status"], "blocked", "{first}");
+    assert_eq!(
+        read_the_whole_manual(&session).await,
+        manual,
+        "the first restore reads whole"
+    );
+
+    // The last chunk, as the restore wrote it, is lost.
+    // Recall serves the large chunks a few at a time, so read on until the one
+    // that holds the tail turns up.
+    let mut lost = None;
+    let mut offset = 0;
+    while lost.is_none() {
+        let page = session
+            .call(
+                "recall",
+                json!({"subject": "document:homer", "facts": true, "offset": offset}),
+            )
+            .await
+            .json();
+        let facts = page["objects"][0]["facts"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a page of records: {page}"));
+        // A chunk is a restored record that carries a section on; the last one
+        // in the order the section is read in holds the tail.
+        lost = facts
+            .iter()
+            .filter(|fact| {
+                fact["status"] == "active"
+                    && fact["derived_from"].is_string()
+                    && fact["fields"]["continues"].is_string()
+            })
+            .max_by_key(|fact| {
+                fact["fields"]["order"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .map(|fact| fact["address"].as_str().expect("an address").to_string());
+        match page["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    let lost = lost.expect("the restored chunk that holds the tail");
+    session
+        .call(
+            "update_fact",
+            json!({"address": lost, "status": "archived"}),
+        )
+        .await;
+    assert_ne!(
+        read_the_whole_manual(&session).await,
+        manual,
+        "the tail is gone, or this story proves nothing"
+    );
+
+    let second = restore().await.json();
+    assert_ne!(second["status"], "blocked", "{second}");
+    assert_eq!(
+        read_the_whole_manual(&session).await,
+        manual,
+        "the restore sent again brings the tail back: {second}"
+    );
+
+    let third = restore().await.json();
+    assert_eq!(
+        third["restored"]["changed"], 0,
+        "…and a further repeat writes nothing: {third}"
+    );
+}

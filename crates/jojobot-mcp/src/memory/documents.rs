@@ -270,7 +270,8 @@ fn plan_restore(
         let run = run_of(then, at);
         let head_id = then[at].fact.id.0.as_str();
         restored_heads.insert(head_id);
-        let now_run: Vec<usize> = match counterpart(&then[at]) {
+        let head_now = counterpart(&then[at]);
+        let now_run: Vec<usize> = match head_now {
             Some(head_at) => {
                 restored_heads.insert(now[head_at].fact.id.0.as_str());
                 run_of(now, head_at)
@@ -327,10 +328,15 @@ fn plan_restore(
                     plan.touched.push(was.fact.id.clone());
                 }
                 None => {
+                    // **The heading that STANDS carries the chunk on**, which is the
+                    // copy of the heading when an earlier restore made one. The
+                    // original is archived by then, and a chunk that continues an
+                    // archived heading is never read.
+                    let heading = head_now.map_or(head_id, |at| now[at].fact.id.0.as_str());
                     plan.steps.push(Step::Recreate {
                         old: was.fact.address(),
                         new: Box::new(restored_record(subject, was.fact, session, day)),
-                        continues: Some(Some(head_id.to_string())),
+                        continues: Some(Some(heading.to_string())),
                     });
                     plan.touched.push(was.fact.id.clone());
                     if is_testimony(was) {
