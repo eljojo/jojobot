@@ -3236,6 +3236,58 @@ impl DoltMemory {
         Ok(apply_merges(held, &steps, entity))
     }
 
+    /// **One `field_write` row joined to its record, read as the write it is**, or
+    /// nothing when the write does not reach its thing. The one reading shared by
+    /// the read of a single thing and the batched read of a collection's members.
+    fn key_write_of(
+        row: &sqlx::mysql::MySqlRow,
+        label: &str,
+    ) -> Result<Option<KeyWrite>, MemoryError> {
+        let class = jojobot_domain::memory::WriteClass::from_token(
+            &row.try_get::<String, _>("write_class").map_err(store)?,
+        );
+        if !jojobot_domain::memory::reaches_the_thing(class) {
+            return Ok(None);
+        }
+        Ok(Some(KeyWrite {
+            key: row.try_get("key").map_err(store)?,
+            ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
+            value: row.try_get("value").map_err(store)?,
+            fact: FactId(row.try_get::<String, _>("fact_id").map_err(store)?),
+            // Read as tolerantly as a record's own status is read, and for
+            // the same reason: a token this build does not know must not
+            // make a thing unreadable.
+            status: FactStatus::from_token(&row.try_get::<String, _>("status").map_err(store)?),
+            // **Who backs the claim this write came from**, off the row the
+            // status already comes from: a folded value that dropped this
+            // handed back the user's own word and an assistant's guess in
+            // the same shape.
+            provenance: Provenance::from_token(
+                &row.try_get::<String, _>("provenance").map_err(store)?,
+            ),
+            standing: Standing::parse(
+                row.try_get::<Option<String>, _>("standing")
+                    .map_err(store)?
+                    .as_deref()
+                    .unwrap_or(""),
+                Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?),
+            ),
+            // **The note off the same row the standing comes from.** A
+            // folded value that dropped it hands back an estimate and the
+            // sentence saying it is an estimate stays on a record nothing
+            // points at.
+            note: row.try_get::<Option<String>, _>("details").map_err(store)?,
+            // **The moment the store took this write in**, or nothing for a
+            // write from before the column existed. A stamp that does not
+            // parse reads as no stamp, as it does everywhere else here.
+            written_at: parse_stamp(
+                row.try_get::<Option<String>, _>("written_at")
+                    .map_err(store)?,
+                label,
+            ),
+        }))
+    }
+
     /// The writes stored under one key, as they are stored.
     async fn writes_stored_at(
         tx: &mut Transaction<'_, MySql>,
@@ -3254,51 +3306,9 @@ impl DoltMemory {
         .map_err(store)?;
         let mut writes = Vec::with_capacity(rows.len());
         for row in &rows {
-            // **The one reading of whether a write reaches its thing**, shared by
-            // every store and the fake.
-            let class = jojobot_domain::memory::WriteClass::from_token(
-                &row.try_get::<String, _>("write_class").map_err(store)?,
-            );
-            if !jojobot_domain::memory::reaches_the_thing(class) {
-                continue;
+            if let Some(write) = Self::key_write_of(row, entity.as_str())? {
+                writes.push(write);
             }
-            writes.push(KeyWrite {
-                key: row.try_get("key").map_err(store)?,
-                ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
-                value: row.try_get("value").map_err(store)?,
-                fact: FactId(row.try_get::<String, _>("fact_id").map_err(store)?),
-                // Read as tolerantly as a record's own status is read, and for
-                // the same reason: a token this build does not know must not
-                // make a thing unreadable.
-                status: FactStatus::from_token(&row.try_get::<String, _>("status").map_err(store)?),
-                // **Who backs the claim this write came from**, off the row the
-                // status already comes from: a folded value that dropped this
-                // handed back the user's own word and an assistant's guess in
-                // the same shape.
-                provenance: Provenance::from_token(
-                    &row.try_get::<String, _>("provenance").map_err(store)?,
-                ),
-                standing: Standing::parse(
-                    row.try_get::<Option<String>, _>("standing")
-                        .map_err(store)?
-                        .as_deref()
-                        .unwrap_or(""),
-                    Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?),
-                ),
-                // **The note off the same row the standing comes from.** A
-                // folded value that dropped it hands back an estimate and the
-                // sentence saying it is an estimate stays on a record nothing
-                // points at.
-                note: row.try_get::<Option<String>, _>("details").map_err(store)?,
-                // **The moment the store took this write in**, or nothing for a
-                // write from before the column existed. A stamp that does not
-                // parse reads as no stamp, as it does everywhere else here.
-                written_at: parse_stamp(
-                    row.try_get::<Option<String>, _>("written_at")
-                        .map_err(store)?,
-                    entity.as_str(),
-                ),
-            });
         }
         Ok(writes)
     }

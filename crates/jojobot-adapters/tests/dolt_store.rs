@@ -10517,3 +10517,133 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
 
     store.stop().await;
 }
+
+/// How many times as long a capture on a member of a numbered collection may take
+/// as the same capture on a plain thing, at the collection size the case below
+/// builds. A capture reads the whole collection to check its numbers, so some
+/// multiple is the price. Reading every member's writes one query at a time cost
+/// over forty times as much at this size on the real store; the batched read costs
+/// about a dozen times. The bound sits between the two, as a ratio so a loaded
+/// machine moves both sides together.
+const MEMBER_CAPTURE_OVER_PLAIN: u128 = 25;
+
+/// **A capture on a member of a large numbered collection reads the collection in
+/// a handful of statements, not a few per member.** A collection of 250 members
+/// numbered by a key, a plain thing beside it, and the same note captured on each
+/// five times. The median of the member's captures is held to a multiple of the
+/// median of the plain thing's. **Paired**: both captures land, so the ratio is
+/// about the reads and not about a refusal.
+#[tokio::test]
+async fn a_capture_on_a_member_of_a_large_numbered_collection_costs_a_bounded_multiple_of_a_plain_one()
+ {
+    use jojobot_domain::memory::{Guarded, guard};
+    const MEMBERS: u32 = 250;
+    let scratch = Scratch::new("numbered-cost");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "numberedcost")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory_store = DoltMemory::open(pool);
+
+    // Entities of one family share words, and the guard asks to be told apart.
+    let add = |new: NewEntity| {
+        let memory_store = &memory_store;
+        async move {
+            match memory_store.add_entity(new.clone()).await.expect("add") {
+                Guarded::Blocked {
+                    attempted,
+                    candidates,
+                } => memory_store
+                    .add_entity(NewEntity {
+                        override_token: Some(guard::override_token(&attempted, &candidates)),
+                        override_reason: Some("a fixture of the same family".into()),
+                        ..new
+                    })
+                    .await
+                    .expect("add again")
+                    .written()
+                    .expect("not blocked twice"),
+                other => other.written().expect("written"),
+            };
+        }
+    };
+    let note = |about: &EntityId, text: String| {
+        memory::state(NewFact {
+            fields: [("note".to_string(), text.clone())].into_iter().collect(),
+            ..NewFact::about(about.clone(), text, date(2026, 10, 2))
+        })
+    };
+    let collection = EntityId("topic:contract-cost-book".into());
+    let plain = EntityId("topic:contract-cost-note".into());
+    add(NewEntity::new(
+        collection.clone(),
+        "Tally book",
+        "cost-fixture",
+    ))
+    .await;
+    add(NewEntity::new(plain.clone(), "Plain note", "cost-fixture")).await;
+    memory_store
+        .capture(memory::state(NewFact {
+            fields: [("numbers_by".to_string(), "slot".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(collection.clone(), "numbers its rows", date(2026, 10, 1))
+        }))
+        .await
+        .expect("the collection numbers")
+        .written()
+        .expect("not blocked");
+    let mut last = collection.clone();
+    for n in 1..=MEMBERS {
+        let row = format!("contract-cost-row-{n}");
+        last = EntityId(format!("decision:{row}"));
+        add(NewEntity {
+            parent: Some(collection.clone()),
+            ..NewEntity::new(
+                last.clone(),
+                format!("Tally row {n} of the book"),
+                "cost-fixture",
+            )
+        })
+        .await;
+        memory_store
+            .capture(memory::state(NewFact {
+                fields: [("slot".to_string(), n.to_string())].into_iter().collect(),
+                ..NewFact::about(last.clone(), format!("row {n}"), date(2026, 10, 1))
+            }))
+            .await
+            .expect("a row takes its number")
+            .written()
+            .expect("not blocked");
+    }
+
+    let median_of = async |target: &EntityId| {
+        let mut times = Vec::new();
+        for i in 0..5 {
+            let fact = note(target, format!("a note {i}"));
+            let started = std::time::Instant::now();
+            memory_store
+                .capture(fact)
+                .await
+                .expect("the note lands")
+                .written()
+                .expect("not blocked");
+            times.push(started.elapsed().as_micros());
+        }
+        times.sort_unstable();
+        times[2]
+    };
+    let on_member = median_of(&last).await;
+    let on_plain = median_of(&plain).await;
+    assert!(
+        on_member <= on_plain * MEMBER_CAPTURE_OVER_PLAIN,
+        "a capture on one of {MEMBERS} members took {on_member} us against {on_plain} us on a \
+         plain thing: more than {MEMBER_CAPTURE_OVER_PLAIN} times"
+    );
+
+    store.stop().await;
+}

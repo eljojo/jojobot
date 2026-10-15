@@ -16,6 +16,10 @@ use jojobot_domain::memory::numbered::{
 
 use super::*;
 
+/// How many keys one `IN (...)` list carries, so a collection of any size is read
+/// in a few statements and none is long enough for the server to refuse.
+const IN_LIST: usize = 500;
+
 impl DoltMemory {
     /// Every descendant of the thing wearing `root` (a stored key), by the
     /// parent pointers, as `(handle, stored key)`. A cycle ends the walk and a
@@ -30,16 +34,19 @@ impl DoltMemory {
         while let Some(parent) = frontier.pop() {
             // **The children a read serves under the thing**, which include those
             // of everything folded into it.
-            let mut rows: Vec<(String, Option<String>)> = Vec::new();
-            for id in Self::children_served_under(tx, &EntityId(parent.clone())).await? {
-                let badge: Option<String> =
-                    sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
-                        .bind(id.as_str())
-                        .fetch_one(&mut **tx)
-                        .await
-                        .map_err(store)?;
-                rows.push((id.as_str().to_string(), badge));
-            }
+            let ids: Vec<String> = Self::children_served_under(tx, &EntityId(parent.clone()))
+                .await?
+                .into_iter()
+                .map(|id| id.as_str().to_string())
+                .collect();
+            let mut badges = Self::badges_of(tx, &ids).await?;
+            let rows: Vec<(String, Option<String>)> = ids
+                .into_iter()
+                .map(|id| {
+                    let badge = badges.remove(&id).flatten();
+                    (id, badge)
+                })
+                .collect();
             for (id, badge) in rows {
                 let key = badge.unwrap_or_else(|| id.clone());
                 if seen.insert(key.clone()) {
@@ -49,6 +56,95 @@ impl DoltMemory {
             }
         }
         Ok(found)
+    }
+
+    /// The badge of each stored key named, in one read. A key with no row, or with
+    /// no badge, maps to nothing.
+    async fn badges_of(
+        tx: &mut Transaction<'_, MySql>,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Option<String>>, MemoryError> {
+        let mut found = std::collections::HashMap::new();
+        for chunk in ids.chunks(IN_LIST) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            let sql = format!("SELECT id, badge FROM entity WHERE id IN ({marks})");
+            let mut query = sqlx::query(&sql);
+            for id in chunk {
+                query = query.bind(id);
+            }
+            for row in query.fetch_all(&mut **tx).await.map_err(store)? {
+                found.insert(
+                    row.try_get::<String, _>("id").map_err(store)?,
+                    row.try_get::<Option<String>, _>("badge").map_err(store)?,
+                );
+            }
+        }
+        Ok(found)
+    }
+
+    /// **What each of these things holds, as [`Self::held_by`] reads it, in two
+    /// reads for the many and not two per thing.** The types are read once, and the
+    /// writes of every thing that no merge touches come back in one query. A thing
+    /// a merge touches, on either side, is read by `held_by` itself, because
+    /// what it holds depends on the merge events.
+    pub(super) async fn held_by_many(
+        tx: &mut Transaction<'_, MySql>,
+        keys: &[EntityId],
+    ) -> Result<
+        std::collections::BTreeMap<EntityId, std::collections::BTreeMap<String, String>>,
+        MemoryError,
+    > {
+        let declared = Self::types_in(tx).await?;
+        let names: Vec<String> = keys.iter().map(|key| key.as_str().to_string()).collect();
+        let mut merged: BTreeSet<String> = BTreeSet::new();
+        for chunk in names.chunks(IN_LIST) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            for column in ["survivor", "folded"] {
+                let sql = format!(
+                    "SELECT DISTINCT {column} FROM merge_event WHERE ordinal = 0 AND {column} IN ({marks})"
+                );
+                let mut query = sqlx::query_scalar::<_, String>(&sql);
+                for name in chunk {
+                    query = query.bind(name);
+                }
+                merged.extend(query.fetch_all(&mut **tx).await.map_err(store)?);
+            }
+        }
+        let plain: Vec<&String> = names
+            .iter()
+            .filter(|name| !merged.contains(*name))
+            .collect();
+        let mut writes: std::collections::HashMap<String, Vec<KeyWrite>> = Default::default();
+        for chunk in plain.chunks(IN_LIST) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                        f.status, f.provenance, f.standing, f.details
+                 FROM field_write w
+                 JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+                 WHERE w.entity IN ({marks})"
+            );
+            let mut query = sqlx::query(&sql);
+            for name in chunk {
+                query = query.bind(*name);
+            }
+            for row in query.fetch_all(&mut **tx).await.map_err(store)? {
+                let entity: String = row.try_get("entity").map_err(store)?;
+                if let Some(write) = Self::key_write_of(&row, &entity)? {
+                    writes.entry(entity).or_default().push(write);
+                }
+            }
+        }
+        let mut held = std::collections::BTreeMap::new();
+        for key in keys {
+            let fields = if merged.contains(key.as_str()) {
+                Self::held_by(tx, key).await?
+            } else {
+                folded_fields(&writes.remove(key.as_str()).unwrap_or_default(), &declared)
+            };
+            held.insert(key.clone(), fields);
+        }
+        Ok(held)
     }
 
     /// The collection a thing is, if it carries `numbers_by`: the key and
@@ -66,12 +162,18 @@ impl DoltMemory {
         else {
             return Ok(None);
         };
-        let mut members = Vec::new();
-        for (member, member_key) in Self::descendants_of_key(tx, key.as_str()).await? {
-            let fields = Self::held_by(tx, &member_key).await?;
+        let found = Self::descendants_of_key(tx, key.as_str()).await?;
+        let keys: Vec<EntityId> = found
+            .iter()
+            .map(|(_, member_key)| member_key.clone())
+            .collect();
+        let mut fields = Self::held_by_many(tx, &keys).await?;
+        let mut members = Vec::with_capacity(found.len());
+        for (member, member_key) in found {
+            let held = fields.remove(&member_key).unwrap_or_default();
             members.push(Member {
                 handle: member,
-                value: fields.get(&by).cloned(),
+                value: held.get(&by).cloned(),
             });
         }
         Ok(Some(Numbered {

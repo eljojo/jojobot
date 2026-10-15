@@ -1283,6 +1283,8 @@ const ORDINARY: &[&str] = &[
     "thing:handcart-2",
     "thing:handcart-lost",
     "topic:contract-tally-book",
+    "topic:contract-cost-book",
+    "topic:contract-cost-note",
     "decision:contract-entry-first",
     "decision:contract-entry-second",
     "topic:contract-ordinances-named",
