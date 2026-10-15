@@ -26,7 +26,9 @@
 
 **Anything already delivered comes back marked**, with its body left out and its size in place of it, so a caller can tell a leftover from something new without being charged twice for the same content.
 
-## The limit that keeps this honest
+## The limits that keep this honest
+
+**A receipt is a read just before the write and a read just after it, not a lock.** Another session's write to the same thing in that instant can appear in this call's receipt, and this call's in theirs. Holding a lock across every write to make the receipt exact would cost every writer to perfect a report about one, so the receipt stays a close reading rather than a proof.
 
 **It holds only where jojobot owns the data.** A foreign service that quietly drops content is caught by reading its echo and by nothing else, so suppressing that echo is something a caller opts into rather than something jojobot decides for it.
 

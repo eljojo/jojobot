@@ -80,7 +80,7 @@ This prevents one failure: a claim put on the parent because that was easier. A 
 
 **A claim carries the address a caller edits it through.** Another claim links to that address when it says where a claim came from. A claim's local number is unique inside its home. The number says how many claims sit on one entity. It does not say how many jojobot holds.
 
-**A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, a link holds an opaque id. So somebody can rename or move a thing, and nothing that points at it breaks. **A field that holds several pointers holds their permanent ids, never a text list.** The readable form is composed on the way out and is never what is stored, so a read cannot rewrite what the writer typed.
+**A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, a link holds an opaque id. So somebody can rename or move a thing, and nothing that points at it breaks. **A write a store holds by handle alone, with no id beside it, belongs to the thing that left that handle** — and when two things have left the same handle in turn, it shows in both their histories, because nothing recorded says which of them it was. **A field that holds several pointers holds their permanent ids, never a text list.** The readable form is composed on the way out and is never what is stored, so a read cannot rewrite what the writer typed.
 
 **A caller chooses a link when jojobot captures the event.** jojobot never infers one later. This makes a question across the graph a walk: you name the relation once, and every later question follows it.
 

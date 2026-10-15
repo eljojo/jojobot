@@ -34,9 +34,12 @@ message is covered the moment it is written. Fixture names come from the
 fictional roster — characters from the Simpsons, South Park, Family Guy or
 Bob's Burgers, plus greek letters —
 `crates/jojobot-domain/tests/fixture_roster.rs` is the allowlist and the
-test bar enforces it. The near-miss screen matches on containment, so a
-new handle is refused when an existing one is a prefix of it — qualifying
-a name already on the roster is the way to trip it. Read the guard's own
+test bar enforces it. The near-miss screen matches on containment, a known
+nickname, and two or more shared rare words, so a new handle is refused when
+an existing one is a prefix of it — qualifying a name already on the roster is
+the way to trip it, and so is a second fixture sharing two words with the first
+("Grant boot-as-patty" beside "Grant boot-as-nelson"); lift it with the token
+and a reason, as the engine's own records do. Read the guard's own
 answer instead of guessing at a rename. An example quoted from the user's
 private docs gets a roster substitution BEFORE it crosses; that quote path
 is the standing leak vector and has burned this project three times. When
@@ -139,7 +142,11 @@ Shipped and live:
   refused for that first. The refusal names
   the route — archive the claim, then capture the correction with
   `derived_from` — and says the original stays readable. Inference and
-  observation are still rewritten in place. A claim carries **three dates**: the day it is true of,
+  observation are still rewritten in place. **Settling an open claim takes a
+  receipt** — a check another agent can run again, or the day and place the
+  operator confirmed it — and changes standing, never provenance: a settled
+  inference reads back as an inference with its receipt, and
+  `confirmed_by_user` only moves a claim to testimony. A claim carries **three dates**: the day it is true of,
   the moment jojobot took it in, and optionally the day its reading stops
   being good. A derived claim names what it was worked out from, and that
   pointer is **walkable both ways** — from a claim to its source, and from a
@@ -186,13 +193,17 @@ Shipped and live:
   rest of the call in from that view's own keys** · **a RECORD'S ADDRESS, which
   selects on its own: the address names its subject, so the call fills the rest
   in from it, and a subject naming something ELSE is refused rather than
-  reconciled** · **a `parent`, which selects that thing's direct children**),
+  reconciled** · **`records`, a list of addresses on any subjects, each served
+  as it stands now** — an address that names nothing is named in its place, and
+  nothing else may select beside it · **a `parent`, which selects that thing's direct children**),
   says what of each comes back
   (facts · prose · the history of one key OR one claim · **`as_of`, the day of
   the newest write behind what each object holds, with `fields_as_of` for any
   key whose day differs** · **`keys`, which narrows
   each object's fields to the keys named**, walked objects included, while the
-  object names what it left out in `fields_left_out` and how to read it), and
+  answer says once, in `narrowed`, what it left out and how to read it — per
+  object in `fields_left_out` only when a view's `shows_keys` supplied the
+  keys), and
   walks to a depth in either direction. **A view carries its own list as
   `shows_keys`**, and a caller's `keys` wins over it.
   **`where` says which objects in one expression** — `=`, `!=`, the four
@@ -211,13 +222,24 @@ Shipped and live:
   `where` stored as an expression that is checked when it is written.
   **A view is a record of kind `view`, so the one the operator declares and the
   one the build supplies are the same shape and nothing branches on which.**
-  **The build supplies a charter and three views** — `colleagues`, `loops`, and
+  **A view takes typed inputs** (`inputs`, each `name: type`, optional with a
+  default or required) bound into its own keys, so one view answers for a named
+  project, day or type — on `recall` and on its page alike. **A view that,
+  with what the caller sent, narrows nothing is refused when asked**, naming
+  the keys that would narrow it, and its page answers the same; a view asking
+  `ready` or `plan` narrows to work on its own. An overdue read that left
+  things out says why, by reason and kind (`not_due_yet`, `not_yet_opened`,
+  `finished` — done or ended — and `no_schedule`), on `recall` and on the page.
+  **The build supplies a charter and seven views** — `colleagues`, `loops`,
   `ready`, which lists unfinished work whose every dependency is finished and
   that waits on nothing — work already under way included, archived work never,
   and the page is cut after readiness so blocked work does not use it up — and,
-  for a named piece of work, says what blocks it — assembled in one place: a
-  capability ships data by adding an entry there, with no table, migration or
-  verb. **Two kinds of link:** an **edge**, followed by one of the five shapes;
+  for a named piece of work, says what blocks it; `plan`, every unfinished piece
+  with whether it can start and what stops it; `board`, one project's work
+  grouped by status; `due`, what falls due by a day and what is already late;
+  and `of-type`, the things that answer a declared type — assembled in one
+  place: a capability ships data by adding an entry there, with no table,
+  migration or verb. **Two kinds of link:** an **edge**, followed by one of the five shapes;
   and a **relation**, a key some type declared to hold a reference, followed by
   that key's own name. **A relation is key-scoped** — it reaches everything
   using that key, so *which of those are pets* is a selection (a kind plus a key
@@ -390,14 +412,18 @@ Shipped and live:
   top of what the build ships** — a claim, a `sets`-only `update_entity` — and
   is found by search by its words and keys; an edit of its name, aliases,
   source or crm is refused with no token, and rename, archive and merge are
-  refused.
+  refused. **An upgrade never stops the server or strands those writes (rule
+  508):** a stored row at a handle a new build starts to supply wins at boot,
+  with a log line, and writes on a handle the build stops supplying are given a
+  row at boot — the kind from the handle, the name its slug.
   **The CREATION screen reads that wider set too**, so a near-miss against a
   supplied record is caught exactly as one against a stored row is. ⭐ **The
   question this was held open on is answered by the override the guard already
   mints: a near-miss is BLOCKED WITH CANDIDATES AND A TOKEN, never refused — so
   a declaration that should stand still stands, by re-calling with the token.**
-  **A resemblance by name alone** — the same name under another kind, or one
-  name inside the other — takes the token plus `override_reason`, a reason that
+  **A resemblance by name alone** — the same name under another kind, one name
+  inside the other, a known nickname of a thing of the same kind, or two or more
+  shared rare words — takes the token plus `override_reason`, a reason that
   tells the two apart, kept as `told_apart_by` and shown on the refusals and
   search hits where both appear.
   **Only an exact handle collision is unforceable, and that is the shipped-row
@@ -433,8 +459,32 @@ Shipped and live:
   the live sections joined byte for byte, paged by `offset`. The order of
   sections is the server's to mint, and `update_fact` with `after` moves one
   section behind another. A search hit on a section carries its document and is
-  grouped with that document's other hits. Not built yet: a document as of a
-  named day, restoring an old version, frontmatter read as fields.
+  grouped with that document's other hits. **A document reads as it stood on a
+  day** (`read_document` with `as_of`) **and is put back as it stood at a
+  moment** (`put_document` with `restore_to`), by writing that old version on
+  top — nothing is erased, a second restore to the same moment writes nothing,
+  and a restore that would change testimony is refused whole unless
+  `confirmed_by_user`. **A document's page shows it rendered from markdown**
+  above its facts, joined as `read_document` joins it: raw HTML stays text, a
+  link goes only to http, https, mailto, an anchor or a relative path, and no
+  image is drawn. **A merge of two documents leaves one**: the folded sections
+  follow the survivor's last, in their own order, each long section whole; a
+  document merged with anything else is refused with the route. Not built yet:
+  frontmatter read as fields.
+- **Numbered collections** — a thing carrying `numbers_by` numbers its
+  descendants by that key: each holds a whole number unique across the
+  subtree, archived members included, so a number is never reused. `recall`
+  of the collection says `next_number` (the largest held plus one; jojobot
+  keeps the count, never the writer), a write repeating a number is refused
+  naming its holder, and `<collection>/<N>` is a handle wherever one is read,
+  written to or pointed at — never one a thing is made or renamed to. A miss
+  on a number offers the numbers held. **A number stays with its member
+  through every verb**: a change of number, a move out, a merge, a declaration
+  that changes how the key folds, and re-keying or dropping `numbers_by` are
+  refused while they would leave a number unheld or held by two, naming the
+  member, each with advice for the verb that asked; `numbers_by` is taken only
+  by a subtree that already keeps the promise (`MembersBreakNumbering`). Only a
+  retraction frees a number.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches
@@ -459,7 +509,9 @@ Shipped and live:
 > store ends, and `stale` when the index holds an older version than the store —
 > a refresh that could not reach it, or a committed write whose re-read
 > failed — on the memory half, the record's own re-read; on the mail half, a
-> verb's listing of the boxes.
+> verb's listing of the boxes. **The write itself is answered as done**: the
+> store committed it, so the failed re-read is logged and marks the half
+> stale, and is never answered as the write's failure.
 > The token is what a caller branches on; the note beside it is what a reader
 > reads. Being honest to the caller who wrote is not enough on its own — the
 > sessions that read later are the ones with no other way to tell.
@@ -509,7 +561,18 @@ Shipped and live:
 > (a qualified subject, a defaulted provenance, a trimmed value), plus the
 > byte count of what was STORED and enough of the opening to tell one write
 > from another. Eliding is never silent: each answer names the call that
-> returns the whole thing. `mark_processed` answers with the message's
+> returns the whole thing. **Every write verb's receipt carries one `changed`
+> block** — what the write did, entry by entry (`on`, `what`, a `key`, `from`
+> and `to`), text named by its size and never its words, or `nothing` — read
+> just before and just after the write, not under a lock, so another session's
+> write to the same thing in that instant can appear in it. **A write that lands
+> also says what it opened up:** `capture`, `add_entity` and `update_fact` add
+> an `unlocks` block when the thing could answer more — each step the keys to
+> add and what they let jojobot answer, a half-held declared type once per
+> thing per session — and say nothing when there is nothing to unlock; and a
+> claim whose words name another known thing that is not its subject carries
+> `possible_subject_note`, once per thing per session, naming the route that
+> moves a claim. The write lands either way. `mark_processed` answers with the message's
 > envelope — id, sender, new state and the notes it stored — and nothing of its
 > subject or body beyond the body's byte count. **`post_message` also takes
 > delivery of the caller's own box in the same call**, lists only the mail
@@ -639,8 +702,9 @@ Shipped and live:
   **focus as current truth**, rewritten in place; the **chronology hangs off
   it**, one entry per beat (append-only, oldest first; only the newest
   entry amendable). **A run keeps every change beside its row** — focus, zone,
-  stated day, wrap window, close, served total, key, charter moment, never a
-  wrap code or a key itself — and every wording of each journal entry;
+  stated day, wrap window, close, served total, key, charter moment (read as
+  "never told" for a run never handed its charter), never a wrap code or a
+  key itself — and every wording of each journal entry;
   `recall` of a session with `history` (a field's name, or `journal`) reads
   them in parts, newest first.
   **`start_here` is the start verb** — there is no `start_session`, because
@@ -651,7 +715,8 @@ Shipped and live:
   bound to the bot and the moment, each run's `working_on`, and, for a run still
   inside its lease, the moment a name can take it. Booting sweeps that bot's sessions that have gone `ABANDONED_AFTER` without a
   beat, **offers** any resumable one back as a choice, and otherwise begins one **lazily: no row until the first
-  write**, so a boot that does nothing leaves nothing behind. A session records
+  write**, so a boot that does nothing leaves nothing behind; the record still
+  dates the run from its boot, never from that first write. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
   **A role is claimed at the door** (`claim`) and held on a lease every write
@@ -918,7 +983,15 @@ roles and never an operator.
   served surface. A capability can hold full unit coverage and still be
   invisible to every session that did not already know it was there. **A call
   with no assertion is not coverage** — a beat asserts what came back, what
-  changed, or what a later read returns.
+  changed, or what a later read returns. A case that only checks where the
+  surface stops or what shape a line takes — a size limit, the answer ceiling,
+  a boot budget — carries no beat a person follows: it lives in a `contract_*`
+  file beside the stories, headed as a contract, and does not count as a story.
+  **A story's server starts the way the binary does** — the memory image is
+  filled on every start through the same wiring call boot makes — so a story
+  that writes to the store beneath the served image calls
+  `the_store_changed_underneath`, as a restart would, or it tests a server
+  that cannot exist.
 - **And a third bar, which neither of the first two can reach: whether a session
   that was told nothing FINDS the capability.** A story is written by somebody
   who already knows the answer, so it can only prove a capability is reachable —
@@ -1010,9 +1083,10 @@ roles and never an operator.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
-  and fails on any warning or error line at boot. **It keeps two fixtures**, one
-  from each of the last two deployed builds, and the gate's boot cases read
-  them. `make refresh-upgrade-fixture DIR=<fixture directory>` records a fixture
+  and fails on any warning or error line at boot. **It keeps a fixture from each
+  of the last deployed builds — today deploys 3, 4 and 5 — and one is always
+  from the build production runs now**, recorded before the next deploy's
+  review; the gate's boot cases read them. `make refresh-upgrade-fixture DIR=<fixture directory>` records a fixture
   again from a ref (default `origin/main`, the deployed build) whenever the deployed build moves;
   it names no directory of its own and refuses without one. An empty
   `RUST_LOG` counts as unset. **`make carried` says what a carry would move**:

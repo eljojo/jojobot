@@ -48,7 +48,7 @@
 
 **jojobot keeps the count, never the writer.** The next number is a read, the largest held plus one, and a write that would repeat a number is refused, naming the member that holds it. There is no allocator to drift: two writers racing for one number get one success and one refusal that names the winner.
 
-**A number is never reused.** A retired member is archived, not deleted, so its number still resolves, to it and to the reason it was retired. Nothing here is specific to rules; a run of episodes or a series of issues numbers the same way.
+**A number is never reused.** A retired member is archived, not deleted, so its number still resolves, to it and to the reason it was retired. **So a number stays with its member through every verb:** a change of number, a move out of the collection, a merge, a declaration that changes how the key folds, and re-keying or dropping `numbers_by` itself are refused while they would leave a number unheld or held by two, naming the member — and `numbers_by` is taken only by a subtree that already keeps the promise. Only a retraction frees a number, because a retracted claim was never true. Nothing here is specific to rules; a run of episodes or a series of issues numbers the same way.
 
 ## Reading a container whole
 
