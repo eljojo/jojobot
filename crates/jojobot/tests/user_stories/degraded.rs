@@ -14,20 +14,25 @@
 use super::dsl::Story;
 
 #[tokio::test]
-#[ignore = "card 2442: the first phase needs an index that never scanned, which a filled boot never reaches"]
 async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missing() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let s = story.session().await;
+    let earlier = story.session().await;
 
-    // ── this morning · something recorded before anything went wrong ────────
-    s.add("person:milhouse", "Milhouse").await;
-    s.fact("person:milhouse", "allergic to shellfish").await;
+    // ── yesterday · something recorded while everything worked ──────────────
+    earlier.add("person:milhouse", "Milhouse").await;
+    earlier
+        .fact("person:milhouse", "allergic to shellfish")
+        .await;
 
-    // ── the store goes away ─────────────────────────────────────────────────
+    // ── this morning · the server starts while the store cannot be read ─────
     //
-    // Nothing tells the session. It asks the same question it would have asked
-    // anyway.
-    store.goes_away();
+    // The boot's read of the whole store fails and is not fatal. The run kept
+    // its key across the restart, so it goes on without booting again, and
+    // adds what it learns today.
+    store.the_corpus_read_fails();
+    let restarted = story.restarted().await;
+    let s = restarted.session_carried_from(&earlier).await;
+    s.add("person:homer", "Homer").await;
 
     let behind = s.find("shellfish").await;
     // Searched — the hits are real, and an answer carrying hits must never
@@ -40,12 +45,14 @@ async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missi
     // result as "nothing says that", which is the conclusion this block exists
     // to prevent.
     behind.says("\"behind\":\"unscanned\"");
+    behind.never_says("allergic to shellfish");
     // The way past the index is named, and it works: `recall` reads the store,
     // which is still answering everything except the read that fills the
     // index.
     s.recall("person:milhouse")
         .await
         .says("allergic to shellfish");
+    s.find("Homer").await.says("person:homer");
 
     // ── it comes back ───────────────────────────────────────────────────────
     //
@@ -62,7 +69,7 @@ async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missi
     // Now the index has read the store once and holds nearly all of it, so the
     // claim is a different one: what is here is real and one thing may be a
     // version the store has moved past. The token changes with it.
-    store.goes_away();
+    store.the_corpus_read_fails();
 
     let stale = s.find("shellfish").await;
     stale.says("\"searched\":true");
@@ -71,6 +78,7 @@ async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missi
 
     s.wrap("searched through a store that came and went, and was told so each time")
         .await;
+    restarted.finish().await;
     story.finish().await;
 }
 
@@ -86,7 +94,7 @@ async fn a_server_that_scanned_its_store_at_start_is_not_unscanned_when_the_stor
     s.add("person:milhouse", "Milhouse").await;
     s.fact("person:milhouse", "allergic to shellfish").await;
 
-    store.goes_away();
+    store.the_corpus_read_fails();
 
     let found = s.find("shellfish").await;
     found.says("\"searched\":true");

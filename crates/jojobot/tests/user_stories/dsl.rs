@@ -66,14 +66,21 @@ const UI_CLIENT: &str = "jojobot-ui";
 /// against a store that is always there, so the degraded half of the surface —
 /// what a search says about its own coverage — has never been reached by one.
 ///
-/// It stages the WORLD, not the answer. Only `scan` fails, which is the read
-/// that fills the index; reads and writes still land, exactly as they would
-/// against a store whose listing call is failing. Nothing here touches the
+/// It stages the WORLD, not the answer. Only the reads that fill the index
+/// fail; reads and writes still land, exactly as they would against a store
+/// whose listing call is failing. **Two switches, because two different
+/// stores are being modelled**: one that has gone away
+/// ([`Blindable::goes_away`]) and one whose read of the whole corpus fails while
+/// a read of one document still answers ([`Blindable::the_corpus_read_fails`]). Nothing here touches the
 /// index or the coverage it reports: the story asks jojobot through the served
 /// surface and jojobot works out what to say.
 pub struct Blindable {
     inner: Arc<InMemoryMemory>,
+    /// The store has gone away: the whole-corpus read and the one-document read
+    /// both fail.
     blind: std::sync::atomic::AtomicBool,
+    /// The whole-corpus read fails and the one-document read answers.
+    corpus_blind: std::sync::atomic::AtomicBool,
     /// Writes read back with no moment, as writes the store kept before it
     /// stamped them do.
     unstamped: std::sync::atomic::AtomicBool,
@@ -84,6 +91,7 @@ impl Blindable {
         Blindable {
             inner: Arc::new(InMemoryMemory::booted()),
             blind: std::sync::atomic::AtomicBool::new(false),
+            corpus_blind: std::sync::atomic::AtomicBool::new(false),
             unstamped: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -94,14 +102,24 @@ impl Blindable {
             .store(true, std::sync::atomic::Ordering::Release);
     }
 
-    /// The store stops answering the read that fills the index.
+    /// The store stops answering the reads that fill the index, the
+    /// whole-corpus read and the one-document read alike.
     pub fn goes_away(&self) {
         self.blind.store(true, std::sync::atomic::Ordering::Release);
     }
 
-    /// …and comes back.
+    /// **Only the whole-corpus read stops answering.** A read of one document
+    /// still does, as the real store reads it by its own query.
+    pub fn the_corpus_read_fails(&self) {
+        self.corpus_blind
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// …and comes back, from either.
     pub fn comes_back(&self) {
         self.blind
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.corpus_blind
             .store(false, std::sync::atomic::Ordering::Release);
     }
 }
@@ -119,12 +137,30 @@ impl jojobot_domain::memory::Memory for Blindable {
         &self,
     ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
     {
-        if self.blind.load(std::sync::atomic::Ordering::Acquire) {
+        if self.blind.load(std::sync::atomic::Ordering::Acquire)
+            || self.corpus_blind.load(std::sync::atomic::Ordering::Acquire)
+        {
             return Err(jojobot_domain::memory::MemoryError::Store(
                 "the store cannot be read".into(),
             ));
         }
         self.inner.scan().await
+    }
+
+    /// **One document is read by its own query, as the real store reads it**, so
+    /// a store whose whole-corpus read fails still answers this one. A store that
+    /// has gone away does not.
+    async fn scan_entity(
+        &self,
+        entity: &jojobot_domain::memory::EntityId,
+    ) -> Result<Option<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
+    {
+        if self.blind.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(jojobot_domain::memory::MemoryError::Store(
+                "the store cannot be read".into(),
+            ));
+        }
+        self.inner.scan_entity(entity).await
     }
 
     async fn add_entity(
@@ -1179,6 +1215,17 @@ impl Story {
         Answer {
             what: format!("the page at {path}"),
             body,
+        }
+    }
+
+    /// **A run of an earlier server, carried to this one by its key**: a new
+    /// connection that sends the run's `sid` and boots nothing, which is how a
+    /// client that kept its key across a restart goes on.
+    pub async fn session_carried_from(&self, earlier: &Session) -> Session {
+        Session {
+            client: self.connect().await,
+            sid: earlier.sid.clone(),
+            run: earlier.run.clone(),
         }
     }
 
