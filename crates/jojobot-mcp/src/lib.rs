@@ -553,6 +553,8 @@ impl ServerHandler for Jojobot {
             request::Begun::Fresh(scope) => Some(scope),
         };
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        // A protocol error from the verb leaves through the `?` below and never
+        // reaches `end_request`; see its note for why that is accepted.
         let mut answered = match &scope {
             Some(scope) => {
                 jojobot_domain::request::within(scope.clone(), self.tool_router.call(call)).await?

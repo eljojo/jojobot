@@ -103,6 +103,15 @@ impl Jojobot {
     /// stored as the receipt of that id. If it did not, another call may have
     /// spent the id while this one ran, and then this one's answer is replaced by
     /// that call's receipt. Returns the replacement, when there is one.
+    ///
+    /// **This runs only when the verb answered.** A verb that ends in a protocol
+    /// error returns from the dispatch before it, so a loser of a race between two
+    /// calls under one id is not given the winner's receipt on that call. That is
+    /// accepted and left alone on purpose: the loser is told to retry, and its
+    /// resend under the same id finds the winner's row and answers as a repeat with
+    /// the winner's receipt, so the caller ends with the truth one call later.
+    /// Running this on the error path as well would need a dispatch test hook to
+    /// prove, and the PM ruled against building one.
     pub(crate) async fn end_request(
         &self,
         scope: &Scope,
