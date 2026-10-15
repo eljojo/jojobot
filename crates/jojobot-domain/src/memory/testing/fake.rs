@@ -4196,11 +4196,10 @@ impl Memory for InMemoryMemory {
             )?;
         }
         // **When both sides are documents, the folded sections follow the
-        // survivor's last one**, and each chunk names its heading's new id. Written
-        // here, before the event is appended, while the folded records are still
-        // served at the addresses they were made under; the same planning the real
-        // store runs, from the domain.
-        if folded.kind() == Some(EntityKind::DOCUMENT) {
+        // survivor's last one**, and each chunk names its heading's new id. Planned
+        // here, while the folded records are still served at the addresses they
+        // were made under; the same planning the real store runs, from the domain.
+        let planned = if folded.kind() == Some(EntityKind::DOCUMENT) {
             let survivor_records: Vec<Fact> = held_facts
                 .iter()
                 .filter(|f| f.home == survivor_key)
@@ -4218,6 +4217,16 @@ impl Memory for InMemoryMemory {
                             "the folded sections cannot be placed: {e}"
                         ))
                     })?;
+            Some((folded_records, relocated))
+        } else {
+            None
+        };
+        // **The id is spent before anything is written**, the sections' new order
+        // included, so a merge that finds it spent stores nothing, as the real
+        // store spends it in the transaction that writes the sections and the
+        // event.
+        self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
+        for (folded_records, relocated) in planned {
             for place in relocated {
                 let Some(record) = folded_records.iter().find(|f| f.id == place.fact) else {
                     continue;
@@ -4235,10 +4244,6 @@ impl Memory for InMemoryMemory {
             }
         }
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
-        // **The id is spent before the event is recorded**, so a merge that finds
-        // it spent stores nothing, as the real store spends it in the transaction
-        // that writes the event.
-        self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
         self.merges
             .lock()
             .expect("fake mutex poisoned")
@@ -4862,6 +4867,134 @@ mod tests {
                 .expect("the events read")
                 .len(),
             2
+        );
+    }
+
+    /// A document of one section: the entity and a record that holds the section
+    /// under an order, as a put writes it.
+    async fn document_of_one_section(
+        store: &InMemoryMemory,
+        handle: &str,
+        name: &str,
+        text: &str,
+    ) -> EntityId {
+        let id = thing(store, handle, name).await;
+        let sections = crate::memory::document::split(text).expect("the text splits");
+        let orders = crate::memory::order::spread(None, None, sections.len()).expect("room");
+        for (section, order) in sections.iter().zip(orders) {
+            store
+                .capture(NewFact {
+                    details: (!section.body.is_empty()).then(|| section.body.clone()),
+                    fields: crate::memory::document::record_fields(section, &order),
+                    ..NewFact::about(id.clone(), section.first_line.clone(), date(2026, 6, 2))
+                })
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked");
+        }
+        id
+    }
+
+    /// The order the section with this first line holds, as the thing serves it.
+    async fn order_of(store: &InMemoryMemory, doc: &EntityId, first_line: &str) -> String {
+        store
+            .recall(doc)
+            .await
+            .expect("recall")
+            .into_iter()
+            .find(|fact| fact.content == first_line)
+            .and_then(|fact| fact.fields.get(crate::memory::document::ORDER).cloned())
+            .unwrap_or_else(|| panic!("{doc} serves no section {first_line}"))
+    }
+
+    /// **A document merge that finds its request id spent writes nothing**, not
+    /// even the new order of the sections it was to move: the id is spent before
+    /// the first section is written, as the real store spends it in the
+    /// transaction that writes them. **Paired**: the same merge with no id lands
+    /// and does move the section behind the survivor's, so the order that stayed
+    /// put under the spent id is the id's doing.
+    #[tokio::test]
+    async fn a_document_merge_under_a_spent_request_id_moves_no_section() {
+        use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
+        let ledger = crate::request::testing::InMemoryRequests::new();
+        let store = InMemoryMemory::booted().with_requests(ledger.clone());
+        let survivor = document_of_one_section(
+            &store,
+            "document:alpha",
+            "Fryer Manual",
+            "# Alpha head\n\nbody\n",
+        )
+        .await;
+        let folded = document_of_one_section(
+            &store,
+            "document:beta",
+            "Oven Guide",
+            "# Beta head\n\nbody\n",
+        )
+        .await;
+        let other_survivor = document_of_one_section(
+            &store,
+            "document:homer",
+            "Cellar Log",
+            "# Homer head\n\nbody\n",
+        )
+        .await;
+        let other_folded = document_of_one_section(
+            &store,
+            "document:lisa",
+            "Attic Notes",
+            "# Lisa head\n\nbody\n",
+        )
+        .await;
+        let caller = EntityId("bot:sigma".into());
+        let under_the_id = |folded: EntityId, survivor: EntityId| {
+            let store = &store;
+            let caller = caller.clone();
+            async move {
+                let scope = Scope::new(Request {
+                    bot: EntityId("bot:sigma".into()),
+                    id: RequestId::parse("merge-1").expect("a good id"),
+                    verb: "merge_entities".into(),
+                    digest: digest_of("{}"),
+                });
+                within(
+                    scope,
+                    armed(store.merge(&folded, &survivor, None, date(2026, 6, 3), &caller, None)),
+                )
+                .await
+            }
+        };
+
+        under_the_id(folded.clone(), survivor.clone())
+            .await
+            .expect("the first merge lands");
+        let before = order_of(&store, &other_folded, "# Lisa head").await;
+        let refused = under_the_id(other_folded.clone(), other_survivor.clone())
+            .await
+            .expect_err("the id is spent, so the second merge is refused");
+        assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+        assert_eq!(
+            order_of(&store, &other_folded, "# Lisa head").await,
+            before,
+            "the refused merge moved a section"
+        );
+
+        store
+            .merge(
+                &other_folded,
+                &other_survivor,
+                None,
+                date(2026, 6, 3),
+                &caller,
+                None,
+            )
+            .await
+            .expect("a merge with no id lands");
+        assert_ne!(
+            order_of(&store, &other_survivor, "# Lisa head").await,
+            before,
+            "a landed merge places the folded section behind the survivor's"
         );
     }
 
