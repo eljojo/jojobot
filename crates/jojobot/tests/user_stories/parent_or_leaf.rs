@@ -33,9 +33,20 @@ async fn a_project_says_it_has_parts_and_a_leaf_says_nothing() {
     let children = &project.json()["objects"][0]["children"];
     assert_eq!(children["count"], 3, "{}", project.raw());
     assert_eq!(children["archived"], 1, "{}", project.raw());
+    // **The answer names the call that lists the parts**, and the call is read
+    // from it: the handle in quotes is the `parent` to send. This is the positive
+    // the leaf's silence below depends on.
+    let how = children["how_to_list"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the project says how to list its parts: {}", project.raw()));
+    let parent = how
+        .split('"')
+        .nth(1)
+        .unwrap_or_else(|| panic!("how_to_list quotes the parent: {how}"));
+    assert_eq!(parent, "project:atlas", "{how}");
 
     // ── the call the answer names returns those parts ───────────────────────
-    let parts = s.call("recall", json!({"parent": "project:atlas"})).await;
+    let parts = s.call("recall", json!({"parent": parent})).await;
     let body = parts.json();
     let handles: Vec<&str> = body["objects"]
         .as_array()
