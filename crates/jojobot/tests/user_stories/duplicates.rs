@@ -457,8 +457,8 @@ async fn a_thing_is_not_folded_into_its_own_descendant_and_the_refusal_names_the
     s.add("org:springfield-town-council", "Town council").await;
     s.add_under(
         "org:springfield-town-council",
-        "org:springfield-records-office",
-        "Records office",
+        "org:springfield-cyclery",
+        "Cyclery",
     )
     .await;
 
@@ -466,20 +466,20 @@ async fn a_thing_is_not_folded_into_its_own_descendant_and_the_refusal_names_the
         .refused(
             "merge_entities",
             json!({"duplicate": "org:springfield-town-council",
-                   "survivor": "org:springfield-records-office",
+                   "survivor": "org:springfield-cyclery",
                    "reason": "one body under two names"}),
         )
         .await;
     refused.says("rename_entity");
     // Nothing moved: the office still answers to its own parent.
-    s.recall("org:springfield-records-office")
+    s.recall("org:springfield-cyclery")
         .await
         .says("\"parent\":\"org:springfield-town-council\"");
 
     // The way the refusal names, taken: the other way round.
     let merged = s
         .merge_entities(
-            "org:springfield-records-office",
+            "org:springfield-cyclery",
             "org:springfield-town-council",
             "one body under two names",
             None,

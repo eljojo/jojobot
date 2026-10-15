@@ -473,6 +473,16 @@ const ORDINARY: &[&str] = &[
     // Capital City is the state capital in The Simpsons; a trip there is a plain noun.
     "event:capital-city-trip",
     "org:contract-guild",
+    // The merge refusal cases: a parent, its child, its grandchild and a thing
+    // beside it, and four people for the order the sides are judged in.
+    "org:contract-child-one",
+    "org:contract-grandchild-one",
+    "org:contract-parent-one",
+    "org:contract-sibling-one",
+    "person:contract-refusal-alpha",
+    "person:contract-refusal-beta",
+    "person:contract-refusal-gamma",
+    "person:contract-refusal-omega",
     "person:contract-a",
     "person:contract-acting-beta",
     "person:contract-alias-rename-was",

@@ -658,12 +658,12 @@ answer: {
 ### Memory refusal `MergeIntoDescendant`
 
 ```text
-reads: 'org:child-one' sits below 'org:parent-one': 'org:parent-one' cannot be folded into its own descendant
+reads: 'org:springfield-cyclery' sits below 'org:springfield-town-council': 'org:springfield-town-council' cannot be folded into its own descendant
 answer: {
-  "attempted": "org:parent-one",
+  "attempted": "org:springfield-town-council",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was merged: 'org:child-one' sits below 'org:parent-one': 'org:parent-one' cannot be folded into its own descendant. To fold them anyway, either call capture the other way, folding 'org:child-one' into 'org:parent-one', or move 'org:child-one' out from under 'org:parent-one' first with rename_entity and its parent argument, then fold.",
+  "how_to_proceed": "Nothing was merged: 'org:springfield-cyclery' sits below 'org:springfield-town-council': 'org:springfield-town-council' cannot be folded into its own descendant. To fold them anyway, either call capture the other way, folding 'org:springfield-cyclery' into 'org:springfield-town-council', or move 'org:springfield-cyclery' out from under 'org:springfield-town-council' first with rename_entity and its parent argument, then fold.",
   "status": "blocked",
   "wrote": false
 }

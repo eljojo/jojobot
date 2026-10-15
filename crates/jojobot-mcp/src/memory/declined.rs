@@ -2497,8 +2497,8 @@ pub(crate) mod tests {
             (
                 "MergeIntoDescendant",
                 MemoryError::MergeIntoDescendant {
-                    folded: s("org:parent-one"),
-                    survivor: s("org:child-one"),
+                    folded: s("org:springfield-town-council"),
+                    survivor: s("org:springfield-cyclery"),
                 },
                 Some("change"),
             ),
