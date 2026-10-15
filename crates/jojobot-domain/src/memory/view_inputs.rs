@@ -114,8 +114,8 @@ impl Bound {
 /// **What a write of a view's keys breaks**, as the key and what it wanted, or
 /// nothing. A view's `inputs` has to read, every `$name` its `where` or its
 /// `parent` uses has to be one it declares, and a `parent` that is an input has to
-/// be a handle. **A view that declares no input is not held to this**: a `$word`
-/// in its question is a word.
+/// be a handle. **A view that declares no input is held to it too**: a `$word`
+/// in its question names an input it does not declare, and the write is refused.
 pub fn breaks_a_view(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,

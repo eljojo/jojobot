@@ -186,19 +186,6 @@ pub fn scopes_of(
     scopes
 }
 
-/// **The member of `collection` holding `number`**, if the collection is
-/// numbered and one does.
-pub fn member_numbered(
-    collection: &EntityId,
-    number: u64,
-    entities: &[Entity],
-    fields: &BTreeMap<EntityId, BTreeMap<String, String>>,
-) -> Option<EntityId> {
-    collection_of(collection, entities, fields)?
-        .holder_of(number)
-        .map(|m| m.handle.clone())
-}
-
 /// **One change a write makes to the members of a numbered collection.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {

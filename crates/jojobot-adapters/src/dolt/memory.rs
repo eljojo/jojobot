@@ -4747,25 +4747,6 @@ impl Memory for DoltMemory {
             .collect())
     }
 
-    async fn numbering_of(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Option<jojobot_domain::memory::numbered::Numbering>, MemoryError> {
-        let mut tx = self.pool.begin().await.map_err(store)?;
-        let Some((key, handle)) = self.resolve(&mut tx, entity).await? else {
-            let index = self.known(&mut tx).await?;
-            return Err(MemoryError::UnknownEntity {
-                attempted: entity.to_string(),
-                nearest: self.nearest(&mut tx, entity, &index).await?,
-            });
-        };
-        let scope = Self::collection_at(&mut tx, &handle, &key).await?;
-        tx.commit().await.map_err(store)?;
-        Ok(scope
-            .as_ref()
-            .map(jojobot_domain::memory::numbered::Numbering::from))
-    }
-
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut out = Self::former_handles_in(&mut tx).await?;
