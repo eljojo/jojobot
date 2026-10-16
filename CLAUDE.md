@@ -719,6 +719,11 @@ Shipped and live:
   dates the run from its boot, never from that first write. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
+  **What a BOT is working on is a key on the bot, `working_on`**, distinct
+  from a run's own focus: a link declared or cleared by `journal`'s
+  `working_on` argument, or filled when a session moves work its own bot owns
+  to `now`, and served only while the session that wrote it is live —
+  otherwise it reads as unknown, never as a stale value.
   **A role is claimed at the door** (`claim`) and held on a lease every write
   renews. **A role is its own object, `role:<name>`, a child of the bot that
   first claims it**, with the keys `holder`, `claimed_at` and `agent`; the flat
