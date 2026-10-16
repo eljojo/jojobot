@@ -757,8 +757,19 @@ async fn stopped_after<F: std::future::Future>(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again() {
     use jojobot_domain::memory::MemoryError;
+    use tracing::Instrument;
 
     const STOPS: usize = 30;
+    // **The span this case's calls run in.** The log sink is the process's one
+    // sink, so a sibling case that loses a commit writes the same refusal into it.
+    // A line a call of this case logs carries the span's name, and no other case's
+    // line does.
+    //
+    // The sink is installed first: a span made before any subscriber exists is
+    // cached as disabled, and then no line carries it.
+    const CASE_SPAN: &str = "commit_race_case";
+    jojobot_adapters::testing::install_store_log_sink();
+    let case = tracing::warn_span!("commit_race_case");
     let dir = std::env::temp_dir().join(format!("jojobot-requests-commit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -792,6 +803,7 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
                 .await;
                 (told, scope.was_spent())
             }
+            .instrument(case.clone())
         };
         let mut first = std::pin::pin!(capture("first"));
         let finished = stopped_after(&mut first, stop).await;
@@ -827,9 +839,11 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
         "no stopped call lost to a commit: the case never overlapped two transactions"
     );
     // The store's own account of those losses is in the log: a conflict at the
-    // commit, which the insert of a second id row would not say.
+    // commit, which the insert of a second id row would not say. Only the lines
+    // this case's own calls logged count.
     let commit_conflicts = jojobot_adapters::testing::store_log()
-        .matches("serialization failure")
+        .lines()
+        .filter(|line| line.contains(CASE_SPAN) && line.contains("serialization failure"))
         .count();
     assert!(
         commit_conflicts > 0,
