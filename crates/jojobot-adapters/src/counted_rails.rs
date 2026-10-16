@@ -43,6 +43,8 @@ pub struct Calls {
     /// Set once: the next call of this name commits in the store and then never
     /// answers.
     hang_after: std::sync::Mutex<Option<&'static str>>,
+    /// Told when a call has committed and begun to hang.
+    hung: tokio::sync::Notify,
 }
 
 impl Calls {
@@ -106,6 +108,13 @@ impl Calls {
         *self.hang_after.lock().expect("count lock") = Some(name);
     }
 
+    /// **Resolves once a call has committed and begun to hang.** A caller that
+    /// drops the call then drops it after the commit, however long the store
+    /// took to commit: a timeout would drop a slow store's write before it landed.
+    pub async fn hung(&self) {
+        self.hung.notified().await;
+    }
+
     async fn hang_if_armed(&self, name: &'static str) {
         let armed = {
             let mut slot = self.hang_after.lock().expect("count lock");
@@ -115,6 +124,7 @@ impl Calls {
             }
         };
         if armed {
+            self.hung.notify_one();
             std::future::pending::<()>().await;
         }
     }

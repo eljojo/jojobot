@@ -9,6 +9,9 @@
 //! answers, a timeout drops the future, and the battery asks every read of the
 //! image and of the store. Taking the scope off a verb makes its row fail.
 //!
+//! The same tables run over the real store (see the end of this file), where
+//! the commit is a real one and a slow write must not be cut off before it lands.
+//!
 //! Each row fills the image first. A dropped call leaves no image, so a row
 //! that started on an empty image would pass whether the scope ran or not. Each
 //! row also checks that the store changed, so a call that wrote nothing cannot
@@ -16,7 +19,6 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
 
 use jiff::Timestamp;
 use jiff::civil::date;
@@ -29,6 +31,7 @@ use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
 use jojobot_domain::memory::{
     EntityId, EntityPatch, FactPatch, Memory, NewEntity, NewFact, Override, Provenance,
 };
+use jojobot_domain::session::history::WriteStamp;
 use jojobot_domain::session::testing::InMemorySessions;
 use jojobot_domain::session::{
     CharterChange, NewEntry, NewSession, SessionId, SessionState, Sessions, Sid, WrapWindow,
@@ -45,8 +48,20 @@ use crate::fold::teachings::FoldedTeachings;
 use crate::fold_battery::Probe;
 use crate::fold_rails_battery::{MailRails, SessionRails};
 
-/// How long a case waits on a call that never answers before it drops it.
-const GIVE_UP: Duration = Duration::from_millis(50);
+/// **Drops a call once it has committed and hung.** `hung` resolves when the
+/// wrapper in front of the store has let the store commit and stopped answering.
+/// A timeout in its place would drop a slow store's write before the commit and
+/// prove nothing about the moment after it. Whether the call was dropped: false
+/// is a call that ended on its own, which no verb under test may do.
+async fn dropped_once_hung<T>(
+    hung: impl Future<Output = ()>,
+    call: impl Future<Output = T>,
+) -> bool {
+    tokio::select! {
+        _ = call => false,
+        () = hung => true,
+    }
+}
 
 fn id(handle: &str) -> EntityId {
     EntityId(handle.to_string())
@@ -95,8 +110,8 @@ impl MemoryRow<'_> {
             .expect("the image is full before the write");
         let before = memory_holds(self.probe.direct).await;
         self.counted.hang_after_next(verb);
-        let waited = tokio::time::timeout(GIVE_UP, call).await;
-        assert!(waited.is_err(), "{verb}: the call is cancelled");
+        let cancelled = dropped_once_hung(self.counted.hung(), call).await;
+        assert!(cancelled, "{verb}: the call is cancelled");
         assert_ne!(
             before,
             memory_holds(self.probe.direct).await,
@@ -146,7 +161,11 @@ fn claim(handle: &str, content: &str) -> NewFact {
 #[tokio::test]
 async fn a_memory_write_dropped_after_the_store_committed_leaves_the_image_correct() {
     jojobot_domain::memory::kinds::load_shipped();
-    let store = Arc::new(InMemoryMemory::booted());
+    every_memory_write_dropped(Arc::new(InMemoryMemory::booted())).await;
+}
+
+/// The memory table over any store: every verb dropped after it committed.
+async fn every_memory_write_dropped(store: Arc<dyn Memory>) {
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("the image loads");
@@ -355,8 +374,8 @@ impl RunRow<'_> {
             .expect("the image is full before the write");
         let before = runs_hold(self.rails.direct).await;
         self.counted.calls.hang_after_next(verb);
-        let waited = tokio::time::timeout(GIVE_UP, call).await;
-        assert!(waited.is_err(), "{verb}: the call is cancelled");
+        let cancelled = dropped_once_hung(self.counted.calls.hung(), call).await;
+        assert!(cancelled, "{verb}: the call is cancelled");
         assert_ne!(
             before,
             runs_hold(self.rails.direct).await,
@@ -384,8 +403,13 @@ fn new_run(slug: &str, sid: &str, run: &str, second: i64) -> NewSession {
 #[tokio::test]
 async fn a_run_write_dropped_after_the_store_committed_leaves_the_image_correct() {
     let store = Arc::new(InMemorySessions::new());
+    every_run_write_dropped(store.clone(), store.write_stamp()).await;
+}
+
+/// The runs table over any store, given the stamp the store reads its moment from.
+async fn every_run_write_dropped(store: Arc<dyn Sessions>, stamp: WriteStamp) {
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone(), store.write_stamp(), Clock::Real);
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
     folded.rebuild().await.expect("the image loads");
     let rails = SessionRails {
         folded: &folded,
@@ -538,8 +562,8 @@ impl BoardRow<'_> {
             .expect("the image is full before the write");
         let before = board_holds(self.rails.direct).await;
         self.counted.calls.hang_after_next(verb);
-        let waited = tokio::time::timeout(GIVE_UP, call).await;
-        assert!(waited.is_err(), "{verb}: the call is cancelled");
+        let cancelled = dropped_once_hung(self.counted.calls.hung(), call).await;
+        assert!(cancelled, "{verb}: the call is cancelled");
         assert_ne!(
             before,
             board_holds(self.rails.direct).await,
@@ -583,7 +607,11 @@ fn message(to: &str, sender: &str, body: &str, second: i64) -> NewMessage {
 #[tokio::test]
 async fn a_mail_write_dropped_after_the_store_committed_leaves_the_image_correct() {
     jojobot_domain::memory::kinds::load_shipped();
-    let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    every_mail_write_dropped(Arc::new(InMemoryMailboxes::knowing_any_owner())).await;
+}
+
+/// The mail table over any store whose owners all resolve.
+async fn every_mail_write_dropped(store: Arc<dyn Mailboxes>) {
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
     let folded = FoldedMailboxes::new(counted.clone());
     folded.rebuild().await.expect("the image loads");
@@ -674,7 +702,11 @@ async fn a_mail_write_dropped_after_the_store_committed_leaves_the_image_correct
 /// held.
 #[tokio::test]
 async fn a_teaching_write_dropped_after_the_store_committed_leaves_the_ledger_correct() {
-    let store = Arc::new(InMemoryTeachings::new());
+    every_teaching_write_dropped(Arc::new(InMemoryTeachings::new())).await;
+}
+
+/// The teaching table over any store.
+async fn every_teaching_write_dropped(store: Arc<dyn Teachings>) {
     let counted = Arc::new(CountedTeachings::new(store.clone()));
     let folded = FoldedTeachings::new(counted.clone());
     folded.rebuild().await.expect("the ledger loads");
@@ -682,8 +714,12 @@ async fn a_teaching_write_dropped_after_the_store_committed_leaves_the_ledger_co
     let other = Sid("s002".into());
 
     counted.calls.hang_after_next("first_contact");
-    let waited = tokio::time::timeout(GIVE_UP, folded.first_contact(&sid, "claims", at(1))).await;
-    assert!(waited.is_err(), "first_contact: the call is cancelled");
+    let cancelled = dropped_once_hung(
+        counted.calls.hung(),
+        folded.first_contact(&sid, "claims", at(1)),
+    )
+    .await;
+    assert!(cancelled, "first_contact: the call is cancelled");
     assert_eq!(
         store.taught().await.expect("the store answers"),
         Some(vec![(sid.clone(), "claims".to_string())]),
@@ -717,8 +753,8 @@ async fn a_teaching_write_dropped_after_the_store_committed_leaves_the_ledger_co
         "a second session is a first contact"
     );
     counted.calls.hang_after_next("forget");
-    let waited = tokio::time::timeout(GIVE_UP, folded.forget(&sid)).await;
-    assert!(waited.is_err(), "forget: the call is cancelled");
+    let cancelled = dropped_once_hung(counted.calls.hung(), folded.forget(&sid)).await;
+    assert!(cancelled, "forget: the call is cancelled");
     assert_eq!(
         store.taught().await.expect("the store answers"),
         Some(vec![(other.clone(), "claims".to_string())]),
@@ -731,4 +767,98 @@ async fn a_teaching_write_dropped_after_the_store_committed_leaves_the_ledger_co
             .expect("answers"),
         "forget: the store forgot the session, so its next contact is a first one"
     );
+}
+
+// ── over the real store ──────────────────────────────────────────────────────
+
+/// **The same tables, over the store production runs.** The wrapper commits in
+/// the real store and then hangs, so the drop falls after a real commit. The
+/// guard sits above the store, and these cases hold that to the store's own
+/// answers rather than to a fake's.
+mod over_the_real_store {
+    use async_trait::async_trait;
+    use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
+
+    use super::*;
+    use crate::dolt::mailboxes::DoltMailboxes;
+    use crate::dolt::memory::DoltMemory;
+    use crate::dolt::sessions::DoltSessions;
+    use crate::dolt::teaching::DoltTeachings;
+    use crate::dolt::tests::{Scratch, free_port};
+    use crate::dolt::{Dolt, migrate};
+    use crate::testing::migrated_database;
+
+    /// Every well-formed owner resolves: the table is about the board, not about
+    /// who may own a box.
+    struct AnyOwner;
+
+    #[async_trait]
+    impl OwnerIndex for AnyOwner {
+        async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
+            Ok(OwnerLookup::Known)
+        }
+    }
+
+    /// A store of its own, migrated and seeded with the shipped kinds.
+    async fn database(server: &Dolt, what: &str) -> sqlx::MySqlPool {
+        let pool = migrated_database(server, what)
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+            .await
+            .expect("the kinds are seeded");
+        pool
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_memory_write_dropped_after_the_real_store_committed_leaves_the_image_correct() {
+        let scratch = Scratch::new("dropped-memory");
+        let mut server = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = database(&server, "dropped_memory").await;
+        jojobot_domain::memory::kinds::load_shipped();
+        every_memory_write_dropped(Arc::new(DoltMemory::open(pool))).await;
+        server.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_run_write_dropped_after_the_real_store_committed_leaves_the_image_correct() {
+        let scratch = Scratch::new("dropped-runs");
+        let mut server = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = database(&server, "dropped_runs").await;
+        let stamp = WriteStamp::new();
+        every_run_write_dropped(
+            Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone())),
+            stamp,
+        )
+        .await;
+        server.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_mail_write_dropped_after_the_real_store_committed_leaves_the_image_correct() {
+        let scratch = Scratch::new("dropped-mail");
+        let mut server = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = database(&server, "dropped_mail").await;
+        jojobot_domain::memory::kinds::load_shipped();
+        every_mail_write_dropped(Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)))).await;
+        server.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_teaching_write_dropped_after_the_real_store_committed_leaves_the_ledger_correct() {
+        let scratch = Scratch::new("dropped-teachings");
+        let mut server = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = database(&server, "dropped_teachings").await;
+        every_teaching_write_dropped(Arc::new(DoltTeachings::open(pool))).await;
+        server.stop().await;
+    }
 }
