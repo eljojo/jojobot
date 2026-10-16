@@ -1275,7 +1275,13 @@ impl Sessions for DoltSessions {
         let total = total.unwrap_or(0);
         self.keep_change(&mut tx, id, Change::ServedReset(total.max(0) as u64))
             .await?;
-        tx.commit().await.map_err(store)?;
+        // **A part of a write that commits in several** (a mark, then the restart
+        // of the total), so the id's row for this part goes in with it.
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "reset": total.max(0) }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(())
     }
 

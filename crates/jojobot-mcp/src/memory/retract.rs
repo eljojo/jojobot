@@ -862,6 +862,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,

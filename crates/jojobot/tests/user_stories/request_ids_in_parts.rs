@@ -894,3 +894,45 @@ async fn a_beat_whose_working_on_failed_is_finished_by_sending_it_again() {
     assert_eq!(working_on().await, "work:sigma");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_compaction_report_whose_total_failed_is_sent_again_and_marks_the_run_once() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let run = story.as_bot("bot:gamma").await;
+    run.journal("opened the run").await;
+    let handle = format!("session:{}", run.run());
+    let marks = || async {
+        run.call("recall", json!({"subject": &handle, "prose": true}))
+            .await
+            .json()["objects"][0]["prose"]
+            .as_str()
+            .unwrap_or_default()
+            .matches("reported that its context was compacted")
+            .count()
+    };
+    let args = json!({ "compacted": true, "brief": true, "request_id": "compaction-1" });
+
+    // ── the mark is written, and the total does not restart ─────────────────
+    story.fails_the_next_commit_of("total");
+    let first = run.refused("start_here", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    assert_eq!(marks().await, 1, "the mark landed");
+
+    // ── the same call again restarts it, and writes no second mark ──────────
+    let finished = run.call("start_here", args.clone()).await.json();
+    assert!(
+        finished["orientation"]
+            .as_str()
+            .is_some_and(|essay| !essay.is_empty()),
+        "{finished}"
+    );
+    assert_eq!(marks().await, 1, "the mark was written once");
+
+    // ── a third send answers from the finished report ───────────────────────
+    let third = run.call("start_here", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert_eq!(marks().await, 1);
+    story.finish().await;
+}

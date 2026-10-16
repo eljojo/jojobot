@@ -637,6 +637,7 @@ mod tests {
 
     fn boot_with_code(bot: &str, challenge: &str, code: &str) -> OrientArgs {
         OrientArgs {
+            request_id: None,
             compacted: None,
             claim: None,
             timezone: None,

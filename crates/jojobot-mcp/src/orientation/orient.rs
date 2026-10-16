@@ -1298,6 +1298,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1346,6 +1347,7 @@ mod tests {
         let booted = json_of(
             &blind
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1388,6 +1390,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some(role.into()),
                     timezone: None,
@@ -1504,6 +1507,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1628,6 +1632,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1726,6 +1731,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1815,6 +1821,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1940,6 +1947,7 @@ mod tests {
 
         let result = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -2004,6 +2012,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -2062,6 +2071,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -2115,6 +2125,7 @@ mod tests {
             let booted = json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        request_id: None,
                         compacted: None,
                         claim: None,
                         timezone: None,
@@ -2224,6 +2235,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -2837,6 +2849,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -2914,6 +2927,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -2988,6 +3002,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3055,6 +3070,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3236,6 +3252,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3348,6 +3365,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3499,6 +3517,7 @@ mod skills_are_indexed_not_shipped {
         let booted = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3563,6 +3582,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3605,6 +3625,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -3653,6 +3674,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,

@@ -113,6 +113,16 @@ pub struct OrientArgs {
     /// bot the `sid` belongs to.
     #[serde(default)]
     pub(crate) compacted: Option<bool>,
+    /// **A name of your choosing for a compaction report**, up to 128 bytes, sent
+    /// with `compacted: true` and your `sid`. The report is made of parts, the
+    /// mark in the chronology and the restart of the running total: if an answer
+    /// is lost or a part fails, send the same call again with the same
+    /// `request_id` and the mark is not written twice. A boot takes none.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
     /// **The day this run is in**, as `YYYY-MM-DD`, when it is not the day the
     /// server is having.
     ///
@@ -550,6 +560,7 @@ mod tests {
         // is reached at all.
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -581,6 +592,7 @@ mod tests {
         // bot rather than the resume.
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -628,6 +640,7 @@ mod tests {
         let fetched = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -688,6 +701,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        request_id: None,
                         compacted: None,
                         claim: None,
                         timezone: None,
@@ -771,6 +785,7 @@ mod tests {
 
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -858,6 +873,7 @@ mod tests {
         let full = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -882,6 +898,7 @@ mod tests {
         let brief = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -955,6 +972,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        request_id: None,
                         compacted: None,
                         claim: None,
                         timezone: None,
@@ -976,6 +994,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        request_id: None,
                         compacted: None,
                         claim: None,
                         timezone: None,
@@ -1031,6 +1050,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1062,6 +1082,7 @@ mod tests {
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::booted()))
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -1099,6 +1120,7 @@ mod tests {
         let jojobot = handler();
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -1150,6 +1172,7 @@ mod tests {
 
         let err = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,
@@ -1195,6 +1218,7 @@ mod tests {
         let near = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1221,6 +1245,7 @@ mod tests {
         let stranger = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1297,6 +1322,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1332,6 +1358,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1368,6 +1395,7 @@ mod tests {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         let args = |sid: Option<String>, claim: Option<&str>, resume: Option<&str>| OrientArgs {
+            request_id: None,
             compacted: None,
             claim: claim.map(str::to_string),
             timezone: None,
@@ -1457,6 +1485,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1482,6 +1511,7 @@ mod tests {
         let second = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1544,6 +1574,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1567,6 +1598,7 @@ mod tests {
         let renewed = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1595,6 +1627,7 @@ mod tests {
         let unrelated = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("reviewer-dispatch".into()),
                     timezone: None,
@@ -1665,6 +1698,7 @@ mod tests {
         make_bot(&t0, "gamma").await;
         let claimed = json_of(
             &t0.start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: Some("dev-dispatch".into()),
                 timezone: None,
@@ -1696,6 +1730,7 @@ mod tests {
         let rival = json_of(
             &at(3000)
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
@@ -1777,6 +1812,7 @@ mod tests {
             }
         }
         let boot = |bot: &str, claim: Option<&str>| OrientArgs {
+            request_id: None,
             compacted: None,
             claim: claim.map(str::to_string),
             timezone: None,
@@ -1914,6 +1950,7 @@ mod tests {
         let fetched = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1961,6 +1998,7 @@ mod tests {
         let fetched = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -1999,6 +2037,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    request_id: None,
                     compacted: None,
                     claim: None,
                     timezone: None,
@@ -2035,6 +2074,7 @@ mod tests {
 
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 timezone: None,

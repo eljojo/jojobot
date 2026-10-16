@@ -512,6 +512,7 @@ impl Sessions for InMemorySessions {
                 attempted: id.to_string(),
             }
         })?;
+        self.spend_request(|| format!("{{\"reset\":{}}}", sessions[at].served_chars))?;
         let total = std::mem::take(&mut sessions[at].served_chars);
         self.record(id, Change::ServedReset(total));
         Ok(())

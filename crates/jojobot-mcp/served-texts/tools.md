@@ -5293,6 +5293,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "request_id": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "resume": {
         "default": null,
         "type": [
@@ -5455,6 +5462,16 @@ bot the `sid` belongs to.
 With it, and only with it, the answer to that offer carries what is new.
 Without it, or with a code for another bot or one already used, the answer
 is the full boot.
+```
+
+#### `start_here` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for a compaction report**, up to 128 bytes, sent
+with `compacted: true` and your `sid`. The report is made of parts, the
+mark in the chronology and the restart of the running total: if an answer
+is lost or a part fails, send the same call again with the same
+`request_id` and the mark is not written twice. A boot takes none.
 ```
 
 #### `start_here` — argument `/inputSchema.resume`

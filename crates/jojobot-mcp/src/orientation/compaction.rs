@@ -146,32 +146,37 @@ impl Jojobot {
             self.clock().now(),
             caller.day,
         );
-        if let Err(e) = self.sessions.append(&card, mark).await {
+        // **The report is two parts under a `request_id`**: the mark, then the
+        // restart of the running total. A resend finds the mark written and does
+        // not write a second.
+        use jojobot_domain::request::{Part, part};
+        if let Part::Ran(Err(e)) = part("mark", None, self.sessions.append(&card, mark)).await {
             tracing::warn!(error = %e, %run, "a compaction report could not write its mark");
             return Err(handle_declined(
                 "",
-                format!(
+                WayForward::retry(format!(
                     "The mark could not be written, so the report is not complete: run {run} \
                      was made to forget what it was taught, and nothing else moved. Send the \
                      same call again."
-                ),
+                )),
             ));
         }
         // **The running total restarts after the mark**, the last step that can
         // fail. The answer to this call is counted by `finish` after this
         // returns, so the new total is what the run is handed from here on,
         // this answer included.
-        if let Err(e) = self.sessions.reset_served(&card).await {
+        if let Part::Ran(Err(e)) = part("total", None, self.sessions.reset_served(&card)).await {
             tracing::warn!(error = %e, %run, "a compaction report could not restart the running total");
             return Err(handle_declined(
                 "",
-                format!(
+                WayForward::retry(format!(
                     "The running total of what run {run} has been handed could not be \
                      restarted, so the report is not complete. Send the same call again."
-                ),
+                )),
             ));
         }
         self.registry.forget_shown(run);
+        jojobot_domain::request::finished();
         Ok(caller)
     }
 }

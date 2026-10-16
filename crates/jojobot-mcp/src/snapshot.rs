@@ -225,6 +225,7 @@ async fn boot(doc: &mut Doc, label: &str, bot: Option<&str>) {
     }
     let result = jojobot
         .start_here(Parameters(crate::orientation::start_here::OrientArgs {
+            request_id: None,
             compacted: None,
             claim: None,
             timezone: Some("UTC".into()),

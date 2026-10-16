@@ -769,6 +769,7 @@ async fn a_read_answers_in_the_day_the_run_states() {
     let acting = sid_of(&json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 bot: Some("otto".into()),
@@ -9902,6 +9903,7 @@ async fn run_on(jojobot: &Jojobot, day: &str) -> String {
     sid_of(&json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                request_id: None,
                 compacted: None,
                 claim: None,
                 bot: Some("otto".into()),
