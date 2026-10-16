@@ -90,11 +90,9 @@ impl Jojobot {
     #[tool(
         description = "Edit what an entity is called and where it came from (name/aliases/source/\
                        crm), in place. This verb does not edit the handle — its slug, kind or \
-                       parent — use `rename_entity` for that. THIS VERB \
-                       DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can \
-                       be edited or reassigned — it belongs to the bot it is named for and opens \
-                       with it, in add_entity (the operator's opens at the first post to them), \
-                       so there is nothing here to point at a different one. Any change to what it is CALLED — name or aliases — faces the same \
+                       parent — use `rename_entity` for that. It does \
+                       not touch mailboxes: a box belongs to the bot it is named for and opens \
+                       with it, in add_entity (the operator's, at the first post to them). Any change to what it is CALLED — name or aliases — faces the same \
                        check a creation does, because an alias is a name: it can come back \
                        status: blocked with candidates, and the override_token that refusal \
                        carries is how you confirm a genuinely shared name — a token lifts the one \
@@ -106,7 +104,13 @@ impl Jojobot {
                        only `sets` leaves the entity itself alone, and a key that needs the \
                        operator's word is written with capture. A rule's `starred` mark stays \
                        on its claim, so it is not set here: update_fact on the rule's address \
-                       with fields {starred: \"true\"} or {starred: \"false\"} stars or unstars it. A handle that names \
+                       with fields {starred: \"true\"} or {starred: \"false\"} stars or unstars it. On a record the \
+                       build supplies (a shipped view), `name` and `aliases` are yours, laid over \
+                       the build's: once you name it, the shipped name no longer answers (it \
+                       returns only as an alias you list), so a new thing may take it; your \
+                       aliases ADD to the build's and `[]` clears only yours; an upgrade leaves \
+                       yours on top. `source` and `crm` stay the build's, refused with no \
+                       token. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
                        be read back whole in one answer are refused with nothing written. The \
                        receipt's `changed` lists what this call changed, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
@@ -764,9 +768,11 @@ mod tests {
     }
 
     /// 🚨 **A refusal on a record the build ships never offers a token, and names
-    /// the write that works.** The record is the build's own, so no token lifts
-    /// the refusal. One that carried a token sent the caller round a loop: the
-    /// resend was refused again, with a new token, for ever.
+    /// the write that works.** The source and crm are the build's own, so no token
+    /// lifts the refusal. One that carried a token sent the caller round a loop:
+    /// the resend was refused again, with a new token, for ever. (The name and
+    /// aliases are the operator's to set: see
+    /// `the_operator_names_a_shipped_record_and_it_reads_and_searches_by_both`.)
     ///
     /// **Three things at once.** Every field of the edit that the build keeps is
     /// refused with no token; a resend with a token the caller invented, which is
@@ -775,25 +781,12 @@ mod tests {
     /// way forward exists. Without the last, a refusal that named nothing real
     /// would pass the first two.
     #[tokio::test]
-    async fn a_shipped_records_relabel_refusal_offers_no_token_and_names_a_write_that_lands() {
+    async fn a_shipped_records_source_and_crm_refusal_offers_no_token_and_names_a_write_that_lands()
+    {
         let jojobot = handler_shipped();
         let sid = writing_as(&jojobot);
 
         let calls = [
-            (
-                "name",
-                UpdateEntityArgs {
-                    name: Some("Mine".into()),
-                    ..edit("view:loops")
-                },
-            ),
-            (
-                "aliases",
-                UpdateEntityArgs {
-                    aliases: Some(vec!["rounds".into()]),
-                    ..edit("view:loops")
-                },
-            ),
             (
                 "source",
                 UpdateEntityArgs {
@@ -811,7 +804,7 @@ mod tests {
             (
                 "a token nobody minted",
                 UpdateEntityArgs {
-                    name: Some("Mine".into()),
+                    source: Some("me".into()),
                     override_token: Some("0123456789abcdef".into()),
                     ..edit("view:loops")
                 },
@@ -926,7 +919,7 @@ mod tests {
         let whole = json_of(
             &jojobot
                 .update_entity(Parameters(UpdateEntityArgs {
-                    name: Some("Mine".into()),
+                    source: Some("me".into()),
                     sets: Some([("other".to_string(), "x".to_string())].into()),
                     ..edit("view:loops")
                 }))
@@ -946,6 +939,110 @@ mod tests {
         assert!(
             after["objects"][0]["fields"]["other"].is_null(),
             "a refused edit writes none of its sets: {after}",
+        );
+    }
+
+    /// **The operator names a shipped record and gives it another name, and a
+    /// recall, a search and the creation screen all answer to both.** The edit goes
+    /// through the verb a caller uses, over the real index.
+    ///
+    /// Paired three ways: the record read before the edit is the build's; a name
+    /// another thing holds is refused rather than taken; and the build's source
+    /// is unmoved by the edit that moved the name.
+    #[tokio::test]
+    async fn the_operator_names_a_shipped_record_and_it_reads_and_searches_by_both() {
+        let jojobot = crate::harness::handler_shipped_indexed();
+        let sid = writing_as(&jojobot);
+        let recall = |sid: String| {
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .recall(Parameters(RecallArgs {
+                            sid: Some(sid),
+                            ..recall_args("view:loops")
+                        }))
+                        .await
+                        .expect("recall answers"),
+                )
+            }
+        };
+        let before = recall(sid.clone()).await;
+        assert_eq!(before["objects"][0]["name"], "The Loops", "{before}");
+
+        let named = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    name: Some("Weekly rounds".into()),
+                    aliases: Some(vec!["Orbit".into()]),
+                    ..edit("view:loops")
+                }))
+                .await
+                .expect("a name on a shipped record answers"),
+        );
+        assert_ne!(named["status"], "blocked", "{named}");
+        assert_eq!(named["name"], "Weekly rounds", "{named}");
+
+        let after = recall(sid.clone()).await;
+        let loops = &after["objects"][0];
+        assert_eq!(loops["name"], "Weekly rounds", "{after}");
+        assert_eq!(
+            loops["source"], "jojobot",
+            "the build keeps the source: {after}"
+        );
+        assert!(
+            loops["fields"].get("overlay_name").is_none(),
+            "the overlay's keys are not shown as fields: {after}"
+        );
+
+        for word in ["Orbit", "Weekly"] {
+            let found = json_of(
+                &jojobot
+                    .search(Parameters(SearchArgs {
+                        query: Some(word.into()),
+                        sid: Some(sid.clone()),
+                        ..search_args()
+                    }))
+                    .await
+                    .expect("search answers"),
+            );
+            // The RECORD is the hit, not only the claim that carries the words:
+            // the index took the operator's name from the record's own document.
+            assert!(
+                found["results"].as_array().is_some_and(|hits| hits
+                    .iter()
+                    .any(|hit| hit["hit"] == "entity" && hit["id"] == "view:loops")),
+                "a search for {word} finds the record itself: {found}"
+            );
+        }
+
+        let created = json_of(
+            &jojobot
+                .add_entity(Parameters(add_args("view", "orbit", "Orbit")))
+                .await
+                .expect("add answers"),
+        );
+        assert_eq!(
+            created["status"], "blocked",
+            "a new thing under the operator's alias is refused: {created}"
+        );
+
+        jojobot
+            .add_entity(Parameters(add_args("thing", "red-bike", "Red Bike")))
+            .await
+            .expect("add ok");
+        let taken = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    name: Some("Weekly rounds".into()),
+                    ..edit("thing:red-bike")
+                }))
+                .await
+                .expect("answers"),
+        );
+        assert_eq!(
+            taken["status"], "blocked",
+            "another thing cannot take the operator's name: {taken}"
         );
     }
 }

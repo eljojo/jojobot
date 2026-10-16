@@ -1507,7 +1507,7 @@ impl DoltMemory {
     /// not exist, over a store holding its rows.
     async fn known(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
         let rows = self.index(tx).await?;
-        Ok(self.extend_with_supplied(rows))
+        self.extend_with_supplied(tx, rows).await
     }
 
     /// **[`guard::decide_existing`], without the listing a hit does not need.**
@@ -2297,13 +2297,23 @@ impl DoltMemory {
     /// find the one row a write targets, never a supplied record that is not
     /// one — can still build the wider set to screen against, without a second
     /// query for the same rows.
-    fn extend_with_supplied(&self, mut rows: Vec<Entity>) -> Vec<Entity> {
+    ///
+    /// **The operator's name and aliases are laid over each supplied record**
+    /// (rule 508), by the function every reader composes them with, so the
+    /// near-miss screen sees the names a read shows. A stored row wins and is
+    /// left as it is.
+    async fn extend_with_supplied(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        mut rows: Vec<Entity>,
+    ) -> Result<Vec<Entity>, MemoryError> {
         for (entity, _) in self.supplied.records() {
             if !rows.iter().any(|held| held.id == entity.id) {
-                rows.push(entity.clone());
+                let held = self.held_by(tx, &entity.id).await?;
+                rows.push(jojobot_domain::memory::owned::overlaid(entity, &held));
             }
         }
-        rows
+        Ok(rows)
     }
 
     async fn index(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
@@ -2733,7 +2743,7 @@ impl DoltMemory {
         // **The screen alone reads the wider set** — rows plus what the build
         // supplies — so a rename that collides with a supplied record is
         // caught exactly as one against a stored record is.
-        let known = self.extend_with_supplied(rows);
+        let known = self.extend_with_supplied(tx, rows).await?;
         // Changing what an entity is CALLED is an entity-touching write, so it
         // faces the same gate — display name and aliases alike.
         if let guard::Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &known) {
@@ -5272,7 +5282,7 @@ impl Memory for DoltMemory {
         // `update_entity` reads off: a rename mutates a stored row, and a
         // build-shipped record has none to mutate.
         let rows = self.index(&mut tx).await?;
-        let known = self.extend_with_supplied(rows.clone());
+        let known = self.extend_with_supplied(&mut tx, rows.clone()).await?;
         let Some(entity) = rows.iter().find(|e| &e.id == from).cloned() else {
             // **A supplied record is real and still not a row** — checked
             // before `resolve_handle`, whose own direct-match branch reads
@@ -6850,7 +6860,7 @@ impl Memory for DoltMemory {
                 let nearest = if supplied {
                     Vec::new()
                 } else {
-                    let known = self.extend_with_supplied(index.clone());
+                    let known = self.extend_with_supplied(&mut tx, index.clone()).await?;
                     self.nearest(&mut tx, &side, &known).await?
                 };
                 return Err(jojobot_domain::memory::merge::missing_side(

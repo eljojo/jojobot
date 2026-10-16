@@ -11061,3 +11061,104 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_num
 
     store.stop().await;
 }
+
+/// **The operator's name and aliases on a supplied record, over the real store.**
+/// The case the fake runs, run here: every read shows the name, the near-miss
+/// screen on a new thing and on an edit of a stored one sees the alias, and the
+/// store holds no row at the supplied handle.
+#[tokio::test]
+async fn the_operators_name_on_a_supplied_record_reads_and_screens_over_the_real_store() {
+    use jojobot_adapters::provisioned::overlay_contract;
+
+    let scratch = Scratch::new("overlay");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let supplied = overlay_contract::supplied();
+    let bare = DoltMemory::open(pool.clone()).knowing(supplied.clone());
+    overlay_contract::the_operators_own_view(&bare).await;
+    let served = Provisioned::new(bare, supplied);
+
+    overlay_contract::the_operator_names_a_supplied_record_and_every_read_shows_it(&served).await;
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity WHERE id = 'view:loops'")
+        .fetch_one(&pool)
+        .await
+        .expect("the entity table reads");
+    assert_eq!(rows, 0, "the overlay is keys on the handle, never a row");
+
+    store.stop().await;
+}
+
+/// **An upgrade that changes the shipped name leaves the operator's name on top,
+/// and a record they never named takes the new one.** One real store, two builds:
+/// the first ships two views and the operator names one; the second ships the
+/// same two under other names. Without the second half a layer that froze every
+/// name at the first build would pass the first.
+#[tokio::test]
+async fn an_upgrade_that_renames_a_shipped_record_leaves_the_operators_name_on_top() {
+    use jojobot_adapters::provisioned::overlay_contract::{shipped_record_as, supplied};
+    use jojobot_domain::memory::EntityPatch;
+
+    let scratch = Scratch::new("overlay-upgrade");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_upgrade")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let first_build = supplied();
+    let before = Provisioned::new(
+        DoltMemory::open(pool.clone()).knowing(first_build.clone()),
+        first_build,
+    );
+    let named = EntityId("view:loops".into());
+    before
+        .update_entity(
+            &named,
+            EntityPatch {
+                name: Some("Weekly rounds".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the operator names it")
+        .written()
+        .expect("it lands");
+
+    // The second build: the same handles, other shipped names.
+    let second_build = Provisions::new(vec![
+        shipped_record_as("loops", "Loop board"),
+        shipped_record_as("ready", "Ready board"),
+    ]);
+    let after = Provisioned::new(
+        DoltMemory::open(pool.clone()).knowing(second_build.clone()),
+        second_build,
+    );
+    let listed = after.list_entities(None).await.expect("lists");
+    let name_of = |handle: &str| {
+        listed
+            .iter()
+            .find(|entity| entity.id.as_str() == handle)
+            .map(|entity| entity.name.clone())
+    };
+    assert_eq!(
+        name_of("view:loops").as_deref(),
+        Some("Weekly rounds"),
+        "the operator's name stays on top of the new build"
+    );
+    assert_eq!(
+        name_of("view:ready").as_deref(),
+        Some("Ready board"),
+        "a record the operator never named takes the new build's name"
+    );
+
+    store.stop().await;
+}

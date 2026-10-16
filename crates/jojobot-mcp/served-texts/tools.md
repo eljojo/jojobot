@@ -5391,12 +5391,14 @@ did.
 ```text
 Edit what an entity is called and where it came from (name/aliases/source/crm), in place.
 This verb does not edit the handle — its slug, kind or parent — use `rename_entity` for that.
-THIS VERB DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can be edited or reassigned — it belongs to the bot it is named for and opens with it, in add_entity (the operator's opens at the first post to them), so there is nothing here to point at a different one.
+It does not touch mailboxes: a box belongs to the bot it is named for and opens with it, in add_entity (the operator's, at the first post to them).
 Any change to what it is CALLED — name or aliases — faces the same check a creation does, because an alias is a name: it can come back status: blocked with candidates, and the override_token that refusal carries is how you confirm a genuinely shared name — a token lifts the one refusal that minted it and no other.
 A refusal on the name alone also needs override_reason, shown beside the name.
 Passing `aliases` REPLACES the whole set ([] clears it); source and crm edits are never questioned.
 `sets` sets keys on the thing in the same call, through a claim of inference; a call that sends only `sets` leaves the entity itself alone, and a key that needs the operator's word is written with capture.
 A rule's `starred` mark stays on its claim, so it is not set here: update_fact on the rule's address with fields {starred: "true"} or {starred: "false"} stars or unstars it.
+On a record the build supplies (a shipped view), `name` and `aliases` are yours, laid over the build's: once you name it, the shipped name no longer answers (it returns only as an alias you list), so a new thing may take it; your aliases ADD to the build's and `[]` clears only yours; an upgrade leaves yours on top.
+`source` and `crm` stay the build's, refused with no token.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
 The receipt's `changed` lists what this call changed, or says nothing.

@@ -36,17 +36,24 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use jiff::civil::Date;
 
-use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
+use jojobot_domain::clock::Clock;
+use jojobot_domain::memory::owned::{
+    Provisions, extended, guard_extension, is_overlay_key, overlaid, overlay_fields,
+    without_overlay,
+};
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge,
-    NewEntity, NewFact, Retraction, WriteSummary, guard, search, types,
+    NewEntity, NewFact, Retraction, WriteSummary, guard, screen_entity_patch, search, types,
+    validate_aliases, validate_field,
 };
 
 /// A store, plus what this build supplies over it.
 pub struct Provisioned<M> {
     inner: M,
     provisions: Provisions,
+    /// The clock the day of an overlay's claim is read from.
+    clock: Clock,
 }
 
 impl<M: Memory + Send + Sync> Provisioned<M> {
@@ -55,7 +62,114 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
     /// **An empty set is the ordinary case for every row**, so a store with no
     /// provisions over it behaves exactly as the store does.
     pub fn new(inner: M, provisions: Provisions) -> Self {
-        Provisioned { inner, provisions }
+        Provisioned {
+            inner,
+            provisions,
+            clock: Clock::default(),
+        }
+    }
+
+    /// **The layer, told which clock it dates the claims it writes with.** The
+    /// real one unless the server acts out a day, and the same clock the store
+    /// beneath stamps with.
+    #[must_use]
+    pub fn on_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// **The one place a supplied record meets the operator's name and aliases**
+    /// (rule 498): the record as the build ships it, with what the store holds
+    /// under the overlay's keys laid over it. Every read that answers for a
+    /// supplied record and every edit that screens against one asks this.
+    async fn with_overlay(&self, shipped: &Entity) -> Result<Entity, MemoryError> {
+        let held = self.inner.fields(&shipped.id).await?;
+        Ok(overlaid(shipped, &held))
+    }
+
+    /// **The refusal of an overlay key sent as an ordinary field.** The keys are
+    /// written by the update that sets a name or aliases, which screens them; a
+    /// capture that set them would skip the screen.
+    fn refuse_overlay_keys<'a>(
+        keys: impl IntoIterator<Item = &'a String>,
+    ) -> Result<(), MemoryError> {
+        match keys.into_iter().find(|key| is_overlay_key(key)) {
+            Some(key) => Err(MemoryError::InvalidFact(format!(
+                "'{key}' is a key jojobot keeps a supplied record's name and aliases under, and a \
+                 write cannot set it: edit the name or the aliases with update_entity, which \
+                 screens them like any other name"
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// **What a name or aliases edit of a supplied record comes to, once it has
+    /// faced the checks and the screen a rename of a stored row faces.** `Ok` is
+    /// the fields to store under the overlay's keys and the record as it will
+    /// read afterwards; `Err` is the candidates the screen found, and nothing is
+    /// written. The record is screened against everything that answers to a name,
+    /// the other supplied records with their operator's names included.
+    async fn screened_overlay(
+        &self,
+        shipped: &Entity,
+        patch: &EntityPatch,
+    ) -> Result<Result<(BTreeMap<String, String>, Entity), Vec<guard::EntityMatch>>, MemoryError>
+    {
+        if let Some(name) = &patch.name {
+            validate_field("name", name)?;
+        }
+        if let Some(aliases) = &patch.aliases {
+            validate_aliases(aliases)?;
+        }
+        let current = self.with_overlay(shipped).await?;
+        let known = self.list_entities(None).await?;
+        if let guard::Decision::Block(candidates) = screen_entity_patch(&current, patch, &known) {
+            return Ok(Err(candidates));
+        }
+        let new = overlay_fields(patch.name.as_deref(), patch.aliases.as_deref());
+        let mut merged = self.inner.fields(&shipped.id).await?;
+        merged.extend(new.clone());
+        Ok(Ok((new, overlaid(shipped, &merged))))
+    }
+
+    /// **The claim that carries an overlay.** It says what was set and holds the
+    /// overlay's keys in its setting bag, so retracting it takes the operator's
+    /// name off the record.
+    fn overlay_claim(
+        &self,
+        handle: &EntityId,
+        patch: &EntityPatch,
+        new: &BTreeMap<String, String>,
+    ) -> NewFact {
+        let what = match (patch.name.is_some(), patch.aliases.is_some()) {
+            (true, true) => "name and aliases",
+            (true, false) => "name",
+            _ => "aliases",
+        };
+        let mut fact = NewFact::about(
+            handle.clone(),
+            format!("Set the {what} of this record."),
+            self.clock.today_in(&jiff::tz::TimeZone::UTC),
+        );
+        fact.session = patch.session.clone();
+        fact.fields = new.clone();
+        fact.sets = new.keys().cloned().collect();
+        fact
+    }
+
+    /// The answer that names the supplied record a refused edit collided with.
+    fn blocked_by<T>(attempted: &EntityId, supplied: &Entity) -> Guarded<T> {
+        Guarded::Blocked {
+            attempted: attempted.clone(),
+            candidates: vec![guard::EntityMatch {
+                handle: supplied.id.clone(),
+                kind: supplied.kind,
+                name: supplied.name.clone(),
+                source: supplied.source.clone(),
+                reason: guard::MatchReason::ExactHandle,
+                told_apart_by: None,
+            }],
+        }
     }
 
     /// Resolve a scanned document's prose, if the build supplies any for it.
@@ -134,9 +248,10 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
         &self,
         entity: &EntityId,
     ) -> Result<Option<search::DocScan>, MemoryError> {
-        let Some((held, _)) = self.provisions.record_for(entity) else {
+        let Some((shipped, _)) = self.provisions.record_for(entity) else {
             return Ok(None);
         };
+        let held = self.with_overlay(shipped).await?;
         Ok(Some(search::DocScan {
             doc_id: held.id.to_string(),
             title: held.name.clone(),
@@ -145,7 +260,7 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
                 .prose_for(entity)
                 .unwrap_or_default()
                 .to_string(),
-            entity: Some(held.clone()),
+            entity: Some(held),
             facts: self.inner.recall(entity).await?,
             fields: self.fields(entity).await?,
             owner: None,
@@ -284,58 +399,65 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                 }],
             });
         }
+        Self::refuse_overlay_keys(first.fields.keys())?;
         self.inner.add_entity_with_first_claim(new, first).await
     }
 
-    /// **A supplied record is not edited by the edit that writes a claim**, for the
-    /// reason `update_entity` refuses it: the claim must not be a way past the
-    /// screen.
+    /// **A supplied record's name and aliases are the operator's to set, in the
+    /// edit that writes a claim as in the edit that does not.**
     ///
     /// **An edit that names nothing of the record itself is a capture.** What the
     /// call sets is written on top of what the build ships, exactly as `capture`
-    /// writes it, and the record answered with is the supplied one. A name,
-    /// aliases, source or crm in the same call refuses the whole call, so the
-    /// claim is not written either.
+    /// writes it, and the record answered with is the supplied one with the
+    /// operator's name laid over it. **A name or aliases in the call are screened
+    /// like a rename, and stored in the same claim as the rest of the call**, so
+    /// the pair is whole or not at all. A source or crm refuses the whole call,
+    /// so the claim is not written either.
     async fn update_entity_with_claim(
         &self,
         handle: &EntityId,
         patch: EntityPatch,
-        claim: NewFact,
+        mut claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        Self::refuse_overlay_keys(claim.fields.keys())?;
         if let Some((supplied, _)) = self.supplied_only(handle).await? {
-            let edits_the_record = patch.name.is_some()
-                || patch.aliases.is_some()
-                || patch.source.is_some()
-                || patch.crm.is_some();
-            if !edits_the_record {
-                // The same check the store makes before it writes the pair.
-                if claim.subject != *handle {
-                    return Err(MemoryError::InvalidFact(format!(
-                        "the claim is about {}, and the thing being edited is {handle}",
-                        claim.subject
-                    )));
-                }
-                return Ok(match self.inner.capture(claim).await? {
-                    Guarded::Written(fact) => Guarded::Written((supplied.clone(), fact)),
-                    Guarded::Blocked {
-                        attempted,
-                        candidates,
-                    } => Guarded::Blocked {
-                        attempted,
-                        candidates,
-                    },
-                });
+            if patch.source.is_some() || patch.crm.is_some() {
+                return Ok(Self::blocked_by(handle, supplied));
             }
-            return Ok(Guarded::Blocked {
-                attempted: handle.clone(),
-                candidates: vec![guard::EntityMatch {
-                    handle: supplied.id.clone(),
-                    kind: supplied.kind,
-                    name: supplied.name.clone(),
-                    source: supplied.source.clone(),
-                    reason: guard::MatchReason::ExactHandle,
-                    told_apart_by: None,
-                }],
+            // The same check the store makes before it writes the pair.
+            if claim.subject != *handle {
+                return Err(MemoryError::InvalidFact(format!(
+                    "the claim is about {}, and the thing being edited is {handle}",
+                    claim.subject
+                )));
+            }
+            let supplied = supplied.clone();
+            let after = if patch.name.is_some() || patch.aliases.is_some() {
+                match self.screened_overlay(&supplied, &patch).await? {
+                    Ok((new, after)) => {
+                        claim.sets.extend(new.keys().cloned());
+                        claim.fields.extend(new);
+                        after
+                    }
+                    Err(candidates) => {
+                        return Ok(Guarded::Blocked {
+                            attempted: handle.clone(),
+                            candidates,
+                        });
+                    }
+                }
+            } else {
+                self.with_overlay(&supplied).await?
+            };
+            return Ok(match self.inner.capture(claim).await? {
+                Guarded::Written(fact) => Guarded::Written((after, fact)),
+                Guarded::Blocked {
+                    attempted,
+                    candidates,
+                } => Guarded::Blocked {
+                    attempted,
+                    candidates,
+                },
             });
         }
         self.inner
@@ -357,7 +479,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             // declared is theirs, and a build that supplies the same handle
             // does not overwrite it in the answer.
             if kind.is_none_or(|k| entity.kind == k) && !held.iter().any(|e| e.id == entity.id) {
-                held.push(entity.clone());
+                held.push(self.with_overlay(entity).await?);
             }
         }
         Ok(held)
@@ -387,16 +509,19 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         let held = self.inner.fields(entity).await?;
         let mut folded = self.unwritten_defaults(entity).await?;
         folded.extend(held);
-        Ok(folded)
+        Ok(without_overlay(folded))
     }
 
-    /// **Straight through.** A supplied default is not a write, so it has no
-    /// moment and no age: what the store took in is all there is to date.
+    /// **What the store took in, without the overlay's keys.** A supplied
+    /// default is not a write, so it has no moment and no age: what the store
+    /// took in is all there is to date.
     async fn field_ages(
         &self,
         entity: &EntityId,
     ) -> Result<jojobot_domain::memory::FieldAges, MemoryError> {
-        self.inner.field_ages(entity).await
+        let mut ages = self.inner.field_ages(entity).await?;
+        ages.keys.retain(|key, _| !is_overlay_key(key));
+        Ok(ages)
     }
 
     /// **The same fold as [`fields`](Self::fields), under the store's own
@@ -410,7 +535,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         let (held, version) = self.inner.fields_versioned(entity).await?;
         let mut folded = self.unwritten_defaults(entity).await?;
         folded.extend(held);
-        Ok((folded, version))
+        Ok((without_overlay(folded), version))
     }
 
     /// **The one comparison this layer can make that the store underneath
@@ -439,11 +564,14 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         echoed
     }
 
+    /// **Without the overlay's keys**, like every other read of the fields.
     async fn backing(
         &self,
         entity: &EntityId,
     ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
-        self.inner.backing(entity).await
+        let mut backing = self.inner.backing(entity).await?;
+        backing.retain(|key, _| !is_overlay_key(key));
+        Ok(backing)
     }
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         self.inner.built_on(source).await
@@ -465,12 +593,16 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     // ⛔️ **Not a rescue either.** An arm turning the miss into an empty answer
     // would hide a child the operator really filed under a supplied record; the
     // default returns it.
-    /// **A supplied record is not the caller's to rename.**
+    /// **A supplied record's name and aliases are the operator's to set; its
+    /// source and crm stay the build's** (rule 508).
     ///
-    /// It is refused the way creating one under that handle is refused, and for
-    /// the same reason: the handle is taken, by a record the build supplies.
+    /// A name or aliases go through the screen a rename of a stored row faces,
+    /// and are kept as the overlay's keys on the record's handle; no row is
+    /// made. A source or crm, or an edit that sets nothing, is refused the way
+    /// creating a record under that handle is refused, and for the same reason:
+    /// the handle is taken, by a record the build supplies.
     ///
-    /// ⚠️ **The failure this closes is a guard that could not see what the
+    /// ⚠️ **The failure the refusal closes is a guard that could not see what the
     /// build supplies** (rule 234). The inner store holds no row for the
     /// handle, so it answered that the handle names nothing — and offered no
     /// candidates, which says nothing even resembles it. **Every other read
@@ -483,17 +615,36 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
         if let Some((supplied, _)) = self.supplied_only(handle).await? {
-            return Ok(Guarded::Blocked {
-                attempted: handle.clone(),
-                candidates: vec![guard::EntityMatch {
-                    handle: supplied.id.clone(),
-                    kind: supplied.kind,
-                    name: supplied.name.clone(),
-                    source: supplied.source.clone(),
-                    reason: guard::MatchReason::ExactHandle,
-                    told_apart_by: None,
-                }],
-            });
+            let names = patch.name.is_some() || patch.aliases.is_some();
+            if !names || patch.source.is_some() || patch.crm.is_some() {
+                return Ok(Self::blocked_by(handle, supplied));
+            }
+            let supplied = supplied.clone();
+            let (new, after) = match self.screened_overlay(&supplied, &patch).await? {
+                Ok(composed) => composed,
+                Err(candidates) => {
+                    return Ok(Guarded::Blocked {
+                        attempted: handle.clone(),
+                        candidates,
+                    });
+                }
+            };
+            return Ok(
+                match self
+                    .inner
+                    .capture(self.overlay_claim(handle, &patch, &new))
+                    .await?
+                {
+                    Guarded::Written(_) => Guarded::Written(after),
+                    Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    } => Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    },
+                },
+            );
         }
         self.inner.update_entity(handle, patch).await
     }
@@ -555,6 +706,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         self.inner.restore_entity(id, session).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        Self::refuse_overlay_keys(fact.fields.keys())?;
         self.inner.capture(fact).await
     }
     /// **Straight through.** The store's existence gate reads what the build
@@ -569,6 +721,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        Self::refuse_overlay_keys(patch.fields.keys())?;
         self.inner.update_fact(address, patch, caller).await
     }
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
@@ -699,8 +852,207 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     }
 }
 
+/// **The overlay cases, held to any store.** The unit cases run them over the
+/// fake and the real-store suite runs them over Dolt, so a store that composed
+/// the operator's name for a read and not for its own screen would fail here
+/// (rule 234).
+#[cfg(any(test, feature = "testing"))]
+pub mod overlay_contract {
+    use super::*;
+    use jojobot_domain::memory::owned::Provision;
+
+    /// **A record the build ships**: a view with one key.
+    pub fn shipped_record(slug: &str) -> Provision {
+        shipped_record_as(slug, &format!("The {slug} view"))
+    }
+
+    /// **The same record under the name a later build gives it.**
+    pub fn shipped_record_as(slug: &str, name: &str) -> Provision {
+        let id = EntityId::new(EntityKind::VIEW, slug);
+        Provision::record(
+            Entity {
+                folded_names: Vec::new(),
+                id: id.clone(),
+                kind: EntityKind::VIEW,
+                name: name.to_string(),
+                aliases: Vec::new(),
+                source: "jojobot".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                merged_into: None,
+                badge: None,
+                archived: None,
+            },
+            BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
+        )
+    }
+
+    /// What the build supplies in the overlay cases: two views.
+    pub fn supplied() -> Provisions {
+        Provisions::new(vec![shipped_record("loops"), shipped_record("ready")])
+    }
+
+    /// The operator's own thing, which a supplied record's name may collide with.
+    pub async fn the_operators_own_view<M: Memory>(store: &M) {
+        store
+            .add_entity(NewEntity::new(
+                EntityId("view:my-week".into()),
+                "The week",
+                "the operator",
+            ))
+            .await
+            .expect("the operator's own view is created")
+            .written()
+            .expect("an empty board blocks nothing");
+    }
+
+    /// **The operator names a supplied record and gives it more names, and every
+    /// read shows it.** One update, then the reads that name a record (the
+    /// listing, the document, the scan the index ingests and the fields), the
+    /// screen a new creation faces and the screen a rename of a stored thing
+    /// faces, and the claim that carries the overlay. Paired with the record
+    /// before the update, which is the build's own.
+    pub async fn the_operator_names_a_supplied_record_and_every_read_shows_it<M: Memory>(over: &M) {
+        let id = EntityId("view:loops".into());
+        let before = over.list_entities(None).await.expect("lists");
+        assert_eq!(
+            before.iter().find(|e| e.id == id).map(|e| e.name.as_str()),
+            Some("The loops view"),
+            "before any update the record is the build's"
+        );
+
+        let written = over
+            .update_entity(
+                &id,
+                EntityPatch {
+                    name: Some("Weekly rounds".into()),
+                    aliases: Some(vec!["Rounds".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a name and aliases on a supplied record answer");
+        match written {
+            Guarded::Written(entity) => {
+                assert_eq!(entity.name, "Weekly rounds");
+                assert_eq!(entity.aliases, vec!["Rounds".to_string()]);
+                assert_eq!(entity.source, "jojobot", "source stays the build's");
+            }
+            other => panic!("the operator's name lands on a supplied record: {other:?}"),
+        }
+
+        let listed = over.list_entities(None).await.expect("lists");
+        let there = listed.iter().find(|e| e.id == id).expect("still listed");
+        assert_eq!(there.name, "Weekly rounds", "the listing shows it");
+        assert_eq!(there.aliases, vec!["Rounds".to_string()]);
+        let document = over
+            .scan_entity(&id)
+            .await
+            .expect("scan_entity reads")
+            .expect("the supplied record has a document");
+        assert_eq!(document.title, "Weekly rounds", "the document's title");
+        assert_eq!(
+            document.entity.as_ref().map(|e| e.aliases.clone()),
+            Some(vec!["Rounds".to_string()]),
+            "the document's entity"
+        );
+        let scanned = over.scan().await.expect("scan reads");
+        assert!(
+            scanned.iter().any(|d| d
+                .entity
+                .as_ref()
+                .is_some_and(|e| e.id == id && e.name == "Weekly rounds")),
+            "the scan the index ingests carries it"
+        );
+        let held = over.fields(&id).await.expect("fields read");
+        assert!(
+            held.keys()
+                .all(|key| !jojobot_domain::memory::owned::is_overlay_key(key)),
+            "a reader never sees the keys the overlay is stored under: {held:?}"
+        );
+        assert_eq!(held.get("selects").map(String::as_str), Some("rhythm"));
+        let backing = over.backing(&id).await.expect("backing reads");
+        let ages = over.field_ages(&id).await.expect("ages read");
+        assert!(
+            backing
+                .keys()
+                .chain(ages.keys.keys())
+                .all(|key| !jojobot_domain::memory::owned::is_overlay_key(key)),
+            "no read of the fields shows the keys the overlay is stored under: {backing:?} {ages:?}"
+        );
+        assert_eq!(
+            over.recall(&id).await.expect("recall reads").len(),
+            1,
+            "the overlay is one claim on the record"
+        );
+
+        // The near-miss screen reads the same names a listing does.
+        let created = over
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                EntityId("view:rounds".into()),
+                "Rounds",
+                "the operator",
+            ))
+            .await
+            .expect("a creation answers");
+        assert!(
+            matches!(created, Guarded::Blocked { ref candidates, .. } if candidates.iter().any(|c| c.handle == id)),
+            "a new thing under the operator's alias is blocked, naming the record: {created:?}"
+        );
+        let old = over
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                EntityId("view:lantern".into()),
+                "The loops view",
+                "the operator",
+            ))
+            .await
+            .expect("a creation answers");
+        assert!(
+            matches!(old, Guarded::Written(_)),
+            "the shipped name no longer belongs to the record once the operator named it: {old:?}"
+        );
+
+        // The screen an edit of a stored thing faces reads the same names.
+        let taken = over
+            .update_entity(
+                &EntityId("view:my-week".into()),
+                EntityPatch {
+                    name: Some("Rounds".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("an edit answers");
+        assert!(
+            matches!(taken, Guarded::Blocked { ref candidates, .. } if candidates.iter().any(|c| c.handle == id)),
+            "a stored thing renamed onto the operator's alias is blocked, naming the record: {taken:?}"
+        );
+
+        // A second update moves the name and leaves the aliases.
+        over.update_entity(
+            &id,
+            EntityPatch {
+                name: Some("Rounds weekly".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("answers")
+        .written()
+        .expect("lands");
+        let again = over.list_entities(None).await.expect("lists");
+        let there = again.iter().find(|e| e.id == id).expect("listed");
+        assert_eq!(
+            (there.name.as_str(), there.aliases.clone()),
+            ("Rounds weekly", vec!["Rounds".to_string()])
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::overlay_contract::{shipped_record, supplied, the_operators_own_view};
     use super::*;
     use jojobot_domain::memory::owned::Provision;
     use jojobot_domain::memory::testing::InMemoryMemory;
@@ -943,8 +1295,9 @@ mod tests {
         );
     }
 
-    /// **Renaming a supplied record is refused the way creating one is, and
-    /// the refusal says the record is there.**
+    /// **Changing a supplied record's source is refused the way creating one is,
+    /// and the refusal says the record is there.** (Its name and aliases are the
+    /// operator's to set: see `the_operator_names_a_supplied_record_and_every_read_shows_it`.)
     ///
     /// `add_entity` on a supplied handle comes back blocked, naming the
     /// collision. `update_entity` reached the inner store, which holds no row
@@ -958,7 +1311,7 @@ mod tests {
     /// renames it — without the second, a decorator that blocked every rename
     /// would pass the first.
     #[tokio::test]
-    async fn renaming_a_supplied_record_is_blocked_and_a_stored_one_still_renames() {
+    async fn changing_the_source_of_a_supplied_record_is_blocked_and_a_stored_one_still_renames() {
         let store = InMemoryMemory::booted();
         store
             .add_entity(jojobot_domain::memory::NewEntity::new(
@@ -976,7 +1329,7 @@ mod tests {
             .update_entity(
                 &EntityId("view:loops".into()),
                 jojobot_domain::memory::EntityPatch {
-                    name: Some("Mine now".into()),
+                    source: Some("the operator".into()),
                     ..Default::default()
                 },
             )
@@ -996,8 +1349,8 @@ mod tests {
                 );
             }
             other => panic!(
-                "a supplied record is there, so renaming it is a refusal that names it — \
-                 not an answer that it does not exist: {other:?}"
+                "a supplied record is there, so changing its source is a refusal that names \
+                 it — not an answer that it does not exist: {other:?}"
             ),
         }
 
@@ -1018,17 +1371,18 @@ mod tests {
     }
 
     /// **An edit that writes a claim and names nothing of the record itself is a
-    /// capture on a supplied record**, and a name beside it refuses the whole
+    /// capture on a supplied record**, and a source beside it refuses the whole
     /// call.
     ///
     /// Three reads in one case. The claim lands and the supplied record is what
     /// comes back, with what the build ships still under what was set; the same
-    /// call with a name refuses and leaves the claim unwritten, so the pair is
+    /// call with a source refuses and leaves the claim unwritten, so the pair is
     /// whole or not at all; and a claim about another record than the one edited
     /// is the malformed call it is on a stored record. Without the second, a
     /// layer that ignored the patch and wrote the claim would pass the first.
     #[tokio::test]
-    async fn an_edit_that_only_sets_lands_on_a_supplied_record_and_one_that_renames_does_not() {
+    async fn an_edit_that_only_sets_lands_on_a_supplied_record_and_one_that_changes_its_source_does_not()
+     {
         let supplied = Provisions::new(vec![shipped_record("loops")]);
         let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
         let id = EntityId("view:loops".into());
@@ -1064,7 +1418,7 @@ mod tests {
             .update_entity_with_claim(
                 &id,
                 EntityPatch {
-                    name: Some("Mine".into()),
+                    source: Some("the operator".into()),
                     ..Default::default()
                 },
                 claim("another note", "other"),
@@ -1073,7 +1427,7 @@ mod tests {
             .expect("the refusal is an answer");
         assert!(
             matches!(renamed, Guarded::Blocked { ref attempted, .. } if attempted == &id),
-            "a name beside the sets refuses the call: {renamed:?}",
+            "a source beside the sets refuses the call: {renamed:?}",
         );
         let held = over.fields(&id).await.expect("fields read");
         assert!(
@@ -1095,6 +1449,101 @@ mod tests {
         assert!(
             matches!(elsewhere, Err(MemoryError::InvalidFact(_))),
             "a claim about another record is a malformed call: {elsewhere:?}",
+        );
+    }
+
+    /// **Two supplied records and an operator-owned thing, for the overlay cases.**
+    async fn with_two_supplied_and_a_stored_thing() -> Provisioned<InMemoryMemory> {
+        let store = InMemoryMemory::booted().knowing(supplied());
+        the_operators_own_view(&store).await;
+        Provisioned::new(store, supplied())
+    }
+
+    /// **The operator names a supplied record and gives it more names, and every
+    /// read shows it.** One update, then the reads that name a record (the
+    /// listing, the document, the scan the index ingests and the fields), the
+    /// screen a new creation faces, and the claim that carries the overlay.
+    /// Paired with the record before the update, which is the build's own.
+    #[tokio::test]
+    async fn the_operator_names_a_supplied_record_and_every_read_shows_it() {
+        let over = with_two_supplied_and_a_stored_thing().await;
+        overlay_contract::the_operator_names_a_supplied_record_and_every_read_shows_it(&over).await;
+    }
+
+    /// **The operator's name faces the screen a rename does, and a refusal writes
+    /// nothing.** A name another thing answers to is blocked with the thing named,
+    /// and the record keeps the name it had. Source and crm are refused.
+    #[tokio::test]
+    async fn the_operators_name_faces_the_screen_and_source_and_crm_stay_the_builds() {
+        let over = with_two_supplied_and_a_stored_thing().await;
+        let id = EntityId("view:loops".into());
+        let taken = over
+            .update_entity(
+                &id,
+                EntityPatch {
+                    name: Some("The week".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a refusal is an answer");
+        let Guarded::Blocked { candidates, .. } = taken else {
+            panic!("a name another thing answers to is blocked: {taken:?}");
+        };
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.handle.as_str() == "view:my-week")
+        );
+        let after = over.list_entities(None).await.expect("lists");
+        assert_eq!(
+            after.iter().find(|e| e.id == id).map(|e| e.name.as_str()),
+            Some("The loops view"),
+            "a refused name leaves the record as it was"
+        );
+        assert!(over.recall(&id).await.expect("recall").is_empty());
+
+        for patch in [
+            EntityPatch {
+                source: Some("the operator".into()),
+                ..Default::default()
+            },
+            EntityPatch {
+                crm: Some("card-1".into()),
+                ..Default::default()
+            },
+        ] {
+            let refused = over.update_entity(&id, patch).await.expect("answers");
+            assert!(
+                matches!(refused, Guarded::Blocked { .. }),
+                "source and crm stay the build's: {refused:?}"
+            );
+        }
+    }
+
+    /// **The overlay's keys are written by the update that sets a name, and by
+    /// nothing else.** A capture that names one is refused, because a write that
+    /// set them directly would skip the screen.
+    #[tokio::test]
+    async fn a_caller_cannot_write_the_overlay_keys_around_the_screen() {
+        let over = with_two_supplied_and_a_stored_thing().await;
+        let id = EntityId("view:loops".into());
+        let mut fact = NewFact::about(id.clone(), "a name", Date::constant(2026, 10, 12));
+        fact.fields.insert(
+            jojobot_domain::memory::owned::OVERLAY_NAME.to_string(),
+            "Sneaked".to_string(),
+        );
+        fact.sets
+            .insert(jojobot_domain::memory::owned::OVERLAY_NAME.to_string());
+        let refused = over.capture(fact).await;
+        assert!(
+            matches!(refused, Err(MemoryError::InvalidFact(_))),
+            "a capture setting the overlay's key is refused: {refused:?}"
+        );
+        let listed = over.list_entities(None).await.expect("lists");
+        assert_eq!(
+            listed.iter().find(|e| e.id == id).map(|e| e.name.as_str()),
+            Some("The loops view")
         );
     }
 
@@ -1602,28 +2051,6 @@ mod tests {
             "a value that differs from the shipped record's own field must not be named: \
              {not_echoed:?}",
         );
-    }
-
-    /// A record the build ships: kind, handle, and the keys it carries.
-    fn shipped_record(slug: &str) -> jojobot_domain::memory::owned::Provision {
-        let id = EntityId::new(EntityKind::VIEW, slug);
-        jojobot_domain::memory::owned::Provision::record(
-            Entity {
-                folded_names: Vec::new(),
-                id: id.clone(),
-                kind: EntityKind::VIEW,
-                name: format!("The {slug} view"),
-                aliases: Vec::new(),
-                source: "jojobot".into(),
-                crm: None,
-                parent: None,
-                boot: Default::default(),
-                merged_into: None,
-                badge: None,
-                archived: None,
-            },
-            BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
-        )
     }
 
     /// **A record the build ships answers every read a stored one answers, and

@@ -192,6 +192,9 @@ mod mentioning;
 mod moving;
 #[path = "user_stories/my_past_runs.rs"]
 mod my_past_runs;
+/// The operator names a view the software ships, and every read answers to the name.
+#[path = "user_stories/naming_a_shipped_view.rs"]
+mod naming_a_shipped_view;
 /// A container numbers what it holds, and a member is found by its number.
 #[path = "user_stories/numbered_collections.rs"]
 mod numbered_collections;

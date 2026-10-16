@@ -889,6 +889,32 @@ impl InMemoryMemory {
         known
     }
 
+    /// **[`known`](Self::known) with the operator's name and aliases laid over
+    /// each supplied record** (rule 508), for the screens that compare NAMES.
+    ///
+    /// A separate set because the overlay is read off the claims, which takes the
+    /// store's locks, and `known` is asked by write paths that already hold them.
+    /// **Ask it only where no lock is held.**
+    fn known_by_name(&self) -> Vec<Entity> {
+        let supplied: Vec<Entity> = self
+            .supplied
+            .lock()
+            .expect("fake mutex poisoned")
+            .records()
+            .map(|(entity, _)| entity.clone())
+            .collect();
+        let mut known = self.known();
+        for entity in supplied {
+            if let Some(at) = known
+                .iter()
+                .position(|held| held.id == entity.id && held == &entity)
+            {
+                known[at] = super::super::owned::overlaid(&entity, &self.held(&entity.id));
+            }
+        }
+        known
+    }
+
     /// Every rename event, synchronously — the sibling `known()` already is,
     /// for the same reason: the callers that need this are themselves
     /// synchronous helpers taking and releasing the same locks.
@@ -2075,7 +2101,7 @@ impl Memory for InMemoryMemory {
             new.crm.as_deref(),
             new.parent.as_ref(),
         )?;
-        let index = self.known();
+        let index = self.known_by_name();
         if let Decision::Block(candidates) = guard::decide_creating(
             &new.id,
             &new.labels(),
@@ -2360,7 +2386,7 @@ impl Memory for InMemoryMemory {
         let session = patch.session.clone();
         validate_write_subject(handle)?;
         // Taken before the lock: known() locks too.
-        let index = self.known();
+        let index = self.known_by_name();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == handle) else {
             return Err(MemoryError::UnknownEntity {

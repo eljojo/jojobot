@@ -229,6 +229,70 @@ impl Provisions {
     }
 }
 
+// ── the operator's name and aliases, laid over a record the build supplies ─────
+
+/// **The key that holds the operator's name for a record the build supplies.**
+/// Reserved: a record the build supplies has no row to carry a name, so the
+/// operator's name is a key on its handle (rule 508).
+pub const OVERLAY_NAME: &str = "overlay_name";
+
+/// **The key that holds the operator's aliases for such a record**, one per line.
+/// An alias holds no comma and no line break (see `validate_aliases`), so a line
+/// is never split, and the value is never a comma list that a read would take
+/// for a list of links.
+pub const OVERLAY_ALIASES: &str = "overlay_aliases";
+
+/// Whether a key is one the overlay reserves.
+pub fn is_overlay_key(key: &str) -> bool {
+    key == OVERLAY_NAME || key == OVERLAY_ALIASES
+}
+
+/// **The fields a write stores to set the overlay.** `None` leaves a key alone;
+/// `Some(&[])` stores an empty alias list, which clears the operator's aliases.
+pub fn overlay_fields(name: Option<&str>, aliases: Option<&[String]>) -> BTreeMap<String, String> {
+    let mut fields = BTreeMap::new();
+    if let Some(name) = name {
+        fields.insert(OVERLAY_NAME.to_string(), name.to_string());
+    }
+    if let Some(aliases) = aliases {
+        fields.insert(OVERLAY_ALIASES.to_string(), aliases.join("\n"));
+    }
+    fields
+}
+
+/// **A bag of fields without the overlay's keys.** The overlay is shown through
+/// the record's name and aliases, never as a field a reader could mistake for
+/// the operator's own data.
+pub fn without_overlay(mut fields: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    fields.retain(|key, _| !is_overlay_key(key));
+    fields
+}
+
+/// **The one place the operator's name and aliases are laid over a record the
+/// build supplies** (rule 498). The name the operator set replaces the build's;
+/// the operator's aliases join the build's, in the build's order and without
+/// repeating one. Source, crm and everything else stay the build's. A key no
+/// reader can use (a blank name or no alias on any line) leaves the record as
+/// the build ships it.
+pub fn overlaid(shipped: &Entity, fields: &BTreeMap<String, String>) -> Entity {
+    let mut composed = shipped.clone();
+    if let Some(name) = fields
+        .get(OVERLAY_NAME)
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty())
+    {
+        composed.name = name.to_string();
+    }
+    if let Some(own) = fields.get(OVERLAY_ALIASES) {
+        for alias in own.lines().map(str::trim).filter(|a| !a.is_empty()) {
+            if !composed.aliases.iter().any(|held| held == alias) {
+                composed.aliases.push(alias.to_string());
+            }
+        }
+    }
+    composed
+}
+
 /// **The stored rows that sit at a handle the build supplies as a whole
 /// record.** A boot names each one and serves on: the stored row answers
 /// there, as it does in every read, and what the build ships stays under the
@@ -320,6 +384,7 @@ fn carries(text: &str, shipped: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::EntityKind;
 
     /// **The three answers a reconcile has to keep apart**, in one call: a row
     /// that left the build's set goes, a row still in it stays, and a row the
@@ -351,6 +416,111 @@ mod tests {
             reclaimed(vec![("zeta", Origin::Declared)], ["person"]).is_empty(),
             "the column says whose the row is, and this one is not the build's",
         );
+    }
+
+    /// A record the build supplies, as the overlay composes over it.
+    fn shipped_view() -> Entity {
+        Entity {
+            folded_names: Vec::new(),
+            id: EntityId("view:colleagues".into()),
+            kind: EntityKind::VIEW,
+            name: "Colleagues".into(),
+            aliases: vec!["Crew".into()],
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        }
+    }
+
+    fn held(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// **The operator's name replaces the shipped one, their aliases join the
+    /// build's, and nothing else of the record moves.** Source and crm stay the
+    /// build's. Paired with the record read before any overlay is written, which
+    /// is the shipped record exactly.
+    #[test]
+    fn the_overlay_names_the_operators_name_and_adds_their_aliases_to_the_builds() {
+        let shipped = shipped_view();
+        assert_eq!(
+            overlaid(&shipped, &BTreeMap::new()),
+            shipped,
+            "no overlay keys: the record is the build's"
+        );
+        let fields = overlay_fields(Some("Team"), Some(&["Squad".to_string()]));
+        let composed = overlaid(&shipped, &fields);
+        assert_eq!(composed.name, "Team");
+        assert_eq!(
+            composed.aliases,
+            vec!["Crew".to_string(), "Squad".to_string()]
+        );
+        assert_eq!(composed.source, shipped.source);
+        assert_eq!(composed.id, shipped.id);
+    }
+
+    /// **A name alone leaves the aliases alone, aliases alone leave the name, and
+    /// an empty alias set clears only the operator's.** The build's alias stays.
+    #[test]
+    fn the_overlay_moves_the_name_and_the_aliases_apart() {
+        let shipped = shipped_view();
+        let named = overlaid(&shipped, &overlay_fields(Some("Team"), None));
+        assert_eq!((named.name.as_str(), named.aliases.len()), ("Team", 1));
+        let aliased = overlaid(
+            &shipped,
+            &overlay_fields(None, Some(&["Squad".to_string()])),
+        );
+        assert_eq!(aliased.name, "Colleagues");
+        assert_eq!(
+            aliased.aliases,
+            vec!["Crew".to_string(), "Squad".to_string()]
+        );
+        let cleared = overlaid(&shipped, &overlay_fields(None, Some(&[])));
+        assert_eq!(cleared.aliases, vec!["Crew".to_string()]);
+    }
+
+    /// **An alias the build already ships is not listed twice.**
+    #[test]
+    fn an_alias_the_build_ships_is_not_repeated_by_the_overlay() {
+        let shipped = shipped_view();
+        let fields = overlay_fields(None, Some(&["Crew".to_string(), "Squad".to_string()]));
+        assert_eq!(
+            overlaid(&shipped, &fields).aliases,
+            vec!["Crew".to_string(), "Squad".to_string()]
+        );
+    }
+
+    /// **An overlay no reader can use composes to nothing.** A blank name or blank
+    /// alias lines leave the build's record, so a damaged key never blanks a
+    /// shipped name.
+    #[test]
+    fn an_overlay_that_cannot_be_read_leaves_the_shipped_record() {
+        let shipped = shipped_view();
+        let damaged = held(&[(OVERLAY_NAME, "   "), (OVERLAY_ALIASES, " \n\n ")]);
+        assert_eq!(overlaid(&shipped, &damaged), shipped);
+    }
+
+    /// **The reserved keys are exactly these two, and a read hides them.** The
+    /// spelling is stored with every write that sets an overlay and nothing
+    /// outside this process declares it, so this is the one place it is pinned.
+    #[test]
+    fn the_reserved_keys_are_spelled_as_stored_and_hidden_from_the_fields() {
+        assert_eq!(OVERLAY_NAME, "overlay_name");
+        assert_eq!(OVERLAY_ALIASES, "overlay_aliases");
+        let all = held(&[
+            ("overlay_name", "Team"),
+            ("overlay_aliases", "Squad"),
+            ("rank", "3"),
+        ]);
+        assert_eq!(without_overlay(all), held(&[("rank", "3")]));
+        assert!(is_overlay_key("overlay_name") && !is_overlay_key("rank"));
     }
 
     /// **A build that ships nothing reclaims every owned row and no other.**

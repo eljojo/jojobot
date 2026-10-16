@@ -96,6 +96,17 @@ pub async fn open_provisioned<M: Memory + Clone + 'static>(
     bare: M,
     supplied: Provisions,
 ) -> anyhow::Result<Arc<dyn Memory>> {
+    open_provisioned_on(bare, supplied, jojobot_domain::clock::Clock::default()).await
+}
+
+/// **[`open_provisioned`], dating the claims the layer writes with `clock`** —
+/// the clock the stores beneath stamp with, so an instance acting out a day
+/// dates an operator's name on a supplied record with that day.
+pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
+    bare: M,
+    supplied: Provisions,
+    clock: jojobot_domain::clock::Clock,
+) -> anyhow::Result<Arc<dyn Memory>> {
     if PROVISIONED.set(()).is_err() {
         anyhow::bail!(
             "a store is already provisioned in this process — a process serves one store, and \
@@ -141,7 +152,7 @@ pub async fn open_provisioned<M: Memory + Clone + 'static>(
              wrongly; a restart once the store is reachable names them."
         ),
     }
-    Ok(Arc::new(Provisioned::new(bare, supplied)))
+    Ok(Arc::new(Provisioned::new(bare, supplied).on_clock(clock)))
 }
 
 /// **Stage one: wrap memory, and open the fold and the index over it.**
@@ -540,7 +551,7 @@ pub async fn boot_store_pushing(
     let bare_memory = DoltMemory::open(store.pool().clone())
         .knowing(supplied.clone())
         .on_clock(clock);
-    let resolved = open_provisioned(bare_memory, supplied).await?;
+    let resolved = open_provisioned_on(bare_memory, supplied, clock).await?;
 
     // **A handle the build stopped supplying, or renamed, keeps the writes the
     // operator made while it was supplied** (rule 508). They are filed under the
