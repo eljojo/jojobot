@@ -1089,9 +1089,12 @@ roles and never an operator.
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
   and fails on any warning or error line at boot. **It keeps a fixture from each
-  of the last deployed builds — today deploys 3, 4 and 5 — and one is always
-  from the build production runs now**, recorded before the next deploy's
-  review; the gate's boot cases read them. `make refresh-upgrade-fixture DIR=<fixture directory>` records a fixture
+  of the last deployed builds — today deploys 3, 4, 5 and 6 (6 from
+  c99fc847) — and one is always from the build production runs now**,
+  recorded before the next deploy's review; the gate's boot cases read them.
+  ⚠️ **It boots each store cleanly, so it never reads a migration's landed
+  check**: a start interrupted mid-migration is covered by the migrate unit
+  cases, not by the gate. `make refresh-upgrade-fixture DIR=<fixture directory>` records a fixture
   again from a ref (default `origin/main`, the deployed build) whenever the deployed build moves;
   it names no directory of its own and refuses without one. An empty
   `RUST_LOG` counts as unset. **`make carried` says what a carry would move**:
