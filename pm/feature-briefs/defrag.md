@@ -30,7 +30,7 @@
 
 **Defrag never has to search for its work.** Each thing carries a review stamp: the moment defrag last read it whole. **A thing written after its stamp is unreviewed**, and the unreviewed things are one query.
 
-**Defrag's session opens with that queue.** It works through it, and a thing it has read whole gets a fresh stamp — in the same act as any change defrag makes to it, so defrag's own repairs never put a thing back in the queue. **Any other session's write does.**
+**Defrag's session opens with that queue.** It works through it, and a thing it has read whole gets a fresh stamp — in the same act as any change defrag makes to it, so defrag's own repairs never put a thing back in the queue. **A thing it read and left alone is marked by one standing record, rewritten on every later mark**, so reading never grows a thing and a full thread can still be marked. **Any other session's write puts it back.**
 
 **Only defrag can write the stamp.** It is a key licensed to one writer, so no other session can mark something reviewed. **It stays out of ordinary reads**: it is bookkeeping for one bot and noise for every other. It is not secret — a read that asks for it gets it.
 

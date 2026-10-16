@@ -8,7 +8,7 @@
 
 **Context is always limited, so prioritizing happens somewhere.** Without a bound it happens nowhere: a page, a thread or a bot's state that can always be appended to grows until it is too expensive to read whole and too undifferentiated to act on. Then it can only be searched, and a search finds only what the reader already has words for.
 
-⭐ **The ceiling is not a storage limit. It exists to force the decision at the moment of writing,** when the writer still knows why the new thing matters and what it would displace.
+⭐ **The ceiling is not a storage limit. It exists to force the decision at the moment of writing,** when the writer still knows why the new thing matters and what it would displace. **So only content takes a slot:** defrag's mark that it has read a thing forces no such decision, and counts against nothing.
 
 ## One mechanism at every scale
 
