@@ -858,14 +858,25 @@ impl Carrier for Promises {
     }
 }
 
+/// **The carrier that answers for these fields**, the first whose interface
+/// they match. Every question about which carrier owns a thing is put here, so
+/// no two readers can pick different ones.
+fn carrier_answering<'a>(
+    carriers: &[&'a dyn Carrier],
+    fields: &BTreeMap<String, String>,
+) -> Option<&'a dyn Carrier> {
+    carriers
+        .iter()
+        .copied()
+        .find(|carrier| carrier.interface().matched_by(fields).is_some())
+}
+
 /// **What is owed, over any carrier.** The read hands a thing's folded fields;
 /// a carrier is found by which of them it structurally answers to, never by
 /// what kind produced them, and a thing no carrier's interface matches owes
 /// nothing.
 pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due {
-    carriers
-        .iter()
-        .find(|carrier| carrier.interface().matched_by(fields).is_some())
+    carrier_answering(carriers, fields)
         .map(|carrier| carrier.due(fields))
         .unwrap_or(Due::Never)
 }
@@ -876,10 +887,7 @@ pub fn unreadable_because(
     carriers: &[&dyn Carrier],
     fields: &BTreeMap<String, String>,
 ) -> Option<Unreadable> {
-    carriers
-        .iter()
-        .find(|carrier| carrier.interface().matched_by(fields).is_some())
-        .and_then(|carrier| carrier.unreadable_because(fields))
+    carrier_answering(carriers, fields).and_then(|carrier| carrier.unreadable_because(fields))
 }
 
 /// **What a thing of this kind owes, and why it owes nothing when it owes
@@ -910,9 +918,7 @@ pub fn owes_as(
     // A carrier that can be ended and holds its ending word has finished with the
     // thing, whatever day it still holds. A thing no carrier answers for has no
     // ending to hold, so it stays a thing with nothing that falls due.
-    let ended = carriers
-        .iter()
-        .find(|carrier| carrier.interface().matched_by(fields).is_some())
+    let ended = carrier_answering(carriers, fields)
         .is_some_and(|carrier| carrier.ending().is_some())
         && has_ended(fields);
     if ended {
@@ -939,10 +945,7 @@ pub fn owed_as(
 /// the carrier that answers for these fields. A thing no carrier answers for
 /// derives nothing.
 pub fn due_is_derived(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> bool {
-    carriers
-        .iter()
-        .find(|carrier| carrier.interface().matched_by(fields).is_some())
-        .is_some_and(|carrier| carrier.derives_due())
+    carrier_answering(carriers, fields).is_some_and(|carrier| carrier.derives_due())
 }
 
 /// **The keys each carrier's interface names, one group per carrier, in the
@@ -1093,13 +1096,7 @@ pub fn moved_due_moment_as(
         // carrier answering then, the date is a leftover of a write the old code
         // allowed, nothing derived it, and a write that finishes nothing has no
         // reason to erase it.
-        DueMove::Cleared
-            if !carriers
-                .iter()
-                .any(|c| c.interface().matched_by(held).is_some()) =>
-        {
-            DueMove::Unchanged
-        }
+        DueMove::Cleared if carrier_answering(carriers, held).is_none() => DueMove::Unchanged,
         moved => moved,
     }
 }
@@ -2429,6 +2426,98 @@ mod tests {
             owed(&carriers, &BTreeMap::new()),
             Due::Never,
             "…and carrying none of it still owes nothing",
+        );
+    }
+
+    /// **When two carriers answer for one thing, every question about it is put
+    /// to the same one.** The due day, the reason it cannot be said, whether it is
+    /// derived and whether the thing has ended each read off the carrier that
+    /// answers for the fields. The carriers differ on all four, so a question put
+    /// to another carrier than the rest changes its answer. Asked in the other
+    /// order, the other carrier answers all four, which is the positive the first
+    /// order's answers rest on.
+    #[test]
+    fn every_question_about_a_thing_is_put_to_the_one_carrier_that_answers_for_it() {
+        struct Pledges {
+            day: Date,
+            derives: bool,
+            ends: bool,
+            lacks: Option<&'static str>,
+        }
+        impl Carrier for Pledges {
+            fn interface(&self) -> types::DeclaredType {
+                types::DeclaredType::new(
+                    "pledges",
+                    vec![types::Field::new("promised_for", types::ValueType::Date)],
+                )
+            }
+            fn due(&self, _: &BTreeMap<String, String>) -> Due {
+                Due::On(self.day)
+            }
+            fn derives_due(&self) -> bool {
+                self.derives
+            }
+            fn ending(&self) -> Option<Ending> {
+                self.ends.then(open_ending)
+            }
+            fn unreadable_because(&self, _: &BTreeMap<String, String>) -> Option<Unreadable> {
+                self.lacks.map(|key| Unreadable {
+                    lacks: vec![key],
+                    will_not_parse: Vec::new(),
+                })
+            }
+        }
+
+        let ending = Pledges {
+            day: date(2026, 8, 1),
+            derives: true,
+            ends: true,
+            lacks: Some("schedule"),
+        };
+        let lasting = Pledges {
+            day: date(2026, 9, 1),
+            derives: false,
+            ends: false,
+            lacks: None,
+        };
+        let held: BTreeMap<String, String> = [
+            ("promised_for".to_string(), "2026-08-01".to_string()),
+            (ENDED.to_string(), "kept".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let none = BTreeMap::new();
+        let answers = |asked: &[&dyn Carrier]| {
+            (
+                owed(asked, &held),
+                unreadable_because(asked, &held),
+                due_is_derived(asked, &held),
+                owes_as("thing", asked, &held, &none),
+            )
+        };
+
+        assert_eq!(
+            answers(&[&ending, &lasting]),
+            (
+                Due::On(date(2026, 8, 1)),
+                Some(Unreadable {
+                    lacks: vec!["schedule"],
+                    will_not_parse: Vec::new(),
+                }),
+                true,
+                Owes::Finished,
+            ),
+            "the carrier asked first answers all four",
+        );
+        assert_eq!(
+            answers(&[&lasting, &ending]),
+            (
+                Due::On(date(2026, 9, 1)),
+                None,
+                false,
+                Owes::Due(Due::On(date(2026, 9, 1))),
+            ),
+            "asked in the other order, the other carrier answers all four",
         );
     }
 
