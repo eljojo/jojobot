@@ -300,6 +300,7 @@ fn an_owned_object_answers_its_owner_and_nobody_else() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
 
     let mine = resolved(&scanned, &[], &asking(Some("bot:gamma"))).expect("a kind selects");
@@ -363,6 +364,7 @@ fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
 
     let with_facts = resolved(&scanned, &[], &asking(true)).expect("a kind selects");
@@ -418,6 +420,7 @@ fn what_a_selection_withheld_is_counted_rather_than_dropped_in_silence() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
 
     let answer = resolve(&scanned, &[], &query).expect("a kind selects");
@@ -467,6 +470,7 @@ fn naming_another_identitys_object_is_refused_and_its_owner_still_reads_it() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
 
     let refused = resolve(&scanned, &[], &naming("bot:delta"));
@@ -571,6 +575,7 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
     match resolve(&scanned, &[], &naming) {
         Err(MemoryError::NotYours { attempted }) => {
@@ -597,6 +602,7 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
     let browsed = resolve(&scanned, &[], &browsing).expect("a kind selects");
     assert_eq!(
@@ -625,6 +631,7 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
     let mine_read = resolved(&scanned, &[], &mine_query).expect("its own bot reads it");
     assert_eq!(handles(&mine_read), vec!["session:contract-gamma-run"]);
@@ -1182,6 +1189,7 @@ fn a_kind_selects_its_objects_and_prose_comes_back_whole() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
     let found = resolved(&scanned, &[], &query).expect("a kind is a selection");
     assert_eq!(
@@ -1254,6 +1262,7 @@ fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
     fn ids(object: &Object) -> Vec<&str> {
         object.facts.iter().map(|f| f.id.as_str()).collect()
@@ -1365,6 +1374,7 @@ fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
     let found = resolved(&scanned, &[], &unscoped).expect("a named subject always comes back");
     assert_eq!(
@@ -2533,6 +2543,7 @@ fn a_walk_leaves_by_either_end_of_an_edge() {
                     fits_type: None,
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a subject with a walk")
@@ -2607,6 +2618,7 @@ fn a_reached_object_brings_its_own_facts() {
                 fits_type: None,
             }),
             history: None,
+            masked: Default::default(),
         },
     )
     .expect("a walk of one hop");
@@ -2666,6 +2678,7 @@ fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
                     fits_type: None,
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a walk out of a subject")
@@ -2728,6 +2741,7 @@ fn an_object_says_when_it_has_edges_nobody_followed() {
                     fits_type: None,
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a walk out of a subject")
@@ -2788,6 +2802,7 @@ fn a_walk_over_a_cycle_terminates() {
                 fits_type: None,
             }),
             history: None,
+            masked: Default::default(),
         },
     )
     .expect("a walk at the ceiling");
@@ -2956,6 +2971,7 @@ fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a declared relation is followable");
@@ -3146,6 +3162,7 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a declared relation is followable")
@@ -3226,6 +3243,7 @@ fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a subject with a walk");
@@ -3287,6 +3305,7 @@ fn a_declared_reference_key_is_a_walkable_link_both_ways() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a declared relation is followable")
@@ -3344,6 +3363,7 @@ fn nothing_is_a_relation_until_a_declaration_says_it_is() {
             ..Follow::hop()
         }),
         history: None,
+        masked: Default::default(),
     };
     resolved(&kennel(), &[], &query)
         .expect_err("with nothing declared, the key's name is no relation to walk by");
@@ -3397,6 +3417,7 @@ fn a_text_key_of_another_type_does_not_hide_a_declared_relation() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("some type declares 'owner' a reference, so it is one")
@@ -3460,6 +3481,7 @@ fn two_reference_keys_of_one_type_do_not_collide() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("both keys are declared references");
@@ -3524,6 +3546,7 @@ fn a_relation_is_scoped_by_its_key_and_the_direction_chooses_the_way() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
     };
@@ -3628,6 +3651,7 @@ fn a_key_named_like_an_edge_shape_is_still_a_key() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("both vocabularies are followable");
@@ -3762,6 +3786,7 @@ fn a_walk_keeps_only_what_answers_its_filters() {
                     ..Follow::hop()
                 }),
                 history: None,
+                masked: Default::default(),
             },
         )
         .expect("a walk with filters on what it reaches")
@@ -3997,6 +4022,7 @@ fn walking_out_of(handle: &str, asking: &str, depth: usize) -> GraphQuery {
             ..Follow::hop()
         }),
         history: None,
+        masked: Default::default(),
     }
 }
 

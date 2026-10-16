@@ -76,6 +76,7 @@ impl Question {
                 include,
                 follow,
                 history,
+                masked: Default::default(),
             },
             asks: Asks::default(),
         }

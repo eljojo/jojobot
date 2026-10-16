@@ -812,6 +812,7 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
         },
         follow: None,
         history: None,
+        masked: Default::default(),
     };
 
     let found_by_new = graph::walk(mentioning, &[], &query(now.as_str()))
@@ -1139,6 +1140,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -1163,6 +1165,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await;
@@ -1424,6 +1427,7 @@ pub async fn a_former_handle_reused_after_a_rename_resolves_to_the_newest_event<
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await

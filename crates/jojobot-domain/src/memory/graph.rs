@@ -793,6 +793,12 @@ pub struct GraphQuery {
     /// what a record carries is the projection — the writes it replaced are not
     /// on it any more.
     pub history: Option<History>,
+    /// **Keys to read as not held, on named things.** The walk reads each thing's
+    /// fields from the store and leaves these out of what it reads, so a filter, an
+    /// object, a walked neighbour and an order all see the thing without them. A
+    /// caller sets it for a key it will not serve (a bot's `working_on` once the
+    /// session that said it is gone); the walk decides nothing about why.
+    pub masked: BTreeMap<EntityId, Vec<String>>,
 }
 
 impl GraphQuery {
@@ -2009,6 +2015,7 @@ impl Ctx<'_> {
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         };
         let mut standing: Vec<Object> = children
             .iter()
@@ -3322,7 +3329,7 @@ where
         let mut passed = skipped;
         for shell in &selected.objects[skipped..] {
             passed += 1;
-            let doc = read_doc(store, &shell.entity, query.include.prose).await?;
+            let doc = read_doc(store, &shell.entity, query.include.prose, &query.masked).await?;
             let Some(mut object) = resolve(std::slice::from_ref(&doc), &declarations, query)?
                 .objects
                 .pop()
@@ -3399,7 +3406,7 @@ where
             continue;
         }
         if wanted.iter().any(|w| w.id == entity.id) {
-            scanned.push(read_doc(store, entity, query.include.prose).await?);
+            scanned.push(read_doc(store, entity, query.include.prose, &query.masked).await?);
         } else {
             scanned.push(DocScan {
                 doc_id: entity.id.to_string(),
@@ -3451,7 +3458,12 @@ where
 
 /// **One entity's document, read from the store**: its records, its prose when
 /// asked for, and its fields.
-async fn read_doc<M>(store: &M, entity: &Entity, prose: bool) -> Result<DocScan, MemoryError>
+async fn read_doc<M>(
+    store: &M,
+    entity: &Entity,
+    prose: bool,
+    masked: &BTreeMap<EntityId, Vec<String>>,
+) -> Result<DocScan, MemoryError>
 where
     M: super::Memory + ?Sized,
 {
@@ -3469,7 +3481,10 @@ where
     // holds is decided in the order its keys were written, which the records have
     // already projected away — so a walk that folded them for itself would answer
     // with a value the store does not hold.
-    let fields = store.fields(&entity.id).await?;
+    let mut fields = store.fields(&entity.id).await?;
+    for key in masked.get(&entity.id).into_iter().flatten() {
+        fields.remove(key);
+    }
     // **The claims this thing cannot serve are named, not dropped.** A read that
     // asks for the records says so, and the store is what knows which are left.
     let unmapped = store.unmapped_claims(&entity.id).await?;

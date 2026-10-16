@@ -10648,6 +10648,7 @@ async fn walked_along(
             },
             follow: Some(follow),
             history: None,
+            masked: Default::default(),
         },
     )
     .await

@@ -318,3 +318,181 @@ async fn a_word_the_instance_maps_to_now_fills_working_on_and_no_other_word_does
     );
     story.finish().await;
 }
+
+/// How the session that said what a bot is working on is gone.
+#[derive(Clone, Copy)]
+enum Writer {
+    /// Still running.
+    Live,
+    /// Wrapped, with its story told.
+    Wrapped,
+    /// Stopped without a wrap, and swept by a later boot.
+    Abandoned,
+}
+
+/// A bot that said it works on `work:sigma`, and a reader of another bot. The
+/// story is handed back so it outlives the reads.
+async fn a_bot_on_sigma(writer: Writer) -> (Story, Session) {
+    match writer {
+        Writer::Live | Writer::Wrapped => {
+            let story = Story::begin("bot:otto").await;
+            let otto = story.session().await;
+            otto.add("work:sigma", "Sigma").await;
+            otto.call(
+                "journal",
+                json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+            )
+            .await;
+            if matches!(writer, Writer::Wrapped) {
+                otto.call("wrap_session", json!({"story": "done for now"}))
+                    .await;
+            }
+            let reader = story.as_bot("bot:assistant").await;
+            (story, reader)
+        }
+        Writer::Abandoned => {
+            let june = Story::begin_pretending_it_is("bot:otto", "2026-06-01").await;
+            let sitting = june.session().await;
+            sitting.add("work:sigma", "Sigma").await;
+            sitting
+                .call(
+                    "journal",
+                    json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+                )
+                .await;
+            // The sitting ends without a wrap. A boot a month later sweeps it.
+            let july = june.restarted_pretending_it_is("2026-07-20").await;
+            let _ = july.full_boot().await;
+            let reader = july.as_bot("bot:assistant").await;
+            (july, reader)
+        }
+    }
+}
+
+/// The handles of the bots a `recall` of kind bot returns.
+async fn bots_answering(reader: &Session, asked: serde_json::Value) -> Vec<String> {
+    let mut args = json!({"kind": "bot"});
+    for (key, value) in asked.as_object().expect("an object") {
+        args[key] = value.clone();
+    }
+    let answer = reader.call("recall", args).await;
+    answer.json()["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .filter_map(|object| object["id"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// **A filter on `working_on` sees the gated value.** A bot whose writer is gone
+/// is not returned by a filter that asks for the thing, in either form of it, and
+/// is returned by one that asks for a bot working on nothing. While the writer is
+/// live it is the other way round.
+async fn the_filters_see_the_gated_value(writer: Writer) {
+    let (story, reader) = a_bot_on_sigma(writer).await;
+    let live = matches!(writer, Writer::Live);
+    let asks_for_it = json!({"where": "working_on = work:sigma"});
+    let asks_by_field = json!({"fields": [{"key": "working_on", "value": "work:sigma"}]});
+    let asks_for_none = json!({"where": "!working_on"});
+
+    for asked in [asks_for_it, asks_by_field] {
+        let found = bots_answering(&reader, asked.clone()).await;
+        assert_eq!(
+            found.iter().any(|bot| bot == "bot:otto"),
+            live,
+            "{asked}: {found:?}"
+        );
+    }
+    let found = bots_answering(&reader, asks_for_none).await;
+    assert_eq!(
+        found.iter().any(|bot| bot == "bot:otto"),
+        !live,
+        "a bot working on nothing: {found:?}"
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn the_filters_return_a_bot_while_its_writer_is_live() {
+    the_filters_see_the_gated_value(Writer::Live).await;
+}
+
+#[tokio::test]
+async fn the_filters_do_not_return_a_bot_whose_writer_wrapped() {
+    the_filters_see_the_gated_value(Writer::Wrapped).await;
+}
+
+#[tokio::test]
+async fn the_filters_do_not_return_a_bot_whose_writer_was_abandoned() {
+    the_filters_see_the_gated_value(Writer::Abandoned).await;
+}
+
+/// **The records of a bot do not serve a stale working-on record as current.**
+/// The record that set the key says its session is gone, and while the writer is
+/// live it says nothing of the kind.
+async fn the_records_mark_a_stale_working_on(writer: Writer) {
+    let (story, reader) = a_bot_on_sigma(writer).await;
+    let live = matches!(writer, Writer::Live);
+
+    let answer = reader
+        .call("recall", json!({"subject": "bot:otto", "facts": true}))
+        .await;
+    let facts = answer.json()["objects"][0]["facts"].clone();
+    let setting: Vec<&serde_json::Value> = facts
+        .as_array()
+        .expect("facts")
+        .iter()
+        .filter(|fact| fact["sets"]["working_on"].is_string())
+        .collect();
+    assert_eq!(setting.len(), 1, "one record sets it: {facts}");
+    assert_eq!(
+        setting[0]["working_on_stale"].as_bool().unwrap_or(false),
+        !live,
+        "{}",
+        setting[0]
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn the_records_do_not_mark_a_live_working_on() {
+    the_records_mark_a_stale_working_on(Writer::Live).await;
+}
+
+#[tokio::test]
+async fn the_records_mark_a_working_on_whose_writer_wrapped() {
+    the_records_mark_a_stale_working_on(Writer::Wrapped).await;
+}
+
+#[tokio::test]
+async fn the_records_mark_a_working_on_whose_writer_was_abandoned() {
+    the_records_mark_a_stale_working_on(Writer::Abandoned).await;
+}
+
+/// **The page of a view that selects on `working_on` answers as `recall` does.**
+/// The bot is on the page while its writer is live, and is not once it wrapped.
+#[tokio::test]
+async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_writer_wrapped() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("work:sigma", "Sigma").await;
+    otto.call(
+        "journal",
+        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+    )
+    .await;
+    otto.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "on-sigma", "name": "On sigma",
+               "source": "user-named",
+               "sets": {"selects": "bot", "where": "working_on = work:sigma"}}),
+    )
+    .await;
+    story.page("view:on-sigma").await.says("bot:otto");
+
+    otto.call("wrap_session", json!({"story": "done for now"}))
+        .await;
+
+    story.page("view:on-sigma").await.never_says("bot:otto");
+    story.finish().await;
+}

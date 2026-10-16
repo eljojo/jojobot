@@ -933,6 +933,14 @@ async fn view_section(
         carriers: &carriers,
         instance: &instance,
     };
+    // **A bot's `working_on` is left out of the walk for a bot whose session is
+    // gone**, as a `recall` leaves it out, so a view that selects on it answers
+    // the same here.
+    let mut question = question;
+    question.query.masked = jojobot_mcp::memory::working_on::masked_working_on(
+        &jojobot_mcp::memory::working_on::stale_working_on_bots(&*state.memory, &*state.sessions)
+            .await,
+    );
     let (found, omitted) = match view_run::answer(&*state.memory, &question, &context).await {
         Ok(answered) => (
             answered.selected.objects,

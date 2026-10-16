@@ -188,11 +188,6 @@ impl Jojobot {
         }
     }
 
-    /// **The one read of a bot's `working_on`**, for the verbs of this server.
-    pub(crate) async fn working_on_of(&self, bot: &EntityId) -> Result<WorkingOn, MemoryError> {
-        working_on_of(&*self.memory, &*self.sessions, bot).await
-    }
-
     /// The bot's one working-on record, if it has one.
     async fn working_on_record(&self, bot: &EntityId) -> Result<Option<FactAddress>, MemoryError> {
         let facts = match self.memory.recall(bot).await {
@@ -206,48 +201,73 @@ impl Jojobot {
             .map(|f| f.address()))
     }
 
-    /// **Take `working_on` out of every bot in an answer whose writing session
-    /// is no longer live**, the bots a walk reached included. Answers with the
-    /// bots it hid, so the caller can say so once.
-    ///
-    /// A bot whose key a live session wrote keeps it, and so does one nobody
-    /// declared. A read that cannot decide hides the key: the stored value is
-    /// never the fallback.
-    pub(crate) async fn hide_stale_working_on(&self, objects: &mut [Object]) -> BTreeSet<EntityId> {
-        fn bots_holding(objects: &[Object], into: &mut BTreeSet<EntityId>) {
-            for object in objects {
-                if object.fields.contains_key(WORKING_ON) {
-                    into.insert(object.entity.id.clone());
-                }
-                bots_holding(&object.connected, into);
-            }
-        }
-        fn strip(objects: &mut [Object], hidden: &BTreeSet<EntityId>) {
-            for object in objects {
-                if hidden.contains(&object.entity.id) {
-                    object.fields.remove(WORKING_ON);
-                }
-                strip(&mut object.connected, hidden);
-            }
-        }
-        let mut holding = BTreeSet::new();
-        bots_holding(objects, &mut holding);
-        let mut hidden = BTreeSet::new();
-        for bot in holding {
-            match self.working_on_of(&bot).await {
-                Ok(WorkingOn::Live(_)) => {}
-                Ok(WorkingOn::Unset) | Ok(WorkingOn::Stale) => {
-                    hidden.insert(bot);
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, %bot, "could not decide working_on, so it is not shown");
-                    hidden.insert(bot);
-                }
-            }
-        }
-        strip(objects, &hidden);
-        hidden
+    /// **The bots whose stored `working_on` is not shown**: the session that
+    /// wrote it is gone. Read from the one gate, [`working_on_of`]; a bot whose
+    /// session cannot be decided is counted as gone, so the stored value is never
+    /// the fallback.
+    pub(crate) async fn stale_working_on_bots(&self) -> BTreeSet<EntityId> {
+        stale_working_on_bots(&*self.memory, &*self.sessions).await
     }
+}
+
+/// **The bots whose stored `working_on` is not shown**, for any surface that
+/// holds the two ports.
+pub async fn stale_working_on_bots(
+    memory: &dyn Memory,
+    sessions: &dyn Sessions,
+) -> BTreeSet<EntityId> {
+    let mut stale = BTreeSet::new();
+    let bots = match memory.list_entities(Some(EntityKind::BOT)).await {
+        Ok(bots) => bots,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not list the bots to decide working_on");
+            return stale;
+        }
+    };
+    for bot in bots {
+        match memory.fields(&bot.id).await {
+            Ok(held) if held.contains_key(WORKING_ON) => {}
+            _ => continue,
+        }
+        match working_on_of(memory, sessions, &bot.id).await {
+            Ok(WorkingOn::Live(_)) => {}
+            Ok(WorkingOn::Unset) => {}
+            Ok(WorkingOn::Stale) => {
+                stale.insert(bot.id);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, bot = %bot.id, "could not decide working_on, so it is not shown");
+                stale.insert(bot.id);
+            }
+        }
+    }
+    stale
+}
+
+/// **The keys a walk reads as not held**, for these bots: their `working_on`.
+pub fn masked_working_on(
+    stale: &BTreeSet<EntityId>,
+) -> std::collections::BTreeMap<EntityId, Vec<String>> {
+    stale
+        .iter()
+        .map(|bot| (bot.clone(), vec![WORKING_ON.to_string()]))
+        .collect()
+}
+
+/// **The stale bots an answer holds**, the bots a walk reached included, so the
+/// answer names only the ones it left a value out of.
+pub fn stale_in(objects: &[Object], stale: &BTreeSet<EntityId>) -> BTreeSet<EntityId> {
+    let mut present = BTreeSet::new();
+    fn visit(objects: &[Object], stale: &BTreeSet<EntityId>, into: &mut BTreeSet<EntityId>) {
+        for object in objects {
+            if stale.contains(&object.entity.id) {
+                into.insert(object.entity.id.clone());
+            }
+            visit(&object.connected, stale, into);
+        }
+    }
+    visit(objects, stale, &mut present);
+    present
 }
 
 /// **The one sentence an answer carries when it hid a stored `working_on`.**

@@ -2988,6 +2988,11 @@ impl Jojobot {
         // `built_on` share this one path rather than each carrying a copy
         // of it.
         let mut query = query;
+        // **A bot's `working_on` is read through the one gate before the walk**, and
+        // left out of what the walk reads for a bot whose session is gone, so a
+        // filter, an order and the objects all see the same bot.
+        let stale_working_on = self.stale_working_on_bots().await;
+        query.masked = super::working_on::masked_working_on(&stale_working_on);
         // **Whether `subject` is the caller's own word, or a fill this loop
         // is about to do itself.** The two read the same on `query.select`
         // once filled, and the refusal below has to tell them apart: a
@@ -3529,7 +3534,7 @@ impl Jojobot {
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
         // gets them in, ranked, without knowing there was anything to ask.
-        let hidden_working_on = self.hide_stale_working_on(&mut found).await;
+        let hidden_working_on = super::working_on::stale_in(&found, &stale_working_on);
         let mut backing = Vec::with_capacity(found.len());
         if args.backing.unwrap_or(false) {
             for object in &found {
@@ -4022,6 +4027,20 @@ impl Jojobot {
                     }
                     if let Some(held) = held {
                         rendered["held"] = held;
+                    }
+                    // **A record that set a `working_on` whose session is gone says
+                    // so**, beside the value it still carries as history.
+                    if stale_working_on.contains(&o.entity.id)
+                        && let Some(facts) = rendered["facts"].as_array_mut()
+                    {
+                        for (fact, raw) in facts.iter_mut().zip(&o.facts) {
+                            if raw
+                                .sets
+                                .contains(jojobot_domain::memory::kinds::WORKING_ON)
+                            {
+                                fact["working_on_stale"] = serde_json::Value::Bool(true);
+                            }
+                        }
                     }
                     match backing {
                         Some(backing) => {

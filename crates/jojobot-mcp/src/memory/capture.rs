@@ -777,6 +777,7 @@ impl Jojobot {
                 },
                 follow: None,
                 history: None,
+                masked: Default::default(),
             },
         )
         .await

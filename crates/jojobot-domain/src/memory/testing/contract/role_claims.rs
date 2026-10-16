@@ -98,6 +98,7 @@ async fn folded_fields_of<M: Memory>(
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await

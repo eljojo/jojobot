@@ -90,6 +90,7 @@ pub(super) async fn thing_fields<M: Memory>(
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -11307,6 +11308,7 @@ pub async fn a_graph_query_selects_a_kind_and_returns_its_prose<M: Memory>(store
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -11425,6 +11427,7 @@ pub async fn a_graph_query_filters_on_a_stored_value_and_walks_an_edge<M: Memory
                 fits_type: None,
             }),
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -12147,6 +12150,7 @@ async fn walked_from<M: Memory>(
                 fits_type: None,
             }),
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -12217,6 +12221,7 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
                         ..graph::Follow::hop()
                     }),
                     history: None,
+                    masked: Default::default(),
                 },
             )
             .await
@@ -13786,6 +13791,7 @@ pub async fn a_filter_tree_gives_the_same_answer_from_every_store<M: Memory>(sto
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -13852,6 +13858,7 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -13892,6 +13899,7 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -14216,6 +14224,7 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
                     },
                     follow: None,
                     history: Some(graph::History::of(&key)),
+                    masked: Default::default(),
                 },
             )
             .await
@@ -14284,6 +14293,7 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
             },
             follow: None,
             history: Some(graph::History::of("cost")),
+            masked: Default::default(),
         },
     )
     .await
@@ -14342,6 +14352,7 @@ pub async fn a_read_of_facts_says_how_many_times_each_was_written<M: Memory>(sto
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -14388,6 +14399,7 @@ pub async fn a_walk_with_no_facts_carries_no_revision_counts<M: Memory>(store: &
             },
             follow: None,
             history: None,
+            masked: Default::default(),
         },
     )
     .await
@@ -15074,6 +15086,7 @@ pub async fn a_walk_from_a_folded_handle_says_where_it_went<M: Memory>(store: &M
                     },
                     follow: None,
                     history: None,
+                    masked: Default::default(),
                 },
             )
             .await
@@ -15839,6 +15852,7 @@ async fn held_and_walked<M: Memory>(
                 ..graph::Follow::hop()
             }),
             history: None,
+            masked: Default::default(),
         },
     )
     .await
