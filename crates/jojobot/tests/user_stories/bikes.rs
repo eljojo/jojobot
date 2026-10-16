@@ -254,7 +254,7 @@ async fn keeping_track_of_bikes() {
         }),
     )
     .await;
-    s.recall("thing:road-bike")
+    s.recall_with_details("thing:road-bike")
         .await
         .says("\"content\":\"needs tyres before it can be sold\"")
         .says("the rear rim is worn too");

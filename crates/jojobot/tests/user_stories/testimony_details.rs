@@ -48,7 +48,7 @@ async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
         .await;
     refused.says("archive").says("derived_from").says("details");
     second
-        .recall("person:kenny")
+        .recall_with_details("person:kenny")
         .await
         .claim(&claim)
         .says("closes at ten")
@@ -84,7 +84,7 @@ async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
     // **The correction by its own address**: the archived claim also holds
     // "closes at nine" in its reason, and names itself, so a needle over the whole
     // read is satisfied by a correction that was never derived from anything.
-    let listing = second.recall("person:kenny").await;
+    let listing = second.recall_with_details("person:kenny").await;
     let correction = listing.claim(&corrected);
     correction.says("closes at nine");
     assert_eq!(
@@ -121,7 +121,7 @@ async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
         )
         .await;
     first
-        .recall("person:kenny")
+        .recall_with_details("person:kenny")
         .await
         .claim(&own)
         .says("to the minute");

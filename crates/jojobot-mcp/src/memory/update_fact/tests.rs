@@ -338,12 +338,10 @@ async fn claim_with_details(jojobot: &Jojobot) {
 
 /// The claim `person:alpha#f1` as `recall` serves it.
 async fn recalled_claim(jojobot: &Jojobot) -> serde_json::Value {
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(recall_args("person:alpha")))
-            .await
-            .expect("recall ok"),
-    );
+    // The details are what these cases compare, so the read asks for them.
+    let mut args = recall_args("person:alpha");
+    args.details = Some(true);
+    let body = json_of(&jojobot.recall(Parameters(args)).await.expect("recall ok"));
     body["objects"][0]["facts"][0].clone()
 }
 

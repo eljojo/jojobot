@@ -821,7 +821,10 @@ async fn a_restore_puts_the_document_back_as_a_day_read_it_and_keeps_every_versi
 
     // The opening still stands, on its own address, with every version.
     let history = session
-        .call("recall", json!({"history_record": opening}))
+        .call(
+            "recall",
+            json!({"history_record": opening, "details": true}),
+        )
         .await
         .json();
     let writes = history["objects"][0]["record_history"]["writes"]
@@ -1080,7 +1083,7 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
         let page = session
             .call(
                 "recall",
-                json!({"subject": "document:homer", "facts": true, "offset": offset}),
+                json!({"subject": "document:homer", "facts": true, "details": true, "offset": offset}),
             )
             .await
             .json();
@@ -1205,7 +1208,7 @@ async fn standing_records(session: &super::dsl::Session) -> Vec<serde_json::Valu
         let page = session
             .call(
                 "recall",
-                json!({"subject": "document:homer", "facts": true, "offset": offset}),
+                json!({"subject": "document:homer", "facts": true, "details": true, "offset": offset}),
             )
             .await
             .json();

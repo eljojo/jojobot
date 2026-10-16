@@ -2417,7 +2417,7 @@ async fn records_over_the_ceiling(
             let raw = surface
                 .call(
                     "recall",
-                    json!({"subject": handle, "facts": true, "offset": offset}),
+                    json!({"subject": handle, "facts": true, "details": true, "offset": offset}),
                 )
                 .await;
             let size = raw.chars().count();
@@ -3391,9 +3391,9 @@ async fn assert_what_a_real_store_holds_reads_back(
     if !vocabulary["types"]
         .as_array()
         .is_some_and(|types| types.contains(&json!({"type": "topic"})))
-        || !vocabulary["kinds"]
-            .as_array()
-            .is_some_and(|kinds| kinds.contains(&json!({"kind": "topic"})))
+        || boot["snapshot"]["entities"]["by_kind"]["topic"]
+            .as_u64()
+            .is_none_or(|held| held == 0)
     {
         fail("a type named topic beside the topic kind", &read);
     }

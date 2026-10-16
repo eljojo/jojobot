@@ -107,6 +107,21 @@ pub(crate) fn capped_roster<'a>(
     (listed, left_out)
 }
 
+/// **The bots a NAMED boot lists: the one that booted**, with its mail, and the
+/// count of the rest. A colleague's mail counts and bodies are never shown, so the
+/// booting bot's box is the only one a boot can say has mail waiting; listing the
+/// others by name would be twenty rows that each say nothing a session can act
+/// on. A caller that is choosing an identity takes [`capped_roster`] instead.
+pub(crate) fn roster_of_one<'a>(handles: Vec<&'a str>, own: &str) -> (Vec<&'a str>, usize) {
+    let total = handles.len();
+    let listed: Vec<&str> = handles
+        .into_iter()
+        .filter(|handle| *handle == own)
+        .collect();
+    let left_out = total - listed.len();
+    (listed, left_out)
+}
+
 /// **What a capped roster owes its reader**: the count of bots it left out and
 /// the two calls that list every one. `None` when nothing was left out, so a
 /// roster that is whole carries no note.

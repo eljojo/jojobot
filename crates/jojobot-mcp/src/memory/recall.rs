@@ -342,6 +342,14 @@ pub struct RecallArgs {
     /// refused the same way.
     #[serde(default)]
     pub(crate) facts: Option<bool>,
+    /// **Whether each record comes back with its details.** Off by default: a
+    /// listing leads with each record's one-line claim, its address, provenance
+    /// and standing, and the details (the reasons under a claim) are a paragraph
+    /// the reader has not asked for. An answer that left details out says once,
+    /// in `details_left_out`, how many it left out and how to ask. Send `true` to
+    /// read them. Applies to every record this call returns, `records` included.
+    #[serde(default)]
+    pub(crate) details: Option<bool>,
     /// **Serve a shape's sources alongside it**, on the same listing of
     /// `facts`. Off by default: a record marked with `stands_for` already
     /// carries its sources' content in its own words, so the listing that
@@ -1265,7 +1273,7 @@ fn fit_run_histories(body: &mut serde_json::Value, traced: &str, paged: Option<u
 /// A write kept before the substrate recorded a moment carries none, and it is
 /// absent rather than filled from the claim: a copied moment would report that
 /// year of corrections as one instant.
-fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
+fn record_history_json(history: &graph::ClaimHistory, details_asked: bool) -> serde_json::Value {
     let mut body = serde_json::json!({
         "record": history.record.to_string(),
         "count": history.total,
@@ -1295,7 +1303,9 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
                 if let Some(run) = &write.session {
                     fields.insert("run".into(), run.as_str().into());
                 }
-                if let Some(details) = &write.details {
+                // **A write's details are left out of a history unless the call
+                // asked**, the way a listing leaves them out; the answer counts them.
+                if let (Some(details), true) = (&write.details, details_asked) {
                     fields.insert("details".into(), details.as_str().into());
                 }
                 if let Some(edge) = &write.edge {
@@ -1353,6 +1363,18 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
         );
     }
     body
+}
+
+/// **How many of a record's shown writes carry details this answer leaves out.**
+fn writes_leaving_details_out(history: &graph::ClaimHistory, details_asked: bool) -> usize {
+    if details_asked {
+        return 0;
+    }
+    history
+        .writes
+        .iter()
+        .filter(|write| write.details.is_some())
+        .count()
 }
 
 /// **The versions of one thing's own row**, oldest first.
@@ -2197,6 +2219,7 @@ fn object_json(
     as_of: jiff::civil::Date,
     only: Option<KeyNarrowing<'_>>,
     frame: DayFrame<'_>,
+    details: bool,
 ) -> serde_json::Value {
     // **A folded handle is not a thing, and it is never served as an empty
     // one.** It goes on answering because a handle somebody wrote down must
@@ -2224,7 +2247,14 @@ fn object_json(
             // at the address under the folded handle it was named by: the
             // history asked for is the one thing a folded handle still answers.
             if let Some(history) = object.record_history.as_ref() {
-                map.insert("record_history".into(), record_history_json(history));
+                map.insert(
+                    "record_history".into(),
+                    record_history_json(history, details),
+                );
+                let left_out = writes_leaving_details_out(history, details);
+                if left_out > 0 {
+                    map.insert(wire::OBJECT_LEFT_OUT.into(), left_out.into());
+                }
             }
         }
         return body;
@@ -2315,9 +2345,22 @@ fn object_json(
             object
                 .facts
                 .iter()
-                .map(|fact| fact_json(fact, as_of, object.fact_revisions.get(&fact.id).copied()))
+                .map(|fact| {
+                    wire::listed_json(
+                        fact,
+                        as_of,
+                        object.fact_revisions.get(&fact.id).copied(),
+                        details,
+                    )
+                })
                 .collect(),
         );
+        // **What this object's records left out is counted here and said once by
+        // the answer**, off the objects it kept.
+        let left_out = wire::left_out_of(object.facts.iter(), details);
+        if left_out > 0 {
+            fields.insert(wire::OBJECT_LEFT_OUT.into(), left_out.into());
+        }
         // **A claim the thing cannot serve is named, never dropped without a
         // word**: a merge left it under the folded thing's key and its event does
         // not list it. Each comes with the reason and the address that reads it.
@@ -2411,7 +2454,14 @@ fn object_json(
     // are different questions and a reader should not have to look at the value
     // to find out which was asked.
     if let Some(history) = object.record_history.as_ref() {
-        fields.insert("record_history".into(), record_history_json(history));
+        fields.insert(
+            "record_history".into(),
+            record_history_json(history, details),
+        );
+        let left_out = writes_leaving_details_out(history, details);
+        if left_out > 0 {
+            fields.insert(wire::OBJECT_LEFT_OUT.into(), left_out.into());
+        }
     }
     // **The writes behind the thing the call named**, on the one object it names.
     if let Some(history) = object.entity_history.as_ref() {
@@ -2469,7 +2519,7 @@ fn object_json(
     let rendered: Vec<serde_json::Value> = object
         .connected
         .iter()
-        .map(|o| object_json(o, include, as_of, only, frame))
+        .map(|o| object_json(o, include, as_of, only, frame, details))
         .collect();
     let kept = text::CONNECTED_CONTEXT.head(&rendered, |item| item.to_string().chars().count());
     fields.insert("connected".into(), kept.kept().to_vec().into());
@@ -3342,6 +3392,9 @@ impl Jojobot {
             keys,
             by_view: keys_from_view,
         });
+        // **Whether the records this answer renders carry their details**: only
+        // when the call asked.
+        let details_asked = args.details.unwrap_or(false);
         let ships_held = ships_held(args.held, include.facts, names_keys(narrowing));
         let held_floor = if ships_held {
             [entitlement::Widen::Never, entitlement::Widen::WhenEmpty]
@@ -3353,8 +3406,14 @@ impl Jojobot {
             0
         };
         let floor = |object: &graph::Object| -> usize {
-            crate::answer::served_len(&object_json(object, include, today, narrowing, day_frame))
-                + 1
+            crate::answer::served_len(&object_json(
+                object,
+                include,
+                today,
+                narrowing,
+                day_frame,
+                details_asked,
+            )) + 1
                 + held_floor
         };
         let window = (as_of.is_none()
@@ -3602,17 +3661,24 @@ impl Jojobot {
             None => None,
             Some(source) => {
                 match self.memory.built_on(source).await {
-                    Ok(claims) => Some(serde_json::json!({
-                        "source": source.to_string(),
-                        "count": claims.len(),
-                        // No revision count: lineage is read straight off the
-                        // store rather than through a walk, so there is no
-                        // `fact_revisions` map beside it to look one up in.
-                        "claims": claims
-                            .iter()
-                            .map(|fact| fact_json(fact, today, None))
-                            .collect::<Vec<_>>(),
-                    })),
+                    Ok(claims) => {
+                        let mut lineage = serde_json::json!({
+                            "source": source.to_string(),
+                            "count": claims.len(),
+                            // No revision count: lineage is read straight off the
+                            // store rather than through a walk, so there is no
+                            // `fact_revisions` map beside it to look one up in.
+                            "claims": claims
+                                .iter()
+                                .map(|fact| wire::listed_json(fact, today, None, details_asked))
+                                .collect::<Vec<_>>(),
+                        });
+                        let left_out = wire::left_out_of(claims.iter(), details_asked);
+                        if left_out > 0 {
+                            lineage[wire::OBJECT_LEFT_OUT] = left_out.into();
+                        }
+                        Some(lineage)
+                    }
                     Err(e) => return memory_declined("recall", e),
                 }
             }
@@ -3929,6 +3995,7 @@ impl Jojobot {
                         today,
                         narrowing,
                         day_frame,
+                        details_asked,
                     );
                     if let Some(next) = numbering_views.get(&o.entity.id) {
                         rendered["next_number"] = (*next).into();
@@ -4409,6 +4476,10 @@ impl Jojobot {
         {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
         }
+        // **Room for the line that says details were left out is made before the
+        // ceiling is applied, and the count is made after it**, so the line counts
+        // the objects the answer kept and not the ones the ceiling cut.
+        wire::say_details_left_out(&mut body, wire::Marks::Keep);
         crate::memory::ready::fit_under_ceiling(&mut body);
         if let Some(traced) = args.history.as_deref().map(str::trim) {
             fit_run_histories(&mut body, traced, pages_history.then_some(offset));
@@ -4421,6 +4492,7 @@ impl Jojobot {
                 after: left_over,
             },
         );
+        wire::say_details_left_out(&mut body, wire::Marks::Take);
         if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
             self.registry.note_shown(caller.sid.as_str(), &body);
         }
@@ -4564,6 +4636,7 @@ impl Jojobot {
         args: &RecallArgs,
         addresses: &[String],
     ) -> Result<CallToolResult, McpError> {
+        let details_asked = args.details.unwrap_or(false);
         if let Some(beside) = selection_beside_records(args) {
             return memory_declined(
                 "recall",
@@ -4596,7 +4669,7 @@ impl Jojobot {
             match self.memory.claim_history(&address).await {
                 Ok(writes) => match writes.last() {
                     Some(newest) => {
-                        answered.push(record_json(&address, newest, writes.len()));
+                        answered.push(record_json(&address, newest, writes.len(), details_asked));
                     }
                     None => answered.push(missing_record(asked, "the record holds no write")),
                 },
@@ -4608,6 +4681,8 @@ impl Jojobot {
         }
         let mut body = serde_json::json!({ "count": answered.len(), "records": answered });
         fit_records(&mut body, args.offset.map_or(0, |offset| offset as usize));
+        // **Said once, off the records the answer kept.**
+        wire::say_details_left_out(&mut body, wire::Marks::Take);
         json_result(&body)
     }
 }
@@ -4630,6 +4705,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         scope,
         order,
         facts,
+        details: _,
         stood_for,
         status,
         prose,
@@ -4695,6 +4771,7 @@ fn record_json(
     address: &FactAddress,
     newest: &jojobot_domain::memory::ClaimWrite,
     revisions: usize,
+    details_asked: bool,
 ) -> serde_json::Value {
     let mut record = serde_json::json!({
         "address": address.to_string(),
@@ -4707,7 +4784,12 @@ fn record_json(
         "revisions": revisions,
     });
     if let (Some(details), Some(fields)) = (&newest.details, record.as_object_mut()) {
-        fields.insert("details".into(), details.as_str().into());
+        if details_asked {
+            fields.insert("details".into(), details.as_str().into());
+        } else {
+            // Marked, so the answer counts what it kept and says it once.
+            fields.insert(wire::OBJECT_LEFT_OUT.into(), 1.into());
+        }
     }
     record
 }

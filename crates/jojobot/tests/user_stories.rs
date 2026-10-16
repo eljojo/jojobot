@@ -78,6 +78,9 @@ mod contract_boot_budget;
 /// A claim must fit one ordinary answer, or it is refused when written.
 #[path = "user_stories/contract_claim_room.rs"]
 mod contract_claim_room;
+/// How much a standard boot and a standard records read may weigh.
+#[path = "user_stories/contract_lean_defaults.rs"]
+mod contract_lean_defaults;
 /// The line a write ends with when it sets a due moment.
 #[path = "user_stories/contract_owed_receipt.rs"]
 mod contract_owed_receipt;
@@ -145,6 +148,9 @@ mod keeping_up;
 /// What a record pointed at and stood for at each write of it.
 #[path = "user_stories/kept_marks.rs"]
 mod kept_marks;
+/// A listing leads with each claim; details come when asked.
+#[path = "user_stories/lean_defaults.rs"]
+mod lean_defaults;
 /// A merge in the history of the survivor and of the children it moved.
 #[path = "user_stories/merge_history.rs"]
 mod merge_history;

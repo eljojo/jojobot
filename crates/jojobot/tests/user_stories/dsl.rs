@@ -2168,6 +2168,17 @@ impl Session {
         .await
     }
 
+    /// [`recall`](Self::recall), asking for each record's details too: a standard
+    /// records read leaves them out and says how many it left out.
+    pub async fn recall_with_details(&self, subject: &str) -> Answer {
+        self.read(
+            format!("recall of {subject} with details"),
+            "recall",
+            json!({"subject": subject, "facts": true, "details": true}),
+        )
+        .await
+    }
+
     pub async fn find(&self, query: &str) -> Answer {
         self.read(
             format!("search for {query:?}"),

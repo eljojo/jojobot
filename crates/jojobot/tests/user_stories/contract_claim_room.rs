@@ -126,7 +126,10 @@ async fn a_capture_too_big_to_be_read_back_whole_is_refused_and_the_largest_that
     assert_eq!(refusal.json()["wrote"], false, "{}", refusal.raw());
     refusal.says("split").says("pointer");
     let held = otto
-        .call("recall", json!({"subject": subject, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": subject, "facts": true, "details": true}),
+        )
         .await;
     assert_eq!(
         held.json()["objects"][0]["facts"].as_array().map(Vec::len),
@@ -147,7 +150,10 @@ async fn a_capture_too_big_to_be_read_back_whole_is_refused_and_the_largest_that
     )
     .await;
     let (read, size) = otto
-        .answer_and_size("recall", json!({"subject": subject, "facts": true}))
+        .answer_and_size(
+            "recall",
+            json!({"subject": subject, "facts": true, "details": true}),
+        )
         .await;
     assert!(size <= ANSWER_CEILING, "the read fits: {size}");
     let facts = read["objects"][0]["facts"].as_array().expect("the facts");
@@ -218,9 +224,12 @@ async fn the_limit_for_a_claim_is_where_a_read_of_it_stops_fitting() {
             let written = memory.capture(fact).await;
             assert!(matches!(written, Ok(Guarded::Written(_))), "{written:?}");
             story.the_store_changed_underneath().await;
-            otto.answer_and_size("recall", json!({"subject": id.as_str(), "facts": true}))
-                .await
-                .1
+            otto.answer_and_size(
+                "recall",
+                json!({"subject": id.as_str(), "facts": true, "details": true}),
+            )
+            .await
+            .1
         }
     };
     let (fits, past, at) = (
@@ -280,7 +289,10 @@ async fn an_edit_that_makes_a_claim_too_big_to_read_is_refused_and_leaves_it_as_
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     refusal.says("split").says("pointer");
     let (read, size) = otto
-        .answer_and_size("recall", json!({"subject": subject, "facts": true}))
+        .answer_and_size(
+            "recall",
+            json!({"subject": subject, "facts": true, "details": true}),
+        )
         .await;
     assert!(size <= ANSWER_CEILING, "{size}");
     let facts = read["objects"][0]["facts"].as_array().expect("the facts");
@@ -357,7 +369,7 @@ async fn a_creation_whose_first_claim_is_too_big_to_read_back_makes_nothing() {
     let (read, size) = otto
         .answer_and_size(
             "recall",
-            json!({"subject": format!("thing:{slug}"), "facts": true}),
+            json!({"subject": format!("thing:{slug}"), "facts": true, "details": true}),
         )
         .await;
     assert!(size <= ANSWER_CEILING, "{size}");
@@ -394,7 +406,10 @@ async fn a_creation_whose_first_claim_is_too_big_to_read_back_makes_nothing() {
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     let bare = otto
-        .call("recall", json!({"subject": existing, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": existing, "facts": true, "details": true}),
+        )
         .await;
     assert_eq!(
         bare.json()["objects"][0]["facts"].as_array().map(Vec::len),
@@ -494,7 +509,10 @@ async fn aliases_that_could_not_be_read_back_whole_are_refused_on_creation_and_o
     )
     .await;
     let (read, size) = otto
-        .answer_and_size("recall", json!({"subject": handle, "facts": true}))
+        .answer_and_size(
+            "recall",
+            json!({"subject": handle, "facts": true, "details": true}),
+        )
         .await;
     assert!(size <= ANSWER_CEILING, "{size}");
     assert_eq!(
@@ -513,7 +531,10 @@ async fn aliases_that_could_not_be_read_back_whole_are_refused_on_creation_and_o
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     let again = otto
-        .call("recall", json!({"subject": handle, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": handle, "facts": true, "details": true}),
+        )
         .await;
     assert_eq!(
         again.json()["objects"][0]["alternateName"]
@@ -559,7 +580,10 @@ async fn a_merge_whose_account_is_too_big_to_read_back_moves_nothing() {
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     let still = otto
-        .call("recall", json!({"subject": duplicate, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": duplicate, "facts": true, "details": true}),
+        )
         .await;
     assert_ne!(
         still.json()["objects"][0]["status"],
@@ -576,7 +600,10 @@ async fn a_merge_whose_account_is_too_big_to_read_back_moves_nothing() {
     )
     .await;
     let (read, size) = otto
-        .answer_and_size("recall", json!({"subject": survivor, "facts": true}))
+        .answer_and_size(
+            "recall",
+            json!({"subject": survivor, "facts": true, "details": true}),
+        )
         .await;
     assert!(size <= ANSWER_CEILING, "{size}");
     assert_eq!(
@@ -700,7 +727,10 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
     )
     .await;
     let read = otto
-        .call("recall", json!({"subject": handle, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": handle, "facts": true, "details": true}),
+        )
         .await;
     assert_eq!(
         read.json()["objects"][0]["facts"].as_array().map(Vec::len),
@@ -761,7 +791,10 @@ async fn a_merge_account_that_fits_beside_the_survivor_but_not_beside_the_merged
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     let still = otto
-        .call("recall", json!({"subject": duplicate, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": duplicate, "facts": true, "details": true}),
+        )
         .await;
     assert_ne!(
         still.json()["objects"][0]["status"],

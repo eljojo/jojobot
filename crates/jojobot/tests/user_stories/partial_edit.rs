@@ -58,7 +58,10 @@ async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
         .await;
     refused.says("\"matches\":3").says("\"fix_by\":\"change\"");
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         NOTE
     );
 
@@ -73,7 +76,10 @@ async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
     .await
     .says("\"matches\":0");
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         NOTE,
         "a find that matched nothing left the text as it was"
     );
@@ -96,7 +102,7 @@ async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
         receipt["text_edit"]["bytes_before"].as_u64().unwrap(),
         "{receipt}"
     );
-    let recalled = run.recall("person:kenny").await.json();
+    let recalled = run.recall_with_details("person:kenny").await.json();
     assert_eq!(
         details_of(&recalled, &claim),
         "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph"
@@ -129,7 +135,10 @@ async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
     .says("\"fix_by\":\"retry\"")
     .says("expected_revision: 2");
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph",
         "a stale edit left the text as the last edit made it"
     );
@@ -243,7 +252,10 @@ async fn a_find_that_matches_nothing_names_the_read_that_shows_the_text() {
         .says("facts: true");
     // The read it names returns the text the find was meant to match.
     let read = run
-        .call("recall", json!({"subject": "person:kenny", "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": "person:kenny", "facts": true, "details": true}),
+        )
         .await
         .json();
     assert_eq!(details_of(&read, &claim), NOTE, "{read}");
@@ -276,7 +288,7 @@ async fn an_edits_receipt_carries_the_revision_the_next_guarded_edit_sends() {
             .is_some_and(|note| note.contains("expected_revision")),
         "the receipt says what to do with the number: {first}"
     );
-    let read = run.recall("person:kenny").await.json();
+    let read = run.recall_with_details("person:kenny").await.json();
     let served = read["objects"][0]["facts"]
         .as_array()
         .and_then(|facts| facts.iter().find(|fact| fact["address"] == claim))
@@ -358,7 +370,10 @@ async fn a_find_call_that_is_not_whole_changes_nothing() {
             .says("\"fix_by\":\"change\"")
             .says(names);
         assert_eq!(
-            details_of(&run.recall("person:kenny").await.json(), &claim),
+            details_of(
+                &run.recall_with_details("person:kenny").await.json(),
+                &claim
+            ),
             NOTE,
             "{label}: the text stays"
         );
@@ -386,7 +401,10 @@ async fn an_empty_replace_deletes_and_a_find_at_the_current_revision_lands() {
     assert_eq!(receipt["text_edit"]["inserted"], "", "{receipt}");
     assert_eq!(receipt["revision"], 2, "{receipt}");
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         "first paragraph\n\nsecond paragraph\n\nthird paragraph"
     );
     story.finish().await;
@@ -434,7 +452,10 @@ async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() 
     .says("whole handle")
     .says("\"fix_by\":\"change\"");
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         "met @person:butters at noon. A typo here."
     );
 
@@ -453,7 +474,10 @@ async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() 
     )
     .await;
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         "met @person:marjorine at noon. A fix here.",
         "the edit turned the link into the words that were typed"
     );
@@ -468,7 +492,10 @@ async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() 
     )
     .await;
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &claim),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &claim
+        ),
         "met a friend at noon. A fix here."
     );
     story.finish().await;
@@ -519,7 +546,10 @@ async fn an_edit_inside_a_fence_that_opens_on_the_content_keeps_the_code_literal
     )
     .await;
     assert_eq!(
-        details_of(&run.recall("person:kenny").await.json(), &fenced),
+        details_of(
+            &run.recall_with_details("person:kenny").await.json(),
+            &fenced
+        ),
         "met @person:butters with @person:butters and @person:nelson\n```",
         "the code stayed as it was typed"
     );
@@ -534,7 +564,9 @@ async fn an_edit_inside_a_fence_that_opens_on_the_content_keeps_the_code_literal
         }),
     )
     .await;
-    run.recall("person:kenny").await.says("```@person:nelson");
+    run.recall_with_details("person:kenny")
+        .await
+        .says("```@person:nelson");
 
     let outside = run
         .call(

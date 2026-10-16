@@ -3123,6 +3123,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "details": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "facts": {
         "default": null,
         "type": [
@@ -3721,6 +3728,17 @@ of it may be text the software supplies rather than text anybody wrote,
 and a write repeating it comes back blocked. Send what you are writing.
 
 Objects that are not bots carry no charter at all.
+```
+
+#### `recall` — argument `/inputSchema.details`
+
+```text
+**Whether each record comes back with its details.** Off by default: a
+listing leads with each record's one-line claim, its address, provenance
+and standing, and the details (the reasons under a claim) are a paragraph
+the reader has not asked for. An answer that left details out says once,
+in `details_left_out`, how many it left out and how to ask. Send `true` to
+read them. Applies to every record this call returns, `records` included.
 ```
 
 #### `recall` — argument `/inputSchema.facts`
@@ -4644,6 +4662,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "details": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "edge": {
         "anyOf": [
           {
@@ -4817,6 +4842,17 @@ of two orderings.
 `clock` picks the day ranking reads: `recorded_on` (the default) is the
 day in a claim's `recorded_at`, and `happened_at` is the day the thing
 itself did.
+```
+
+#### `search` — argument `/inputSchema.details`
+
+```text
+**Whether each claim comes back with its details.** Off by default: a hit
+leads with the claim, its address, provenance and standing, and the
+details (the reasons under a claim) are a paragraph the reader has not
+asked for. An answer that left details out says once, in
+`details_left_out`, how many it left out and how to ask. Send `true` to
+read them. Words in a claim's details still match.
 ```
 
 #### `search` — argument `/inputSchema.edge`

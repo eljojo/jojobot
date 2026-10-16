@@ -144,13 +144,107 @@ pub(crate) fn fact_json(
     {
         rendered["revised"] = serde_json::json!(true);
         rendered["revision_count"] = serde_json::json!(total);
-        rendered["revision_note"] = serde_json::json!(format!(
-            "this claim has been written {total} times. The record above is the newest; recall \
-             the subject with history_record: \"{}\" to read the earlier wording, oldest first.",
-            fact.address()
-        ));
     }
     rendered
+}
+
+/// **The record on the wire as a LISTING serves it.**
+///
+/// A listing leads with each record's one-line claim, its address, provenance and
+/// standing. The details are a paragraph of reasons the reader has not asked for,
+/// so they are left out unless the call sent `details: true`, and the answer says
+/// once how many it left out and how to ask ([`details_note`]). A record whose
+/// details are left out is counted by [`left_out_of`], which the caller adds up.
+pub(crate) fn listed_json(
+    fact: &Fact,
+    as_of: jiff::civil::Date,
+    revised: Option<usize>,
+    details_asked: bool,
+) -> serde_json::Value {
+    let mut rendered = fact_json(fact, as_of, revised);
+    if !details_asked && let Some(map) = rendered.as_object_mut() {
+        map.remove("details");
+    }
+    rendered
+}
+
+/// **How many of these records a listing without `details` leaves details out
+/// of.** A record with no details leaves nothing out.
+pub(crate) fn left_out_of<'a>(
+    facts: impl IntoIterator<Item = &'a Fact>,
+    details_asked: bool,
+) -> usize {
+    if details_asked {
+        return 0;
+    }
+    facts
+        .into_iter()
+        .filter(|fact| fact.details.is_some())
+        .count()
+}
+
+/// **The line an answer carries once when it left details out.** Eliding is never
+/// silent: the count and the argument that returns them ride together.
+pub(crate) fn details_note(count: usize) -> serde_json::Value {
+    serde_json::json!({
+        "count": count,
+        "how_to_ask": "ask again with details: true to read them",
+    })
+}
+
+/// The private key an object carries from where its records are rendered to
+/// where the answer is finished, so the count of the answer is of the objects it
+/// kept and not of the ones a ceiling cut.
+pub(crate) const OBJECT_LEFT_OUT: &str = "_details_left_out";
+
+/// **What to do with the marks while the answer says how many details it left
+/// out**: leave them, because the answer is not finished, or take them off.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Marks {
+    Keep,
+    Take,
+}
+
+/// **Say once, off the answer as it stands, how many records it left their
+/// details out of.** The one home for the count, the line and the marks, for
+/// every shape an answer takes: `objects` with the ones they reached
+/// (`connected`) and `built_on`, `results`, and `records`. A count above zero
+/// sets `details_left_out`; none removes it. `Marks::Take` also takes the marks
+/// off, once the answer is finished; `Marks::Keep` leaves them for a later pass,
+/// so a ceiling that cuts objects is counted after it, on what it kept.
+pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
+    fn visit(object: &mut serde_json::Value, take: bool) -> usize {
+        let Some(map) = object.as_object_mut() else {
+            return 0;
+        };
+        let own = if take {
+            map.remove(OBJECT_LEFT_OUT)
+        } else {
+            map.get(OBJECT_LEFT_OUT).cloned()
+        }
+        .and_then(|count| count.as_u64())
+        .unwrap_or(0) as usize;
+        let reached = map
+            .get_mut("connected")
+            .and_then(|connected| connected.as_array_mut())
+            .map_or(0, |all| all.iter_mut().map(|one| visit(one, take)).sum());
+        own + reached
+    }
+    let take = marks == Marks::Take;
+    let mut left_out = 0;
+    for shape in ["objects", "results", "records"] {
+        if let Some(all) = body.get_mut(shape).and_then(|all| all.as_array_mut()) {
+            left_out += all.iter_mut().map(|one| visit(one, take)).sum::<usize>();
+        }
+    }
+    if let Some(built_on) = body.get_mut("built_on") {
+        left_out += visit(built_on, take);
+    }
+    if left_out > 0 {
+        body["details_left_out"] = details_note(left_out);
+    } else if let Some(map) = body.as_object_mut() {
+        map.remove("details_left_out");
+    }
 }
 
 /// **The receipt for a record somebody just wrote**: the same record with the

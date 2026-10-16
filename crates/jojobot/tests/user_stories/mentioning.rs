@@ -145,7 +145,7 @@ async fn sample_code_naming_nothing_is_kept_as_written_and_the_same_handle_outsi
     let read = s
         .call(
             "recall",
-            json!({"subject": "person:milhouse", "facts": true}),
+            json!({"subject": "person:milhouse", "facts": true, "details": true}),
         )
         .await;
     read.says("`@person:nelson`")

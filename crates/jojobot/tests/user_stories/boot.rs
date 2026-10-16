@@ -219,16 +219,19 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     let (vocabulary, _) = story
         .call("start_here", json!({"bot": "otto", "brief": true}))
         .await;
-    vocabulary.says("\"kinds\"").says("\"person\"");
+    vocabulary.says("\"kinds\"");
 
-    // **The half that makes the three above mean anything.** A boot that named
-    // an empty list would satisfy every `says` on a key that is present and
-    // holds nothing, which is the shape this suite has paid for more than
-    // once. The kinds are counted out of the answer instead.
+    // **The half that makes the line above mean anything.** The boot counts the
+    // kinds and says where they are named, so the count is read out of the answer
+    // and a zero or a missing one cannot pass for an answer.
     let named = vocabulary.json()["snapshot"]["vocabulary"]["kinds"]
-        .as_array()
-        .expect("the boot names the kinds it ships")
-        .len();
+        .as_u64()
+        .expect("the boot counts the kinds it ships");
+    assert!(
+        vocabulary.json()["snapshot"]["vocabulary"]["kinds_listed_in"].is_string(),
+        "…and says where they are named: {}",
+        vocabulary.raw()
+    );
     assert!(
         named > 5,
         "a boot naming {named} kind(s) is a build that ships almost none, or a list that came \
@@ -302,13 +305,15 @@ async fn a_roster_of(story: &Story, count: usize, caller: &str) -> Vec<String> {
     roster
 }
 
-/// **A boot lists at most twenty bots and counts the rest.** The caller's own
-/// bot is always listed; the others come in handle order. What is left out is
-/// counted, and the answer names the two calls that list every bot. Paired with
-/// a small roster below, which lists every bot and carries no count of what it
-/// left out.
+/// **A named boot lists the bot that booted and counts the rest; an anonymous
+/// boot lists at most twenty and counts the rest.** Only the booting bot's own
+/// box is ever counted, so it is the one bot a named boot can name as having mail
+/// waiting; the others are a count and the two calls that list them. An
+/// anonymous boot is choosing an identity, so it names up to the cap, in handle
+/// order. Paired with a small roster below, which an anonymous boot lists whole
+/// and carries no count for.
 #[tokio::test]
-async fn a_boot_of_a_large_roster_lists_twenty_bots_with_the_caller_and_counts_the_rest() {
+async fn a_named_boot_lists_the_caller_and_counts_the_rest_while_an_anonymous_one_lists_twenty() {
     let story = Story::begin("bot:upsilon").await;
     let roster = a_roster_of(&story, 150, "bot:upsilon").await;
     let (booted, _) = story.call("start_here", json!({"bot": "upsilon"})).await;
@@ -320,58 +325,79 @@ async fn a_boot_of_a_large_roster_lists_twenty_bots_with_the_caller_and_counts_t
         "the roster this case built is not the instance's: {entities}"
     );
 
+    // ── the named boot: the caller, with its mail, and a count of the rest ──
+    let listed: Vec<&serde_json::Value> = entities["bots"]
+        .as_array()
+        .expect("a list of bots")
+        .iter()
+        .collect();
+    assert_eq!(listed.len(), 1, "{entities}");
+    assert_eq!(listed[0]["handle"], "bot:upsilon", "{entities}");
+    assert_eq!(listed[0]["yours"], true, "{entities}");
+    assert!(listed[0]["mail"]["counts"].is_object(), "{entities}");
+    let left_out = &entities["bots_left_out"];
+    assert_eq!(left_out["count"], roster.len() - 1, "{entities}");
+    let how = left_out["how_to_list"].as_str().unwrap_or_default();
+    assert!(how.contains("list_entities"), "{left_out}");
+    assert!(how.contains("colleagues"), "{left_out}");
+
+    // ── the anonymous boot: twenty names in order, and the count of the rest ──
+    let (anonymous, _) = story.call("start_here", json!({})).await;
+    let anonymous = anonymous.json();
+    let entities = &anonymous["snapshot"]["entities"];
     let listed: Vec<&str> = entities["bots"]
         .as_array()
         .expect("a list of bots")
         .iter()
         .map(|bot| bot["handle"].as_str().expect("a handle"))
         .collect();
-    let mut expected: Vec<&str> = roster
+    let expected: Vec<&str> = roster
         .iter()
         .map(String::as_str)
-        .filter(|handle| *handle != "bot:upsilon")
-        .take(BOTS_LISTED - 1)
+        .take(BOTS_LISTED)
         .collect();
-    expected.push("bot:upsilon");
     assert_eq!(listed, expected, "{entities}");
-    let own: Vec<&serde_json::Value> = entities["bots"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|bot| bot["yours"] == true)
-        .collect();
-    assert_eq!(own.len(), 1, "{entities}");
-    assert_eq!(own[0]["handle"], "bot:upsilon");
-
-    let left_out = &entities["bots_left_out"];
-    assert_eq!(left_out["count"], roster.len() - BOTS_LISTED, "{entities}");
-    let how = left_out["how_to_list"].as_str().unwrap_or_default();
-    assert!(how.contains("list_entities"), "{left_out}");
-    assert!(how.contains("colleagues"), "{left_out}");
+    assert_eq!(
+        entities["bots_left_out"]["count"],
+        roster.len() - BOTS_LISTED,
+        "{entities}"
+    );
     story.finish().await;
 }
 
-/// The other half of the pair: a roster under the cap lists every bot, and says
-/// nothing about leaving any out, so the note means something when it appears.
+/// The other half of the pair: an anonymous boot of a roster under the cap lists
+/// every bot, and says nothing about leaving any out, so the note means something
+/// when it appears. A named boot of the same roster lists itself and counts the
+/// others.
 #[tokio::test]
-async fn a_boot_of_a_small_roster_lists_every_bot_and_counts_none_left_out() {
+async fn a_boot_of_a_small_roster_lists_every_bot_to_a_caller_choosing_one() {
     let story = Story::begin("bot:upsilon").await;
     let roster = a_roster_of(&story, 5, "bot:upsilon").await;
     assert!(roster.len() < BOTS_LISTED);
-    for booted in [
-        story.call("start_here", json!({"bot": "upsilon"})).await.0,
-        story.call("start_here", json!({})).await.0,
-    ] {
-        let entities = &booted.json()["snapshot"]["entities"];
-        let listed: Vec<&str> = entities["bots"]
-            .as_array()
-            .expect("a list of bots")
-            .iter()
-            .map(|bot| bot["handle"].as_str().expect("a handle"))
-            .collect();
-        assert_eq!(listed, roster, "{entities}");
-        assert!(entities.get("bots_left_out").is_none(), "{entities}");
-    }
+
+    let anonymous = story.call("start_here", json!({})).await.0;
+    let entities = &anonymous.json()["snapshot"]["entities"];
+    let listed: Vec<&str> = entities["bots"]
+        .as_array()
+        .expect("a list of bots")
+        .iter()
+        .map(|bot| bot["handle"].as_str().expect("a handle"))
+        .collect();
+    assert_eq!(listed, roster, "{entities}");
+    assert!(entities.get("bots_left_out").is_none(), "{entities}");
+
+    let named = story.call("start_here", json!({"bot": "upsilon"})).await.0;
+    let entities = &named.json()["snapshot"]["entities"];
+    assert_eq!(
+        entities["bots"].as_array().map(Vec::len),
+        Some(1),
+        "{entities}"
+    );
+    assert_eq!(
+        entities["bots_left_out"]["count"],
+        roster.len() - 1,
+        "{entities}"
+    );
     story.finish().await;
 }
 

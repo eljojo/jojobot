@@ -272,6 +272,12 @@ This includes a claim about a person, a summary, a portrait, and a note.
 another bot's mail counts are never shown here — only its own boot or its own poll can see them
 ```
 
+#### Anonymous boot — `.snapshot.vocabulary.kinds_listed_in`
+
+```text
+start_here with no bot: the orientation names every kind
+```
+
 #### Named boot of the shipped identity — `.identity.charter`
 
 ```text
@@ -410,5 +416,11 @@ This includes a claim about a person, a summary, a portrait, and a note.
 
 ```text
 another bot's mail counts are never shown here — only its own boot or its own poll can see them
+```
+
+#### Named boot of the shipped identity — `.snapshot.vocabulary.kinds_listed_in`
+
+```text
+start_here with no bot: the orientation names every kind
 ```
 

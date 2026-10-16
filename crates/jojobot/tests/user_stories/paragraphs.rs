@@ -56,7 +56,7 @@ async fn a_rules_reasoning_keeps_its_paragraphs_from_the_write_to_the_page() {
     .says("one line");
 
     // ── the recall: the same bytes come back ────────────────────────────────
-    let recalled = s.recall("bot:gamma").await;
+    let recalled = s.recall_with_details("bot:gamma").await;
     let facts = recalled.json()["objects"][0]["facts"].clone();
     let rule = facts
         .as_array()
@@ -83,7 +83,7 @@ async fn a_rules_reasoning_keeps_its_paragraphs_from_the_write_to_the_page() {
         json!({"address": address, "details": CORRECTED}),
     )
     .await;
-    let recalled = s.recall("bot:gamma").await;
+    let recalled = s.recall_with_details("bot:gamma").await;
     let corrected = recalled.json()["objects"][0]["facts"]
         .as_array()
         .expect("the facts are a list")

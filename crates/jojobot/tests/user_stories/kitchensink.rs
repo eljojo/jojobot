@@ -151,13 +151,13 @@ async fn nothing_on_the_surface_goes_unexercised() {
     )
     .await
     .says("twenty minutes");
-    s.recall("person:homer")
+    s.recall_with_details("person:homer")
         .await
         .claim(&told)
         .says("twenty minutes");
     s.call("update_fact", json!({"address": &told, "details": ""}))
         .await;
-    s.recall("person:homer")
+    s.recall_with_details("person:homer")
         .await
         .claim(&told)
         .says("\"content\":\"walks to work\"")

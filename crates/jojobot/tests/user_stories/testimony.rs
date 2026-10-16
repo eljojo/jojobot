@@ -78,7 +78,7 @@ async fn a_later_run_cannot_rewrite_the_operators_words_in_place_and_the_route_w
     // now: the original, archived, with the reason; the corrected claim, active,
     // derived from it. A read that dropped the archived one, or served it as
     // active beside the new one, would leave two live claims about one colour.
-    let now = later.recall("thing:handcart").await;
+    let now = later.recall_with_details("thing:handcart").await;
     now.claim(&red)
         .says("\"status\":\"archived\"")
         .says("the handcart is red")

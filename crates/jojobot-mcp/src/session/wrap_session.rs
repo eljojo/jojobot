@@ -1096,6 +1096,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     unreviewed: None,
+                    details: None,
                     view: None,
                     inputs: None,
                     subject: Some(format!("session:{session_id}")),

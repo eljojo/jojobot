@@ -196,6 +196,7 @@ mod tests {
             ticks: None,
             ticks_offset: None,
             unreviewed: None,
+            details: None,
             subject: Some(subject.into()),
             kind: None,
             parent: None,

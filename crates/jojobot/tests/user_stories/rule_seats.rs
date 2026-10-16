@@ -219,8 +219,8 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
 
     // ── a bot already over stays repairable ─────────────────────────────────
     //
-    // Sigma's charter fills the ceiling exactly, and a new colleague then
-    // grows its snapshot, which is the one write that never refuses. A write
+    // Sigma's charter fills the ceiling exactly, and a declared type then
+    // grows its snapshot, which is a write that never refuses. A write
     // that lowers the floor still lands, and one that grows it does not.
     s.add("bot:sigma", "Sigma").await;
     for n in 0..7 {
@@ -235,25 +235,30 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
         .await;
     }
     let fits = fill_the_ceiling_with_a_charter(&s, "bot:sigma").await;
-    let grown = s
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "psi", "name": "Psi", "source": "user-named"}),
-        )
-        .await
-        .json();
-    // The premise of what follows: the new colleague took sigma over the
-    // ceiling, so the two writes below are asked of a bot that is over.
-    assert_eq!(grown["id"], "bot:psi", "the creation stands: {grown}");
-    let pushed = grown["pushes_over"]
-        .as_array()
-        .expect("the bots it pushed over are named");
+    // A declared type is named in every bot's boot, and no rule refuses it, so a
+    // type with a long name takes sigma's boot over the ceiling by more than one
+    // character. (A new colleague no longer does: a named boot lists only the bot
+    // that booted.)
+    s.call(
+        "declare_type",
+        json!({
+            "name": "a-type-whose-name-is-long-enough-to-take-a-full-boot-over-its-ceiling",
+            "fields": [{ "key": "cost", "holds": "number" }],
+        }),
+    )
+    .await;
+    // The premise of what follows: sigma is over the ceiling, so the writes
+    // below are asked of a bot that is over.
+    let (probe, _) = story.call("start_here", json!({"bot": "sigma"})).await;
     assert!(
-        pushed.iter().any(|over| over["bot"] == "bot:sigma"),
-        "sigma was not pushed over the ceiling, so it is not over when the writes below are \
-         asked: {grown}"
+        probe.json()["over_the_ceiling"]["over"]
+            .as_u64()
+            .is_some_and(|over| over >= 2),
+        "sigma was not taken over the ceiling, so it is not over when the writes below are \
+         asked: {}",
+        probe.raw()
     );
-    // Over the ceiling by what the new colleague added, which is more than
+    // Over the ceiling by what the type added, which is more than
     // one character. A charter one longer grows the floor and is refused; one
     // a character shorter lowers it and lands although the boot is still over.
     s.refused(
@@ -409,6 +414,14 @@ async fn fill_the_ceiling_with_a_charter(s: &super::dsl::Session, bot: &str) -> 
     fits
 }
 
+/// How many bots the instance holds, as the boot's snapshot counts them.
+async fn bots_on_the_instance(story: &Story) -> u64 {
+    let (booted, _) = story.call("start_here", json!({})).await;
+    booted.json()["snapshot"]["entities"]["by_kind"]["bot"]
+        .as_u64()
+        .expect("the snapshot counts the bots")
+}
+
 /// **A charter is part of what a boot cannot cut, so it is held to the ceiling
 /// where it is written** — as a star is.
 #[tokio::test]
@@ -512,6 +525,20 @@ async fn creating_a_bot_says_which_bots_it_pushes_over_the_ceiling() {
     roomy.never_says("pushes_over");
 
     // ── omega sits at the ceiling, and the next colleague takes it over ─────
+    //
+    // A named boot lists the bot that booted and counts the rest, so a new
+    // colleague grows another bot's boot by the digits of the counts only. The
+    // roster is brought to nine bots, so the tenth makes `by_kind.bot` one
+    // character longer: the one place a colleague still shows in a boot.
+    let mut filler = 0;
+    while bots_on_the_instance(&story).await < 9 {
+        s.add(
+            &format!("bot:{}", super::boot::slug(filler)),
+            &super::boot::slug(filler + 500),
+        )
+        .await;
+        filler += 1;
+    }
     fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
     let crowded = s
         .call(

@@ -204,7 +204,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         }),
     )
     .await;
-    let after_drop = s2.recall("bot:milhouse").await;
+    let after_drop = s2.recall_with_details("bot:milhouse").await;
     after_drop
         .says("the radiator is banging again")
         .says("the mailbox flag is stuck up")

@@ -1365,6 +1365,9 @@ async fn a_walk_by_the_returned_offsets_yields_each_hit_once_across_a_cut_throug
                 .search(Parameters(SearchArgs {
                     limit: Some(4),
                     offset: Some(offset),
+                    // A section's body is its details, and the case needs them
+                    // long enough to push the ceiling.
+                    details: Some(true),
                     ..search_for_documents()
                 }))
                 .await

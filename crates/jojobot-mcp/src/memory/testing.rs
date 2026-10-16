@@ -178,6 +178,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         ticks: None,
         ticks_offset: None,
         unreviewed: None,
+        details: None,
         view: None,
         inputs: None,
         subject: Some(subject.into()),
@@ -412,6 +413,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
 
 pub(crate) fn search_args() -> SearchArgs {
     SearchArgs {
+        details: None,
         answers_type: None,
         query: None,
         kind: None,

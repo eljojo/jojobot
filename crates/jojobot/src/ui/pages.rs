@@ -1257,8 +1257,10 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
         let (in_content, in_details) =
             mention::followable_words(&fact.content, fact.details.as_deref());
         let claim = match &fact.details {
+            // **The claim leads and its details sit behind a ▸**, collapsed until the
+            // reader opens them, so a page of records reads as a list of claims.
             Some(details) if !details.trim().is_empty() => format!(
-                "{}<br><small>{}</small>",
+                "{}<details><summary>▸</summary><small>{}</small></details>",
                 linkify_spans(&fact.content, in_content, by_id),
                 line_breaks(&linkify_spans(details, in_details, by_id))
             ),

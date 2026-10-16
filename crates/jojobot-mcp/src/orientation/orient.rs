@@ -980,8 +980,14 @@ impl Jojobot {
             && let Some(serde_json::Value::Array(bots)) = object.get("bots")
         {
             let handles: Vec<&str> = bots.iter().filter_map(|b| b.as_str()).collect();
-            let (kept, left_out) =
-                super::identity::capped_roster(handles, bot.map(|booted| booted.as_str()));
+            // **A named boot lists the bot that booted and counts the rest**: only
+            // its own box is ever counted, so it is the only bot a boot can name as
+            // having mail waiting. An anonymous boot is choosing an identity, and
+            // names up to the cap.
+            let (kept, left_out) = match bot {
+                Some(booted) => super::identity::roster_of_one(handles, booted.as_str()),
+                None => super::identity::capped_roster(handles, None),
+            };
             let kept: Vec<serde_json::Value> = kept.into_iter().map(Into::into).collect();
             object.insert("bots".into(), kept.into());
             if let Some(left_out) = super::identity::bots_left_out(left_out) {
@@ -1033,57 +1039,43 @@ impl Jojobot {
                 }
             }
         }
-        // **The vocabulary the software arrived holding, named at the door.**
+        // **The vocabulary the software arrived holding, counted at the door.**
         //
-        // A session that has just booted has to write something, and which
-        // kinds a handle may carry is the first thing it needs. It used to
-        // find out by declaring one and reading a refusal, or by asking a
-        // question it had no reason to ask: the distinction was invisible
-        // until it tripped, which is the safe-default rule upside down.
+        // A session that has just booted has to write something, and which kinds
+        // a handle may carry is the first thing it needs. The orientation names
+        // the shipped kinds once, in its first paragraph, so the names are not
+        // repeated here: the boot says how many kinds there are and where the
+        // list is read. **A count, never the names**, because a list of twenty
+        // names a session reads on every boot is a cost it cannot decline.
         //
-        // **Names only, never bodies.** What a kind means and which keys it
-        // asks for is bigger than the list and is a deliberate second read.
-        // Origin is left off too: an agent booting does not act differently
-        // for knowing which name is closed to redeclaration, and it stays
-        // exactly where that question is actually asked — declaring a kind
-        // or a type, or reading one directly.
-        //
-        // **Read from the store rather than from the list this build ships**,
-        // for the same reason the boot's other reads are: a kind a caller
-        // declared is part of the vocabulary, and a shipped kind the store
-        // somehow lost is not.
-        let vocabulary = match self.memory.declared_kinds().await {
+        // **Read from the store rather than from the list this build ships**, for
+        // the same reason the boot's other reads are: a kind a caller declared is
+        // part of the vocabulary, and a shipped kind the store somehow lost is
+        // not. Each count is read on its own: a type roster outage must not read
+        // as a kind vocabulary outage, or the other way round.
+        let mut vocabulary = serde_json::json!({
+            "kinds_listed_in": "start_here with no bot: the orientation names every kind",
+        });
+        match self.memory.declared_kinds().await {
             Ok(kinds) => {
-                let mut named: Vec<serde_json::Value> = kinds
-                    .iter()
-                    .map(|(token, _origin)| serde_json::json!({ "kind": token }))
-                    .collect();
-                named.sort_by_key(|k| k["kind"].as_str().unwrap_or("").to_string());
-                serde_json::json!({ "available": true, "kinds": named })
+                vocabulary["available"] = serde_json::json!(true);
+                vocabulary["kinds"] = serde_json::json!(kinds.len());
             }
-            // **Best-effort, like every other half of this answer.** A boot
-            // that could not read the vocabulary says so rather than naming
-            // none: "there are no kinds" and "jojobot could not look" are
-            // different claims and a caller acts on both.
-            Err(_) => serde_json::json!({
-                "available": false,
-                "kinds": [],
-                "note": "the vocabulary is not readable right now, so this is not a claim that \
-                         the software ships none",
-            }),
-        };
-        // **A declared type, named beside the kinds — the same block, because
-        // it is the one place that answers what vocabulary this instance
-        // has.** A declared type was invisible from where a cold agent
-        // stands: the boot named every shipped kind and not one declared
-        // type, and every phase of a long-running session is deliberately
-        // fresh, so an earlier session's own catalogue fetch buys a later one
-        // nothing. The only path back was guessing a type name that does not
-        // exist and reading the refusal's own candidate list — which
-        // presupposes already suspecting one exists. Read independently of
-        // `kinds`: a type roster outage must not read as a kind vocabulary
-        // outage, or the other way round.
-        let mut vocabulary = vocabulary;
+            // **Best-effort, like every other half of this answer.** A boot that
+            // could not read the vocabulary says so rather than counting none:
+            // "there are no kinds" and "jojobot could not look" are different
+            // claims and a caller acts on both.
+            Err(_) => {
+                vocabulary["available"] = serde_json::json!(false);
+                vocabulary["note"] = serde_json::json!(
+                    "the vocabulary is not readable right now, so this is not a claim that \
+                     the software ships none"
+                );
+            }
+        }
+        // **The declared types stay named**: no verb lists them, so the boot is the
+        // one place a session reads them, and a type roster outage must not read
+        // as a kind vocabulary outage.
         match self.memory.declared_types().await {
             Ok(types) => {
                 let mut named: Vec<serde_json::Value> = types
@@ -2305,9 +2297,9 @@ mod tests {
         );
         assert!(
             read["snapshot"]["vocabulary"]["kinds"]
-                .as_array()
-                .is_some_and(|kinds| !kinds.is_empty()),
-            "a store that answers named no kinds, so the case below proves nothing: {read}"
+                .as_u64()
+                .is_some_and(|kinds| kinds > 0),
+            "a store that answers counted no kinds, so the case below proves nothing: {read}"
         );
 
         let blind = Jojobot::new(
@@ -2324,10 +2316,8 @@ mod tests {
             "a boot that could not read the vocabulary claimed it could: {unread}"
         );
         assert!(
-            unread["snapshot"]["vocabulary"]["kinds"]
-                .as_array()
-                .is_some_and(|kinds| kinds.is_empty()),
-            "an unreadable vocabulary named kinds it never read: {unread}"
+            unread["snapshot"]["vocabulary"]["kinds"].is_null(),
+            "an unreadable vocabulary counted kinds it never read: {unread}"
         );
         // **That a note is THERE, never what it says.** See the roster case for
         // why the wording stays unpinned.
@@ -2556,20 +2546,22 @@ mod tests {
         );
 
         let booted = boot(&jojobot, "gamma").await;
-        let theirs = bot_entry(&booted, "delta");
-        assert_eq!(theirs["yours"], false);
+        // **The positive the absences rest on**: the booting bot is on the board.
+        let mine = bot_entry(&booted, "gamma");
+        assert_eq!(mine["yours"], true, "{booted}");
+        // A named boot lists the bot that booted and counts the rest, so the
+        // colleague is not on the board at all, and nothing about its box is
+        // anywhere in the snapshot.
+        let board = booted["snapshot"]["entities"]["bots"]
+            .as_array()
+            .expect("the bots");
         assert!(
-            theirs["mail"].get("counts").is_none(),
-            "somebody else's queue is not this boot's to render: {theirs}"
+            !board.iter().any(|bot| bot["handle"] == "bot:delta"),
+            "a colleague is counted, not listed: {booted}"
         );
         assert!(
-            theirs["mail"].get("counts_elided").is_none(),
-            "the per-bot elision flag must be gone — the snapshot says it once, not per bot: \
-             {theirs}"
-        );
-        assert!(
-            theirs["mail"].get("quarantined").is_none(),
-            "a stranger box's fault is not this boot's to report either: {theirs}"
+            !booted["snapshot"].to_string().contains("4212"),
+            "a stranger box's fault is not this boot's to report: {booted}"
         );
         assert!(
             booted["snapshot"]["mail"]["note"]
@@ -2636,12 +2628,11 @@ mod tests {
 
         let booted = boot(&jojobot, "gamma").await;
         let vocabulary = &booted["snapshot"]["vocabulary"];
-        for kind in vocabulary["kinds"].as_array().expect("kinds") {
-            assert!(
-                kind.get("origin").is_none(),
-                "a kind must not carry its origin in the boot's own vocabulary: {kind}"
-            );
-        }
+        // Kinds are a count: there is no row of theirs to carry an origin.
+        assert!(
+            vocabulary["kinds"].is_u64(),
+            "the boot's vocabulary counts its kinds: {vocabulary}"
+        );
         for declared_type in vocabulary["types"].as_array().expect("types") {
             assert!(
                 declared_type.get("origin").is_none(),
@@ -2685,11 +2676,20 @@ mod tests {
             "my mail, counted: {booted}"
         );
         assert_eq!(find("gamma")["yours"], true);
+        // A colleague is counted and not listed, so no queue of theirs is on
+        // the board for me to weigh.
         assert!(
-            find("delta")["mail"]["counts"].is_null(),
-            "somebody else's queue is not mine to weigh: {booted}"
+            booted["snapshot"]["entities"]["bots"]
+                .as_array()
+                .is_some_and(|bots| bots.iter().all(|bot| bot["handle"] == "bot:gamma")),
+            "only the booting bot is listed: {booted}"
         );
-        assert_eq!(find("delta")["yours"], false);
+        assert!(
+            booted["snapshot"]["entities"]["bots_left_out"]["count"]
+                .as_u64()
+                .is_some_and(|left| left >= 1),
+            "the rest are counted: {booted}"
+        );
         // No `ownership_known` flag: it could only ever say `true` where it
         // appeared, since it would be rendered inside the `Ok` arm of the
         // very read whose `Err` arm is the only thing that would set it
@@ -3201,9 +3201,14 @@ mod tests {
             on_the_board.contains(&format!("bot:{named}")),
             "the identity named {named:?}, and the snapshot beside it gives it no mail: {booted}"
         );
-        // …and the other bot's mail is on the same board, so this is not
-        // passing because the board holds exactly one thing.
-        assert!(on_the_board.contains(&"bot:delta".to_string()), "{booted}");
+        // …and the other bots are counted, so a board of one is not an instance
+        // of one.
+        assert!(
+            booted["snapshot"]["entities"]["bots_left_out"]["count"]
+                .as_u64()
+                .is_some_and(|left| left >= 1),
+            "{booted}"
+        );
     }
 
     /// **One orientation, one door — but not one answer any more, by

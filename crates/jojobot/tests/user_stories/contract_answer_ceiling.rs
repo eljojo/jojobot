@@ -344,20 +344,29 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
     let mut measured = Vec::new();
     measured.push((
         "search at limit 1000",
-        o.answer_size("search", json!({"query": "pantry", "limit": 1000}))
-            .await,
+        o.answer_size(
+            "search",
+            json!({"query": "pantry", "limit": 1000, "details": true}),
+        )
+        .await,
     ));
     measured.push((
         "recall one subject with its facts",
-        o.answer_size("recall", json!({"subject": world.heavy, "facts": true}))
-            .await,
+        o.answer_size(
+            "recall",
+            json!({"subject": world.heavy, "facts": true, "details": true}),
+        )
+        .await,
     ));
     // A record already in the store that no answer could carry is served whole.
     // The guard keeps new ones out; the upgrade gate lists the ones already held.
     measured.push((
         "recall the subject holding a record over the ceiling",
-        o.answer_size("recall", json!({"subject": world.oversized, "facts": true}))
-            .await,
+        o.answer_size(
+            "recall",
+            json!({"subject": world.oversized, "facts": true, "details": true}),
+        )
+        .await,
     ));
     measured.push((
         "recall every thing of a kind",
@@ -365,8 +374,11 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
     ));
     measured.push((
         "recall every place with its facts",
-        o.answer_size("recall", json!({"kind": "place", "facts": true}))
-            .await,
+        o.answer_size(
+            "recall",
+            json!({"kind": "place", "facts": true, "details": true}),
+        )
+        .await,
     ));
     measured.push((
         "list_entities",
@@ -453,7 +465,7 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
             .otto
             .call(
                 "search",
-                json!({"query": "pantry", "limit": 1000, "offset": offset}),
+                json!({"query": "pantry", "limit": 1000, "details": true, "offset": offset}),
             )
             .await;
         parts += 1;
@@ -505,7 +517,7 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
             .otto
             .call(
                 "search",
-                json!({"query": "pantry", "limit": 40, "offset": offset}),
+                json!({"query": "pantry", "limit": 40, "details": true, "offset": offset}),
             )
             .await;
         assert!(page.size() <= ANSWER_CEILING, "{}", page.size());
@@ -982,7 +994,7 @@ async fn a_page_of_long_pantry_notes_stays_under_the_ceiling_and_the_walk_return
         let part = s
             .call(
                 "search",
-                json!({"query": "pantry", "limit": 1000, "offset": offset}),
+                json!({"query": "pantry", "limit": 1000, "details": true, "offset": offset}),
             )
             .await;
         parts += 1;
@@ -1032,7 +1044,7 @@ async fn a_subject_past_the_ceiling_is_read_in_parts_that_return_each_fact_once(
             .otto
             .call(
                 "recall",
-                json!({"subject": world.heavy, "facts": true, "offset": offset}),
+                json!({"subject": world.heavy, "facts": true, "details": true, "offset": offset}),
             )
             .await;
         parts += 1;
@@ -1101,7 +1113,7 @@ async fn a_kind_past_the_ceiling_is_read_in_parts_that_return_each_thing_once() 
             .otto
             .call(
                 "recall",
-                json!({"kind": "place", "facts": true, "offset": offset}),
+                json!({"kind": "place", "facts": true, "details": true, "offset": offset}),
             )
             .await;
         parts += 1;
@@ -1253,7 +1265,7 @@ async fn a_kind_of_places_of_different_ages_says_each_ones_age_under_the_ceiling
             .otto
             .call(
                 "recall",
-                json!({"kind": "place", "facts": true, "offset": offset}),
+                json!({"kind": "place", "facts": true, "details": true, "offset": offset}),
             )
             .await;
         parts += 1;
@@ -1344,7 +1356,7 @@ async fn a_fact_larger_than_the_ceiling_is_served_whole_and_the_pointer_says_so(
         let part = otto
             .call(
                 "recall",
-                json!({"kind": "place", "facts": true, "offset": offset}),
+                json!({"kind": "place", "facts": true, "details": true, "offset": offset}),
             )
             .await;
         assert!(part.size() <= ANSWER_CEILING, "{}", part.size());
@@ -1364,7 +1376,10 @@ async fn a_fact_larger_than_the_ceiling_is_served_whole_and_the_pointer_says_so(
 
     // Read alone, the one fact comes back whole and over the ceiling.
     let (body, size) = otto
-        .answer_and_size("recall", json!({"subject": heavy, "facts": true}))
+        .answer_and_size(
+            "recall",
+            json!({"subject": heavy, "facts": true, "details": true}),
+        )
         .await;
     assert!(
         size > ANSWER_CEILING,

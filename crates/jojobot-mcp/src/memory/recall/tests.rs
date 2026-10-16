@@ -53,6 +53,7 @@ fn of(subject: &str) -> RecallArgs {
         ticks: None,
         ticks_offset: None,
         unreviewed: None,
+        details: None,
         view: None,
         inputs: None,
         subject: Some(subject.into()),
@@ -2166,13 +2167,9 @@ async fn an_ordinary_read_says_a_claim_was_written_more_than_once() {
         .expect("the corrected claim is in the answer");
     assert_eq!(corrected["revised"], true, "{corrected}");
     assert_eq!(corrected["revision_count"], 2, "{corrected}");
-    let note = corrected["revision_note"]
-        .as_str()
-        .expect("a note says how to reach the earlier wording");
-    assert!(
-        note.contains("history_record") && note.contains("person:alpha#f1"),
-        "the note names the door and the address it opens: {note}"
-    );
+    // The count says the door is worth opening; the sentence that said where the
+    // door is is the argument's own description, so a record does not repeat it.
+    assert!(corrected.get("revision_note").is_none(), "{corrected}");
 
     // **The negative that gives it meaning.** A claim nobody rewrote is
     // silent on all three keys, not `false`/`1` — the same convention
@@ -2517,7 +2514,10 @@ async fn recall_returns_addresses_that_update_fact_accepts() {
     assert_eq!(updated["content_elided"], true, "{updated}");
     let read = json_of(
         &jojobot
-            .recall(Parameters(recall_args("person:alpha")))
+            .recall(Parameters(RecallArgs {
+                details: Some(true),
+                ..recall_args("person:alpha")
+            }))
             .await
             .expect("recall ok"),
     );
@@ -4899,6 +4899,7 @@ fn of_nothing() -> RecallArgs {
         ticks: None,
         ticks_offset: None,
         unreviewed: None,
+        details: None,
         view: None,
         inputs: None,
         subject: None,
@@ -8811,6 +8812,7 @@ async fn an_object_names_the_claims_it_cannot_serve_beside_the_claims_it_can() {
             jiff::civil::date(2026, 10, 14),
             None,
             frame,
+            false,
         )
     };
 

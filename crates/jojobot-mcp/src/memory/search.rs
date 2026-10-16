@@ -150,6 +150,14 @@ pub struct SearchArgs {
     /// and returns every hit exactly once. Defaults to 0.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
+    /// **Whether each claim comes back with its details.** Off by default: a hit
+    /// leads with the claim, its address, provenance and standing, and the
+    /// details (the reasons under a claim) are a paragraph the reader has not
+    /// asked for. An answer that left details out says once, in
+    /// `details_left_out`, how many it left out and how to ask. Send `true` to
+    /// read them. Words in a claim's details still match.
+    #[serde(default)]
+    pub(crate) details: Option<bool>,
     /// **Which day ranking reads: `recorded_on`** (the default — the day a
     /// claim was said) **or `happened_at`** (the day the thing itself did).
     /// Neither is the system's default over the other; this is a choice the
@@ -196,7 +204,7 @@ fn is_an_active_claim(hit: &serde_json::Value) -> bool {
     hit["hit"] == "fact" && hit["status"] == "active"
 }
 
-fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
+fn hit_json(hit: &Hit, as_of: jiff::civil::Date, details_asked: bool) -> serde_json::Value {
     match hit {
         Hit::Entity {
             entity,
@@ -225,9 +233,13 @@ fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
             source,
             superseded_by,
         } => {
-            let mut body = fact_json(fact, as_of, None);
+            let mut body = wire::listed_json(fact, as_of, None, details_asked);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
+                // Marked, so the answer counts the hits it kept and says it once.
+                if wire::left_out_of(std::iter::once(&**fact), details_asked) > 0 {
+                    obj.insert(wire::OBJECT_LEFT_OUT.into(), 1.into());
+                }
                 obj.insert("about".into(), entity_ref_json(subject));
                 obj.insert("home".into(), entity_ref_json(home));
                 // **What became of the claim under this one.** Absent — not
@@ -959,10 +971,13 @@ impl Jojobot {
         // rank order, whole hits only.** The envelope is counted first, with
         // the block that names what was left out measured at its widest, so the
         // answer that ships is under the ceiling and not merely its hits.
+        // **Whether the claims this answer renders carry their details**: only
+        // when the call asked.
+        let details_asked = args.details.unwrap_or(false);
         let rendered: Vec<(serde_json::Value, usize)> = hits
             .iter()
             .map(|hit| {
-                let mut json = hit_json(hit, as_of);
+                let mut json = hit_json(hit, as_of, details_asked);
                 // **Beside the name**, so a list of resembling things tells them
                 // apart without a second call. Absent for a thing nobody said how
                 // to tell apart.
@@ -992,11 +1007,22 @@ impl Jojobot {
         } else {
             crate::answer::served_len(&serde_json::json!([READ_THE_DOCUMENT])) + 32
         };
+        // **Room for the line that says details were left out**, set aside
+        // whenever a hit could have left some.
+        let details_room = if rendered
+            .iter()
+            .any(|(json, _)| json.get(wire::OBJECT_LEFT_OUT).is_some())
+        {
+            crate::answer::served_len(&wire::details_note(usize::MAX)) + 32
+        } else {
+            0
+        };
         let rest = crate::answer::served_len(&body)
             + crate::answer::widest_not_shown("hits")
             + crate::answer::STATUS_BAR_ROOM
             + teaching_room
-            + document_room;
+            + document_room
+            + details_room;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
         // **Hits on sections of one document sit together**, under the best-ranked
         // of them, and each says which document it is part of. Within what shipped
@@ -1010,6 +1036,8 @@ impl Jojobot {
             .collect::<Vec<_>>()
             .into();
         body["count"] = kept.kept().len().into();
+        // **Said once, off the hits that shipped**, with the marks taken off.
+        wire::say_details_left_out(&mut body, wire::Marks::Take);
         // **Once per answer**, and only when a hit that shipped is a section.
         if kept
             .kept()
@@ -1682,6 +1710,7 @@ mod tests {
         let jojobot = handler_with(spy.clone());
         jojobot
             .search(Parameters(SearchArgs {
+                details: None,
                 answers_type: None,
                 query: Some("winter".into()),
                 kind: Some("person".into()),
@@ -3063,6 +3092,8 @@ mod tests {
             &handler_with(spy)
                 .search(Parameters(SearchArgs {
                     query: Some("winter".into()),
+                    // The case compares the whole hit, details included.
+                    details: Some(true),
                     ..search_args()
                 }))
                 .await
