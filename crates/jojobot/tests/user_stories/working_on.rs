@@ -275,3 +275,46 @@ async fn a_working_on_that_names_nothing_is_refused() {
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
 }
+
+/// **Moving owned work to a word the instance maps to `now` fills `working_on`
+/// as `now` does**, and a word mapped to anything else, or to nothing, fills
+/// nothing.
+#[tokio::test]
+async fn a_word_the_instance_maps_to_now_fills_working_on_and_no_other_word_does() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    for (handle, name) in [
+        ("work:sigma", "Sigma"),
+        ("work:phi", "Phi"),
+        ("work:kappa", "Kappa"),
+    ] {
+        owned_work(&otto, handle, name, "bot:otto").await;
+    }
+    otto.call(
+        "capture",
+        json!({"subject": "topic:instance", "content": "what the columns mean here",
+               "sets": {"status_word/doing": "now", "status_word/later": "next"}}),
+    )
+    .await;
+    let move_to = |thing: &'static str, word: &'static str| {
+        let otto = &otto;
+        async move {
+            otto.call(
+                "capture",
+                json!({"subject": thing, "content": "moved", "sets": {"status": word}}),
+            )
+            .await;
+        }
+    };
+
+    move_to("work:phi", "later").await;
+    move_to("work:kappa", "whenever").await;
+    assert_eq!(working_on(&otto, "bot:otto").await, None);
+
+    move_to("work:sigma", "doing").await;
+    assert_eq!(
+        working_on(&otto, "bot:otto").await.as_deref(),
+        Some("work:sigma")
+    );
+    story.finish().await;
+}

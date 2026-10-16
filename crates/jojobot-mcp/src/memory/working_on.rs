@@ -74,16 +74,26 @@ pub async fn working_on_of(
     }
 }
 
-/// **Whether a write moves a piece of work to `now`**: the call set `status`
-/// (not a field of the claim alone) and the word it set is `now`.
-pub(crate) fn moves_to_now(fields: &BTreeMap<String, String>, sets: &BTreeSet<String>) -> bool {
-    sets.contains("status")
-        && fields
-            .get("status")
-            .is_some_and(|word| word.trim() == "now")
-}
-
 impl Jojobot {
+    /// **Whether a write moves a piece of work to `now`**: the call set `status`
+    /// (not a field of the claim alone) and the word it set means `now` on this
+    /// instance, by the one rule that says what a status word means. The
+    /// instance's record is read only when the call sets a status.
+    pub(crate) async fn moves_to_now(
+        &self,
+        fields: &BTreeMap<String, String>,
+        sets: &BTreeSet<String>,
+    ) -> bool {
+        if !sets.contains(jojobot_domain::memory::kinds::STATUS) {
+            return false;
+        }
+        let Some(word) = fields.get(jojobot_domain::memory::kinds::STATUS) else {
+            return false;
+        };
+        let instance = self.instance_fields().await;
+        jojobot_domain::memory::kinds::meaning_of(word, &instance) == Some("now")
+    }
+
     /// **Declare or clear what the caller's bot is working on.** The write is
     /// the caller's session's: the record keeps every earlier declaration and
     /// the session that made each.

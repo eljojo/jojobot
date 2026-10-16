@@ -1313,7 +1313,7 @@ impl Jojobot {
         // failed. `fold_behind` carries what to note on the receipt; the
         // written record itself is unpacked exactly as an ordinary success.
         let before = self.as_it_stands(&new.subject).await;
-        let moves_to_now = super::working_on::moves_to_now(&new.fields, &new.sets);
+        let moves_to_now = self.moves_to_now(&new.fields, &new.sets).await;
         let (captured, fold_behind) =
             match jojobot_domain::request::armed(self.memory.capture(new)).await {
                 Ok(captured) => (captured, None),

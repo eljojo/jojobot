@@ -862,7 +862,7 @@ impl Jojobot {
         // **The thing as it stands before the write**, for the receipt's account
         // of what the write changed.
         let before = self.as_it_stands(&address.home).await;
-        let moves_to_now = super::working_on::moves_to_now(&patch.fields, &patch.sets);
+        let moves_to_now = self.moves_to_now(&patch.fields, &patch.sets).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) = match jojobot_domain::request::armed(self.memory.update_fact(
