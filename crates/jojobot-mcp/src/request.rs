@@ -120,7 +120,17 @@ impl Jojobot {
         let ledger = self.requests.as_ref()?;
         let request = scope.request();
         if scope.was_spent() {
-            if let CallToolResponse::Complete(result) = answered
+            // **The receipt holds no notice of what changed**: it is the answer
+            // to the write, replayed to a caller whose held things did not move
+            // at that moment.
+            let mut kept = match answered {
+                CallToolResponse::Complete(result) => Some(result.clone()),
+                _ => None,
+            };
+            if let Some(result) = kept.as_mut() {
+                crate::held::without_notice(result);
+            }
+            if let Some(result) = &kept
                 && let Ok(receipt) = serde_json::to_string(result)
                 && let Err(error) = ledger.fill(request, &receipt).await
             {

@@ -42,6 +42,35 @@ pub(crate) struct Shown {
     pub(crate) parent: Option<String>,
 }
 
+/// **What a session holds, by what names it.** An entity by its handle, a claim
+/// by its address, a message by its id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Held {
+    Entity(String),
+    Claim(String),
+    Message(String),
+}
+
+/// **How a held thing stood when it was served**, to be compared with how it
+/// stands now. Each is the one value that moves when the thing is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Version {
+    /// The moment the store took in the newest write about the thing: its
+    /// fields, its records of any status and its own row. `None` for a thing
+    /// nobody has written to.
+    Entity(Option<jiff::Timestamp>),
+    /// How many times the claim was written, and its status.
+    Claim { writes: usize, status: String },
+    /// The state the message was in.
+    Message(String),
+}
+
+/// **How many things one session holds the version of.** Entities, claims and
+/// messages share it, the oldest served going first. Claims make a sitting hold
+/// several times what it holds in entities, so this is twice the number of
+/// entities one session remembers having been shown.
+pub(crate) const MAX_HELD_PER_SESSION: usize = 2 * MAX_SHOWN_PER_SESSION;
+
 /// What a creation is asked about: the thing shown, how long ago, and the word
 /// the two share.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +90,8 @@ struct Session {
     /// Things it has already been asked about. **Once per thing shown**: a
     /// second creation beside the same thing is not asked again.
     asked: HashSet<String>,
+    /// What it holds and how each stood when it was served, oldest first.
+    held: VecDeque<(Held, Version)>,
 }
 
 /// **The whole ledger.**
@@ -114,12 +145,53 @@ impl Ledger {
         }
     }
 
+    /// **Remember how things stood when a session was served them.** A thing
+    /// served again takes its newest version and the back of the line. The
+    /// oldest go first past [`MAX_HELD_PER_SESSION`].
+    pub(crate) fn hold(&mut self, sid: &str, served: Vec<(Held, Version)>) {
+        if served.is_empty() {
+            return;
+        }
+        if !self.sessions.contains_key(sid) {
+            self.sessions.insert(sid.to_string(), Session::default());
+        }
+        self.order.retain(|held| held != sid);
+        self.order.push_back(sid.to_string());
+        while self.order.len() > MAX_SESSIONS {
+            if let Some(oldest) = self.order.pop_front() {
+                self.sessions.remove(&oldest);
+            }
+        }
+        let Some(session) = self.sessions.get_mut(sid) else {
+            return;
+        };
+        for (what, version) in served {
+            session.held.retain(|(held, _)| *held != what);
+            session.held.push_back((what, version));
+        }
+        while session.held.len() > MAX_HELD_PER_SESSION {
+            session.held.pop_front();
+        }
+    }
+
+    /// What a session holds, oldest first. Nothing for a session the ledger does
+    /// not know.
+    pub(crate) fn held_by(&self, sid: &str) -> Vec<(Held, Version)> {
+        self.sessions
+            .get(sid)
+            .map(|session| session.held.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// **Forget a handle that was merged away, in every session.** The handle
     /// answers as a status now and is no thing to ask about, and a merge
     /// suggested for it would come back already done.
     pub(crate) fn forget(&mut self, handle: &str) {
         for session in self.sessions.values_mut() {
             session.shown.retain(|(held, _)| held.handle != handle);
+            session
+                .held
+                .retain(|(held, _)| *held != Held::Entity(handle.to_string()));
         }
     }
 

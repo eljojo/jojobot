@@ -178,6 +178,9 @@ mod two_shared_words;
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]
 mod charter_changed;
+/// "If the person changes in the meantime, show me what's updated."
+#[path = "user_stories/held_changed.rs"]
+mod held_changed;
 #[path = "user_stories/kitchensink.rs"]
 mod kitchensink;
 #[path = "user_stories/labels.rs"]

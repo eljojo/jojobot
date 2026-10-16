@@ -36,7 +36,7 @@ Send it when your run is not happening now: a session catching up on last week, 
 
 ⚠️ **Two sessions in different zones WILL disagree about what today is for one stored claim, and that is correct.** A claim captured at nine in the evening in one zone is the 18th there and the 19th in a zone further east; a loop due today has arrived for the run whose day it already is and has not for the run still on yesterday. **It is not a fault and there is nothing to work around** — if you meet it and start compensating, you will write a wrong date into the store to fix a right one.
 
-**Every answer may carry a `status_bar`**: `mail_waiting` (the count of mail waiting for you) and `charter_changed` (the call that reads a charter another identity rewrote), each present only when there is something to say. **No block means unknown, not zero.**
+**Every answer may carry a `status_bar`**: `mail_waiting` (the count of mail waiting for you) and `charter_changed` (the call that reads a charter another identity rewrote), each present only when there is something to say. **No block means unknown, not zero.** `held_changed` names what you were served that another session has since written to.
 
 **This is the short form.** The rest — mailboxes, more worked examples, the six gates, bots and sessions — comes from `start_here` naming no bot, which ships the sections that fit and names the rest; `section` returns one whole.
 "#;

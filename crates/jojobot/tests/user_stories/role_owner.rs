@@ -10,7 +10,24 @@
 
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
+
+/// **The listing of roles no longer carries `role:dinners`**, read as the list of
+/// entities and not as text: an answer may name the handle elsewhere, such as in
+/// the notice of what the session held that another session archived.
+async fn assert_no_role_dinners(s: &Session) {
+    let listing = s.list("role").await.json();
+    let listed: Vec<&str> = listing["entities"]
+        .as_array()
+        .expect("a listing carries its entities")
+        .iter()
+        .filter_map(|entity| entity["id"].as_str())
+        .collect();
+    assert!(
+        !listed.contains(&"role:dinners"),
+        "the listing of role still carries role:dinners, so nothing was corrected: {listing}"
+    );
+}
 
 /// What the boot answered about the claim, whole.
 fn claim_of(booted: &serde_json::Value) -> &serde_json::Value {
@@ -51,7 +68,7 @@ async fn a_claim_at_the_door_is_refused_when_the_role_belongs_to_another_bot() {
         "the refusal offers to boot as the owner: {bart}"
     );
     // Nothing was written anywhere: no role object, no role key on bart.
-    s.list("role").await.never_says("role:dinners");
+    assert_no_role_dinners(&s).await;
     s.call("recall", json!({"subject": "bot:bart", "facts": true}))
         .await
         .never_says("role/dinners");
@@ -179,7 +196,7 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
             json!({"handle": "role:dinners", "reason": "made by mistake"}),
         )
         .await;
-    s.list("role").await.never_says("role:dinners");
+    assert_no_role_dinners(&s).await;
 
     // Restore follows the same rule.
     bart.refused(
@@ -190,7 +207,7 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
     .says("\"wrote\":false")
     .says("bot:marge")
     .says("bot:smithers");
-    s.list("role").await.never_says("role:dinners");
+    assert_no_role_dinners(&s).await;
     marge
         .call(
             "archive_entity",
@@ -206,7 +223,7 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
             json!({"handle": "role:dinners", "reason": "cleared by the head"}),
         )
         .await;
-    s.list("role").await.never_says("role:dinners");
+    assert_no_role_dinners(&s).await;
     smithers
         .call(
             "archive_entity",
@@ -269,7 +286,7 @@ async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
             "the refusal names the object, the restore and who may: {claim}"
         );
     }
-    s.list("role").await.never_says("role:dinners");
+    assert_no_role_dinners(&s).await;
 
     // ── restored, the object is marge's again and the answer changes ────────
     marge

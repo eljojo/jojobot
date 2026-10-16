@@ -529,6 +529,29 @@ impl SessionRegistry {
             .record(name, returned);
     }
 
+    /// Remember how the things a read served stood at that moment.
+    pub(crate) fn note_held(
+        &self,
+        name: &str,
+        served: Vec<(crate::seen::Held, crate::seen::Version)>,
+    ) {
+        if served.is_empty() || !self.holds(name) {
+            return;
+        }
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .hold(name, served);
+    }
+
+    /// What one run holds, and how each stood when it was served.
+    pub(crate) fn held_by(&self, name: &str) -> Vec<(crate::seen::Held, crate::seen::Version)> {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .held_by(name)
+    }
+
     /// Forget everything one run was shown and asked about.
     pub(crate) fn forget_shown(&self, name: &str) {
         self.seen

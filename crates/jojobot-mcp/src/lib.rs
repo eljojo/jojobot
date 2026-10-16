@@ -63,6 +63,7 @@ pub fn retired_handles() -> Vec<jojobot_domain::memory::EntityId> {
     Vec::new()
 }
 
+mod held;
 pub mod seed;
 mod seen;
 pub mod session;
