@@ -1758,3 +1758,98 @@ async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it(
 
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_store() {
+    use jojobot_adapters::dolt::sessions::DoltSessions;
+    use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-beat-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_beat")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let sessions = DoltSessions::open(pool.clone());
+    let ledger = DoltRequests::new(pool.clone());
+    thing(&memory, "bot:sigma", "Sigma").await;
+    let now = Timestamp::now();
+    let run = sessions
+        .begin(NewSession {
+            bot: EntityId("bot:sigma".into()),
+            sid: Sid("brt1".into()),
+            focus: "working".into(),
+            started_at: now,
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("begin")
+        .id;
+    let first = request_on("journal", "beat-part-1");
+    let scope = Scope::new(first.clone());
+
+    let entry = within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "entry",
+            None,
+            sessions.append(&run, NewEntry::manual("found the cause", now, None)),
+        ),
+    )
+    .await
+    .expect("appended");
+    within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "focus",
+            None,
+            sessions.set_focus(&run, "writing the fix"),
+        ),
+    )
+    .await
+    .expect("focus moved");
+
+    let held = ledger.parts(&first.bot, &first.id).await.expect("readable");
+    assert_eq!(
+        held.iter().map(|row| row.part.as_str()).collect::<Vec<_>>(),
+        ["entry", "focus"]
+    );
+    let landed: serde_json::Value =
+        serde_json::from_str(&held[0].recorded.landed).expect("the row holds JSON");
+    assert_eq!(landed["entry"], entry.id.as_str());
+    assert!(held[1].recorded.landed.contains("writing the fix"));
+
+    // The entry sent again under the id is a conflict, and nothing is appended.
+    let again = Scope::new(first.clone());
+    let refused = within(
+        Arc::clone(&again),
+        jojobot_domain::request::armed_part(
+            "entry",
+            None,
+            sessions.append(&run, NewEntry::manual("found it twice", now, None)),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(
+            refused,
+            Err(jojobot_domain::session::SessionError::Conflict)
+        ),
+        "{refused:?}"
+    );
+    let read = sessions.read_session(&run).await.expect("readable");
+    assert_eq!(read.entries.len(), 1, "the repeated entry was rolled back");
+
+    server.stop().await;
+}

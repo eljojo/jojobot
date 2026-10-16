@@ -284,6 +284,7 @@ mod tests {
         // Active: the first write materializes the card, and it is live.
         jojobot
             .journal(Parameters(crate::session::JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "starting".into(),
                 focus: None,

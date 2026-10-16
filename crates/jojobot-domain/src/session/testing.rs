@@ -327,8 +327,15 @@ impl Sessions for InMemorySessions {
         validate_entry(&entry.text)?;
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = Self::writable(&mut sessions, id)?;
+        let minted = EntryId(self.mint());
+        self.spend_request(|| {
+            format!(
+                "{{\"entry\":{}}}",
+                crate::request::json_text(minted.as_str())
+            )
+        })?;
         let recorded = JournalEntry {
-            id: EntryId(self.mint()),
+            id: minted,
             at: entry.at,
             on: entry.on,
             text: normalize_entry(&entry.text),
@@ -399,6 +406,9 @@ impl Sessions for InMemorySessions {
         validate_focus(focus)?;
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = Self::writable(&mut sessions, id)?;
+        self.spend_request(|| {
+            format!("{{\"focus\":{}}}", crate::request::json_text(focus.trim()))
+        })?;
         sessions[at].focus = focus.trim().to_string();
         self.record(id, Change::Focus(&sessions[at].focus));
         Ok(sessions[at].clone())

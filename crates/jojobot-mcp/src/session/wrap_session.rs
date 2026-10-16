@@ -911,6 +911,7 @@ mod tests {
         let started = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "read the hand-off".into(),
                     focus: Some("cutting the codec seam".into()),
@@ -978,6 +979,7 @@ mod tests {
         for nth in 0..20 {
             jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: format!("beat {nth:02} {}", "w".repeat(1500)),
                     focus: None,
@@ -1039,6 +1041,7 @@ mod tests {
         for nth in 0..20 {
             jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: format!("beat {nth:02} {}", "w".repeat(1500)),
                     focus: None,
@@ -1198,6 +1201,7 @@ mod tests {
         client
             .call()
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "the first run".into(),
                 focus: None,
@@ -1225,6 +1229,7 @@ mod tests {
             &client
                 .call()
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "one more thing".into(),
                     focus: None,
@@ -1245,6 +1250,7 @@ mod tests {
             &client
                 .call()
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "the second run".into(),
                     focus: None,
@@ -1345,6 +1351,7 @@ mod tests {
             json_of(
                 &jojobot
                     .journal(Parameters(JournalArgs {
+                        request_id: None,
                         working_on: None,
                         entry: "one more thing".into(),
                         focus: None,

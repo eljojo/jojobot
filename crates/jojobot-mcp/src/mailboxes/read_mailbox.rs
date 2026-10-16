@@ -1068,6 +1068,7 @@ mod tests {
         let run_a = as_bot(&jojobot, "dev");
         jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "starting work".into(),
                 focus: None,

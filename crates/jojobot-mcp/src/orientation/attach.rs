@@ -1148,6 +1148,7 @@ mod tests {
         let sid = booted(&jojobot, "gamma").await;
         jojobot
             .journal(Parameters(crate::session::JournalArgs {
+                request_id: None,
                 working_on: None,
                 sid: sid.clone(),
                 entry: "found the boot spends nine seconds rebuilding the index".into(),
@@ -1824,6 +1825,7 @@ mod tests {
             &client
                 .call()
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "read the hand-off".into(),
                     focus: None,
@@ -3240,6 +3242,7 @@ mod tests {
                 offer_code: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "the first beat".into(),
                 focus: None,
@@ -3327,6 +3330,7 @@ mod tests {
                 offer_code: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "the first beat, which is what mints the card".into(),
                 focus: None,

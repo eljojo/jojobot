@@ -1565,6 +1565,7 @@ IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it wa
 You wrote the entry; start_here returns the whole chronology when you resume.
 IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, exactly as any other write does — the lease is not journal's alone to keep fresh.
 The receipt's `changed` lists what this call changed, or says nothing.
+A `request_id` makes a resend safe.
 ```
 
 #### `journal` — structure
@@ -1578,6 +1579,13 @@ The receipt's `changed` lists what this call changed, or says nothing.
         "type": "string"
       },
       "focus": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -1624,6 +1632,18 @@ kept as written and never becomes a link.
 What you are working on NOW, in one line. Optional, and it **replaces**
 the session's current focus rather than adding to it. Carries
 `@kind:slug` mentions exactly as `entry` does.
+```
+
+#### `journal` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the beat**, because a call sent without
+one cannot be repeated safely. A beat is made of parts, the entry, the
+focus it moves and the thing you say you are working on: if an answer is
+lost or a part fails, send the same call again with the same
+`request_id` and the parts that landed are not written again and the rest
+are, so the entry lands once.
 ```
 
 #### `journal` — argument `/inputSchema.sid`

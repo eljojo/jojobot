@@ -32,6 +32,18 @@ pub struct JournalArgs {
     /// bound to the bot that booted it; there is no way to write into another
     /// one.
     pub(crate) sid: String,
+    /// **A name of your choosing for this write**, up to 128 bytes.
+    /// **Send it on the first call of the beat**, because a call sent without
+    /// one cannot be repeated safely. A beat is made of parts, the entry, the
+    /// focus it moves and the thing you say you are working on: if an answer is
+    /// lost or a part fails, send the same call again with the same
+    /// `request_id` and the parts that landed are not written again and the rest
+    /// are, so the entry lands once.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Record one beat in this session's chronology, and optionally move what
@@ -61,7 +73,7 @@ impl Jojobot {
                        the whole chronology when you resume. IF YOUR SESSION HOLDS A CLAIMED \
                        ROLE, this beat renews it, exactly as any other write does — the lease is \
                        not journal's alone to keep fresh. The receipt's `changed` lists what \
-                       this call changed, or says nothing."
+                       this call changed, or says nothing. A `request_id` makes a resend safe."
     )]
     pub(crate) async fn journal(
         &self,
@@ -132,15 +144,46 @@ impl Jojobot {
         let session = self
             .session_for(&_serialized, &caller, focus, Some(&args.entry))
             .await?;
-        let entry = match self
-            .sessions
-            .append(
+        // **The beat is made of up to three parts under a `request_id`**: the
+        // entry, the focus it moves, and the thing the bot says it is working on.
+        // A resend finds the parts that landed and writes the rest.
+        use jojobot_domain::request::{Part, part};
+        let appended = part(
+            "entry",
+            None,
+            self.sessions.append(
                 &session,
                 NewEntry::manual(args.entry, self.clock().now(), caller.day),
-            )
-            .await
-        {
-            Ok(entry) => entry,
+            ),
+        )
+        .await;
+        let entry = match appended {
+            Part::Ran(Ok(entry)) => entry,
+            // **An earlier call wrote the entry**; it is read back by the id it
+            // left in `landed`.
+            Part::Recorded(recorded) => {
+                let wanted = serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                    .ok()
+                    .and_then(|landed| landed.get("entry")?.as_str().map(str::to_string));
+                let found = match (wanted, self.sessions.read_session(&session).await) {
+                    (Some(wanted), Ok(read)) => {
+                        read.entries.into_iter().find(|e| e.id.as_str() == wanted)
+                    }
+                    _ => None,
+                };
+                match found {
+                    Some(entry) => entry,
+                    None => {
+                        return Ok(crate::caller::handle_declined(
+                            "journal",
+                            crate::answer::WayForward::person(
+                                "The entry was written under this request_id, but it cannot be \
+                                 read back, so the rest of the beat cannot be finished.",
+                            ),
+                        ));
+                    }
+                }
+            }
             // **An append can fail with its write already on the page** — a
             // reread that failed after the entry landed, or a rollback that
             // failed too. A flat error reads as "nothing was written", and the
@@ -157,11 +200,24 @@ impl Jojobot {
             // was touched — a closed run, an unknown session, a malformed
             // entry — and dressing those as uncertain would send a caller to
             // go and look for a write that provably never happened.
-            Err(e) if !matches!(e, SessionError::Store(_)) => {
+            Part::Ran(Err(e)) if !matches!(e, SessionError::Store(_)) => {
                 return session_declined(e, caller.sid.as_str());
             }
-            Err(e) => {
+            Part::Ran(Err(e)) => {
                 tracing::error!(error = %e, "store failure left an append uncertain");
+                // **With an id the question has an answer**: the entry was claimed in
+                // its own transaction, so the same call sent again writes it only if
+                // it is not there.
+                if jojobot_domain::request::carries_an_id() {
+                    return Ok(crate::caller::handle_declined(
+                        "journal",
+                        crate::answer::WayForward::retry(
+                            "jojobot's own storage failed, and the entry may or may not have \
+                             been recorded. Send the same call again with the same request_id: \
+                             the entry lands once either way.",
+                        ),
+                    ));
+                }
                 return json_result(&serde_json::json!({
                     "status": "uncertain",
                     "wrote": "unknown",
@@ -184,66 +240,96 @@ impl Jojobot {
         // that disagrees with itself.
         let moved = match focus {
             None => None,
-            Some(focus) => match self.sessions.set_focus(&session, focus).await {
-                Ok(session) => Some(session),
-                // **The entry is already recorded, so this is not a failed
-                // call — it is a call that half succeeded.**
-                //
-                // A flat error here reads as "nothing was written", which is
-                // the safe assumption for every other failure on this surface
-                // and the dangerous one here: the caller's natural next move is
-                // to repeat the whole call, and repeating it appends the entry
-                // a second time beside the one already recorded. That is not
-                // hypothetical — it is what a session did after exactly this
-                // failure, and it only avoided the duplicate because the error
-                // happened to carry enough of the record to see the entry in.
-                //
-                // So the answer says what LANDED first and what did not, and
-                // the way forward names the smaller call rather than the one
-                // just made.
-                // **The entry is already recorded, so this is not a failed
-                // call — it is a call that half succeeded.**
-                //
-                // A flat error here reads as "nothing was written", which is
-                // the safe assumption for every other failure on this surface
-                // and the dangerous one here: the caller's natural next move is
-                // to repeat the whole call, and repeating it appends the entry
-                // a second time beside the one already recorded. That is not
-                // hypothetical — it is what a session met after exactly this
-                // failure, and the duplicate was avoided only because the error
-                // happened to carry enough of the record to see the entry in.
-                //
-                // So the answer says what LANDED first, and the way forward
-                // names the smaller call rather than the one just made.
-                Err(e) => {
-                    tracing::error!(
-                        error = %e,
-                        "store failure left the focus unmoved after the entry landed"
-                    );
-                    return json_result(&serde_json::json!({
-                        "status": "partial",
-                        "wrote": true,
-                        "recorded": "entry",
-                        "not_recorded": "focus",
-                        "session": session.as_str(),
-                        "entry": entry_receipt_json(&entry),
-                        "why": "jojobot's own storage failed",
-                        "how_to_proceed": "The entry IS recorded — do not send this call again, \
-                                           or the entry lands twice. Only the focus did not move. \
-                                           Set it with the `focus` of your next journal beat, or \
-                                           leave it: the chronology is what outlives the \
-                                           session, and the focus is overwritten by the next \
-                                           beat anyway.",
-                    }));
+            Some(focus) => {
+                match part("focus", None, self.sessions.set_focus(&session, focus)).await {
+                    Part::Ran(Ok(session)) => Some(session),
+                    // An earlier call moved the focus: the session reads as it stands.
+                    Part::Recorded(_) => self.sessions.read_session(&session).await.ok(),
+                    // **The entry is already recorded, so this is not a failed
+                    // call — it is a call that half succeeded.**
+                    //
+                    // A flat error here reads as "nothing was written", which is
+                    // the safe assumption for every other failure on this surface
+                    // and the dangerous one here: the caller's natural next move is
+                    // to repeat the whole call, and repeating it appends the entry
+                    // a second time beside the one already recorded. That is not
+                    // hypothetical — it is what a session did after exactly this
+                    // failure, and it only avoided the duplicate because the error
+                    // happened to carry enough of the record to see the entry in.
+                    //
+                    // So the answer says what LANDED first and what did not, and
+                    // the way forward names the smaller call rather than the one
+                    // just made.
+                    // **The entry is already recorded, so this is not a failed
+                    // call — it is a call that half succeeded.**
+                    //
+                    // A flat error here reads as "nothing was written", which is
+                    // the safe assumption for every other failure on this surface
+                    // and the dangerous one here: the caller's natural next move is
+                    // to repeat the whole call, and repeating it appends the entry
+                    // a second time beside the one already recorded. That is not
+                    // hypothetical — it is what a session met after exactly this
+                    // failure, and the duplicate was avoided only because the error
+                    // happened to carry enough of the record to see the entry in.
+                    //
+                    // So the answer says what LANDED first, and the way forward
+                    // names the smaller call rather than the one just made.
+                    Part::Ran(Err(e)) => {
+                        tracing::error!(
+                            error = %e,
+                            "store failure left the focus unmoved after the entry landed"
+                        );
+                        if jojobot_domain::request::carries_an_id() {
+                            return Ok(crate::caller::handle_declined(
+                                "journal",
+                                crate::answer::WayForward::retry(
+                                    "The entry is recorded, and the focus did not move. Send the same \
+                                 call again with the same request_id: the entry is not written \
+                                 twice and the focus moves.",
+                                ),
+                            ));
+                        }
+                        return json_result(&serde_json::json!({
+                            "status": "partial",
+                            "wrote": true,
+                            "recorded": "entry",
+                            "not_recorded": "focus",
+                            "session": session.as_str(),
+                            "entry": entry_receipt_json(&entry),
+                            "why": "jojobot's own storage failed",
+                            "how_to_proceed": "The entry IS recorded — do not send this call again, \
+                                               or the entry lands twice. Only the focus did not move. \
+                                               Set it with the `focus` of your next journal beat, or \
+                                               leave it: the chronology is what outlives the \
+                                               session, and the focus is overwritten by the next \
+                                               beat anyway.",
+                        }));
+                    }
                 }
-            },
+            }
         };
         // **Written once the beat is recorded**, as the focus is, and answered
         // the same way when only this part fails.
         if let Some(what) = declared {
             let today = self.dated(None, Some(&args.sid)).await?;
-            if let Err(e) = self.set_working_on(&caller, what, today).await {
+            let marked = part(
+                "working_on",
+                None,
+                self.set_working_on(&caller, what, today),
+            )
+            .await;
+            if let Part::Ran(Err(e)) = marked {
                 tracing::error!(error = %e, "the entry landed and working_on did not");
+                if jojobot_domain::request::carries_an_id() {
+                    return Ok(crate::caller::handle_declined(
+                        "journal",
+                        crate::answer::WayForward::retry(
+                            "The entry is recorded, and the thing you are working on was not \
+                             set. Send the same call again with the same request_id: the entry \
+                             is not written twice and the work is set.",
+                        ),
+                    ));
+                }
                 return json_result(&serde_json::json!({
                     "status": "partial",
                     "wrote": true,
@@ -258,6 +344,7 @@ impl Jojobot {
                 }));
             }
         }
+        jojobot_domain::request::finished();
         let focus_now = moved.map(|s| s.focus);
         let mut body = serde_json::json!({
             "session": session.as_str(),
@@ -308,6 +395,12 @@ impl Jojobot {
                 Err(()) => crate::changed::Changed::not_read(),
             });
         }
+        // **A beat finished by a resend cannot say what it changed**: it did not
+        // read the record before the parts an earlier call wrote.
+        let changed = match crate::request::note_resumed(&mut body) {
+            true => crate::changed::Changed::not_read(),
+            false => changed,
+        };
         crate::changed::note_changed(&mut body, changed);
         crate::answer::note_postcondition(
             &mut body,
@@ -501,6 +594,7 @@ mod tests {
                 json_of(
                     &jojobot
                         .journal(Parameters(JournalArgs {
+                            request_id: None,
                             entry,
                             focus,
                             working_on: None,
@@ -680,6 +774,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "set out to read the box".into(),
                     focus: None,
@@ -742,6 +837,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: entry.into(),
                     focus: None,
@@ -806,6 +902,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "set out to read the box".into(),
                     focus: Some("reading the box".into()),
@@ -900,6 +997,7 @@ mod tests {
                 let body = blocked(
                     &jojobot
                         .journal(Parameters(JournalArgs {
+                            request_id: None,
                             working_on: None,
                             entry: "one more thing".into(),
                             focus: None,
@@ -998,6 +1096,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "one more thing".into(),
                     focus: None,
@@ -1107,6 +1206,7 @@ mod tests {
             let body = json_of(
                 &jojobot
                     .journal(Parameters(JournalArgs {
+                        request_id: None,
                         working_on: None,
                         entry: entry.into(),
                         focus: None,
@@ -1161,6 +1261,7 @@ mod tests {
         // the append refuses the call with the entry already on the record.
         jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "read the hand-off".into(),
                 focus: None,
@@ -1172,6 +1273,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "scoped the slice".into(),
                     focus: Some("two\nlines".into()),
@@ -1215,6 +1317,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "read the hand-off and scoped the slice".into(),
                     focus: Some("building the session context".into()),
@@ -1517,6 +1620,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "no role was ever claimed here".into(),
                     focus: None,
@@ -1536,6 +1640,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "who am i".into(),
                     focus: None,

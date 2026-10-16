@@ -1241,6 +1241,7 @@ mod tests {
 
         jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "first beat".into(),
                 focus: None,
@@ -1250,6 +1251,7 @@ mod tests {
             .expect("journal ok");
         jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "first beat".into(),
                 focus: None,

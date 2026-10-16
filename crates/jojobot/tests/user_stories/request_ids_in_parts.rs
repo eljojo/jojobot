@@ -823,3 +823,74 @@ async fn a_section_moved_whole_under_an_id_is_a_repeat_when_sent_again() {
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_beat_whose_focus_failed_is_finished_by_sending_it_again_and_the_entry_lands_once() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.journal("opened the run").await;
+    let handle = format!("session:{}", s.run());
+    let args = json!({
+        "entry": "found the cause", "focus": "writing the fix", "request_id": "beat-1",
+    });
+    let beats =
+        || async { s.recall(&handle).await.json()["objects"][0]["fields"]["beats"].clone() };
+
+    // ── the entry lands, and the focus does not move ────────────────────────
+    story.fails_the_next_commit_of("focus");
+    let first = s.refused("journal", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    // The positive the negative rests on: the first part is there.
+    assert_eq!(beats().await, "2", "the entry landed");
+    s.recall(&handle).await.never_says("writing the fix");
+
+    // ── the same call again moves the focus, and writes no second entry ─────
+    let finished = s.call("journal", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["entry"]),
+        "{finished}"
+    );
+    assert_eq!(finished["focus"], "writing the fix", "{finished}");
+    assert_eq!(beats().await, "2", "the entry was written once");
+    s.recall(&handle).await.says("writing the fix");
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = s.call("journal", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_beat_whose_working_on_failed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("work:sigma", "Sigma").await;
+    let reader = story.as_bot("bot:assistant").await;
+    let working_on = || async {
+        reader
+            .call("recall", json!({"subject": "bot:otto"}))
+            .await
+            .json()["objects"][0]["fields"]["working_on"]
+            .clone()
+    };
+    let args = json!({
+        "entry": "picked up sigma", "working_on": "work:sigma", "request_id": "beat-2",
+    });
+
+    story.fails_the_next_commit_of("working_on");
+    let first = otto.refused("journal", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    assert!(working_on().await.is_null(), "nothing set yet");
+
+    let finished = otto.call("journal", args).await.json();
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["entry"]),
+        "{finished}"
+    );
+    assert_eq!(working_on().await, "work:sigma");
+    story.finish().await;
+}

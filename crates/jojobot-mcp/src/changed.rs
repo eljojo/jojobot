@@ -803,6 +803,7 @@ mod tests {
             "journal",
             jojobot
                 .journal(Parameters(JournalArgs {
+                    request_id: None,
                     working_on: None,
                     entry: "Read the plan.".into(),
                     focus: Some("the plan".into()),

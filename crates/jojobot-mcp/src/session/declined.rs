@@ -284,6 +284,7 @@ pub(crate) mod tests {
         let started = booted(&jojobot, "gamma").await;
         jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "set out to read the box".into(),
                 focus: None,
@@ -293,6 +294,7 @@ pub(crate) mod tests {
             .expect("the first beat lands");
         let empty_entry = jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "   ".into(),
                 focus: None,
@@ -308,6 +310,7 @@ pub(crate) mod tests {
         let fresh = booted(&jojobot, "delta").await;
         let bad_focus = jojobot
             .journal(Parameters(JournalArgs {
+                request_id: None,
                 working_on: None,
                 entry: "set out to read the box".into(),
                 focus: Some("reading `the box`".into()),

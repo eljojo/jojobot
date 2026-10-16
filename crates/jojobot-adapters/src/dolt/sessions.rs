@@ -1006,7 +1006,13 @@ impl Sessions for DoltSessions {
             .await?;
         let written = read_entry(&mut tx, id, &entry_id).await?;
         self.keep_wording(&mut tx, id, &written).await?;
-        tx.commit().await.map_err(store)?;
+        // **A part of a write that commits in several** (an entry, then the focus
+        // it moves), so the id's row for this part goes in with it.
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "entry": written.id.as_str() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(written)
     }
 
@@ -1091,7 +1097,11 @@ impl Sessions for DoltSessions {
         self.keep_change(&mut tx, id, Change::Focus(focus.trim()))
             .await?;
         let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "focus": focus.trim() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(session)
     }
 
