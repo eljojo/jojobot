@@ -389,7 +389,9 @@ Shipped and live:
   writers, replaces that number. A capture, a merge or a retype into the thread
   kind that would pass it is refused with nothing written, listing the live
   records and naming four routes (rewrite, archive, split, document); one
-  borrow lands one record over, once, and defrag's review mark takes no slot. **Who a
+  borrow lands one record over, once, and defrag's review mark takes no slot;
+  `recall`'s facts and `search` leave that mark out unless `review_marks: true`,
+  and say how many they left out. **Who a
   bot reports to is changed only by a bot above it on the chart**, a bot with no
   manager is adopted only by the manager named or a bot above that manager, and **the head of a chart is
   given a manager by no bot**. One table of the build's own says who may write
