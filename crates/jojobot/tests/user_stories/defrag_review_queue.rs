@@ -324,3 +324,33 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
     forged.says("review_mark");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_waits() {
+    let story = Story::begin("bot:otto").await;
+    let dev = story.session().await;
+    dev.add("bot:defrag", "Defrag").await;
+    let defrag = story.as_bot("bot:defrag").await;
+
+    dev.add("person:bart", "Bart").await;
+    defrag.add("person:lisa", "Lisa").await;
+
+    let waiting = queue(&defrag).await;
+    assert!(
+        waiting.contains(&"person:bart".to_string()),
+        "a thing another bot creates waits: {waiting:?}"
+    );
+    assert!(
+        !waiting.contains(&"person:lisa".to_string()),
+        "a thing defrag creates is stamped in the same act: {waiting:?}"
+    );
+
+    // …and another bot's write to it brings it back, as to any reviewed thing.
+    dev.call(
+        "capture",
+        json!({"subject": "person:lisa", "content": "plays the saxophone", "provenance": "testimony"}),
+    )
+    .await;
+    assert!(queue(&defrag).await.contains(&"person:lisa".to_string()));
+    story.finish().await;
+}

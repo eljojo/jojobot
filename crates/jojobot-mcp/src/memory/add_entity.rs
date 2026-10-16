@@ -382,7 +382,9 @@ impl Jojobot {
             if let Some(reason) = override_reason {
                 sets.insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
             }
-            (!sets.is_empty()).then_some(sets)
+            // **A creation by defrag carries the review stamp**, so the first claim
+            // is written for it even when the caller set nothing.
+            (!sets.is_empty() || self.review_stamp(&caller.bot).is_some()).then_some(sets)
         };
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
@@ -493,6 +495,12 @@ impl Jojobot {
                         due_on.to_string(),
                     );
                     derived.insert(jojobot_domain::attention::DUE_ON.to_string());
+                }
+                // **The stamp of a write by defrag**, a key on the new thing riding
+                // its first claim, as it rides every other write by defrag.
+                if let Some((key, moment)) = self.review_stamp(&caller.bot) {
+                    fields.insert(key.clone(), moment);
+                    derived.insert(key);
                 }
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
