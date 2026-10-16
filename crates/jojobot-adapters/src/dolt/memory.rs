@@ -3059,7 +3059,7 @@ impl DoltMemory {
                         held: &held,
                     },
                     &live,
-                    1,
+                    jojobot_domain::memory::capacity::slots_taken(&fact.fields),
                     fact.borrow,
                 )
             {
@@ -3915,6 +3915,11 @@ impl DoltMemory {
             true => Self::types_in(tx).await?,
             false => Vec::new(),
         };
+        // **One moment for the whole write.** The keys of one record's write are
+        // one act, so none is a later change than another: the review stamp rides
+        // such a write and reads as reviewed only if it is not earlier than the
+        // keys beside it.
+        let moment = clock.now().to_string();
         for (key, value) in wrote {
             let ordinal = ordinal::next(
                 tx,
@@ -3938,7 +3943,7 @@ impl DoltMemory {
             .bind(ordinal)
             .bind(value.as_deref())
             .bind(fact.as_str())
-            .bind(clock.now().to_string())
+            .bind(&moment)
             .bind(class.as_token())
             .execute(&mut **tx)
             .await

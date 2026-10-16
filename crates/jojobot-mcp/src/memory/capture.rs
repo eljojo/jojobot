@@ -1010,6 +1010,10 @@ impl Jojobot {
         {
             return Ok(refused);
         }
+        // **The review stamp is jojobot's too**, set when the writer is defrag.
+        if let Some(refused) = self.refuses_a_hand_written_review_stamp(&subject, &fields, &[]) {
+            return Ok(refused);
+        }
         // **The keys jojobot computes below reach the thing**: they are its own
         // arithmetic on the thing, not words a caller wrote on a record.
         let mut derived: std::collections::BTreeSet<String> = Default::default();
@@ -1053,6 +1057,12 @@ impl Jojobot {
         if let attention::DueMove::Set(due_on) = due_on_computed {
             fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
             derived.insert(attention::DUE_ON.to_string());
+        }
+        // **A write by defrag stamps the thing in the same act.** One computed
+        // key on the thing, riding this record, so no record is added for it.
+        if let Some((key, moment)) = self.review_stamp(&caller.bot) {
+            fields.insert(key.clone(), moment);
+            derived.insert(key);
         }
         // **A capture can only ADD fields to a record**: `NewFact` has no
         // clear_fields of its own. So when the write moves the thing out of owing

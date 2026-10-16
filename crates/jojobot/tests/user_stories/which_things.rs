@@ -576,9 +576,9 @@ async fn a_view_with_an_old_filter_record_keeps_answering_and_the_line_is_added_
         "the done one is out by the line, the unowned one by the record"
     );
     // ── a view can ask its line of the records instead of the things ────────
-    s.add("view:reviewed", "Reviewed").await;
+    s.add("view:verdicts", "Verdicts").await;
     s.event_with(
-        "view:reviewed",
+        "view:verdicts",
         "what a record says was reviewed open",
         json!({ "selects": "thing", "where": "verdict = open", "scope": "record" }),
         &[],
@@ -594,7 +594,7 @@ async fn a_view_with_an_old_filter_record_keeps_answering_and_the_line_is_added_
     .await;
     assert_eq!(
         handles_of(
-            &s.shape("the reviewed view", json!({ "view": "reviewed" }))
+            &s.shape("the reviewed view", json!({ "view": "verdicts" }))
                 .await
         ),
         ["thing:gamma"],

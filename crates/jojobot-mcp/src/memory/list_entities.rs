@@ -195,6 +195,7 @@ mod tests {
         RecallArgs {
             ticks: None,
             ticks_offset: None,
+            unreviewed: None,
             subject: Some(subject.into()),
             kind: None,
             parent: None,

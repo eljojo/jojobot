@@ -1321,6 +1321,16 @@ async fn own_fields_stay_and_computed_keys_reach_against_the_fake() {
         .await;
 }
 
+/// **The review stamp is not a later change than its own write**, over the fake.
+/// The real store runs the same case (`dolt_store`).
+#[tokio::test]
+async fn a_review_stamp_is_not_a_later_change_than_its_own_write() {
+    contract::a_review_stamp_is_not_a_later_change_than_the_write_that_carries_it(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
 /// Own fields reaching their thing, against the fake built in the old mode.
 #[tokio::test]
 async fn own_fields_reach_their_thing_against_the_fake_in_the_old_mode() {

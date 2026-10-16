@@ -248,6 +248,8 @@ const ROSTER: &[&str] = &[
 /// [`ROSTER`], where the bar shows it, or nowhere.
 const ORDINARY: &[&str] = &[
     "bot:assistant",
+    "bot:defrag",
+    "thing:contract-reviewed",
     "document:contract-move",
     "document:contract-notes",
     "document:contract-docmerge",
@@ -305,6 +307,7 @@ const ORDINARY: &[&str] = &[
     "view:lantern",
     "view:orbit",
     "view:rounds",
+    "view:unreviewed",
     "view:my-bikes",
     "view:my-friends",
     "view:marked-things",
@@ -327,7 +330,7 @@ const ORDINARY: &[&str] = &[
     "view:my-people",
     "view:my-projects",
     "view:open-work",
-    "view:reviewed",
+    "view:verdicts",
     "view:unscoped",
     "view:latest-first",
     "view:started",
@@ -778,6 +781,7 @@ const ORDINARY: &[&str] = &[
     "decision:contract-records-three-child",
     "thread:contract-records-five",
     "thread:contract-records-merge",
+    "thread:contract-records-reviewed",
     "thread:contract-records-three",
     "thread:contract-records-two",
     "topic:contract-records-crowded",

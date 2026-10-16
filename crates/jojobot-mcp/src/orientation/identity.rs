@@ -436,6 +436,14 @@ impl Jojobot {
         ) {
             obj.insert("unseated_rules".into(), map);
         }
+        // **Defrag's boot fronts its queue**: how many things wait for it and the
+        // first of them, so its session starts on what changed since it last looked.
+        if jojobot_domain::memory::review::is_defrag(bot)
+            && let (Some(block), Some(obj)) =
+                (self.review_queue_block().await, body.as_object_mut())
+        {
+            obj.insert("review_queue".into(), block);
+        }
         // **The answer to the offer drops the rules the offering call shipped**,
         // the carried ones, their note and the map of those at home. They were
         // built above so the offering boot and this one cannot disagree about

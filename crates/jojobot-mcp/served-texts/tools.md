@@ -3318,6 +3318,13 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "unreviewed": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "values": {
         "default": null,
         "type": [
@@ -4171,6 +4178,16 @@ says in `entries_left_out` when an entry it holds is done or dropped.
 ```text
 **How many ticks of a list were already read**, newest first, when `ticks`
 reads on. `offset` pages the answer's objects and is not this.
+```
+
+#### `recall` — argument `/inputSchema.unreviewed`
+
+```text
+**Only the things defrag has not reviewed**, oldest change first: a thing
+whose newest write is later than the stamp jojobot sets when defrag writes
+to it or marks it reviewed, or that has none. It names what to recall on
+its own, like `overdue`. Send `true`; the shipped view `unreviewed` asks
+the same.
 ```
 
 #### `recall` — argument `/inputSchema.values`
@@ -5481,6 +5498,13 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
           "null"
         ]
       },
+      "reviewed": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "sets": {
         "additionalProperties": {
           "type": "string"
@@ -5572,6 +5596,17 @@ same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the edit is made once. It needs a `sid`, and a call that
 wrote nothing spends no id.
+```
+
+#### `update_entity` — argument `/inputSchema.reviewed`
+
+```text
+**Mark the thing reviewed, and change nothing else.** Only the bot
+`defrag` may send it, and only `true`: jojobot stamps the thing with the
+moment, and it leaves the review queue (`recall` with `unreviewed`) until
+somebody else writes to it. Any other bot is refused. The mark is ONE
+standing record per thing, rewritten in place by every later mark, and it
+takes no slot under a record ceiling.
 ```
 
 #### `update_entity` — argument `/inputSchema.sets`

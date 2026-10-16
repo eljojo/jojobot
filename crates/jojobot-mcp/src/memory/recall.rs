@@ -638,6 +638,13 @@ pub struct RecallArgs {
     /// overdue question.
     #[serde(default)]
     pub(crate) overdue: Option<OverdueArgs>,
+    /// **Only the things defrag has not reviewed**, oldest change first: a thing
+    /// whose newest write is later than the stamp jojobot sets when defrag writes
+    /// to it or marks it reviewed, or that has none. It names what to recall on
+    /// its own, like `overdue`. Send `true`; the shipped view `unreviewed` asks
+    /// the same.
+    #[serde(default)]
+    pub(crate) unreviewed: Option<bool>,
     /// **What else was recorded around a day.** See [`NearArgs`].
     #[serde(default)]
     pub(crate) near: Option<NearArgs>,
@@ -1648,6 +1655,7 @@ impl Jojobot {
                         as_of: asked.as_of.clone(),
                     })
                 }),
+                unreviewed: args.unreviewed.or(asked.unreviewed.then_some(true)),
                 answers_type: args.answers_type.or(asked.answers_type),
                 keys: args.keys.or(asked.keys),
                 follow: args.follow.or_else(|| {
@@ -1797,8 +1805,14 @@ impl KeyNarrowing<'_> {
 
 /// **Whether `key` comes back**: every key does when nothing narrowed the read.
 /// The one test every place that narrows by keys asks.
+///
+/// **The review stamp is the exception**: jojobot's own bookkeeping stays out of
+/// an ordinary read and comes back when a read names it.
 fn wants_key(only: Option<KeyNarrowing<'_>>, key: &str) -> bool {
-    only.is_none_or(|narrowing| narrowing.wants(key))
+    match only {
+        None => !jojobot_domain::memory::review::is_review_key(key),
+        Some(narrowing) => narrowing.wants(key),
+    }
 }
 
 /// **Whether a read names its keys itself**, as opposed to a view that supplied
@@ -2244,7 +2258,7 @@ fn object_json(
         .fields
         .keys()
         .map(String::as_str)
-        .filter(|key| !wanted(key))
+        .filter(|key| !wanted(key) && !jojobot_domain::memory::review::is_review_key(key))
         .collect();
     if !left_out.is_empty() && !names_keys(only) {
         // **The way back depends on who narrowed.** Keys the caller named come
@@ -2972,6 +2986,7 @@ impl Jojobot {
                 asked_by,
                 owed: view_overdue,
                 ready: readiness_asked.is_some(),
+                unreviewed: args.unreviewed == Some(true),
             },
             include,
             follow,
@@ -3358,11 +3373,12 @@ impl Jojobot {
         // spent during the walk is spent on finished work and on work that is
         // blocked, and the ready work behind them never reaches the answer; the
         // window is applied after the narrowing, over what is ready.
-        let (walk_window, deferred_window) = if readiness_asked.is_some() {
-            (None, window)
-        } else {
-            (window, None)
-        };
+        let (walk_window, deferred_window) =
+            if readiness_asked.is_some() || args.unreviewed == Some(true) {
+                (None, window)
+            } else {
+                (window, None)
+            };
         let graph::Selected {
             objects: mut found,
             ordered,
@@ -3487,6 +3503,7 @@ impl Jojobot {
                 ask,
                 named: query.select.subject.clone(),
             }),
+            unreviewed: args.unreviewed == Some(true),
         };
         let carriers = self.carriers();
         // **What the operator mapped their status words to**, read once and
@@ -3524,9 +3541,15 @@ impl Jojobot {
         }
         let (skipped, left_over) = match &deferred_window {
             Some(window) => {
+                // **Restored only if the question had one**: a window deferred for
+                // another narrowing (the review queue) has no verdicts to align,
+                // and an empty list put back would be indexed per object.
+                let asked_readiness = readiness.is_some();
                 let mut verdicts = readiness.take().unwrap_or_default();
                 let outside = view_run::cut_to_window(&mut found, &mut [&mut verdicts], window);
-                readiness = Some(verdicts);
+                if asked_readiness {
+                    readiness = Some(verdicts);
+                }
                 outside
             }
             None => (walked_past, walked_left),
@@ -4625,6 +4648,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         values,
         values_most,
         overdue,
+        unreviewed,
         near,
         follow,
         view,
@@ -4650,6 +4674,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         ("keys", keys.is_some()),
         ("follow", follow.is_some()),
         ("overdue", overdue.is_some()),
+        ("unreviewed", unreviewed.is_some()),
         ("near", near.is_some()),
         ("history", history.is_some()),
         ("history_record", history_record.is_some()),

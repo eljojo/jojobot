@@ -52,6 +52,7 @@ fn of(subject: &str) -> RecallArgs {
     RecallArgs {
         ticks: None,
         ticks_offset: None,
+        unreviewed: None,
         view: None,
         inputs: None,
         subject: Some(subject.into()),
@@ -1988,6 +1989,7 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
         .expect("add ok");
     jojobot
         .update_entity(Parameters(UpdateEntityArgs {
+            reviewed: None,
             request_id: None,
             handle: "person:teddy".into(),
             name: Some("Theodore".into()),
@@ -4896,6 +4898,7 @@ fn of_nothing() -> RecallArgs {
     RecallArgs {
         ticks: None,
         ticks_offset: None,
+        unreviewed: None,
         view: None,
         inputs: None,
         subject: None,

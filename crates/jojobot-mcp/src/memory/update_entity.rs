@@ -51,6 +51,14 @@ pub struct UpdateEntityArgs {
     /// the operator's own word behind a key, write it with `capture`.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
+    /// **Mark the thing reviewed, and change nothing else.** Only the bot
+    /// `defrag` may send it, and only `true`: jojobot stamps the thing with the
+    /// moment, and it leaves the review queue (`recall` with `unreviewed`) until
+    /// somebody else writes to it. Any other bot is refused. The mark is ONE
+    /// standing record per thing, rewritten in place by every later mark, and it
+    /// takes no slot under a record ceiling.
+    #[serde(default)]
+    pub(crate) reviewed: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -126,6 +134,19 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let handle = EntityId::person(&args.handle);
+        // **The review stamp of a write by defrag**, and the one mark that sets
+        // it alone. Only defrag marks a thing reviewed, and only with `true`.
+        let stamp = self.review_stamp(&caller.bot);
+        if let Some(reviewed) = args.reviewed
+            && (!reviewed || stamp.is_none())
+        {
+            return Ok(blocked_body(
+                &handle,
+                &[],
+                "Nothing was written. `reviewed` marks a thing reviewed and only the bot \
+                 `defrag` sends it, with `true`. Send the call without it.",
+            ));
+        }
         // **A voucher is issued, never edited.** Judged on the handle's kind.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&handle) {
             return memory_declined("update_entity", refused);
@@ -171,12 +192,44 @@ impl Jojobot {
         // **The thing as it stands before the write**, for the receipt's account
         // of what the write changed.
         let before = self.as_it_stands(&handle).await;
+        // **A write by defrag stamps the thing, and an edit of the row has no
+        // record to carry a key**, so it is written as the claim an edit with
+        // `sets` is, and the stamp rides that.
+        let edits_the_row = patch.name.is_some()
+            || patch.aliases.is_some()
+            || patch.source.is_some()
+            || patch.crm.is_some();
+        // **A thing is marked by ONE standing record**, rewritten in place by every
+        // later mark, so a mark neither grows the thing nor leaves a trail of
+        // them. The rewrite is defrag's own `update_fact`, which carries the new
+        // stamp as any write by defrag does.
+        let marks_only = args.reviewed == Some(true)
+            && !edits_the_row
+            && args.sets.as_ref().is_none_or(|sets| sets.is_empty());
+        if marks_only
+            && let Some(standing) = self.memory.recall(&handle).await.ok().and_then(|facts| {
+                facts.into_iter().find(|fact| {
+                    fact.status == FactStatus::Active
+                        && jojobot_domain::memory::review::is_review_mark(&fact.fields)
+                })
+            })
+        {
+            return self
+                .update_fact(Parameters(super::update_fact::UpdateFactArgs {
+                    address: standing.address().to_string(),
+                    sid: args.sid.clone(),
+                    ..Default::default()
+                }))
+                .await;
+        }
         let sets = {
             let mut sets = args.sets.clone().unwrap_or_default();
             if let Some(reason) = override_reason {
                 sets.insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
             }
-            (!sets.is_empty()).then_some(sets)
+            (!sets.is_empty()
+                || (stamp.is_some() && (args.reviewed == Some(true) || edits_the_row)))
+                .then_some(sets)
         };
         let mut claim = None;
         let mut fold_behind = None;
@@ -212,6 +265,11 @@ impl Jojobot {
                 {
                     return Ok(refused);
                 }
+                if let Some(refused) =
+                    self.refuses_a_hand_written_review_stamp(&handle, &fields, &[])
+                {
+                    return Ok(refused);
+                }
                 // **The keys the caller sent are the settings.** The due moment worked
                 // out below is jojobot's own arithmetic beside them, kept as one of
                 // the claim's own fields.
@@ -235,6 +293,18 @@ impl Jojobot {
                     );
                     derived.insert(jojobot_domain::attention::DUE_ON.to_string());
                 }
+                if let Some((key, moment)) = stamp {
+                    fields.insert(key.clone(), moment);
+                    derived.insert(key);
+                }
+                // **The label stays on the record** (it is neither a setting nor
+                // derived), so it never reaches the thing.
+                if marks_only {
+                    fields.insert(
+                        jojobot_domain::memory::review::REVIEW_MARK.to_string(),
+                        "true".to_string(),
+                    );
+                }
                 let keys = set_keys.iter().cloned().collect::<Vec<_>>();
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
@@ -246,7 +316,10 @@ impl Jojobot {
                         handle.clone(),
                         // **What the generated claim says**: which keys were set,
                         // on the thing as a link, so the words follow a rename.
-                        format!("Set {} on @{}.", keys.join(", "), handle.as_str()),
+                        match keys.is_empty() {
+                            true => format!("Reviewed @{}.", handle.as_str()),
+                            false => format!("Set {} on @{}.", keys.join(", "), handle.as_str()),
+                        },
                         recorded_at,
                     )
                 };
@@ -403,6 +476,7 @@ mod tests {
         let sid = writing_as(&jojobot);
         ensure(&jojobot, "person:alpha").await;
         let rename = |handle: &str, name: &str| UpdateEntityArgs {
+            reviewed: None,
             request_id: None,
             handle: handle.into(),
             name: Some(name.into()),
@@ -454,6 +528,7 @@ mod tests {
             .expect("add ok");
         let updated = jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                reviewed: None,
                 request_id: None,
                 handle: "thing:red-bike".into(),
                 name: Some("Red Bike (the gravel one)".into()),
@@ -492,6 +567,7 @@ mod tests {
             .expect("add ok");
 
         let rename = |override_token: Option<String>| UpdateEntityArgs {
+            reviewed: None,
             override_reason: None,
             request_id: None,
             handle: "person:zenith".into(),
@@ -587,6 +663,7 @@ mod tests {
 
         let result = jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                reviewed: None,
                 request_id: None,
                 handle: "person:zenith".into(),
                 name: None,
@@ -657,6 +734,7 @@ mod tests {
         assert_eq!(added["alternateName"][1], "H.");
 
         let patch = |aliases: Vec<String>| UpdateEntityArgs {
+            reviewed: None,
             request_id: None,
             handle: "person:homer-simpson".into(),
             name: None,
@@ -720,6 +798,7 @@ mod tests {
             .expect("add ok");
         let err = jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                reviewed: None,
                 request_id: None,
                 handle: "thing:red-bikee".into(),
                 name: Some("nope".into()),
@@ -743,6 +822,7 @@ mod tests {
     /// The call a caller sends to edit a record: only the pieces it names.
     fn edit(handle: &str) -> UpdateEntityArgs {
         UpdateEntityArgs {
+            reviewed: None,
             request_id: None,
             handle: handle.into(),
             name: None,

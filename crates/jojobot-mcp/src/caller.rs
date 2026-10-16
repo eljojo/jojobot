@@ -1395,6 +1395,7 @@ mod tests {
                 blocked(
                     &jojobot
                         .update_entity(Parameters(UpdateEntityArgs {
+                            reviewed: None,
                             request_id: None,
                             handle: "person:alpha".into(),
                             name: Some("Alpha".into()),

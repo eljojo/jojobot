@@ -322,6 +322,10 @@ pub struct Selection {
     /// what is ready or the whole plan. Readiness is a question about work and
     /// only work answers it, so it names what to recall as a kind does.
     pub ready: bool,
+    /// **The things defrag has not reviewed**, because the call asks for the
+    /// review queue or is a view that does. Every kind can wait for defrag, so
+    /// it names what to recall as `owed` does and the pass keeps what waits.
+    pub unreviewed: bool,
 }
 
 /// **The ways a recall says what it is about.** A selection that uses none of
@@ -342,6 +346,9 @@ pub enum Narrowing {
     Overdue,
     /// What can be started, or the whole plan: readiness asked of the work.
     Readiness,
+    /// What defrag has not reviewed: a thing whose newest write is later than
+    /// its review stamp, or that has none.
+    Unreviewed,
     /// The things answering a declared type.
     AnswersType,
     /// A filter on keys, the `fields` of a call or a `where` line.
@@ -352,12 +359,13 @@ pub enum Narrowing {
 
 impl Narrowing {
     /// Every way a recall can narrow.
-    pub const ALL: [Narrowing; 8] = [
+    pub const ALL: [Narrowing; 9] = [
         Narrowing::Subject,
         Narrowing::Kind,
         Narrowing::Parent,
         Narrowing::Overdue,
         Narrowing::Readiness,
+        Narrowing::Unreviewed,
         Narrowing::AnswersType,
         Narrowing::Filter,
         Narrowing::Near,
@@ -372,6 +380,7 @@ impl Narrowing {
             Narrowing::Parent => Some("parent"),
             Narrowing::Overdue => Some("asks: overdue"),
             Narrowing::Readiness => Some("asks: ready or asks: plan"),
+            Narrowing::Unreviewed => Some("asks: unreviewed"),
             Narrowing::AnswersType => Some("answers_type"),
             Narrowing::Filter => Some("where"),
             Narrowing::Subject | Narrowing::Near => None,
@@ -392,6 +401,7 @@ impl Narrowing {
             Narrowing::Readiness => fields
                 .get("asks")
                 .is_some_and(|word| super::readiness::Ask::named(word).is_some()),
+            Narrowing::Unreviewed => fields.get("asks").map(String::as_str) == Some("unreviewed"),
             Narrowing::AnswersType => held("answers_type"),
             Narrowing::Filter => held("where"),
             Narrowing::Subject | Narrowing::Near => false,
@@ -436,6 +446,7 @@ impl Selection {
             Narrowing::Parent => self.parent.is_some(),
             Narrowing::Overdue => self.owed,
             Narrowing::Readiness => self.ready,
+            Narrowing::Unreviewed => self.unreviewed,
             Narrowing::AnswersType => self.answers_type.is_some(),
             Narrowing::Filter => !self.fields.is_empty(),
             Narrowing::Near => self.near.is_some(),
@@ -914,6 +925,9 @@ pub struct Asked {
     /// the same reason `overdue` is: it asks about the things a reference list
     /// names, which a key filter on the thing cannot.
     pub ready: Option<super::readiness::Ask>,
+    /// **Only what defrag has not reviewed**, oldest change first: a named ask
+    /// for the reason `overdue` is, since it compares two moments a thing holds.
+    pub unreviewed: bool,
     /// **A key filter for every record on the view that carries one** — see
     /// [`asked_by_view`] for the shape a filter record takes. Several
     /// filters are several records; nothing here caps it at one per key.
@@ -1160,6 +1174,7 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
         filters,
         charter: shows("charter"),
         overdue: held.get("asks").map(String::as_str) == Some("overdue"),
+        unreviewed: held.get("asks").map(String::as_str) == Some("unreviewed"),
         ready: held
             .get("asks")
             .and_then(|word| super::readiness::Ask::named(word)),

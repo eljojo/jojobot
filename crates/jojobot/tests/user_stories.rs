@@ -94,9 +94,12 @@ mod counting;
 mod creating_with_fields;
 #[path = "user_stories/curveball.rs"]
 mod curveball;
-/// A key that stopped opening its run says what is in flight.
 #[path = "user_stories/dead_handle.rs"]
 mod dead_handle;
+/// A key that stopped opening its run says what is in flight.
+/// Defrag's queue: what another bot wrote since defrag last looked.
+#[path = "user_stories/defrag_review_queue.rs"]
+mod defrag_review_queue;
 #[path = "user_stories/degraded.rs"]
 mod degraded;
 /// One thing filed twice, put back together — and what a repair costs.

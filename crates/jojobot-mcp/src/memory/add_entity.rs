@@ -448,6 +448,11 @@ impl Jojobot {
                 {
                     return Ok(refused);
                 }
+                if let Some(refused) =
+                    self.refuses_a_hand_written_review_stamp(&creating, &fields, &[])
+                {
+                    return Ok(refused);
+                }
                 // **A key that only labels a claim is never a property of the new
                 // thing**, so a creation refuses it by name, as a capture does in
                 // `sets`. A creation has no claim fields of its own to hold it.

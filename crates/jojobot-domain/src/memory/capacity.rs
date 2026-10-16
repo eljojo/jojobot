@@ -22,6 +22,7 @@
 
 use std::collections::BTreeMap;
 
+use super::review::is_review_mark;
 use super::{
     EntityId, EntityKind, Fact, FactStatus, MemoryError, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
 };
@@ -101,15 +102,24 @@ pub fn ceiling_of(kind: Option<EntityKind>, held: &BTreeMap<String, String>) -> 
 }
 
 /// **The records that take a slot: the active ones filed on the thing.** An
-/// archived record, an old version of a record, a write of keys alone and a
-/// record filed on another thing take none, so `filed_on` is the thing's own
-/// records and nothing else.
+/// archived record, an old version of a record, a write of keys alone, a record
+/// filed on another thing and the thing's review mark take none, so `filed_on`
+/// is the thing's own records and nothing else. The mark records that defrag
+/// read the thing and holds no content, so a ceiling has no decision to force
+/// on it.
 pub fn live_records(filed_on: &[Fact]) -> Vec<Fact> {
     filed_on
         .iter()
-        .filter(|fact| fact.status == FactStatus::Active)
+        .filter(|fact| fact.status == FactStatus::Active && !is_review_mark(&fact.fields))
         .cloned()
         .collect()
+}
+
+/// **How many slots a new record takes**, from the fields it is written with:
+/// none for the review mark, one for every other record. The count [`admit`] is
+/// given as `adding`, so the mark is exempt on the way in as it is when counted.
+pub fn slots_taken(fields: &BTreeMap<String, String>) -> usize {
+    usize::from(!is_review_mark(fields))
 }
 
 /// **The thing a write adds to.**
@@ -427,6 +437,19 @@ mod tests {
             accepts("any_other_key", "three"),
             "only ceilings are judged"
         );
+    }
+
+    /// **The review mark is the one record that takes no slot**, whether it is
+    /// counted or about to be added. The literal is the stored label.
+    #[test]
+    fn the_review_mark_takes_no_slot_counted_or_added() {
+        let mut mark = record("f4", FactStatus::Active);
+        mark.fields.insert("review_mark".into(), "true".into());
+        let mut held = active(3);
+        held.push(mark);
+        assert_eq!(live_records(&held).len(), 3);
+        assert_eq!(slots_taken(&held[3].fields), 0);
+        assert_eq!(slots_taken(&held[0].fields), 1);
     }
 
     /// A key that is the same spelling in storage as in this constant is

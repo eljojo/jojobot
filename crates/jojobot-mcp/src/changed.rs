@@ -876,6 +876,7 @@ mod tests {
 
     fn renaming(handle: &str, name: &str) -> UpdateEntityArgs {
         UpdateEntityArgs {
+            reviewed: None,
             request_id: None,
             handle: handle.into(),
             name: Some(name.into()),

@@ -1095,6 +1095,7 @@ mod tests {
         let recalled = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
+                    unreviewed: None,
                     view: None,
                     inputs: None,
                     subject: Some(format!("session:{session_id}")),
@@ -1550,6 +1551,7 @@ mod tests {
             json_of(
                 &jojobot
                     .update_entity(Parameters(UpdateEntityArgs {
+                        reviewed: None,
                         request_id: None,
                         handle: "bot:gamma".into(),
                         name: None,

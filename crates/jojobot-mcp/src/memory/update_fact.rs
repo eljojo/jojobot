@@ -15,7 +15,7 @@ use crate::teaching::{
 };
 
 /// Arguments to `update_fact`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateFactArgs {
     /// The fact's global address, `kind:slug#local-id` — exactly as `recall`
     /// returned it. **A claim cannot change subject:** to move one filed on the
@@ -555,6 +555,12 @@ impl Jojobot {
         {
             return Ok(refused);
         }
+        // **The review stamp is jojobot's too**, set when the writer is defrag.
+        if let Some(refused) =
+            self.refuses_a_hand_written_review_stamp(&address.home, &fields, &cleared)
+        {
+            return Ok(refused);
+        }
         // **Kept current here too.** An edit that moves a cadence, a policy or
         // a basis is a write like any other write that could move the due
         // moment — the mechanism does not care that this one is a patch
@@ -593,6 +599,12 @@ impl Jojobot {
             // see `clear_stored_due_moment`.
             attention::DueMove::Cleared => clears_due_on = true,
             attention::DueMove::Unchanged => {}
+        }
+        // **A write by defrag stamps the thing in the same act**, as a key on the
+        // thing riding this record.
+        if let Some((key, moment)) = self.review_stamp(&caller.bot) {
+            fields.insert(key.clone(), moment);
+            derived.insert(key);
         }
         let content_sent = args.content.is_some();
         let patch = FactPatch {

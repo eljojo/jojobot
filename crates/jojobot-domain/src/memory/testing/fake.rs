@@ -1622,6 +1622,11 @@ impl InMemoryMemory {
         // too, and the write is kept under the key and id the claim was made
         // under.
         let at = self.stored_address(&FactAddress::new(home.clone(), fact.clone()));
+        // **One moment for the whole write**, as the real store takes it: the keys
+        // of one record's write are one act, so none is a later change than
+        // another. The review stamp rides such a write and reads as reviewed only
+        // if it is not earlier than the keys beside it.
+        let moment = self.clock().now();
         for (key, value) in wrote {
             let ordinal = self.with_writes(|served| {
                 served
@@ -1644,7 +1649,7 @@ impl InMemoryMemory {
                     value,
                     fact: at.local.clone(),
                     class,
-                    written_at: Some(self.clock().now()),
+                    written_at: Some(moment),
                 });
         }
     }
@@ -2696,7 +2701,13 @@ impl Memory for InMemoryMemory {
             };
             let held =
                 super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
-            let filed: Vec<Fact> = facts.iter().filter(|f| f.home == home).cloned().collect();
+            // **Projected, as the real store's count reads them**: a stored claim
+            // carries no fields, and the ceiling's count asks for the mark's.
+            let filed: Vec<Fact> = facts
+                .iter()
+                .filter(|f| f.home == home)
+                .map(|f| self.projected(f))
+                .collect();
             let live: Vec<Fact> = crate::memory::capacity::live_records(&filed)
                 .into_iter()
                 .map(|f| Fact {
@@ -3072,7 +3083,13 @@ impl Memory for InMemoryMemory {
         {
             let held =
                 super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
-            let filed: Vec<Fact> = facts.iter().filter(|f| f.home == home).cloned().collect();
+            // **Projected, as the real store's count reads them**: a stored claim
+            // carries no fields, and the ceiling's count asks for the mark's.
+            let filed: Vec<Fact> = facts
+                .iter()
+                .filter(|f| f.home == home)
+                .map(|f| self.projected(f))
+                .collect();
             let live: Vec<Fact> = crate::memory::capacity::live_records(&filed)
                 .into_iter()
                 .map(|f| Fact {
@@ -3089,7 +3106,7 @@ impl Memory for InMemoryMemory {
                         held: &held,
                     },
                     &live,
-                    1,
+                    crate::memory::capacity::slots_taken(&fact.fields),
                     fact.borrow,
                 )
             {

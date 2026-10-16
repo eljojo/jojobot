@@ -3900,6 +3900,7 @@ mod a_write_needs_an_identity {
         refused(
             &jojobot
                 .update_entity(Parameters(UpdateEntityArgs {
+                    reviewed: None,
                     request_id: None,
                     handle: "place:springfield".into(),
                     name: Some("Springfield Renamed".into()),

@@ -41,6 +41,9 @@ pub struct Asks {
     /// **What of the work to keep, by readiness**: only what can be started, or
     /// the whole plan.
     pub ready: Option<Readiness>,
+    /// **Only what defrag has not reviewed**, oldest change first. See
+    /// [`keep_unreviewed`].
+    pub unreviewed: bool,
 }
 
 /// **A readiness question.**
@@ -117,6 +120,7 @@ impl Question {
                 order,
                 owed: asked.overdue,
                 ready: asked.ready.is_some(),
+                unreviewed: asked.unreviewed,
                 ..graph::Selection::default()
             },
             graph::Include {
@@ -139,6 +143,7 @@ impl Question {
             }),
             measure_from: asked.overdue.then_some(today),
             ready: asked.ready.map(|ask| Readiness { ask, named: None }),
+            unreviewed: asked.unreviewed,
         };
         if question.query.select.narrows_nothing() {
             return Err(MemoryError::ViewNarrowsNothing {
@@ -198,6 +203,9 @@ pub async fn narrow(
         Some(asked) => Some(keep_ready(memory, found, asked).await?),
         None => None,
     };
+    if asks.unreviewed {
+        keep_unreviewed(found);
+    }
     Ok(Narrowed { owed, ready })
 }
 
@@ -363,6 +371,23 @@ fn left_out_because(
 /// owes nothing, which is what keeps a person out of an answer about what is
 /// late. `instance` is the operator's own status words, so a word mapped to
 /// `done` finishes a work item or project here as it does in the verbs.
+/// **Keep what defrag has not reviewed, oldest change first.** The question is
+/// the domain's one (`review::is_unreviewed`) asked of the two moments each
+/// object's ages already hold; a thing the store holds no moments for (a run) is
+/// not defrag's to review and is left out. A thing whose newest write is not
+/// known sorts last.
+pub fn keep_unreviewed(found: &mut Vec<graph::Object>) {
+    found.retain(|object| {
+        object
+            .ages
+            .as_ref()
+            .is_some_and(jojobot_domain::memory::review::is_unreviewed)
+    });
+    found.sort_by_key(|object| {
+        jojobot_domain::memory::review::oldest_change_first(object.ages.as_ref())
+    });
+}
+
 pub fn keep_owed(
     found: &mut Vec<graph::Object>,
     carriers: &[&dyn attention::Carrier],

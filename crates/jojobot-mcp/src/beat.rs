@@ -523,6 +523,7 @@ mod tests {
         capture_ok(&jojobot, capture_args("alpha", "plays go on tuesdays")).await;
         jojobot
             .update_entity(Parameters(UpdateEntityArgs {
+                reviewed: None,
                 request_id: None,
                 handle: "person:alpha".into(),
                 name: Some("Alpha, renamed by nobody".into()),

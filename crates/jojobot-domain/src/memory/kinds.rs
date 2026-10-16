@@ -334,7 +334,12 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // value held on the thing itself.
             Field::one_of(
                 "asks",
-                ["overdue", super::readiness::ASK, super::readiness::ASK_PLAN],
+                [
+                    "overdue",
+                    super::readiness::ASK,
+                    super::readiness::ASK_PLAN,
+                    "unreviewed",
+                ],
             ),
             // **Which things, as one expression over keys** — the line a recall's
             // `where` takes. A handle written in it is bound to the permanent id

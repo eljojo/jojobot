@@ -11163,3 +11163,23 @@ async fn an_upgrade_that_renames_a_shipped_record_leaves_the_operators_name_on_t
 
     store.stop().await;
 }
+
+/// **A review stamp is not a later change than the write that carries it, in the
+/// real store.** The store stamps each key of a write with a moment of its own;
+/// the stamp has to be the newest of them, or defrag's own write puts the thing
+/// straight back in its queue.
+#[tokio::test]
+async fn a_review_stamp_is_not_a_later_change_than_its_own_write_in_the_real_store() {
+    let scratch = Scratch::new("review-stamp");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "review_stamp")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+    memory::a_review_stamp_is_not_a_later_change_than_the_write_that_carries_it(&memory).await;
+    store.stop().await;
+}

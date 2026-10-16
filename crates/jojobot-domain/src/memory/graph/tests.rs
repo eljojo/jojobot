@@ -4959,6 +4959,13 @@ fn a_selection_narrowed_in_any_one_way_asks_a_question() {
             },
         ),
         (
+            "unreviewed",
+            Selection {
+                unreviewed: true,
+                ..Selection::default()
+            },
+        ),
+        (
             "answers_type",
             Selection {
                 answers_type: Some(types::DeclaredType::new("pet", Vec::new())),
@@ -5032,6 +5039,7 @@ fn a_view_narrows_by_the_keys_the_one_list_spells() {
             "parent",
             "asks: overdue",
             "asks: ready or asks: plan",
+            "asks: unreviewed",
             "answers_type",
             "where"
         ]

@@ -10,10 +10,11 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Seven views ship, and that is deliberate rather than a first instalment of
+//! **Eight views ship, and that is deliberate rather than a first instalment of
 //! a catalogue.** Two are the ones the operator named, three ask about work
 //! (what can be started, what a plan holds and what a project's board shows),
-//! one asks which things answer a type and one asks what falls due. A rich set
+//! one asks which things answer a type, one asks what falls due and one asks what
+//! defrag has not reviewed. A rich set
 //! is generated once the shape is settled. If this file starts growing a query
 //! per question somebody asks, it has taken the wrong turn.
 
@@ -123,6 +124,12 @@ pub fn provisions() -> Vec<Provision> {
                 ("as_of", "$by"),
             ],
         ),
+        // **What defrag has not reviewed**, oldest change first: every kind of
+        // thing whose newest write is later than the stamp jojobot sets when
+        // defrag writes to it or marks it reviewed, or that has none. It names no
+        // kind and takes no input; the comparison is the domain's one
+        // (`review::is_unreviewed`).
+        view("view:unreviewed", "Unreviewed", &[("asks", "unreviewed")]),
         // **A whole plan in one call.** The work that is not finished, each
         // piece with whether it can be started and, when it cannot, what stops
         // it. The same readiness question as `ready`, kept differently: a plan

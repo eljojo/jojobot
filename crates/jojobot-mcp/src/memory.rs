@@ -35,6 +35,7 @@ pub mod recall;
 pub mod receipt;
 pub mod rename_entity;
 pub mod retract;
+mod review;
 pub(crate) mod room;
 pub mod search;
 pub mod set_charter;

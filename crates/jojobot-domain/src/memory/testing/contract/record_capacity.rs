@@ -361,10 +361,57 @@ pub async fn a_retype_cannot_make_a_thread_past_its_record_ceiling<M: Memory>(st
         .expect("nothing collides");
 }
 
+/// **The review mark takes no slot, and only the mark.** A record labelled as a
+/// thread's review mark lands on a thread that holds its three live records,
+/// the count still reads three, and a fourth ordinary record is still refused.
+/// Another record that merely carries the stamp key takes its slot as any does.
+pub async fn the_review_mark_takes_no_slot_under_the_record_ceiling<M: Memory>(store: &M) {
+    use crate::memory::review::{DEFRAGGED_AT, REVIEW_MARK};
+    let thread = EntityId("thread:contract-records-reviewed".into());
+    ensure(store, &thread).await;
+    for n in 1..=3 {
+        capture(store, note(&thread, &format!("record {n}"))).await;
+    }
+    capture(
+        store,
+        NewFact {
+            fields: [(REVIEW_MARK.to_string(), "true".to_string())]
+                .into_iter()
+                .collect(),
+            ..note(&thread, "Reviewed.")
+        },
+    )
+    .await;
+    assert!(matches!(
+        refusal(store.capture(note(&thread, "record 4")).await),
+        MemoryError::OverCapacity {
+            live: 3,
+            limit: 3,
+            ..
+        }
+    ));
+    // The exemption is the label's: a record that carries only the stamp is an
+    // ordinary record, and the thread is full.
+    assert!(matches!(
+        refusal(
+            store
+                .capture(NewFact {
+                    fields: [(DEFRAGGED_AT.to_string(), "2026-10-01T00:00:00Z".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..note(&thread, "tidied")
+                })
+                .await
+        ),
+        MemoryError::OverCapacity { live: 3, .. }
+    ));
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_record_capacity<M: Memory>(store: &M) {
     a_thread_holds_three_live_records_and_refuses_a_fourth(store).await;
     a_threads_own_record_number_replaces_the_default(store).await;
     a_merge_cannot_bring_a_thread_over_its_record_ceiling(store).await;
     a_retype_cannot_make_a_thread_past_its_record_ceiling(store).await;
+    the_review_mark_takes_no_slot_under_the_record_ceiling(store).await;
 }

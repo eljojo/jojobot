@@ -177,6 +177,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
     RecallArgs {
         ticks: None,
         ticks_offset: None,
+        unreviewed: None,
         view: None,
         inputs: None,
         subject: Some(subject.into()),
