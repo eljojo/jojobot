@@ -18,6 +18,7 @@ mod known_reds;
 mod levels;
 mod reading;
 mod recording;
+pub mod scratch;
 pub mod sweep;
 pub use calls::{CALL_USAGE, Call, parse_call, write_call};
 pub use expectation::{BACKGROUND_TIMEOUT_MS, start_lines};

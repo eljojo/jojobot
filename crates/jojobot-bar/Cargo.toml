@@ -10,6 +10,7 @@ rust-version.workspace = true
 # adapters — it reads cargo's own output and nothing else: text for the test
 # runs, and `cargo metadata` JSON for the packages `bar dev` selects.
 [dependencies]
+libc.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jojobot_bar::sweep::{process_is_gone, sweep_orphans};
+use jojobot_bar::sweep::{process_is_gone, sweep_orphans, sweep_orphans_of};
 
 fn scratch(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -238,4 +238,27 @@ fn the_real_check_knows_a_live_process_from_a_gone_one() {
         "this process is alive"
     );
     assert!(process_is_gone(a_dead_pid()), "a waited-for child is gone");
+}
+
+/// **The sweep removes the directories of the user it is told, and no other
+/// user's.** A shared directory such as the memory-backed one belongs to root,
+/// so the user who made the scratch directories in it is named, not read from
+/// the parent. Both users are tried on the same directory.
+#[test]
+fn the_sweep_judges_the_directories_of_the_user_it_is_told() {
+    use std::os::unix::fs::MetadataExt;
+    let parent = scratch("user");
+    let me = parent.metadata().expect("the parent's owner").uid();
+    let pid = a_dead_pid();
+    let name = format!("jojobot-bar-{pid}-1791471848664039428");
+    let dir = make(&parent, &name);
+
+    let other = sweep_orphans_of(&parent, me + 1, &|candidate| candidate == pid);
+    assert!(other.removed.is_empty(), "another user's: {other:?}");
+    assert!(dir.exists(), "a directory of another user was removed");
+
+    let mine = sweep_orphans_of(&parent, me, &|candidate| candidate == pid);
+    assert_eq!(mine.removed, std::slice::from_ref(&dir), "{mine:?}");
+    assert!(!dir.exists());
+    let _ = std::fs::remove_dir_all(&parent);
 }

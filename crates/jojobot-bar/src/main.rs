@@ -64,7 +64,7 @@ fn main() -> ExitCode {
     // with it, whatever those children left.
     let _run_root = if matches!(
         args.first().map(String::as_str),
-        Some("check" | "rooms" | "dev")
+        Some("check" | "report" | "narrow" | "rooms" | "dev")
     ) {
         sweep_orphaned_scratch();
         RunRoot::make()
@@ -124,7 +124,24 @@ fn sweep_orphaned_scratch() {
         }
         _ => temp,
     };
-    let swept = jojobot_bar::sweep::sweep_orphans(&parent, &jojobot_bar::sweep::process_is_gone);
+    say_what_was_swept(
+        &parent,
+        jojobot_bar::sweep::sweep_orphans(&parent, &jojobot_bar::sweep::process_is_gone),
+    );
+    // **A run root left in memory costs memory until the host restarts**, so the
+    // memory-backed directory is swept whichever base this run chooses. It is
+    // shared and owned by root, so the sweep is of what this user made in it.
+    let memory = Path::new(jojobot_bar::scratch::MEMORY_DIR);
+    // SAFETY: `geteuid` takes no arguments and cannot fail.
+    let user = unsafe { libc::geteuid() };
+    say_what_was_swept(
+        memory,
+        jojobot_bar::sweep::sweep_orphans_of(memory, user, &jojobot_bar::sweep::process_is_gone),
+    );
+}
+
+/// Said on stderr only when something was found.
+fn say_what_was_swept(parent: &Path, swept: jojobot_bar::sweep::Swept) {
     if !(swept.removed.is_empty() && swept.in_use.is_empty() && swept.failed.is_empty()) {
         eprintln!(
             "bar: swept {} scratch directories whose owner is gone from {} ({} kept, a process works in them; {} could not be removed)",
@@ -145,6 +162,11 @@ static RUN_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 /// directory of this run's own, and removing that, is what makes the cleanup
 /// the run's and not each fixture's. A run that is killed leaves the directory,
 /// and the sweep at the next start removes it by the process number in its name.
+///
+/// **It is made under the memory-backed directory when that has room** (see
+/// [`jojobot_bar::scratch`]), so the test stores do not wait on a disk. This is
+/// the one place the bar chooses it: every child gets it through
+/// [`in_the_run_root`], and no case sets a temp directory of its own.
 struct RunRoot(PathBuf);
 
 impl RunRoot {
@@ -153,8 +175,22 @@ impl RunRoot {
             .duration_since(std::time::UNIX_EPOCH)
             .ok()?
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(jojobot_bar::sweep::run_root_name(std::process::id(), nanos));
+        let memory = Path::new(jojobot_bar::scratch::MEMORY_DIR);
+        let placement = jojobot_bar::scratch::place(
+            memory,
+            jojobot_bar::scratch::free_bytes(memory),
+            jojobot_bar::scratch::MINIMUM_FREE_BYTES,
+            &std::env::temp_dir(),
+        );
+        if let jojobot_bar::scratch::Placement::Disk { base, reason } = &placement {
+            eprintln!(
+                "bar: test directories go on disk, under {}: {reason}",
+                base.display()
+            );
+        }
+        let root = placement
+            .base()
+            .join(jojobot_bar::sweep::run_root_name(std::process::id(), nanos));
         fs::create_dir_all(&root).ok()?;
         RUN_ROOT.set(root.clone()).ok()?;
         Some(RunRoot(root))

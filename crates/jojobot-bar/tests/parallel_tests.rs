@@ -507,6 +507,15 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
         .filter(|name| name.starts_with("jojobot-bar-"))
         .collect();
     let _ = fs::remove_dir_all(&dir);
+    // The run root is in memory when the host has room, and in the temp directory
+    // the bar was given when it has not.
+    let memory = Path::new(jojobot_bar::scratch::MEMORY_DIR);
+    let base = jojobot_bar::scratch::place(
+        memory,
+        jojobot_bar::scratch::free_bytes(memory),
+        jojobot_bar::scratch::MINIMUM_FREE_BYTES,
+        &dir,
+    );
 
     assert!(
         !told.is_empty(),
@@ -522,8 +531,12 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
             "a job was not told to use a directory of the run's own: {place}"
         );
         assert!(
-            Path::new(place).starts_with(&dir),
-            "the run's directory is not inside the temp directory the bar was given: {place}"
+            Path::new(place).starts_with(base.base()),
+            "the run's directory is not inside the directory the bar placed it in: {place}"
+        );
+        assert!(
+            !Path::new(place).exists(),
+            "the run's directory was left behind: {place}"
         );
     }
     assert!(

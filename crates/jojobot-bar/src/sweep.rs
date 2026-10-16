@@ -158,11 +158,17 @@ fn where_processes_work() -> Vec<String> {
 /// `nix-shell.*` directory there, whose owner `gone` says is gone and that no
 /// live process works in.**
 pub fn sweep_orphans(parent: &Path, gone: &dyn Fn(u32) -> bool) -> Swept {
+    match parent.metadata() {
+        Ok(meta) => sweep_orphans_of(parent, meta.uid(), gone),
+        Err(_) => Swept::default(),
+    }
+}
+
+/// **The same sweep, for the directories `user` made.** A directory such as the
+/// memory-backed one is owned by root and shared, so the user who made the
+/// scratch directories in it is not the user who owns it.
+pub fn sweep_orphans_of(parent: &Path, user: u32, gone: &dyn Fn(u32) -> bool) -> Swept {
     let mut swept = Swept::default();
-    let Ok(parent_meta) = parent.metadata() else {
-        return swept;
-    };
-    let user = parent_meta.uid();
     let mut found = Vec::new();
     candidates_in(parent, user, &mut found);
     if let Ok(entries) = std::fs::read_dir(parent) {
